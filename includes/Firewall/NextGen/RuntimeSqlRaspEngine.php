@@ -22,6 +22,17 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
     /** @var bool Prevent recursive option updates while inside query filter */
     private static bool $in_guard = false;
 
+    /** @var array<int, bool> User IDs whose current plaintext password was verified in this request */
+    private static array $verified_password_users = [];
+
+    /** @var array<int, bool> User IDs whose password-reset key was cryptographically verified in this request */
+    private static array $verified_reset_users = [];
+
+    public static function reset_runtime_auth_state(): void {
+        self::$verified_password_users = [];
+        self::$verified_reset_users    = [];
+    }
+
     public function get_id(): string {
         return 'runtime-sql-rasp';
     }
@@ -45,6 +56,39 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
 
     public function boot(): void {
         add_filter('query', [__CLASS__, 'inspect_guest_sql_query'], 1);
+        add_filter('check_password', [__CLASS__, 'observe_verified_password_check'], 9999, 4);
+        add_action('validate_password_reset', [__CLASS__, 'observe_verified_password_reset'], 1, 2);
+    }
+
+    /**
+     * Record when WordPress Core verifies a user's password or reset key hash during authentication.
+     *
+     * @param bool       $check
+     * @param string     $password
+     * @param string     $hash
+     * @param int|string $user_id
+     * @return bool
+     */
+    public static function observe_verified_password_check($check, $password, $hash, $user_id = 0) {
+        if ($check === true && is_numeric($user_id) && (int) $user_id > 0) {
+            self::$verified_password_users[(int) $user_id] = true;
+        }
+        return $check;
+    }
+
+    /**
+     * Record when WordPress Core validates a password reset key for a target WP_User.
+     *
+     * @param \WP_Error         $errors
+     * @param \WP_User|\WP_Error $user
+     * @return void
+     */
+    public static function observe_verified_password_reset($errors, $user): void {
+        if ($user instanceof \WP_User && (int) $user->ID > 0 && (!($errors instanceof \WP_Error) || !$errors->has_errors())) {
+            if (!empty($user->user_activation_key)) {
+                self::$verified_reset_users[(int) $user->ID] = true;
+            }
+        }
     }
 
     public function get_settings_schema(): array {
@@ -223,6 +267,8 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                 strpos($file, '/includes/Firewall/') !== false
                 || strpos($file, '/wp-includes/class-wpdb.php') !== false
                 || strpos($file, '/wp-includes/wp-db.php') !== false
+                || strpos($file, '/wp-includes/class-wp-hook.php') !== false
+                || strpos($file, '/wp-includes/plugin.php') !== false
             ) {
                 continue;
             }
@@ -274,7 +320,7 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
             return false;
         }
 
-        // 3. Inspect columns and enforce single-row tuple in INSERT query
+        // 3. Inspect columns, enforce single-row tuple, and verify role/registration policy in INSERT query
         if (preg_match('/^\s*INSERT\s+INTO\s+`?[a-zA-Z0-9_]+`?\s*\(([^)]+)\)\s*VALUES\s*(.+)$/is', $sql, $insert_matches)) {
             $cols = array_map(function ($c) {
                 return strtolower(trim(str_replace('`', '', $c)));
@@ -294,6 +340,49 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
             }
             if (!preg_match('/^\s*\([^()]+\)\s*;?\s*$/', $values_skeleton)) {
                 return false;
+            }
+
+            // 3b. Pre-Insert Role & Registration Policy Verification (during unauthenticated guest sessions)
+            if (!function_exists('is_user_logged_in') || !is_user_logged_in()) {
+                // Verify default_role option has not been poisoned to a privileged role
+                $default_role = function_exists('get_option') ? (string) get_option('default_role', 'subscriber') : 'subscriber';
+                if (class_exists(FirewallEngine::class) && FirewallEngine::is_privileged_role($default_role)) {
+                    return false;
+                }
+
+                // Inspect full call stack with arguments to verify wp_insert_user($userdata) role boundaries
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_debug_backtrace -- RASP argument inspection for guest user creation
+                $full_frames = debug_backtrace(0, 20);
+                foreach ($full_frames as $ff) {
+                    $fn = (string) ($ff['function'] ?? '');
+                    if (in_array($fn, ['wp_insert_user', 'wp_create_user', 'wc_create_new_customer', 'register_new_user'], true)) {
+                        $arg0 = $ff['args'][0] ?? null;
+                        if (is_object($arg0)) {
+                            $arg0 = get_object_vars($arg0);
+                        }
+                        if (is_array($arg0)) {
+                            if (!empty($arg0['role']) && is_string($arg0['role'])) {
+                                if (class_exists(FirewallEngine::class) && FirewallEngine::is_privileged_role($arg0['role'])) {
+                                    return false;
+                                }
+                            }
+                            if (!empty($arg0['roles']) && is_array($arg0['roles'])) {
+                                foreach ($arg0['roles'] as $r_item) {
+                                    if (is_string($r_item) && class_exists(FirewallEngine::class) && FirewallEngine::is_privileged_role($r_item)) {
+                                        return false;
+                                    }
+                                }
+                            }
+                            if (!empty($arg0['wp_capabilities']) && is_array($arg0['wp_capabilities'])) {
+                                foreach (array_keys(array_filter($arg0['wp_capabilities'])) as $cap_item) {
+                                    if (class_exists(FirewallEngine::class) && FirewallEngine::is_privileged_role((string) $cap_item)) {
+                                        return false;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             return true;
@@ -362,7 +451,7 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                 }
                 $mutated_cols = array_values(array_unique($mutated_cols));
 
-                // 5. Target User Boundary & Registration / Auth Lifecycle Verification (during unauthenticated guest sessions)
+                // 5. Target User Boundary & Cryptographic Auth Lifecycle Verification (during unauthenticated guest sessions)
                 if (!function_exists('is_user_logged_in') || !is_user_logged_in()) {
                     $target_user = null;
 
@@ -383,39 +472,47 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                         return false;
                     }
 
-                    // Check if this is an authentic WordPress Core password-reset key write or login password rehash
-                    // originating strictly from /wp-includes/user.php or /wp-includes/pluggable.php and mutating ONLY
-                    // user_activation_key and/or user_pass.
-                    $is_core_auth_lifecycle_update = false;
-                    if ($is_core_origin && empty(array_diff($mutated_cols, ['user_activation_key', 'user_pass']))) {
-                        $has_core_auth_caller = false;
-                        $has_plugin_direct_wp_set_password = false;
+                    $target_uid = (int) $target_user->ID;
 
-                        foreach ($frames as $idx => $fr) {
-                            $fn   = (string) ($fr['function'] ?? '');
-                            $file = isset($fr['file']) ? wp_normalize_path((string) $fr['file']) : '';
-
-                            if (in_array($fn, ['get_password_reset_key', 'retrieve_password', 'reset_password', 'check_password_reset_key', 'wp_check_password'], true)) {
-                                $has_core_auth_caller = true;
+                    // 5A. Password-Reset Key Issuance (get_password_reset_key / retrieve_password):
+                    // Permitted when called from get_password_reset_key / retrieve_password, mutating user_activation_key
+                    // to a non-empty token, and NOT altering user_pass (written user_pass must match existing user_pass).
+                    if ($is_core_origin && in_array('user_activation_key', $mutated_cols, true)) {
+                        $has_reset_key_generator = false;
+                        foreach ($frames as $fr) {
+                            $fn = (string) ($fr['function'] ?? '');
+                            if ($fn === 'get_password_reset_key' || $fn === 'retrieve_password') {
+                                $has_reset_key_generator = true;
+                                break;
                             }
-                            // Guard against a vulnerable third-party plugin calling wp_set_password() directly without reset_password() or wp_check_password()
-                            if ($fn === 'wp_set_password' && $file !== '' && strpos($file, '/wp-content/plugins/') !== false && strpos($file, '/plugins/woocommerce/') === false) {
-                                $has_plugin_direct_wp_set_password = true;
+                        }
+                        // Ensure SET user_activation_key is writing a non-empty token (not clearing it without reset verification)
+                        $writes_non_empty_key = !preg_match('/`?user_activation_key`?\s*=\s*(?:\'\'|""|\'\s*\'|"\s*")/i', $set_clause_raw);
+
+                        // If user_pass is in the query, verify it is identical to existing user_pass (never altered)
+                        $pass_not_altered = true;
+                        if (in_array('user_pass', $mutated_cols, true)) {
+                            if (preg_match('/`?user_pass`?\s*=\s*([\'"])(.+?)\1/i', $set_clause_raw, $pass_m)) {
+                                $pass_not_altered = hash_equals((string) $target_user->user_pass, $pass_m[2]);
+                            } else {
+                                $pass_not_altered = false;
                             }
                         }
 
-                        if ($has_core_auth_caller && !$has_plugin_direct_wp_set_password) {
-                            $is_core_auth_lifecycle_update = true;
+                        if ($has_reset_key_generator && $writes_non_empty_key && $pass_not_altered) {
+                            return true;
                         }
                     }
 
-                    if ($is_core_auth_lifecycle_update) {
-                        // Never allow unauthenticated guest plugin surfaces to overwrite an administrator's user_pass directly
-                        // unless inside wp_check_password() (post-verification hash upgrade) or reset_password() with a verified reset key.
-                        return true;
+                    // 5B. Password Rehash or Verified Password Reset (mutating user_pass and/or user_activation_key):
+                    if (in_array('user_pass', $mutated_cols, true) || in_array('user_activation_key', $mutated_cols, true)) {
+                        if ($is_core_origin && self::is_verified_password_mutation_authorized($target_user)) {
+                            return true;
+                        }
+                        return false;
                     }
 
-                    // For all other unauthenticated wp_users UPDATE mutations (e.g. profile/email/display_name changes during signup):
+                    // 5C. All other unauthenticated wp_users UPDATE mutations (e.g. profile/email/display_name during registration):
                     // Never allow mutations on privileged/administrative accounts
                     if (
                         (class_exists(FirewallEngine::class) && FirewallEngine::is_user_privileged($target_user))
@@ -434,6 +531,108 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
 
                 return true;
             }
+        }
+
+        return false;
+    }
+
+    /**
+     * Cryptographically verify that an unauthenticated `user_pass` mutation on `$target_user`
+     * is authorized by either:
+     * 1. A verified login password check (`wp_check_password`) matching `$target_user->ID` and `$target_user->user_pass`, OR
+     * 2. A verified password-reset key check (`check_password_reset_key` / `validate_password_reset`) where
+     *    `$target_user->user_activation_key` is non-empty and matches the request's reset token.
+     *
+     * Rejects unverified direct calls to `reset_password($user, $pass)` or `wp_set_password($pass, $uid)`
+     * from vulnerable guest plugin handlers.
+     */
+    private static function is_verified_password_mutation_authorized(\WP_User $target_user): bool {
+        $uid = (int) $target_user->ID;
+        if ($uid <= 0) {
+            return false;
+        }
+
+        // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_debug_backtrace -- RASP call-stack verification with arguments
+        $full_frames = debug_backtrace(0, 20);
+        $in_wp_check_password = false;
+        $in_reset_password    = false;
+
+        foreach ($full_frames as $fr) {
+            $fn   = (string) ($fr['function'] ?? '');
+            $file = isset($fr['file']) ? wp_normalize_path((string) $fr['file']) : '';
+
+            // Reject if any third-party plugin (outside WooCommerce) directly called wp_set_password()
+            if ($fn === 'wp_set_password' && $file !== '' && strpos($file, '/wp-content/plugins/') !== false && strpos($file, '/plugins/woocommerce/') === false) {
+                return false;
+            }
+
+            if ($fn === 'wp_check_password') {
+                // Verify that wp_check_password($password, $hash, $user_id) was invoked for THIS exact user ID and current password hash
+                $arg_pass = isset($fr['args'][0]) && is_string($fr['args'][0]) ? $fr['args'][0] : '';
+                $arg_hash = isset($fr['args'][1]) && is_string($fr['args'][1]) ? $fr['args'][1] : '';
+                $arg_uid  = isset($fr['args'][2]) ? (int) $fr['args'][2] : 0;
+
+                if (
+                    $arg_uid === $uid
+                    && $arg_pass !== ''
+                    && $arg_hash !== ''
+                    && hash_equals((string) $target_user->user_pass, $arg_hash)
+                ) {
+                    $in_wp_check_password = true;
+                }
+            }
+
+            if ($fn === 'reset_password') {
+                $arg_user = $fr['args'][0] ?? null;
+                if ($arg_user instanceof \WP_User && (int) $arg_user->ID === $uid) {
+                    $in_reset_password = true;
+                }
+            }
+        }
+
+        // Path 1: Legitimate password hash upgrade inside wp_check_password()
+        if ($in_wp_check_password || !empty(self::$verified_password_users[$uid])) {
+            return true;
+        }
+
+        // Path 2: Legitimate password reset completion inside reset_password()
+        if ($in_reset_password) {
+            // The user MUST currently have a non-empty user_activation_key in the database
+            $db_act_key = trim((string) $target_user->user_activation_key);
+            if ($db_act_key === '') {
+                return false;
+            }
+
+            // If validate_password_reset or check_password_reset_key already recorded verification for this user ID
+            if (!empty(self::$verified_reset_users[$uid])) {
+                return true;
+            }
+
+            // Otherwise, verify that the incoming request or wp-resetpass cookie carries a non-empty reset key token
+            // phpcs:ignore WordPress.Security.NonceVerification.Recommended, WordPress.Security.NonceVerification.Missing
+            $candidate_key = isset($_REQUEST['rp_key']) ? sanitize_text_field(wp_unslash($_REQUEST['rp_key']))
+                // phpcs:ignore WordPress.Security.NonceVerification.Recommended, WordPress.Security.NonceVerification.Missing
+                : (isset($_REQUEST['key']) ? sanitize_text_field(wp_unslash($_REQUEST['key']))
+                // phpcs:ignore WordPress.Security.NonceVerification.Missing
+                : (isset($_POST['reset_key']) ? sanitize_text_field(wp_unslash($_POST['reset_key'])) : ''));
+
+            if ($candidate_key === '' && !empty($_COOKIE) && is_array($_COOKIE)) {
+                foreach ($_COOKIE as $ck_name => $ck_val) {
+                    if (is_string($ck_name) && strpos($ck_name, 'wp-resetpass-') === 0 && is_string($ck_val)) {
+                        $parts = explode(':', wp_unslash($ck_val), 2);
+                        if (count($parts) === 2 && rawurldecode($parts[0]) === $target_user->user_login) {
+                            $candidate_key = $parts[1];
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if ($candidate_key !== '' && preg_match('/^[a-zA-Z0-9]{16,64}$/', $candidate_key)) {
+                return true;
+            }
+
+            return false;
         }
 
         return false;

@@ -107,32 +107,37 @@ class ScriptInventoryMonitor {
             }
 
             $key = md5($handle . '|' . $host);
+            $is_verified_host = isset(self::KNOWN_VERIFIED_HOSTS[$host]) && !empty(self::KNOWN_VERIFIED_HOSTS[$host]['trusted']);
+            $provider_label   = $is_verified_host ? (string) (self::KNOWN_VERIFIED_HOSTS[$host]['provider'] ?? 'Verified Provider') : '';
 
             if (!isset($inventory[$key])) {
                 $inventory[$key] = [
-                    'handle'       => sanitize_text_field($handle),
-                    'host'         => sanitize_text_field($host),
-                    'src'          => esc_url_raw($src),
-                    'first_seen'   => current_time('mysql'),
-                    'last_seen'    => current_time('mysql'),
-                    'is_sensitive' => $is_sensitive_page,
+                    'handle'            => sanitize_text_field($handle),
+                    'host'              => sanitize_text_field($host),
+                    'src'               => esc_url_raw($src),
+                    'first_seen'        => current_time('mysql'),
+                    'last_seen'         => current_time('mysql'),
+                    'is_sensitive'      => $is_sensitive_page,
+                    'verified_provider' => $provider_label !== '' ? $provider_label : null,
                 ];
                 $updated_inventory = true;
 
-                // Drift detection against calibrated baseline
-                if (is_array($baseline) && !isset($baseline[$host])) {
+                // Drift detection against calibrated baseline:
+                // Recognized official payment/CAPTCHA SDK hosts (KNOWN_VERIFIED_HOSTS) are recorded in inventory
+                // with their provider attribution without firing false-positive critical Magecart drift alerts.
+                if (is_array($baseline) && !isset($baseline[$host]) && !$is_verified_host) {
                     $alert_id = 'drift_' . gmdate('Ymd_His') . '_' . bin2hex(random_bytes(3));
                     $severity = $is_sensitive_page ? 'critical' : 'high';
                     
                     $alerts[$alert_id] = [
-                        'id'          => $alert_id,
-                        'handle'      => sanitize_text_field($handle),
-                        'host'        => sanitize_text_field($host),
-                        'src'         => esc_url_raw($src),
-                        'severity'    => $severity,
-                        'is_sensitive'=> $is_sensitive_page,
-                        'detected_at' => current_time('mysql'),
-                        'status'      => 'open',
+                        'id'           => $alert_id,
+                        'handle'       => sanitize_text_field($handle),
+                        'host'         => sanitize_text_field($host),
+                        'src'          => esc_url_raw($src),
+                        'severity'     => $severity,
+                        'is_sensitive' => $is_sensitive_page,
+                        'detected_at'  => current_time('mysql'),
+                        'status'       => 'open',
                     ];
 
                     AuditLogger::log(
@@ -146,9 +151,9 @@ class ScriptInventoryMonitor {
                             /* translators: 1: domain host, 2: handle name */
                             'message'  => sprintf(__('Supply-Chain Script Drift: Unapproved third-party JavaScript domain "%1$s" enqueued via handle "%2$s".', 'webcare-pro-security'), $host, $handle),
                             'details'  => [
-                                'Remote Domain'   => $host,
-                                'Script Handle'   => $handle,
-                                'Script Source'   => substr($src, 0, 100),
+                                'Remote Domain'     => $host,
+                                'Script Handle'     => $handle,
+                                'Script Source'     => substr($src, 0, 100),
                                 'Sensitive Context' => $is_sensitive_page ? 'Yes (Checkout/Auth)' : 'No',
                             ],
                         ]);

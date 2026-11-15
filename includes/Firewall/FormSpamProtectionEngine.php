@@ -184,7 +184,8 @@ class FormSpamProtectionEngine {
             '  window.addEventListener("scroll", countEntropy, {passive: true});',
             '  function injectArmor(form) {',
             '    if (form.getAttribute("data-webcare-armored")) return;',
-            '    if (form.classList && (form.classList.contains("woocommerce-checkout") || form.classList.contains("checkout") || form.classList.contains("woocommerce-cart-form"))) return;',
+            '    if (form.classList && (form.classList.contains("woocommerce-checkout") || form.classList.contains("checkout") || form.classList.contains("woocommerce-cart-form") || form.classList.contains("wc-block-checkout__form") || form.classList.contains("wc-block-components-form"))) return;',
+            '    if (form.closest && form.closest(".wp-block-woocommerce-checkout, .wp-block-woocommerce-cart, .wc-block-checkout")) return;',
             '    form.setAttribute("data-webcare-armored", "1");',
             '    var hpWrap = document.createElement("div");',
             '    hpWrap.style.cssText = "position:absolute!important;left:-9999px!important;top:-9999px!important;opacity:0!important;height:0!important;width:0!important;overflow:hidden!important;pointer-events:none!important;";',
@@ -366,8 +367,14 @@ class FormSpamProtectionEngine {
                         return new \WP_Error('webcare_spam_speed_gate', __('Submission was completed too quickly for a human visitor. Please take a moment and try again.', 'webcare-pro-security'));
                     }
 
-                    // Stale token (> 7 days / 604800s to respect full-page caching); allow if human telemetry delta is valid
+                    // Hard absolute expiration boundary (> 7 days / 604800s): NEVER bypassable by client telemetry
                     if ($elapsed > 604800) {
+                        self::record_spam_drop('stale_replay_token', $form_source, $client_ip);
+                        return new \WP_Error('webcare_spam_stale_token', __('Form session has expired. Please refresh the page and resubmit.', 'webcare-pro-security'));
+                    }
+
+                    // Soft cached-page window (48h to 7d): permit only if client telemetry is present and non-webdriver
+                    if ($elapsed > 172800) {
                         $has_valid_client_delta = false;
                         if (isset($request_data['webcare_human_telemetry'])) {
                             $tel = json_decode((string) base64_decode(sanitize_text_field(wp_unslash($request_data['webcare_human_telemetry']))), true);

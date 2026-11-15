@@ -175,20 +175,10 @@ class IntentChainSentinel implements SecurityModuleInterface, WafEvaluatorInterf
             }
 
             if ($policy === 'challenge_pow' && class_exists(BotReconDefense::class)) {
-                // Never emit an HTML PoW page inside a WooCommerce AJAX or REST JSON request
-                $is_json_or_wc_ajax = (function_exists('wp_is_json_request') && wp_is_json_request())
-                    || (defined('REST_REQUEST') && REST_REQUEST)
-                    || (function_exists('wp_doing_ajax') && wp_doing_ajax())
-                    || strpos($ctx->uri, 'wc-ajax=') !== false
-                    || strpos($ctx->cleanUri, '/wp-json/') !== false;
-
-                if ($is_json_or_wc_ajax) {
-                    return null;
-                }
-
                 return new WafVerdict('challenge_pow', 'WAF-AI-AGENT-KILLCHAIN', $reason, [
-                    'category' => 'AI Agent Kill-Chain Defense',
-                    'severity' => 'high',
+                    'category'    => 'AI Agent Kill-Chain Defense',
+                    'severity'    => 'high',
+                    'status_code' => 429,
                 ]);
             }
 

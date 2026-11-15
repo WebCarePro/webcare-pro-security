@@ -814,11 +814,48 @@ class BotReconDefense {
     }
 
     public static function render_webcrypto_challenge(string $ip, string $ua): void {
+        // Allow headless/REST/AJAX clients to present a solved PoW token via X-WebCare-PoW-Solution: challenge:nonce
+        $pow_hdr = isset($_SERVER['HTTP_X_WEBCARE_POW_SOLUTION'])
+            ? sanitize_text_field(wp_unslash($_SERVER['HTTP_X_WEBCARE_POW_SOLUTION']))
+            : '';
+        if ($pow_hdr !== '' && strpos($pow_hdr, ':') !== false) {
+            [$ch, $no] = explode(':', $pow_hdr, 2);
+            if (self::verify_pow_solution($ch, $no, $ip, $ua)) {
+                self::issue_clearance_cookie($ip, $ua);
+                return;
+            }
+        }
+
         $challenge = self::generate_challenge($ip, $ua);
         $zeros     = str_repeat('0', self::POW_DIFFICULTY);
 
         status_header(429);
         nocache_headers();
+
+        // Protocol-Appropriate Enforcement: Return structured JSON 429 on REST, AJAX, and WooCommerce JSON endpoints
+        $raw_uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '';
+        $is_json_surface = (function_exists('wp_is_json_request') && wp_is_json_request())
+            || (defined('REST_REQUEST') && REST_REQUEST)
+            || (function_exists('wp_doing_ajax') && wp_doing_ajax())
+            || strpos($raw_uri, 'wc-ajax=') !== false
+            || strpos($raw_uri, '/wp-json/') !== false
+            || strpos($raw_uri, 'rest_route=') !== false;
+
+        if ($is_json_surface) {
+            header('Content-Type: application/json; charset=utf-8');
+            header('Retry-After: 30');
+            echo wp_json_encode([
+                'code'         => 'webcare_pow_challenge_required',
+                'result'       => 'failure',
+                'status'       => 429,
+                'pow_required' => true,
+                'challenge'    => $challenge,
+                'difficulty'   => self::POW_DIFFICULTY,
+                'message'      => __('Browser cryptographic verification (Proof-of-Work) is required before proceeding.', 'webcare-pro-security'),
+                'messages'     => '<ul class="woocommerce-error" role="alert"><li>' . esc_html__('Security verification required. Please reload the page to complete browser verification.', 'webcare-pro-security') . '</li></ul>',
+            ]);
+            exit;
+        }
         ?>
         <!DOCTYPE html>
         <html lang="en">

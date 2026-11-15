@@ -1,5 +1,15 @@
 ﻿v:2.15.0 - 2026-11-15
 - Zero-Gap Fail-Closed Streaming, Runtime RASP Hardening, Response DLP Redaction & Full Architectural Resilience:
+  * Cryptographic Trust Boundaries, Dual-Verification Password Lifecycle & RASP Pre-Insert Guard:
+    - Runtime SQL RASP Auth State Tracking: Bound password reset key writes (5A) and password resets (5B) to explicit authentication lifecycle events via `check_password` and `validate_password_reset` action hooks, cryptographically verifying reset keys against `user_activation_key` before allowing password mutation on accounts older than 120s.
+    - SQL RASP Pre-Insert Role & Policy Gate: Added deep backtrace inspection prior to `INSERT INTO wp_users`, intercepting guest registrations attempting to inject elevated roles or override `default_role`.
+    - Stack & Filter Dispatcher Traversal: Skipped hook/filter dispatcher frames (`class-wp-hook.php`, `plugin.php`) in caller provenance resolution to accurately verify authentic Core/WooCommerce origins.
+    - PoW Challenge Status Code & Headless Protocol Support: Updated `IntentChainSentinel` and `BotReconDefense` to issue standard HTTP 429 status codes with structured JSON denial (`webcare_pow_challenge_required`) and `HTTP_X_WEBCARE_POW_SOLUTION` header verification on REST, AJAX, and WooCommerce endpoints.
+    - Cryptographic WooCommerce Session Verification: Upgraded `has_active_shopper_session()` to verify cryptographic HMAC tokens against the database `woocommerce_sessions` table, eliminating unverified cookie length fallbacks.
+    - Anchored REST Route & Recon Probe Protection: Replaced substring pattern matching in `is_high_risk_recon_probe()` and `check_sensitive_file_probe()` with normalized, anchored route checks, eliminating false positives while preventing path traversal smuggling.
+    - Webhook Source IP Verification: Removed unverified webhook signature header trust in `is_commerce_or_membership_request()`, requiring mandatory Stripe/PayPal CIDR/IP validation.
+    - Scoped Administrative Capabilities & Form Armor Ceiling: Scoped `manage_` capability checks to administrative functions (`manage_network_*`, `manage_options`, `manage_sites`, `manage_woocommerce`, `manage_security`, `manage_webcare`) and enforced a hard 7-day token expiration ceiling in `FormSpamProtectionEngine`.
+    - Script Inventory Payment Provider Integration: Recognized official payment SDKs (Stripe, Braintree, Square, Klarna, etc.) in `capture_enqueued_scripts()`, recording `verified_provider` without raising false-positive Magecart alerts.
   * Extended Remediation, Seamless WooCommerce & Zero-False-Positive Hardening:
     - Runtime SQL RASP Auth Lifecycle: Permitted authentic WordPress Core password-reset key writes and login password rehashes on accounts older than 120s while strictly blocking unauthenticated privilege escalations and malicious mutations.
     - Dynamic Role Privilege Inspection: Dynamically evaluates registered role capabilities for custom roles (B2B, Wholesale, LMS, Forum, Vendor) against privileged capabilities and legacy level_2..level_10, eliminating false-positive bans on unprivileged customer roles.
