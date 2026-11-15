@@ -1,5 +1,9 @@
 ﻿v:2.15.0 - 2026-11-15
 - Zero-Gap Fail-Closed Streaming, Runtime RASP Hardening, Response DLP Redaction & Full Architectural Resilience:
+  * Fail-Closed Registration Window Validation & Unified Target Lookup:
+    - Replaced loose registration timestamp comparisons with unified, fail-closed `is_within_registration_window()` across both `RuntimeSqlRaspEngine` and `FirewallEngine`.
+    - Strictly rejects unauthenticated mutations targeting accounts with missing, empty, `'0000-00-00 00:00:00'`, unparseable, or future timestamps, while enforcing the 120-second registration window.
+    - Unified `ID` and `user_login` target account resolution in `RuntimeSqlRaspEngine` into a single cohesive validation block to permanently prevent check drift.
   * Multi-Role Capability Inspection, Contributor Hardening & Precision Path Traversal:
     - Expanded unauthenticated target user privilege checks in RuntimeSqlRaspEngine via new centralized FirewallEngine::is_user_privileged() helper, verifying all assigned roles, direct capabilities, and effective allcaps (including edit_users, manage_woocommerce, install_plugins) rather than only checking roles[0].
     - Eliminated early role-name returns in FirewallEngine::is_privileged_role(), ensuring any modified standard role (e.g. contributor weaponized with manage_options) is strictly detected and flagged as elevated.

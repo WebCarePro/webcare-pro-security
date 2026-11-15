@@ -10294,6 +10294,42 @@ class FirewallEngine {
     }
 
     /**
+     * Verify whether a target user was authentically registered within the allowed registration window.
+     * Fail-closed: returns false if the timestamp is missing, unparseable, '0000-00-00 00:00:00',
+     * in the future (beyond clock skew tolerance), or older than the allowed window (120 seconds).
+     *
+     * @param \WP_User $user
+     * @param int      $max_age_seconds Default 120 seconds
+     * @return bool
+     */
+    public static function is_within_registration_window(\WP_User $user, int $max_age_seconds = 120): bool {
+        $raw_reg = trim((string) $user->user_registered);
+        if ($raw_reg === '' || $raw_reg === '0000-00-00 00:00:00') {
+            return false;
+        }
+
+        $reg_ts = strtotime($raw_reg);
+        if ($reg_ts === false || $reg_ts <= 0) {
+            return false;
+        }
+
+        $now = time();
+        $age = $now - $reg_ts;
+
+        // Reject future timestamps beyond 5 seconds clock drift allowance
+        if ($age < -5) {
+            return false;
+        }
+
+        // Reject accounts registered longer ago than $max_age_seconds (120s)
+        if ($age > $max_age_seconds) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
      * Rule #44: In-Memory RASP Hook Firewall - Abort guest or unprivileged role escalation to administrator.
      *
      * @param int    $user_id   User ID
@@ -10518,10 +10554,9 @@ class FirewallEngine {
                 // If no elevated privileges are being assigned, verify the user was created recently or in current registration request
                 if (!$has_admin_privilege) {
                     $user_obj = function_exists('get_userdata') ? get_userdata($object_id) : null;
-                    if ($user_obj) {
-                        $registered_time = strtotime($user_obj->user_registered);
+                    if ($user_obj instanceof \WP_User) {
                         // Allow if user registered within the last 120 seconds (standard new account registration window)
-                        if ($registered_time && (time() - $registered_time) <= 120) {
+                        if (self::is_within_registration_window($user_obj, 120)) {
                             $is_safe_registration_mutation = true;
                         }
                     } else {
@@ -10534,9 +10569,8 @@ class FirewallEngine {
                 $level = (int) $meta_value;
                 if ($level <= 1) {
                     $user_obj = function_exists('get_userdata') ? get_userdata($object_id) : null;
-                    if ($user_obj) {
-                        $registered_time = strtotime($user_obj->user_registered);
-                        if ($registered_time && (time() - $registered_time) <= 120) {
+                    if ($user_obj instanceof \WP_User) {
+                        if (self::is_within_registration_window($user_obj, 120)) {
                             $is_safe_registration_mutation = true;
                         }
                     } else {
@@ -10549,8 +10583,7 @@ class FirewallEngine {
             // strictly for a brand-new registration (within 120s) and with zero elevated capabilities ($has_admin_privilege === false)
             if (!$is_safe_registration_mutation && function_exists('debug_backtrace')) {
                 $user_obj = function_exists('get_userdata') ? get_userdata($object_id) : null;
-                $reg_ts   = $user_obj ? strtotime((string) $user_obj->user_registered) : 0;
-                $is_new_account = !$user_obj || ($reg_ts && (time() - $reg_ts) <= 120);
+                $is_new_account = !$user_obj || ($user_obj instanceof \WP_User && self::is_within_registration_window($user_obj, 120));
 
                 if ($is_new_account) {
                     // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_debug_backtrace -- Context inspection required to distinguish legitimate WordPress core registration from raw unauthenticated SQL/HTTP privilege injections.

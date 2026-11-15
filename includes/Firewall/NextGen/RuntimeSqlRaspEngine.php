@@ -360,52 +360,38 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
 
                 // 5. Target User Boundary & Registration Window (during unauthenticated guest sessions)
                 if (!function_exists('is_user_logged_in') || !is_user_logged_in()) {
+                    $target_user = null;
+
                     if ($pred_col === 'id') {
                         $target_id = (int) $pred_val;
                         if (function_exists('get_userdata')) {
                             $target_user = get_userdata($target_id);
-                            if ($target_user instanceof \WP_User) {
-                                if (
-                                    (class_exists(FirewallEngine::class) && FirewallEngine::is_user_privileged($target_user))
-                                    || $target_user->has_cap('manage_options')
-                                    || $target_user->has_cap('administrator')
-                                    || $target_user->has_cap('edit_users')
-                                ) {
-                                    return false;
-                                }
-
-                                $reg_ts = strtotime((string) $target_user->user_registered);
-                                if ($reg_ts && (time() - $reg_ts) > 120) {
-                                    return false;
-                                }
-                            } else {
-                                // Target user does not exist; unauthenticated sessions cannot mutate non-existent user records
-                                return false;
-                            }
                         }
                     } elseif ($pred_col === 'user_login') {
                         $login_val = trim($pred_val, "'\"");
                         if (function_exists('get_user_by')) {
                             $target_user = get_user_by('login', $login_val);
-                            if ($target_user instanceof \WP_User) {
-                                if (
-                                    (class_exists(FirewallEngine::class) && FirewallEngine::is_user_privileged($target_user))
-                                    || $target_user->has_cap('manage_options')
-                                    || $target_user->has_cap('administrator')
-                                    || $target_user->has_cap('edit_users')
-                                ) {
-                                    return false;
-                                }
-
-                                $reg_ts = strtotime((string) $target_user->user_registered);
-                                if ($reg_ts && (time() - $reg_ts) > 120) {
-                                    return false;
-                                }
-                            } else {
-                                // Target user does not exist; unauthenticated sessions cannot mutate non-existent user records
-                                return false;
-                            }
                         }
+                    }
+
+                    // Target user must exist and be an authentic WP_User instance
+                    if (!($target_user instanceof \WP_User)) {
+                        return false;
+                    }
+
+                    // Never allow mutations on privileged/administrative accounts
+                    if (
+                        (class_exists(FirewallEngine::class) && FirewallEngine::is_user_privileged($target_user))
+                        || $target_user->has_cap('manage_options')
+                        || $target_user->has_cap('administrator')
+                        || $target_user->has_cap('edit_users')
+                    ) {
+                        return false;
+                    }
+
+                    // Require a valid, non-future registration timestamp within the 120s window (fail-closed)
+                    if (!self::is_within_registration_window($target_user, 120)) {
+                        return false;
                     }
                 }
 
@@ -414,6 +400,42 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
         }
 
         return false;
+    }
+
+    /**
+     * Verify whether a target user was authentically registered within the allowed registration window.
+     * Fail-closed: returns false if the timestamp is missing, unparseable, '0000-00-00 00:00:00',
+     * in the future (beyond clock skew tolerance), or older than the allowed window (120 seconds).
+     *
+     * @param \WP_User $user
+     * @param int      $max_age_seconds Default 120 seconds
+     * @return bool
+     */
+    public static function is_within_registration_window(\WP_User $user, int $max_age_seconds = 120): bool {
+        $raw_reg = trim((string) $user->user_registered);
+        if ($raw_reg === '' || $raw_reg === '0000-00-00 00:00:00') {
+            return false;
+        }
+
+        $reg_ts = strtotime($raw_reg);
+        if ($reg_ts === false || $reg_ts <= 0) {
+            return false;
+        }
+
+        $now = time();
+        $age = $now - $reg_ts;
+
+        // Reject future timestamps beyond 5 seconds clock drift allowance
+        if ($age < -5) {
+            return false;
+        }
+
+        // Reject accounts registered longer ago than $max_age_seconds (120s)
+        if ($age > $max_age_seconds) {
+            return false;
+        }
+
+        return true;
     }
 
     /**
