@@ -5525,6 +5525,95 @@ class FirewallEngine {
         ];
     }
 
+    public const TIER_HEURISTIC         = 'heuristic';
+    public const TIER_CONFIRMED_EXPLOIT = 'confirmed_exploit';
+    public const TIER_ADMIN_POLICY      = 'admin_policy';
+
+    /**
+     * Authoritatively resolve the enforcement classification tier of a firewall rule.
+     * Enforces trusted provenance and guarantees unknown or heuristic rules default
+     * fail-safe to TIER_HEURISTIC (block individual request; zero automated IP bans).
+     *
+     * @param array $rule
+     * @return string 'heuristic' | 'confirmed_exploit' | 'admin_policy'
+     */
+    public static function get_rule_enforcement_tier(array $rule): string {
+        // 1. Explicit internal classification property on rule array
+        if (!empty($rule['enforcement_tier'])) {
+            $tier = (string) $rule['enforcement_tier'];
+            if (in_array($tier, [self::TIER_HEURISTIC, self::TIER_CONFIRMED_EXPLOIT, self::TIER_ADMIN_POLICY], true)) {
+                return $tier;
+            }
+        }
+
+        // 2. Explicit custom administrator-authored rule policy
+        $is_custom_admin = !empty($rule['is_custom'])
+            || (($rule['category'] ?? '') === 'custom')
+            || (!empty($rule['author']) && $rule['author'] === 'administrator');
+
+        if ($is_custom_admin && max(0, (int) ($rule['ban_ttl'] ?? 0)) > 0) {
+            return self::TIER_ADMIN_POLICY;
+        }
+
+        // 3. Strict whitelisted confirmed high-severity exploit signatures
+        $rule_id_str = strtoupper((string) ($rule['id'] ?? ''));
+        $rule_cat    = (string) ($rule['category'] ?? '');
+
+        // Heuristic exclusions strictly override exploit patterns (e.g. XSS or AI prompts)
+        $is_heuristic = in_array($rule_cat, [
+            'Cross-Site Scripting (XSS)',
+            'AI & Agent Defense',
+            'AI Agent Kill-Chain Defense',
+            'Behavioral Defense',
+            'Bot Recon Defense',
+            '404 Scanner Rate Limit',
+            'Protocol Defense',
+            'Security Policy',
+            'File Reconnaissance',
+        ], true) || str_contains($rule_id_str, 'XSS')
+                 || str_contains($rule_id_str, 'AI-PROMPT')
+                 || str_contains($rule_id_str, 'BOT-')
+                 || str_contains($rule_id_str, 'SCANNER-404');
+
+        if ($is_heuristic) {
+            return self::TIER_HEURISTIC;
+        }
+
+        $critical_ban_categories = [
+            'SQL Injection',
+            'PHP Code Injection',
+            'Execution Armor',
+            'Path Traversal',
+            'Malicious File Upload',
+            'Virtual Patch',
+            'Null Byte Poison',
+            'SSRF Defense',
+        ];
+
+        $is_explicit_exploit = in_array($rule_cat, $critical_ban_categories, true)
+            || str_contains($rule_id_str, 'VPATCH')
+            || str_contains($rule_id_str, 'SQLI')
+            || str_contains($rule_id_str, 'RCE')
+            || str_contains($rule_id_str, 'NULL-BYTE')
+            || str_contains($rule_id_str, 'SSRF')
+            || str_contains($rule_id_str, 'OBJECT-STREAM')
+            || str_contains($rule_id_str, 'SENSITIVE')
+            || str_contains($rule_id_str, 'LOG-EXFIL')
+            || str_contains($rule_id_str, 'POLYGLOT')
+            || str_contains($rule_id_str, 'SHORTCODE-GADGET')
+            || str_contains($rule_id_str, 'INTERACTIVITY-POISON')
+            || str_contains($rule_id_str, 'FORGED-WEBHOOK')
+            || str_contains($rule_id_str, 'AUTH-TYPE-CONFUSION')
+            || str_contains($rule_id_str, 'REST-METHOD-SMUGGLE');
+
+        if ($is_explicit_exploit) {
+            return self::TIER_CONFIRMED_EXPLOIT;
+        }
+
+        // Fail-safe default: All unclassified or ambiguous rules default to heuristic (no automated IP ban)
+        return self::TIER_HEURISTIC;
+    }
+
     /**
      * Handle firewall rule violation with mode sensitivity (learning vs blocking).
      *
@@ -5668,76 +5757,27 @@ class FirewallEngine {
             \WebCareProScanner\Firewall\CAF\OriginLoadCircuitBreaker::record_blocked_probe();
         }
 
-        // Record differential threat score event & trigger containment ban on confirmed exploits or explicit admin policy
+        // Authoritative enforcement tier resolution (governed by get_rule_enforcement_tier)
+        $tier = self::get_rule_enforcement_tier($rule);
+
         $rule_id_str = (string) ($rule['id'] ?? '');
         $rule_cat    = (string) ($rule['category'] ?? '');
 
-        // Heuristic detection categories (strictly block request; zero automated IP bans)
-        $is_heuristic = in_array($rule_cat, [
-            'Cross-Site Scripting (XSS)',
-            'AI & Agent Defense',
-            'AI Agent Kill-Chain Defense',
-            'Behavioral Defense',
-            'Bot Recon Defense',
-            '404 Scanner Rate Limit',
-            'Protocol Defense',
-            'Security Policy',
-            'File Reconnaissance',
-        ], true) || str_contains($rule_id_str, 'XSS')
-                 || str_contains($rule_id_str, 'AI-PROMPT')
-                 || str_contains($rule_id_str, 'BOT-')
-                 || str_contains($rule_id_str, 'SCANNER-404');
-
-        $critical_ban_categories = [
-            'SQL Injection',
-            'PHP Code Injection',
-            'Execution Armor',
-            'Path Traversal',
-            'Malicious File Upload',
-            'Virtual Patch',
-            'Null Byte Poison',
-            'SSRF Defense',
-        ];
-
-        // Confirmed high-severity exploits eligible for automated IP containment
-        $is_confirmed_exploit = !$is_heuristic && (
-            in_array($rule_cat, $critical_ban_categories, true)
-            || str_contains($rule_id_str, 'VPATCH')
-            || str_contains($rule_id_str, 'SQLI')
-            || str_contains($rule_id_str, 'RCE')
-            || str_contains($rule_id_str, 'NULL-BYTE')
-            || str_contains($rule_id_str, 'SSRF')
-            || str_contains($rule_id_str, 'OBJECT-STREAM')
-            || str_contains($rule_id_str, 'SENSITIVE')
-            || str_contains($rule_id_str, 'LOG-EXFIL')
-            || str_contains($rule_id_str, 'POLYGLOT')
-            || str_contains($rule_id_str, 'SHORTCODE-GADGET')
-            || str_contains($rule_id_str, 'INTERACTIVITY-POISON')
-            || str_contains($rule_id_str, 'FORGED-WEBHOOK')
-            || str_contains($rule_id_str, 'AUTH-TYPE-CONFUSION')
-            || str_contains($rule_id_str, 'REST-METHOD-SMUGGLE')
-        );
-
-        // Explicit administrator-configured custom rule
-        $is_custom_admin_rule = !empty($rule['is_custom'])
-            || ($rule_cat === 'custom')
-            || (!empty($rule['author']) && $rule['author'] === 'administrator');
-
-        $rule_ban_ttl        = max(0, (int) ($rule['ban_ttl'] ?? 0));
         $eligible_for_ip_ban = false;
         $effective_ban_ttl   = 0;
 
-        if ($is_custom_admin_rule && $rule_ban_ttl > 0) {
-            // 1. Explicit administrator-configured ban: follow administrator's explicit policy
+        if ($tier === self::TIER_ADMIN_POLICY) {
+            // 1. Explicit administrator-configured ban: strictly follow administrator's explicit policy
             $eligible_for_ip_ban = true;
-            $effective_ban_ttl   = $rule_ban_ttl;
-        } elseif ($is_heuristic) {
-            // 2. Heuristic detection: log and block individual request; zero automated IP bans
-            $eligible_for_ip_ban = false;
-        } elseif ($is_confirmed_exploit) {
-            // 3. Confirmed high-severity exploit: automated containment ban
+            $effective_ban_ttl   = max(0, (int) ($rule['ban_ttl'] ?? 0));
+        } elseif ($tier === self::TIER_CONFIRMED_EXPLOIT) {
+            // 2. Confirmed high-severity exploit: eligible for automated IP containment ban
             $eligible_for_ip_ban = true;
+            $rule_ban_ttl        = max(0, (int) ($rule['ban_ttl'] ?? 0));
             $effective_ban_ttl   = $rule_ban_ttl > 0 ? $rule_ban_ttl : 86400;
+        } else {
+            // 3. Heuristic detection: log and block individual request; zero automated IP bans
+            $eligible_for_ip_ban = false;
         }
 
         // Cloudflare sync preference only applies if the rule is eligible for an IP ban; never causes a ban independently

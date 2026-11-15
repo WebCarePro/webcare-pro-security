@@ -263,7 +263,7 @@ class CommerceSessionGuard {
             $admin_uid = (int) wp_validate_auth_cookie('', 'logged_in');
             if ($admin_uid > 0) {
                 $admin_user = get_userdata($admin_uid);
-                if ($admin_user instanceof \WP_User && (in_array('administrator', (array) $admin_user->roles, true) || $admin_user->has_cap('manage_options'))) {
+                if ($admin_user instanceof \WP_User && $admin_user->has_cap('manage_options')) {
                     return true;
                 }
             }

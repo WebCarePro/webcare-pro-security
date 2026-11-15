@@ -750,10 +750,24 @@ class VaultRotator {
                     continue;
                 }
 
-                $temp_file   = $file_path . '.rot_' . bin2hex(random_bytes(4));
+                $temp_file   = $file_path . '.rot_' . bin2hex(random_bytes(8));
                 $new_content = $header . $format_prefix . $reencrypted;
-                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
-                if (@file_put_contents($temp_file, $new_content, LOCK_EX) === strlen($new_content)) {
+
+                // Exclusive file creation ('xb') guarantees no symlink following or pre-existing file collision
+                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
+                $fp = @fopen($temp_file, 'xb');
+                $written_ok = false;
+                if ($fp !== false) {
+                    // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
+                    $written = @fwrite($fp, $new_content);
+                    // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fflush
+                    @fflush($fp);
+                    // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+                    @fclose($fp);
+                    $written_ok = ($written === strlen($new_content));
+                }
+
+                if ($written_ok) {
                     // On-disk read-back verification from written temporary file before atomic rename
                     $disk_content = @file_get_contents($temp_file);
                     if ($disk_content !== false) {

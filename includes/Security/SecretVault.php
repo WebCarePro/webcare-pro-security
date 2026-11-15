@@ -107,7 +107,7 @@ class SecretVault {
             return $plain;
         }
 
-        if (!function_exists('openssl_encrypt')) {
+        if (!function_exists('openssl_encrypt') || !function_exists('openssl_get_cipher_methods')) {
             throw new \RuntimeException('WebCare SecretVault Error: OpenSSL extension is missing or disabled on this server. Plaintext storage is refused.');
         }
 
@@ -243,7 +243,7 @@ class SecretVault {
      * Encrypt a plaintext secret with an explicit key using authenticated AES-256-GCM.
      */
     public static function encrypt_with_key(string $value, string $key): string {
-        if (!function_exists('openssl_encrypt')) {
+        if (!function_exists('openssl_encrypt') || !function_exists('openssl_get_cipher_methods')) {
             throw new \RuntimeException('WebCare SecretVault Error: OpenSSL extension is missing or disabled on this server.');
         }
 
@@ -298,7 +298,7 @@ class SecretVault {
             return $encrypted_value;
         }
 
-        if (!function_exists('openssl_encrypt') || !function_exists('openssl_decrypt')) {
+        if (!function_exists('openssl_encrypt') || !function_exists('openssl_decrypt') || !function_exists('openssl_get_cipher_methods')) {
             throw new \RuntimeException('WebCare SecretVault Error: OpenSSL extension is missing or disabled on this server.');
         }
 
