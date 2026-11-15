@@ -250,37 +250,84 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
             return false;
         }
 
-        // 3. Inspect columns in INSERT query
-        if (preg_match('/^\s*INSERT\s+INTO\s+`?[a-zA-Z0-9_]+`?\s*\(([^)]+)\)/i', $skeleton, $matches)) {
+        // 3. Inspect columns and enforce single-row tuple in INSERT query
+        if (preg_match('/^\s*INSERT\s+INTO\s+`?[a-zA-Z0-9_]+`?\s*\(([^)]+)\)\s*VALUES\s*(.+)$/is', $sql, $insert_matches)) {
             $cols = array_map(function ($c) {
                 return strtolower(trim(str_replace('`', '', $c)));
-            }, explode(',', $matches[1]));
+            }, explode(',', $insert_matches[1]));
 
             foreach ($cols as $col) {
                 if (!in_array($col, $allowed_columns, true)) {
                     return false;
                 }
             }
-            return true;
-        }
 
-        // Require an explicit, bounded single-row WHERE clause on all UPDATE statements
-        if (preg_match('/^\s*UPDATE\s+`?[a-zA-Z0-9_]+`?\s+SET\s+(.+?)\s+WHERE\s+(.+)$/is', $skeleton, $matches)) {
-            $set_clause   = $matches[1];
-            $where_clause = trim($matches[2]);
-
-            // Reject tautologies, range expansions, inequalities, comments, and multi-record predicates
-            if (preg_match('/\b(?:1\s*=\s*1|0\s*=\s*0|true|null\s+is\s+null)\b|--|\/\*|\bOR\b|!=|<>|>|<|\bLIKE\b|\bNOT\b|\bIN\b|\bBETWEEN\b/i', $where_clause)) {
+            // Enforce single-row INSERT: reject multiple value tuples like `(...), (...)`
+            $values_clause = trim($insert_matches[2]);
+            $values_skeleton = (string) preg_replace("/'(?:\\\\.|[^'\\\\])*'|\"(?:\\\\.|[^\"\\\\])*\"/", "''", $values_clause);
+            if (preg_match('/\)\s*,\s*\(/', $values_skeleton)) {
+                return false;
+            }
+            if (!preg_match('/^\s*\([^()]+\)\s*;?\s*$/', $values_skeleton)) {
                 return false;
             }
 
-            // The WHERE clause MUST be bounded by a specific equality match on a single user identifier
-            if (!preg_match('/^\s*`?(?:ID|id|user_login|user_email|user_activation_key)`?\s*=\s*(?:\d+|\'\'|\'[^\']*\')(?:\s+LIMIT\s+\d+)?\s*$/i', $where_clause)) {
+            return true;
+        }
+
+        // 4. Require an explicit, strictly bounded single-row WHERE clause on all UPDATE statements
+        if (preg_match('/^\s*UPDATE\s+`?[a-zA-Z0-9_]+`?\s+SET\s+(.+?)\s+WHERE\s+(.+)$/is', $sql, $update_matches)) {
+            $set_clause_raw   = $update_matches[1];
+            $where_clause_raw = trim($update_matches[2]);
+
+            // Strip trailing semicolons
+            $where_clause_raw = rtrim($where_clause_raw, ';');
+
+            // Skeleton of WHERE clause with strings stripped for syntax checks
+            $where_skeleton = (string) preg_replace("/'(?:\\\\.|[^'\\\\])*'|\"(?:\\\\.|[^\"\\\\])*\"/", "''", $where_clause_raw);
+
+            // Reject tautologies, range expansions, inequalities, comments, and multi-record predicates
+            if (preg_match('/\b(?:1\s*=\s*1|0\s*=\s*0|true|null\s+is\s+null)\b|--|\/\*|\bOR\b|!=|<>|>|<|\bLIKE\b|\bNOT\b|\bIN\b|\bBETWEEN\b/i', $where_skeleton)) {
+                return false;
+            }
+
+            // Single-row uniqueness constraint: ONLY `ID` / `id` (PRIMARY KEY) or `user_login` (UNIQUE constraint).
+            // Reject non-unique columns like user_email and user_activation_key which lack unique schema constraints.
+            if (!preg_match('/^\s*`?(ID|id|user_login)`?\s*=\s*(.+?)(?:\s+LIMIT\s+\d+)?\s*$/i', $where_clause_raw, $pred_matches)) {
+                return false;
+            }
+
+            $pred_col = strtolower($pred_matches[1]);
+            $pred_val = trim($pred_matches[2]);
+
+            // Validate that the predicate target value is non-empty, strictly typed, and bounds exactly one row:
+            if ($pred_col === 'id') {
+                // Must be a positive integer > 0 (WordPress user IDs start at 1)
+                if (!preg_match('/^[1-9]\d*$/', $pred_val)) {
+                    return false;
+                }
+            } elseif ($pred_col === 'user_login') {
+                // Must be a non-empty string literal or prepared statement placeholder (%s or ?)
+                if ($pred_val === '%s' || $pred_val === '?') {
+                    // Valid prepared statement placeholder
+                } elseif (preg_match('/^\'([^\'\\\\]+)\'$/', $pred_val, $login_match)) {
+                    if (trim($login_match[1]) === '') {
+                        return false;
+                    }
+                } elseif (preg_match('/^"([^"\\\\]+)"$/', $pred_val, $login_match)) {
+                    if (trim($login_match[1]) === '') {
+                        return false;
+                    }
+                } else {
+                    return false;
+                }
+            } else {
                 return false;
             }
 
             // Inspect columns in SET clause
-            if (preg_match_all('/`?([a-zA-Z0-9_]+)`?\s*=/i', $set_clause, $col_matches) && !empty($col_matches[1])) {
+            $set_skeleton = (string) preg_replace("/'(?:\\\\.|[^'\\\\])*'|\"(?:\\\\.|[^\"\\\\])*\"/", "''", $set_clause_raw);
+            if (preg_match_all('/`?([a-zA-Z0-9_]+)`?\s*=/i', $set_skeleton, $col_matches) && !empty($col_matches[1])) {
                 foreach ($col_matches[1] as $col) {
                     if (!in_array(strtolower($col), $allowed_columns, true)) {
                         return false;

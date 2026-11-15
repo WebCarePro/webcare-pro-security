@@ -198,6 +198,24 @@ function scanForForbiddenFunctions(dir) {
 scanForForbiddenFunctions(PACKAGE_DIR);
 console.log('✓ No forbidden functions (str_rot13) found');
 
+// Verify WEBCAREPROSCAN_TESTING is never defined in release package
+function scanForForbiddenConstants(dir) {
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      scanForForbiddenConstants(full);
+    } else if (entry.name.endsWith('.php')) {
+      const content = fs.readFileSync(full, 'utf8');
+      if (/define\s*\(\s*['"]WEBCAREPROSCAN_TESTING['"]/i.test(content)) {
+        throw new Error(`Forbidden testing constant defined in production package: ${full}`);
+      }
+    }
+  }
+}
+scanForForbiddenConstants(PACKAGE_DIR);
+console.log('✓ No WEBCAREPROSCAN_TESTING constant defined in package');
+
 // Verify unexpected root markdown files
 const rootEntries = fs.readdirSync(PACKAGE_DIR);
 for (const entry of rootEntries) {

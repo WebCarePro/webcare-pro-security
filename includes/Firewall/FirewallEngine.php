@@ -3162,17 +3162,50 @@ class FirewallEngine {
     }
 
     /**
+     * Decode and canonicalize URI path by resolving directory traversal (..) and redundant slashes.
+     *
+     * @param string $uri
+     * @return string
+     */
+    public static function canonicalize_uri_path(string $uri): string {
+        $decoded = $uri;
+        for ($i = 0; $i < 3; $i++) {
+            $prev = $decoded;
+            $decoded = rawurldecode($decoded);
+            if ($decoded === $prev) {
+                break;
+            }
+        }
+        $path = (string) (wp_parse_url($decoded, PHP_URL_PATH) ?: $decoded);
+        $path = str_replace('\\', '/', $path);
+        $path = (string) preg_replace('#/{2,}#', '/', $path);
+
+        $segments = explode('/', $path);
+        $resolved = [];
+        foreach ($segments as $seg) {
+            if ($seg === '' || $seg === '.') {
+                continue;
+            }
+            if ($seg === '..') {
+                array_pop($resolved);
+            } else {
+                $resolved[] = $seg;
+            }
+        }
+
+        return '/' . implode('/', $resolved);
+    }
+
+    /**
      * Detect high-risk reconnaissance probes seeking sensitive files or backdoors.
      *
      * @param string $uri
      * @return bool
      */
     public static function is_high_risk_recon_probe(string $uri): bool {
-        $path = strtolower(wp_parse_url($uri, PHP_URL_PATH) ?: $uri);
-        $norm_route = self::resolve_normalized_rest_route($uri);
-        if (str_contains($path, '/wp-json/webcare-pro-security/') || str_starts_with($norm_route, '/webcare-pro-security/')) {
-            return false;
-        }
+        $canonical_path = strtolower(self::canonicalize_uri_path($uri));
+        $raw_path       = strtolower((string) (wp_parse_url($uri, PHP_URL_PATH) ?: $uri));
+        $raw_path       = str_replace('\\', '/', $raw_path);
 
         $high_risk_patterns = [
             '/\.env($|\.)/i',
@@ -3188,9 +3221,13 @@ class FirewallEngine {
         ];
 
         foreach ($high_risk_patterns as $pattern) {
-            if (preg_match($pattern, $path)) {
+            if (preg_match($pattern, $canonical_path) || preg_match($pattern, $raw_path)) {
                 return true;
             }
+        }
+
+        if (str_contains($raw_path, '..') || str_contains($uri, '%2e%2e') || str_contains($uri, '%2E%2E')) {
+            return true;
         }
 
         return false;
@@ -3209,24 +3246,9 @@ class FirewallEngine {
             return null;
         }
 
-        // Multi-pass URL decode to catch obfuscated probes (e.g. /%2eenv, /%252eenv, /%2egit)
-        $decoded_check_path = $uri;
-        for ($d_i = 0; $d_i < 3; $d_i++) {
-            $prev_path = $decoded_check_path;
-            $decoded_check_path = rawurldecode($decoded_check_path);
-            if ($decoded_check_path === $prev_path) {
-                break;
-            }
-        }
-        $clean_path = strtolower(wp_parse_url($decoded_check_path, PHP_URL_PATH) ?: $decoded_check_path);
-        $clean_path = str_replace('\\', '/', $clean_path);
-
-        $norm_rest_route = self::resolve_normalized_rest_route($decoded_check_path);
-        $is_plugin_api   = str_contains($clean_path, '/wp-json/webcare-pro-security/') || str_starts_with($norm_rest_route, '/webcare-pro-security/');
-
-        if ($is_plugin_api) {
-            return null;
-        }
+        $canonical_path = strtolower(self::canonicalize_uri_path($uri));
+        $raw_path       = strtolower((string) (wp_parse_url($uri, PHP_URL_PATH) ?: $uri));
+        $raw_path       = str_replace('\\', '/', $raw_path);
 
         $sensitive_patterns = [
             '/(?:\/|^)(?:\.env(?:\.[a-z0-9_-]+)?|\.git\/(?:config|HEAD|index|logs(?:\/.*)?)|debug\.log|php_errorlog|error_log|wp-content\/uploads\/wc-logs(?:\/.*)?|auth\.json|docker-compose\.ya?ml|id_rsa(?:\.pub)?)(?:$|\?)/i',
@@ -3238,7 +3260,7 @@ class FirewallEngine {
         ];
 
         foreach ($sensitive_patterns as $spat) {
-            if (preg_match($spat, $clean_path)) {
+            if (preg_match($spat, $canonical_path) || preg_match($spat, $raw_path)) {
                 $range_hdr = isset($_SERVER['HTTP_RANGE']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_RANGE'])) : '';
                 return [
                     'id'          => 'WAF-SENSITIVE-FILE-PROBE',
@@ -3247,13 +3269,30 @@ class FirewallEngine {
                     'description' => sprintf(
                         /* translators: %s: Probed sensitive file path */
                         esc_html__('Unauthorized probe targeting sensitive system configuration, log file, or database backup (%s).', 'webcare-pro-security'),
-                        esc_html($clean_path)
+                        esc_html($canonical_path)
                     ),
                     'match_type'  => 'Path Reconnaissance',
-                    'match_value' => $clean_path,
-                    'payload'     => "Path: {$clean_path}" . ($range_hdr !== '' ? " Range: {$range_hdr}" : ''),
+                    'match_value' => $canonical_path,
+                    'payload'     => "Path: {$canonical_path}" . ($range_hdr !== '' ? " Range: {$range_hdr}" : ''),
                 ];
             }
+        }
+
+        // Check if there is an attempted directory traversal in the raw URI or decoded path
+        if (str_contains($raw_path, '..') || str_contains($uri, '%2e%2e') || str_contains($uri, '%2E%2E')) {
+            return [
+                'id'          => 'WAF-PATH-TRAVERSAL',
+                'name'        => 'Directory Traversal Reconnaissance Probe',
+                'category'    => 'Path Traversal Defense',
+                'description' => sprintf(
+                    /* translators: %s: Traversal probe path */
+                    esc_html__('Directory traversal sequence detected in requested path (%s).', 'webcare-pro-security'),
+                    esc_html($raw_path)
+                ),
+                'match_type'  => 'Directory Traversal',
+                'match_value' => '..',
+                'payload'     => "Path: {$raw_path}",
+            ];
         }
 
         return null;
@@ -9978,6 +10017,152 @@ class FirewallEngine {
     }
 
     /**
+     * Determines whether a capability name belongs to an administrative or elevated permission namespace.
+     *
+     * @param string $cap
+     * @return bool
+     */
+    public static function is_privileged_capability(string $cap): bool {
+        $c = strtolower(trim($cap));
+        if ($c === '') {
+            return false;
+        }
+
+        // 1. Explicit Core & Major Plugin administrative capabilities
+        $known_privileged = [
+            'manage_options',
+            'edit_users',
+            'promote_users',
+            'create_users',
+            'delete_users',
+            'list_users',
+            'remove_users',
+            'edit_plugins',
+            'activate_plugins',
+            'delete_plugins',
+            'install_plugins',
+            'update_plugins',
+            'edit_themes',
+            'switch_themes',
+            'delete_themes',
+            'install_themes',
+            'update_themes',
+            'edit_files',
+            'unfiltered_html',
+            'unfiltered_upload',
+            'export',
+            'import',
+            'manage_network',
+            'manage_network_users',
+            'manage_network_plugins',
+            'manage_network_themes',
+            'manage_network_options',
+            'manage_woocommerce',
+            'view_woocommerce_reports',
+            'edit_others_posts',
+            'edit_others_pages',
+            'edit_private_posts',
+            'edit_private_pages',
+            'edit_published_posts',
+            'edit_published_pages',
+            'publish_pages',
+            'publish_posts',
+            'administrator',
+        ];
+
+        if (in_array($c, $known_privileged, true)) {
+            return true;
+        }
+
+        // 2. Dynamic prefix evaluation for privileged namespaces
+        $privileged_prefixes = [
+            'manage_network_',
+            'manage_',
+            'edit_users',
+            'edit_plugins',
+            'edit_themes',
+            'edit_files',
+            'edit_others_',
+            'delete_users',
+            'delete_plugins',
+            'delete_themes',
+            'delete_others_',
+            'activate_',
+            'install_',
+            'update_',
+            'unfiltered_',
+            'publish_',
+        ];
+
+        foreach ($privileged_prefixes as $p) {
+            if (str_starts_with($c, $p)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Deep-inspect a role name or role object to determine if it grants elevated/privileged capabilities.
+     * Treats any unknown, non-standard capabilities conservatively during unauthenticated user registration.
+     *
+     * @param string $role
+     * @return bool
+     */
+    public static function is_privileged_role(string $role): bool {
+        $r = strtolower(trim($role));
+        if ($r === '') {
+            return false;
+        }
+
+        // Known inherently elevated roles
+        if (in_array($r, ['administrator', 'editor', 'author', 'shop_manager', 'super_admin'], true)) {
+            return true;
+        }
+
+        // If the identifier itself is a privileged capability
+        if (self::is_privileged_capability($r)) {
+            return true;
+        }
+
+        // Baseline allowlist of safe unprivileged capabilities for genuine subscriber/customer roles
+        $safe_unprivileged_caps = [
+            'read',
+            'level_0',
+            'exist',
+            'customer',
+            'subscriber',
+            'read_product',
+            'read_shop_order',
+            'view_admin_dashboard',
+        ];
+
+        if (function_exists('get_role')) {
+            $role_obj = get_role($role);
+            if ($role_obj instanceof \WP_Role && is_array($role_obj->capabilities)) {
+                foreach ($role_obj->capabilities as $cap => $granted) {
+                    if (!$granted) {
+                        continue;
+                    }
+                    $cap_lower = strtolower((string) $cap);
+
+                    if (self::is_privileged_capability($cap_lower)) {
+                        return true;
+                    }
+
+                    // For custom roles: if it contains capabilities beyond the safe unprivileged baseline, treat conservatively as elevated
+                    if (!in_array($cap_lower, $safe_unprivileged_caps, true)) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Rule #44: In-Memory RASP Hook Firewall - Abort guest or unprivileged role escalation to administrator.
      *
      * @param int    $user_id   User ID
@@ -9995,15 +10180,8 @@ class FirewallEngine {
             return;
         }
 
-        // If assigning elevated role (administrator or editor, or any custom role with manage_options / edit_users)
-        $role_lower = strtolower($role);
-        $is_elevated_role = in_array($role_lower, ['administrator', 'editor'], true);
-        if (!$is_elevated_role && function_exists('get_role')) {
-            $role_obj = get_role($role);
-            if ($role_obj && ($role_obj->has_cap('manage_options') || $role_obj->has_cap('edit_users'))) {
-                $is_elevated_role = true;
-            }
-        }
+        // If assigning elevated role (administrator, editor, or any custom role with elevated/privileged capabilities)
+        $is_elevated_role = self::is_privileged_role($role);
 
         if ($is_elevated_role) {
             // Verified logged-in administrator with manage_options is legitimate
@@ -10199,62 +10377,10 @@ class FirewallEngine {
             if ($meta_key === $prefix . 'capabilities' && is_array($meta_value)) {
                 $requested_roles = array_keys(array_filter($meta_value));
                 $has_admin_privilege = false;
-
-                // Comprehensive privileged capability checklist (Core Admin, Roles & WooCommerce)
-                $privileged_capabilities = [
-                    'manage_options',
-                    'edit_users',
-                    'promote_users',
-                    'create_users',
-                    'delete_users',
-                    'list_users',
-                    'remove_users',
-                    'edit_plugins',
-                    'activate_plugins',
-                    'delete_plugins',
-                    'install_plugins',
-                    'update_plugins',
-                    'edit_themes',
-                    'switch_themes',
-                    'delete_themes',
-                    'install_themes',
-                    'update_themes',
-                    'edit_files',
-                    'unfiltered_html',
-                    'unfiltered_upload',
-                    'export',
-                    'import',
-                    'manage_network',
-                    'manage_network_users',
-                    'manage_network_plugins',
-                    'manage_network_themes',
-                    'manage_network_options',
-                    'manage_woocommerce',
-                    'view_woocommerce_reports',
-                    'edit_others_posts',
-                    'edit_others_pages',
-                    'publish_pages',
-                ];
-
                 foreach ($requested_roles as $role_or_cap) {
-                    $lower_identifier = strtolower((string) $role_or_cap);
-                    if (in_array($lower_identifier, ['administrator', 'editor', 'shop_manager'], true) || in_array($lower_identifier, $privileged_capabilities, true)) {
+                    if (self::is_privileged_role((string) $role_or_cap)) {
                         $has_admin_privilege = true;
                         break;
-                    }
-
-                    // Deep inspection of effective capabilities in global role registry (for standard or custom roles)
-                    if (function_exists('get_role')) {
-                        $role_obj = get_role($lower_identifier);
-                        if ($role_obj instanceof \WP_Role) {
-                            $role_caps = array_keys(array_filter((array) $role_obj->capabilities));
-                            foreach ($role_caps as $rcap) {
-                                if (in_array(strtolower($rcap), $privileged_capabilities, true)) {
-                                    $has_admin_privilege = true;
-                                    break 2;
-                                }
-                            }
-                        }
                     }
                 }
 
@@ -10273,9 +10399,9 @@ class FirewallEngine {
                     }
                 }
             } elseif ($meta_key === $prefix . 'user_level') {
-                // User levels 0, 1, 2 correspond to Subscriber/Contributor/Author (level 10 is Administrator)
+                // Strictly allow level 0 (subscriber) during unauthenticated user registration
                 $level = (int) $meta_value;
-                if ($level < 7) {
+                if ($level <= 0) {
                     $user_obj = function_exists('get_userdata') ? get_userdata($object_id) : null;
                     if ($user_obj) {
                         $registered_time = strtotime($user_obj->user_registered);
