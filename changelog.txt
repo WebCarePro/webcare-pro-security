@@ -1,5 +1,8 @@
 ﻿v:2.15.0 - 2026-11-15
 - Zero-Gap Fail-Closed Streaming, Runtime RASP Hardening, Response DLP Redaction & Full Architectural Resilience:
+  * Strict Database Format Validation, Canonical Helper & Relative Date Rejection:
+    - Enforced strict WordPress MySQL DATETIME format validation via `DateTimeImmutable::createFromFormat('!Y-m-d H:i:s')` with round-trip verification, rejecting relative dates ('now', 'tomorrow') and impossible calendar dates ('2026-02-30').
+    - Consolidated `is_within_registration_window()` into a single canonical helper in `FirewallEngine` with fail-closed delegation in `RuntimeSqlRaspEngine`, eliminating duplicate fallbacks.
   * Fail-Closed Registration Window Validation, Missing-User Elimination & Timezone Invariance:
     - Eliminated fail-open missing-user fallbacks in FirewallEngine::rasp_guard_user_metadata_injection(), strictly requiring target user records to be verified WP_User instances within the authentic registration window.
     - Standardized is_within_registration_window() as a canonical, timezone-invariant helper (DateTimeImmutable in UTC) shared across FirewallEngine and RuntimeSqlRaspEngine.

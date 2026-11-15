@@ -405,6 +405,7 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
     /**
      * Verify whether a target user was authentically registered within the allowed registration window.
      * Delegates directly to the canonical FirewallEngine::is_within_registration_window helper.
+     * Fails closed if FirewallEngine is unavailable.
      *
      * @param \WP_User $user
      * @param int      $max_age_seconds Default 120 seconds
@@ -415,31 +416,8 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
             return FirewallEngine::is_within_registration_window($user, $max_age_seconds);
         }
 
-        $raw_reg = trim((string) $user->user_registered);
-        if ($raw_reg === '' || $raw_reg === '0000-00-00 00:00:00') {
-            return false;
-        }
-
-        $reg_ts = false;
-        try {
-            $dt = new \DateTimeImmutable($raw_reg, new \DateTimeZone('UTC'));
-            $reg_ts = $dt->getTimestamp();
-        } catch (\Exception $e) {
-            $reg_ts = strtotime($raw_reg . ' UTC');
-        }
-
-        if ($reg_ts === false || $reg_ts <= 0) {
-            return false;
-        }
-
-        $now = time();
-        $age = $now - $reg_ts;
-
-        if ($age < -5 || $age > $max_age_seconds) {
-            return false;
-        }
-
-        return true;
+        // Fail-closed if core FirewallEngine is unavailable
+        return false;
     }
 
     /**

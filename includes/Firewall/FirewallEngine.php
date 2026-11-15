@@ -457,11 +457,14 @@ class FirewallEngine {
      * @return bool
      */
     public static function is_authenticated_administrator(): bool {
-        static $cached_result = null;
-        if ($cached_result === true) {
+        static $cached_result  = null;
+        static $cached_user_id = null;
+
+        $current_uid = function_exists('get_current_user_id') ? (int) get_current_user_id() : 0;
+        if ($cached_result === true && $cached_user_id === $current_uid) {
             return true;
         }
-        if ($cached_result === false && function_exists('did_action') && did_action('init')) {
+        if ($cached_result === false && $cached_user_id === $current_uid && function_exists('did_action') && did_action('init')) {
             return false;
         }
 
@@ -548,7 +551,8 @@ class FirewallEngine {
 
         if ($verified_user_id <= 0) {
             if (function_exists('did_action') && did_action('init')) {
-                $cached_result = false;
+                $cached_user_id = $current_uid;
+                $cached_result  = false;
             }
             return false;
         }
@@ -558,7 +562,8 @@ class FirewallEngine {
             $user = get_userdata($verified_user_id);
             if (!$user || empty($user->ID)) {
                 if (function_exists('did_action') && did_action('init')) {
-                    $cached_result = false;
+                    $cached_user_id = $current_uid;
+                    $cached_result  = false;
                 }
                 return false;
             }
@@ -583,13 +588,15 @@ class FirewallEngine {
 
             if (!$has_admin_cap && !$has_admin_role) {
                 if (function_exists('did_action') && did_action('init')) {
-                    $cached_result = false;
+                    $cached_user_id = $current_uid;
+                    $cached_result  = false;
                 }
                 return false;
             }
         } else {
             if (function_exists('did_action') && did_action('init')) {
-                $cached_result = false;
+                $cached_user_id = $current_uid;
+                $cached_result  = false;
             }
             return false;
         }
@@ -614,7 +621,8 @@ class FirewallEngine {
             if (empty($nonce)) {
                 // REST mutation without nonce header is untrusted (protects against CSRF)
                 if (function_exists('did_action') && did_action('init')) {
-                    $cached_result = false;
+                    $cached_user_id = $current_uid;
+                    $cached_result  = false;
                 }
                 return false;
             }
@@ -634,14 +642,17 @@ class FirewallEngine {
 
                 if (!$nonce_valid) {
                     if (function_exists('did_action') && did_action('init')) {
-                        $cached_result = false;
+                        $cached_user_id = $current_uid;
+                        $cached_result  = false;
                     }
                     return false;
                 }
             }
         }
 
-        return ($cached_result = true);
+        $cached_user_id = $verified_user_id;
+        $cached_result  = true;
+        return true;
     }
 
     /**
@@ -10308,16 +10319,20 @@ class FirewallEngine {
             return false;
         }
 
-        // WordPress stores user_registered strictly in UTC (gmdate). Ensure parsing is timezone-invariant.
-        $reg_ts = false;
-        try {
-            $dt = new \DateTimeImmutable($raw_reg, new \DateTimeZone('UTC'));
-            $reg_ts = $dt->getTimestamp();
-        } catch (\Exception $e) {
-            $reg_ts = strtotime($raw_reg . ' UTC');
+        // Strict WordPress MySQL DATETIME format validation ('Y-m-d H:i:s') in UTC.
+        // Rejects relative strings ('now', 'tomorrow') and impossible calendar dates ('2026-02-30').
+        $dt = \DateTimeImmutable::createFromFormat('!Y-m-d H:i:s', $raw_reg, new \DateTimeZone('UTC'));
+        $errors = \DateTimeImmutable::getLastErrors();
+        if (
+            $dt === false
+            || ($errors !== false && ($errors['warning_count'] > 0 || $errors['error_count'] > 0))
+            || $dt->format('Y-m-d H:i:s') !== $raw_reg
+        ) {
+            return false;
         }
 
-        if ($reg_ts === false || $reg_ts <= 0) {
+        $reg_ts = $dt->getTimestamp();
+        if ($reg_ts <= 0) {
             return false;
         }
 
