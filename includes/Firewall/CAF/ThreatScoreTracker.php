@@ -68,6 +68,14 @@ class ThreatScoreTracker {
             return ['score' => 0.0, 'action' => 'allow', 'escalated' => false];
         }
 
+        // Never accumulate threat scores for whitelisted IPs, administrators, or active shoppers
+        if (class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine') && \WebCareProScanner\Firewall\FirewallEngine::is_ip_whitelisted($ip)) {
+            return ['score' => 0.0, 'action' => 'allow', 'escalated' => false];
+        }
+        if (class_exists('\\WebCareProScanner\\Firewall\\Core\\CommerceSessionGuard') && \WebCareProScanner\Firewall\Core\CommerceSessionGuard::has_active_shopper_session()) {
+            return ['score' => 0.0, 'action' => 'allow', 'escalated' => false];
+        }
+
         // Determine score increment
         $delta = $custom_weight !== null ? $custom_weight : self::get_event_weight($event_type);
 
@@ -92,14 +100,23 @@ class ThreatScoreTracker {
             'event_count'  => (int) ($state['event_count'] ?? 0) + 1,
         ]);
 
-        // Determine Action & Escalation
+        // Determine Action & Escalation:
+        // Policy Invariant: Heuristic/behavioral events NEVER trigger automated 24h IP bans (add_blocked_ip).
+        // Only explicit 'critical_exploit' events can invoke escalate_to_hard_ban(); heuristic accumulation
+        // enforces temporary HTTP 429 throttling / WebCrypto PoW challenges that self-heal via exponential decay.
         $action = 'allow';
         $escalated = false;
 
         if ($new_score >= self::THRESHOLD_HARD_BAN) {
-            $action = 'ban';
-            $escalated = true;
-            self::escalate_to_hard_ban($ip, $new_score, $event_type);
+            if ($event_type === 'critical_exploit') {
+                $action = 'ban';
+                $escalated = true;
+                self::escalate_to_hard_ban($ip, $new_score, $event_type);
+            } else {
+                $action = 'throttle';
+                $escalated = true;
+                self::mark_for_pow_challenge($ip);
+            }
         } elseif ($new_score >= self::THRESHOLD_POW) {
             $action = 'challenge';
             $escalated = true;
@@ -122,6 +139,14 @@ class ThreatScoreTracker {
      */
     public static function get_current_score(string $ip): float {
         if (empty($ip) || $ip === '127.0.0.1' || $ip === '::1') {
+            return 0.0;
+        }
+
+        // Whitelisted IPs and active shoppers always return 0.0 effective score
+        if (class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine') && \WebCareProScanner\Firewall\FirewallEngine::is_ip_whitelisted($ip)) {
+            return 0.0;
+        }
+        if (class_exists('\\WebCareProScanner\\Firewall\\Core\\CommerceSessionGuard') && \WebCareProScanner\Firewall\Core\CommerceSessionGuard::has_active_shopper_session()) {
             return 0.0;
         }
 
@@ -149,11 +174,16 @@ class ThreatScoreTracker {
             return;
         }
 
-        // Exempt logged-in administrators and active WooCommerce shoppers
+        // 1. Respect IP Whitelist before evaluating score or issuing any block/challenge
+        if (class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine') && \WebCareProScanner\Firewall\FirewallEngine::is_ip_whitelisted($ip)) {
+            return;
+        }
+
+        // 2. Exempt logged-in administrators and active WooCommerce shoppers
         if (function_exists('is_user_logged_in') && is_user_logged_in() && function_exists('current_user_can') && current_user_can('manage_options')) {
             return;
         }
-        if (class_exists('\\WebCareProScanner\\Firewall\\CommerceSessionGuard') && \WebCareProScanner\Firewall\CommerceSessionGuard::has_active_shopper_session()) {
+        if (class_exists('\\WebCareProScanner\\Firewall\\Core\\CommerceSessionGuard') && \WebCareProScanner\Firewall\Core\CommerceSessionGuard::has_active_shopper_session()) {
             return;
         }
 
@@ -162,12 +192,13 @@ class ThreatScoreTracker {
             return;
         }
 
-        // Tier 1: Severe threat (score >= 85) -> Immediate Hard Drop
+        // Tier 1: Severe threat (score >= 85) -> Temporary HTTP 429 Throttle (self-healing via decay)
         if ($score >= self::THRESHOLD_HARD_BAN) {
-            status_header(403);
+            status_header(429);
+            header('Retry-After: 60');
             header('Content-Type: text/plain; charset=utf-8');
             header('X-WebCare-Threat-Score: ' . $score);
-            echo 'Access Denied: Severe behavioral threat score accumulated. Connection terminated by WebCare Context-Adaptive Firewall.';
+            echo 'Too Many Requests: Behavioral threat score threshold exceeded. Please wait 60 seconds and try again.';
             exit;
         }
 
@@ -184,7 +215,7 @@ class ThreatScoreTracker {
      */
     private static function escalate_to_hard_ban(string $ip, float $score, string $reason): void {
         // Shopper & Whitelist Immunity: Never escalate active shoppers or whitelisted IPs to automated IP bans
-        if (class_exists('\\WebCareProScanner\\Firewall\\CommerceSessionGuard') && \WebCareProScanner\Firewall\CommerceSessionGuard::has_active_shopper_session()) {
+        if (class_exists('\\WebCareProScanner\\Firewall\\Core\\CommerceSessionGuard') && \WebCareProScanner\Firewall\Core\CommerceSessionGuard::has_active_shopper_session()) {
             return;
         }
         if (class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine') && \WebCareProScanner\Firewall\FirewallEngine::is_ip_whitelisted($ip)) {
@@ -260,6 +291,20 @@ class ThreatScoreTracker {
             'header_anomaly'   => self::WEIGHT_HEADER_ANOMALY,
             default            => 5.0,
         };
+    }
+
+    /**
+     * Clear cached threat score state for a specific IP.
+     *
+     * @param string $ip
+     * @return void
+     */
+    public static function reset_ip(string $ip): void {
+        $key = self::TRANSIENT_PREFIX . substr(md5($ip), 0, 16);
+        if (function_exists('apcu_delete') && ini_get('apc.enabled')) {
+            apcu_delete($key);
+        }
+        delete_transient($key);
     }
 
     /**

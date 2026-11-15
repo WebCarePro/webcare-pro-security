@@ -1817,7 +1817,9 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
 
                   const isUser = isUserIssue(issue);
                   const isAppPasswordRisk = Boolean(issue.type?.includes('app_password') || issue.type?.includes('application_password'));
-                  const userId = (issue.file_path && issue.file_path.match(/user(?:_id)?[:_]\s*(\d+)/i)?.[1]) || issue.user_id || 1;
+                  const rawUserId = (issue.file_path && issue.file_path.match(/user(?:_id)?[:_]\s*(\d+)/i)?.[1]) || issue.user_id || '';
+                  const parsedUserId = Number(rawUserId);
+                  const userId = Number.isInteger(parsedUserId) && parsedUserId > 0 ? parsedUserId : null;
 
                   const isComment = issue.is_comment || issue.engine === 'content-comments' || Boolean(issue.file_path && issue.file_path.startsWith('comment:'));
                   const commentId = issue.comment_id || (issue.file_path && issue.file_path.match(/comment:\s*(\d+)/i)?.[1]) || '';
@@ -2142,9 +2144,11 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                           {!isOrphanedAuthor && isUser && issue.status === 'open' && (
                             <a
                               href={
-                                isAppPasswordRisk
-                                  ? `user-edit.php?user_id=${userId}#application-passwords-section`
-                                  : `user-edit.php?user_id=${userId}`
+                                userId !== null
+                                  ? (isAppPasswordRisk
+                                      ? `user-edit.php?user_id=${userId}#application-passwords-section`
+                                      : `user-edit.php?user_id=${userId}`)
+                                  : 'users.php'
                               }
                               target="_blank"
                               rel="noopener noreferrer"
@@ -2667,7 +2671,9 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
 
                       const isUser = isUserIssue(issue);
                       const isAppPasswordRisk = Boolean(issue.type?.includes('app_password') || issue.type?.includes('application_password'));
-                      const userId = (issue.file_path && issue.file_path.match(/user(?:_id)?[:_]\s*(\d+)/i)?.[1]) || issue.user_id || 1;
+                      const rawUserId = (issue.file_path && issue.file_path.match(/user(?:_id)?[:_]\s*(\d+)/i)?.[1]) || issue.user_id || '';
+                      const parsedUserId = Number(rawUserId);
+                      const userId = Number.isInteger(parsedUserId) && parsedUserId > 0 ? parsedUserId : null;
                       const isDbTable = !isUser && (issue.is_db_table || issue.engine === 'database-table' || Boolean(issue.file_path && !issue.file_path.includes('/') && !issue.file_path.includes('\\') && (issue.file_path.includes('.') || issue.file_path.includes(' [ID:'))));
                       const isDbRecord = !isUser && (isDbOption || isDbTable || issue.engine === 'database-scanner' || issue.engine === 'database-micro-anomaly' || issue.file_path?.startsWith('db:') || issue.file_path?.startsWith('table:'));
                       const isUpdate = Boolean(
@@ -2940,9 +2946,11 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                                 {!isOrphanedAuthor && isUser && issue.status === 'open' && (
                                   <a
                                     href={
-                                      isAppPasswordRisk
-                                        ? `user-edit.php?user_id=${userId}#application-passwords-section`
-                                        : `user-edit.php?user_id=${userId}`
+                                      userId !== null
+                                        ? (isAppPasswordRisk
+                                            ? `user-edit.php?user_id=${userId}#application-passwords-section`
+                                            : `user-edit.php?user_id=${userId}`)
+                                        : 'users.php'
                                     }
                                     target="_blank"
                                     rel="noopener noreferrer"

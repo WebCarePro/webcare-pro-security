@@ -148,23 +148,43 @@ class DirectoryWalker {
     }
 
     private function create_iterator(string $dir): \RecursiveIteratorIterator {
+        $root_norm = rtrim(str_replace('\\', '/', $dir), '/');
         $flags = \FilesystemIterator::SKIP_DOTS
                | \FilesystemIterator::CURRENT_AS_FILEINFO
                | \FilesystemIterator::UNIX_PATHS;
 
         $inner = new \RecursiveDirectoryIterator($dir, $flags);
 
-        // LEAVES_ONLY + CATCH_GET_CHILD; strictly do NOT follow symlinks to prevent circular loops
-        return new \RecursiveIteratorIterator(
+        $filter = new \RecursiveCallbackFilterIterator(
             $inner,
+            function (\SplFileInfo $current) use ($root_norm): bool {
+                $pathname = str_replace('\\', '/', $current->getPathname());
+                $basename = $current->getFilename();
+
+                if ($current->isLink()) {
+                    return false;
+                }
+
+                if ($current->isDir()) {
+                    return !$this->should_exclude_dir($basename, $pathname, $root_norm);
+                }
+
+                return !$this->is_in_excluded_dir($pathname, $root_norm);
+            }
+        );
+
+        return new \RecursiveIteratorIterator(
+            $filter,
             \RecursiveIteratorIterator::SELF_FIRST,
             \RecursiveIteratorIterator::CATCH_GET_CHILD
         );
     }
 
-    private function is_in_excluded_dir(string $pathname, string $root): bool {
-        $relative = substr($pathname, strlen($root));
-        $relative = strtolower(trim($relative, '/'));
+    public function is_in_excluded_dir(string $pathname, string $root): bool {
+        $root_norm = rtrim(str_replace('\\', '/', $root), '/');
+        $path_norm = str_replace('\\', '/', $pathname);
+        $relative  = substr($path_norm, strlen($root_norm));
+        $relative  = strtolower(trim($relative, '/'));
 
         foreach ($this->exclude_dirs as $excluded) {
             $excluded = strtolower(trim($excluded, '/'));
@@ -174,31 +194,83 @@ class DirectoryWalker {
         }
 
         // Check user-configured excluded paths and patterns
-        if (class_exists('\\WebCareProScanner\\System\\SettingsManager') && \WebCareProScanner\System\SettingsManager::is_path_excluded($pathname)) {
+        if (class_exists('\\WebCareProScanner\\System\\SettingsManager') && \WebCareProScanner\System\SettingsManager::is_path_excluded($path_norm)) {
             return true;
         }
 
         return false;
     }
 
-    private function should_exclude_dir(string $basename, string $pathname, string $root): bool {
+    public function should_exclude_dir(string $basename, string $pathname, string $root): bool {
         $basename_lower = strtolower($basename);
-
-        if (in_array($basename_lower, array_map('strtolower', $this->exclude_dirs), true)) {
-            return true;
-        }
-
-        $relative = substr($pathname, strlen($root));
-        $relative = strtolower(trim($relative, '/'));
+        $root_norm      = rtrim(str_replace('\\', '/', $root), '/');
+        $path_norm      = str_replace('\\', '/', $pathname);
 
         foreach ($this->exclude_dirs as $excluded) {
-            $excluded = strtolower(trim($excluded, '/'));
-            if ($relative === $excluded || str_starts_with($relative, $excluded . '/')) {
+            $excluded_lower = strtolower(trim($excluded, '/'));
+            if ($basename_lower === $excluded_lower) {
                 return true;
             }
         }
 
+        $relative = strtolower(trim(substr($path_norm, strlen($root_norm)), '/'));
+        foreach ($this->exclude_dirs as $excluded) {
+            $excluded_lower = strtolower(trim($excluded, '/'));
+            if ($relative === $excluded_lower || str_starts_with($relative, $excluded_lower . '/') || str_contains($relative, '/' . $excluded_lower . '/')) {
+                return true;
+            }
+        }
+
+        if (class_exists('\\WebCareProScanner\\System\\SettingsManager') && \WebCareProScanner\System\SettingsManager::is_path_excluded($path_norm)) {
+            return true;
+        }
+
         return false;
+    }
+
+    /**
+     * Inspect known cache directories specifically for dropped executable scripts (.php, .phtml, .phar, etc.)
+     * without descending into thousands of minified .js/.css asset subdirectories.
+     *
+     * @param string $root Root path (e.g. ABSPATH)
+     * @return array List of suspicious executable file paths found inside cache directories
+     */
+    public function scan_cache_dirs_for_executables(string $root): array {
+        $root = rtrim(str_replace('\\', '/', $root), '/');
+        $found = [];
+        $exec_exts = ['php', 'phtml', 'phar', 'php5', 'php7', 'php8', 'inc'];
+
+        $cache_dirs_to_check = [
+            $root . '/wp-content/cache',
+            $root . '/wp-content/litespeed',
+            $root . '/wp-content/et-cache',
+            $root . '/wp-content/wpo-cache',
+            $root . '/wp-content/breeze',
+            $root . '/wp-content/wp-rocket',
+            $root . '/wp-content/autoptimize',
+        ];
+
+        foreach ($cache_dirs_to_check as $cache_dir) {
+            if (!is_dir($cache_dir)) {
+                continue;
+            }
+            try {
+                $dir_iter = new \DirectoryIterator($cache_dir);
+                foreach ($dir_iter as $item) {
+                    if ($item->isDot() || $item->isDir() || $item->isLink()) {
+                        continue;
+                    }
+                    $ext = strtolower($item->getExtension());
+                    if (in_array($ext, $exec_exts, true)) {
+                        $found[] = str_replace('\\', '/', $item->getPathname());
+                    }
+                }
+            } catch (\Throwable $e) {
+                // Ignore unreadable cache dirs
+            }
+        }
+
+        return $found;
     }
 
     private function should_skip_file(string $basename): bool {

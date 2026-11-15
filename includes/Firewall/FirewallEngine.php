@@ -7376,9 +7376,6 @@ class FirewallEngine {
         if (defined('WP_CLI') && WP_CLI) {
             return true;
         }
-        if (function_exists('wp_doing_cron') && wp_doing_cron()) {
-            return true;
-        }
         if (defined('WEBCAREPROSCAN_PCP_TEST_HARNESS') && WEBCAREPROSCAN_PCP_TEST_HARNESS) {
             return true;
         }

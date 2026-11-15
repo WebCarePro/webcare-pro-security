@@ -337,7 +337,7 @@ class RaspPrivilegeGuard {
     }
 
     /**
-     * Rule #44: In-Memory RASP Hook Firewall - Abort guest or unprivileged role escalation to administrator.
+     * Rule #44: In-Memory RASP Hook Firewall - Abort guest or unprivileged role escalation.
      *
      * @param int    $user_id   User ID
      * @param string $role      Assigned role
@@ -354,33 +354,25 @@ class RaspPrivilegeGuard {
             return;
         }
 
-        // Exempt legitimate WordPress background cron tasks (e.g. WooCommerce Subscriptions, scheduled renewal/role updates)
-        if (defined('DOING_CRON') && DOING_CRON) {
-            // phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.NonceVerification.Recommended -- RASP runtime inspection of request parameters during background cron
-            if (empty($_POST['role']) && empty($_GET['role']) && empty($_POST['new_role'])) {
-                return;
-            }
-        }
-
+        // Evaluate full effective capability set of the requested role.
+        // Ordinary customer/subscriber/member/LMS roles return false here and execute unhindered
+        // across storefront, Shop Manager, and DOING_CRON (WooCommerce Subscriptions) workflows.
         $is_elevated_role = self::is_privileged_role($role);
 
-        if ($is_elevated_role) {
+        // Also check if the target user already holds privileged capabilities (protect admins from non-admin demotion/tampering)
+        $target_user = function_exists('get_userdata') ? get_userdata($user_id) : null;
+        $target_is_privileged = ($target_user instanceof \WP_User) && self::is_user_privileged($target_user);
+
+        if ($is_elevated_role || $target_is_privileged) {
             if (FirewallEngine::is_authenticated_administrator()) {
                 return;
             }
-            if (function_exists('is_user_logged_in') && is_user_logged_in() && function_exists('current_user_can')) {
-                if (current_user_can('manage_options')) {
-                    return;
-                }
-                // Allow WooCommerce Shop Managers (manage_woocommerce) to assign non-administrator roles
-                if (current_user_can('manage_woocommerce') && strtolower(trim($role)) !== 'administrator') {
-                    $role_obj = function_exists('get_role') ? get_role($role) : null;
-                    if (!$role_obj || empty($role_obj->capabilities['manage_options'])) {
-                        return;
-                    }
-                }
+            if (function_exists('is_user_logged_in') && is_user_logged_in() && function_exists('current_user_can') && current_user_can('manage_options')) {
+                return;
             }
 
+            // Note: Neither DOING_CRON nor Shop Managers (manage_woocommerce without manage_options)
+            // are ever permitted to assign a privileged role ($is_elevated_role === true) or mutate an existing privileged account.
             $client_ip = ClientIpResolver::get_client_ip();
             $incident_id = 'WEBCARE-' . strtoupper(substr(md5($client_ip . $role . $user_id . microtime(true)), 0, 8));
             $reason = sprintf('Unauthorized role escalation to "%s" on user #%d', $role, $user_id);
@@ -422,7 +414,7 @@ class RaspPrivilegeGuard {
     }
 
     /**
-     * Rule #44: In-Memory RASP Hook Firewall - Abort guest registration creating administrator or editor users.
+     * Rule #44: In-Memory RASP Hook Firewall - Abort guest or cron registration creating privileged users.
      *
      * @param int $user_id
      * @return void
@@ -437,14 +429,6 @@ class RaspPrivilegeGuard {
             return;
         }
 
-        // Exempt legitimate background cron tasks
-        if (defined('DOING_CRON') && DOING_CRON) {
-            // phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.NonceVerification.Recommended -- RASP runtime inspection of request parameters during background cron
-            if (empty($_POST['role']) && empty($_GET['role']) && empty($_POST['new_role'])) {
-                return;
-            }
-        }
-
         if (FirewallEngine::is_authenticated_administrator()) {
             return;
         }
@@ -453,14 +437,8 @@ class RaspPrivilegeGuard {
         }
 
         $user = function_exists('get_userdata') ? get_userdata($user_id) : null;
-        $has_elevated_priv = false;
-        if ($user) {
-            if (array_intersect(['administrator', 'editor'], array_map('strtolower', (array) $user->roles))) {
-                $has_elevated_priv = true;
-            } elseif ($user->has_cap('manage_options') || $user->has_cap('edit_users')) {
-                $has_elevated_priv = true;
-            }
-        }
+        $has_elevated_priv = ($user instanceof \WP_User) && self::is_user_privileged($user);
+
         if ($user && $has_elevated_priv) {
             $user->set_role('subscriber');
 
@@ -474,7 +452,7 @@ class RaspPrivilegeGuard {
                 'category'    => 'Runtime RASP Hook Defense',
                 'description' => sprintf(
                     /* translators: 1: User ID, 2: Client IP */
-                    __('Unauthenticated guest from %2$s registered new account (#%1$d) with elevated administrator privileges. Account was demoted to subscriber.', 'webcare-pro-security'),
+                    __('Unauthenticated session from %2$s registered new account (#%1$d) with elevated privileges. Account was demoted to subscriber.', 'webcare-pro-security'),
                     $user_id,
                     $client_ip
                 ),
@@ -518,16 +496,17 @@ class RaspPrivilegeGuard {
         $active_prefix = isset($wpdb->base_prefix) ? $wpdb->base_prefix : (isset($wpdb->prefix) ? $wpdb->prefix : 'wp_');
         $prefix        = $orig_prefix;
 
-        $guarded_keys = [
-            '_application_passwords',
-            $orig_prefix . 'capabilities',
-            $orig_prefix . 'user_level',
-        ];
+        $cap_keys = [$orig_prefix . 'capabilities'];
+        $lvl_keys = [$orig_prefix . 'user_level'];
         if ($active_prefix !== $orig_prefix) {
-            $guarded_keys[] = $active_prefix . 'capabilities';
-            $guarded_keys[] = $active_prefix . 'user_level';
+            $cap_keys[] = $active_prefix . 'capabilities';
+            $lvl_keys[] = $active_prefix . 'user_level';
         }
 
+        $guarded_keys = array_merge(['_application_passwords'], $cap_keys, $lvl_keys);
+
+        // Ordinary customer metadata (billing_*, shipping_*, paying_customer, etc.) is never in $guarded_keys
+        // and returns immediately here with zero friction for Shop Managers, customers, and cron jobs.
         if (!in_array($meta_key, $guarded_keys, true)) {
             return $check;
         }
@@ -536,31 +515,55 @@ class RaspPrivilegeGuard {
             return $check;
         }
 
-        // Exempt legitimate WordPress background cron tasks (e.g. WooCommerce Subscriptions renewal, memberships)
-        // phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.NonceVerification.Recommended -- RASP runtime inspection of request state during background cron
-        if (defined('DOING_CRON') && DOING_CRON && empty($_POST) && empty($_GET)) {
-            return $check;
-        }
-
-        if (function_exists('is_user_logged_in') && is_user_logged_in()) {
-            if (FirewallEngine::is_authenticated_administrator()) {
+        if (function_exists('is_user_logged_in') && is_user_logged_in() && function_exists('current_user_can')) {
+            if (current_user_can('manage_options')) {
                 return $check;
             }
-            if (function_exists('current_user_can')) {
-                if (current_user_can('manage_options') || current_user_can('edit_user', $object_id)) {
-                    return $check;
+        }
+
+        $target_user          = function_exists('get_userdata') ? get_userdata($object_id) : null;
+        $target_is_privileged = ($target_user instanceof \WP_User) && self::is_user_privileged($target_user);
+
+        // Evaluate whether the requested capabilities or user_level payload is strictly unprivileged
+        $payload_is_unprivileged = false;
+        if (in_array($meta_key, $cap_keys, true) && is_array($meta_value)) {
+            $requested_roles = array_keys(array_filter($meta_value));
+            $has_elevated_cap = false;
+            foreach ($requested_roles as $role_or_cap) {
+                if (self::is_privileged_role((string) $role_or_cap)) {
+                    $has_elevated_cap = true;
+                    break;
                 }
-                // Allow WooCommerce Shop Managers to manage non-admin metadata
-                if (current_user_can('manage_woocommerce') && $meta_key !== $prefix . 'capabilities') {
+            }
+            $payload_is_unprivileged = !$has_elevated_cap;
+        } elseif (in_array($meta_key, $lvl_keys, true)) {
+            $payload_is_unprivileged = ((int) $meta_value <= 1);
+        }
+
+        // Narrowly Scoped Shop Manager & Cron Allowance:
+        // 1. NEVER allow non-admin or cron to mutate _application_passwords (handled solely by the verified Core REST usage-ping check below).
+        // 2. NEVER allow non-admin or cron to mutate an existing privileged user ($target_is_privileged === true).
+        // 3. NEVER allow non-admin or cron to write any privileged capability or user_level > 1 ($payload_is_unprivileged must be true).
+        if ($meta_key !== '_application_passwords' && !$target_is_privileged && $payload_is_unprivileged) {
+            // Case A: Authenticated Shop Manager (manage_woocommerce) updating a non-privileged customer's role/capabilities to another non-privileged role
+            if (function_exists('is_user_logged_in') && is_user_logged_in() && function_exists('current_user_can') && current_user_can('manage_woocommerce')) {
+                return $check;
+            }
+
+            // Case B: Background Cron (DOING_CRON) updating a non-privileged subscriber/customer to another non-privileged role
+            // (e.g. WooCommerce Subscriptions renewal, MemberPress/LearnDash/LifterLMS expiration) when no untrusted HTTP role parameters exist
+            if (defined('DOING_CRON') && DOING_CRON) {
+                // phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.NonceVerification.Recommended
+                if (empty($_POST['role']) && empty($_GET['role']) && empty($_POST['new_role']) && empty($_POST['wp_capabilities'])) {
                     return $check;
                 }
             }
         }
 
-        if ($meta_key === $prefix . 'capabilities' || $meta_key === $prefix . 'user_level') {
+        if (in_array($meta_key, $cap_keys, true) || in_array($meta_key, $lvl_keys, true)) {
             $is_safe_registration_mutation = false;
 
-            if ($meta_key === $prefix . 'capabilities' && is_array($meta_value)) {
+            if (in_array($meta_key, $cap_keys, true) && is_array($meta_value)) {
                 $requested_roles = array_keys(array_filter($meta_value));
                 $has_admin_privilege = false;
                 foreach ($requested_roles as $role_or_cap) {
@@ -576,7 +579,7 @@ class RaspPrivilegeGuard {
                         $is_safe_registration_mutation = true;
                     }
                 }
-            } elseif ($meta_key === $prefix . 'user_level') {
+            } elseif (in_array($meta_key, $lvl_keys, true)) {
                 $level = (int) $meta_value;
                 if ($level <= 1) {
                     $user_obj = function_exists('get_userdata') ? get_userdata($object_id) : null;
@@ -602,10 +605,10 @@ class RaspPrivilegeGuard {
                             $fn === 'register_new_user' ||
                             ($cls === 'WP_User' && $fn === 'set_role')
                         ) {
-                            if ($meta_key === $prefix . 'capabilities' && is_array($meta_value) && empty($has_admin_privilege)) {
+                            if (in_array($meta_key, $cap_keys, true) && is_array($meta_value) && empty($has_admin_privilege)) {
                                 $is_safe_registration_mutation = true;
                                 break;
-                            } elseif ($meta_key === $prefix . 'user_level' && (int) $meta_value < 7) {
+                            } elseif (in_array($meta_key, $lvl_keys, true) && (int) $meta_value < 7) {
                                 $is_safe_registration_mutation = true;
                                 break;
                             }
