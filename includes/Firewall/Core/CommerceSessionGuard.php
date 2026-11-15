@@ -209,12 +209,34 @@ class CommerceSessionGuard {
             }
         }
 
-        // 3. Fallback: Verified logged-in WordPress customer/member auth cookie
+        // 3. Verified Authenticated Customer or Membership Session
+        $user_id = 0;
         if (function_exists('is_user_logged_in') && is_user_logged_in()) {
-            return true;
+            $user_id = (int) get_current_user_id();
+        } elseif (function_exists('wp_validate_auth_cookie')) {
+            $user_id = (int) wp_validate_auth_cookie('', 'logged_in');
         }
-        if (function_exists('wp_validate_auth_cookie') && wp_validate_auth_cookie('', 'logged_in')) {
-            return true;
+
+        if ($user_id > 0) {
+            $user = function_exists('get_userdata') ? get_userdata($user_id) : null;
+            if ($user instanceof \WP_User) {
+                // Check if user possesses customer or membership roles/capabilities
+                $roles = (array) $user->roles;
+                $is_customer_or_member = in_array('customer', $roles, true)
+                    || in_array('member', $roles, true)
+                    || !empty(get_user_meta($user_id, 'paying_customer', true))
+                    || !empty(get_user_meta($user_id, '_woocommerce_load_saved_cart_after_login', true))
+                    || (function_exists('user_can') && user_can($user, 'customer'));
+
+                if ($is_customer_or_member) {
+                    return true;
+                }
+
+                // Check active WooCommerce cart presence if WooCommerce is initialized
+                if (function_exists('WC') && isset(WC()->cart) && is_object(WC()->cart) && !WC()->cart->is_empty()) {
+                    return true;
+                }
+            }
         }
 
         return false;

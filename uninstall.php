@@ -92,12 +92,6 @@ if (file_exists($webcareproscan_server_sec_file)) {
     }
 }
 
-// Remove Must-Use (MU) plugin watchdog unconditionally upon uninstall
-$webcareproscan_mu_dir = defined('WPMU_PLUGIN_DIR') ? WPMU_PLUGIN_DIR : WP_CONTENT_DIR . '/mu-plugins';
-$webcareproscan_mu_file = $webcareproscan_mu_dir . '/webcare-jit-guardian.php';
-if (file_exists($webcareproscan_mu_file)) {
-    wp_delete_file($webcareproscan_mu_file);
-}
 
 $webcareproscan_settings = get_option('webcareproscan_settings', []);
 $webcareproscan_delete_data = false; // Disabled by default to prevent loss of quarantine vault & settings on reinstallation

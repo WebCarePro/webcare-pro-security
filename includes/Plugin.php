@@ -27,6 +27,11 @@ class Plugin {
         $is_cron  = (defined('DOING_CRON') && DOING_CRON);
         $is_admin = is_admin();
 
+        // 0. Fast In-Memory Database Schema Migration Check (0 SQL queries on regular requests via autoloaded 'alloptions')
+        if (get_option('webcareproscan_db_version') !== '1.13.0') {
+            \WebCareProScanner\Database\Migration::install();
+        }
+
         // 1. Always-On Lightweight Runtime Security (WAF, Auth, Session, Headers)
         \WebCareProScanner\Firewall\WafFileLogger::init();
         \WebCareProScanner\Firewall\FirewallEngine::init();
@@ -57,9 +62,6 @@ class Plugin {
 
         // 3. Admin, Cron & WP-CLI Heavy Subsystems (Never booted on public storefront GET/POST)
         if ($is_admin || $is_cron || $is_cli) {
-            if (get_option('webcareproscan_db_version') !== '1.13.0') {
-                \WebCareProScanner\Database\Migration::install();
-            }
             self::ensure_uploads_storage_protected();
             \WebCareProScanner\System\Cron\CronControlCenter::register_filters();
             AdminMenu::register();
@@ -77,12 +79,6 @@ class Plugin {
             \WebCareProScanner\Firewall\DomainReputationMonitor::init();
             \WebCareProScanner\Firewall\CAF\AdaptiveFirewallAdvisor::register_lifecycle_hooks();
             \WebCareProScanner\Firewall\CAF\CloudflareIpListSynchronizer::register_cron();
-
-            // Clean up legacy JIT guardian MU plugin if present
-            $mu_jit_file = (defined('WPMU_PLUGIN_DIR') ? WPMU_PLUGIN_DIR : WP_CONTENT_DIR . '/mu-plugins') . '/webcare-jit-guardian.php';
-            if (file_exists($mu_jit_file)) {
-                wp_delete_file($mu_jit_file);
-            }
         }
 
         if ($is_cli && class_exists('\\WP_CLI')) {

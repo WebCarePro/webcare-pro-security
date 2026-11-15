@@ -97,7 +97,7 @@ class HoneyTokenEngine {
             'trap_login_forms'         => true,
             'trap_comment_forms'       => true,
             'trap_phantom_endpoints'   => true,
-            'auto_ban_bot_ip'          => true,
+            'auto_ban_bot_ip'          => false,
             'ban_duration_hours'       => 24,
             'enable_form_traps'        => true,
             'enable_phantom_endpoints' => true,
@@ -379,10 +379,8 @@ class HoneyTokenEngine {
             set_transient($hit_transient, $autofill_hits, 600);
         }
 
-        // 2. Auto-ban bot IP if enabled (Form autofills NEVER ban IPs to protect users with password manager extensions)
-        if (!empty($settings['auto_ban_bot_ip']) && !$is_form_autofill) {
-            self::ban_bot_ip($client_ip, $settings['ban_duration_hours'] ?? 24);
-        }
+        // 2. Zero-Automatic-Ban Architecture: Trapped bot requests are recorded and terminated (HTTP 403),
+        // leaving IP bans strictly as an intentional administrative action in the UI.
 
         // Log incident to WAF Incident Logs
         if (class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine')) {
@@ -525,7 +523,6 @@ class HoneyTokenEngine {
         ];
 
         self::record_catch($catch_entry);
-        self::ban_bot_ip($ip, $duration_hours);
 
         if (class_exists('\\WebCareProScanner\\Notifications\\NotificationDispatcher')) {
             \WebCareProScanner\Notifications\NotificationDispatcher::trigger('behavioral_bot_trap_triggered', [
@@ -635,7 +632,15 @@ class HoneyTokenEngine {
 
     private static function alert_and_contain_c2(string $c2_ip, string $token): void {
         if (class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine')) {
-            FirewallEngine::add_blocked_ip($c2_ip, 'Canary Honeytoken Triggered: External C2 probing decoy credentials', 86400, 'canary_trap', 'Honeytoken Alert');
+            FirewallEngine::log_incident([
+                'id'          => 'WAF-CANARY-C2-PROBE-BLOCKED',
+                'name'        => 'Canary Decoy Credential Probed by External C2',
+                'category'    => 'Identity Defense',
+                'description' => sprintf('Hostile C2 probe intercepted using canary token %s.', esc_html($token)),
+                'match_type'  => 'Canary Token Probe',
+                'match_value' => $token,
+                'payload'     => 'Token: ' . $token . ' C2 IP: ' . $c2_ip,
+            ], 'blocked');
         }
 
         if (class_exists('\\WebCareProScanner\\Notifications\\NotificationDispatcher')) {

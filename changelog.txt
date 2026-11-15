@@ -1,5 +1,12 @@
 ﻿v:2.15.0 - 2026-11-15
 - Zero-Gap Fail-Closed Streaming, Runtime RASP Hardening, Response DLP Redaction & Full Architectural Resilience:
+  * Zero-Automatic-Ban Invariant, Deactivation Order, Fail-Closed Compatibility Floor & Shopper Context Hardening:
+    - Zero-Automatic-Ban HoneyToken Hardening: Excised automated IP bans from HoneyTokenEngine (trigger_trap(), record_and_ban(), alert_and_contain_c2()), ensuring honeytokens terminate trapped bots via HTTP 403 Forbidden and record security incident events without adding automated blocks to the firewall blocklist, with auto_ban_bot_ip defaulting to false.
+    - Purged Obsolete JIT & Temporary Support Deactivation Routines: Removed obsolete, destructive ephemeral admin role reversions, session terminations, and webcare-jit-guardian.php deletion from register_deactivation_hook(), Plugin.php, and uninstall.php.
+    - Pre-Floor Deactivation Hook Order & Fail-Closed Gate: Relocated register_deactivation_hook() prior to the runtime compatibility gate in webcare-pro-security.php so the plugin can always be deactivated even if the server environment is downgraded; converted the runtime gate to fail closed if $GLOBALS['wp_version'] is empty or below 7.0.
+    - Authentic Shopper & Member Context Verification: Hardened CommerceSessionGuard::has_active_shopper_session() by replacing generic is_user_logged_in() fallbacks with strict checks verifying customer/member roles, paying customer meta, saved cart flags, or non-empty WooCommerce carts, eliminating blanket bypasses for arbitrary authenticated accounts.
+    - Customer-Safe Shopper Throttling Headroom: Configured AdaptiveRateLimiter with a 50% headroom buffer on dynamic cart, search, and checkout boundaries for verified shoppers returning HTTP 429 without bans, and defaulted escalate_to_ban and enable_auto_escalation to false.
+    - Storefront Immediate Database Migration: Moved the zero-query, memory-cached database schema version check to the top of Plugin::init(), guaranteeing schema migration triggers immediately on the very first post-deployment storefront request.
   * WordPress 7.0+ & PHP 8.3+ Master Plan & Firewall Modularization:
     - Enforced Strict Runtime Floor: Added boot guard requiring PHP 8.3+ and WordPress 7.0+, completely dropping legacy pre-7.0 and pre-PHP 8.3 backwards compatibility shims.
     - Native json_validate() Optimization: Integrated PHP 8.3 native C-level json_validate() pre-flights before json_decode() across FirewallEngine and ModernApiShield, avoiding memory allocations on non-JSON payloads.

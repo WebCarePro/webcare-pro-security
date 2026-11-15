@@ -79,8 +79,8 @@ class AdaptiveRateLimiter {
             'limit_global'           => self::LIMIT_GLOBAL,
             'window_global'          => self::WINDOW_GLOBAL,
             'retry_after_seconds'    => 30,
-            'escalate_to_ban'        => true,
-            'enable_auto_escalation' => true,
+            'escalate_to_ban'        => false,
+            'enable_auto_escalation' => false,
         ];
 
         $stored = get_option(self::OPTION_SETTINGS, []);
@@ -111,8 +111,8 @@ class AdaptiveRateLimiter {
             'limit_global'           => max(50, min(2000, intval($new_settings['limit_global'] ?? $current['limit_global']))),
             'window_global'          => max(30, min(300, intval($new_settings['window_global'] ?? $current['window_global']))),
             'retry_after_seconds'    => max(5, min(300, intval($new_settings['retry_after_seconds'] ?? $current['retry_after_seconds']))),
-            'escalate_to_ban'        => isset($new_settings['escalate_to_ban']) ? !empty($new_settings['escalate_to_ban']) : !empty($current['escalate_to_ban']),
-            'enable_auto_escalation' => isset($new_settings['escalate_to_ban']) ? !empty($new_settings['escalate_to_ban']) : !empty($current['escalate_to_ban']),
+            'escalate_to_ban'        => false,
+            'enable_auto_escalation' => false,
         ];
 
         update_option(self::OPTION_SETTINGS, $updated);
@@ -308,6 +308,17 @@ class AdaptiveRateLimiter {
             $bucket = self::BUCKET_REST_WRITE;
             $limit = (int) ($settings['limit_rest_write'] ?? self::LIMIT_REST_WRITE);
             $window = (int) ($settings['window_rest_write'] ?? self::WINDOW_REST_WRITE);
+        }
+
+        // Customer-Safe Shopper Headroom Policy: Verified shoppers receive increased headroom buffer
+        // on dynamic commerce interaction boundaries (Cart AJAX, Search, and Checkout) without granting blanket immunity.
+        if (
+            class_exists('\\WebCareProScanner\\Firewall\\Core\\CommerceSessionGuard')
+            && \WebCareProScanner\Firewall\Core\CommerceSessionGuard::has_active_shopper_session()
+        ) {
+            if ($bucket === self::BUCKET_CART_AJAX || $bucket === self::BUCKET_SEARCH_PROBE || $bucket === self::BUCKET_CHECKOUT) {
+                $limit = (int) ceil($limit * 1.5); // 50% extra headroom for legitimate shoppers
+            }
         }
 
         $result = self::check_bucket_velocity($bucket, $client_ip, $limit, $window);
