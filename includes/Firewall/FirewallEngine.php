@@ -963,6 +963,12 @@ class FirewallEngine {
                         'payload'         => "Client IP: {$client_ip} URI: {$request_uri}",
                         'sync_cloudflare' => !empty($modular_violation['sync_cloudflare']),
                         'ban_ttl'         => (int) ($modular_violation['ban_ttl'] ?? 0),
+                        'is_custom'       => !empty($modular_violation['is_custom']),
+                        'action_type'     => (string) ($modular_violation['action_type'] ?? ''),
+                        'target_uri'      => (string) ($modular_violation['target_uri'] ?? ''),
+                        'target_param'    => (string) ($modular_violation['target_param'] ?? ''),
+                        'target_value'    => (string) ($modular_violation['target_value'] ?? ''),
+                        'wirefilter_expr' => (string) ($modular_violation['wirefilter_expr'] ?? ''),
                     ];
                     if ($modular_violation['blocked']) {
                         $http_code = ($mod_action === 'rate_limit') ? 429 : 403;
@@ -5629,6 +5635,8 @@ class FirewallEngine {
     /**
      * Authoritatively verify whether a rule matches a genuine, registered exploit signature
      * in the trusted internal signature registry.
+     * Enforces that both the rule ID and its definition category match the authoritative registry entry,
+     * rejecting caller-supplied or forged definitions carrying genuine IDs.
      *
      * @param string $rule_id_str Uppercase rule ID
      * @param array  $rule        Rule definition array
@@ -5641,6 +5649,14 @@ class FirewallEngine {
 
         $registry = self::get_confirmed_exploit_registry();
         if (isset($registry[$rule_id_str])) {
+            $registered = $registry[$rule_id_str];
+            if (!empty($rule)) {
+                $incoming_cat  = trim((string) ($rule['category'] ?? ''));
+                $canonical_cat = trim((string) ($registered['category'] ?? ''));
+                if ($incoming_cat === '' || strcasecmp($incoming_cat, $canonical_cat) !== 0) {
+                    return false; // Rejects genuine IDs with missing, empty, or forged categories
+                }
+            }
             return true;
         }
 
@@ -5650,12 +5666,52 @@ class FirewallEngine {
             if (class_exists('\\WebCareProScanner\\Firewall\\VirtualPatchManager')) {
                 $catalog = \WebCareProScanner\Firewall\VirtualPatchManager::get_patch_catalog();
                 if (isset($catalog[$patch_id])) {
+                    if (!empty($rule)) {
+                        $incoming_cat      = strtolower(trim((string) ($rule['category'] ?? '')));
+                        $valid_vpatch_cats = ['virtual patch (cve shield)', 'virtual patch', 'cve patch'];
+                        if ($incoming_cat === '' || !in_array($incoming_cat, $valid_vpatch_cats, true)) {
+                            return false; // Rejects genuine patch IDs carrying forged or missing category
+                        }
+                    }
                     return true;
                 }
             }
         }
 
         return false;
+    }
+
+    /**
+     * Retrieve the canonical definition of a registered confirmed exploit signature or virtual patch.
+     *
+     * @param string $rule_id_str
+     * @return array|null Canonical metadata array or null if not registered.
+     */
+    public static function get_confirmed_exploit_definition(string $rule_id_str): ?array {
+        $registry = self::get_confirmed_exploit_registry();
+        if (isset($registry[$rule_id_str])) {
+            return array_merge([
+                'id'   => $rule_id_str,
+                'tier' => self::TIER_CONFIRMED_EXPLOIT,
+            ], $registry[$rule_id_str]);
+        }
+
+        if (str_starts_with($rule_id_str, 'VPATCH-') && class_exists('\\WebCareProScanner\\Firewall\\VirtualPatchManager')) {
+            $patch_id = substr($rule_id_str, 7);
+            $catalog  = \WebCareProScanner\Firewall\VirtualPatchManager::get_patch_catalog();
+            if (isset($catalog[$patch_id])) {
+                $patch = $catalog[$patch_id];
+                return [
+                    'id'          => 'VPATCH-' . $patch_id,
+                    'name'        => $patch['title'] ?? ($patch['name'] ?? 'CVE Virtual Patch'),
+                    'category'    => 'Virtual Patch (CVE Shield)',
+                    'tier'        => self::TIER_CONFIRMED_EXPLOIT,
+                    'description' => $patch['description'] ?? 'Curated CVE Virtual Patch',
+                ];
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -5835,15 +5891,29 @@ class FirewallEngine {
         // Authoritative enforcement tier resolution (governed by get_rule_enforcement_tier)
         $tier = self::get_rule_enforcement_tier($rule);
 
+        // Bind authentic stored custom rule definition or canonical exploit definition
+        // Operates strictly on the authoritative database/catalog record rather than caller-supplied definitions
+        $stored_custom_rule = null;
+        if ($tier === self::TIER_ADMIN_POLICY) {
+            $stored_custom_rule = self::get_verified_admin_custom_rule($rule);
+            if ($stored_custom_rule !== null) {
+                $rule = array_merge($rule, $stored_custom_rule);
+            }
+        } elseif ($tier === self::TIER_CONFIRMED_EXPLOIT) {
+            $canonical_exploit = self::get_confirmed_exploit_definition(strtoupper((string) ($rule['id'] ?? '')));
+            if ($canonical_exploit !== null) {
+                $rule = array_merge($rule, $canonical_exploit);
+            }
+        }
+
         $rule_id_str = (string) ($rule['id'] ?? '');
         $rule_cat    = (string) ($rule['category'] ?? '');
 
         $eligible_for_ip_ban = false;
         $effective_ban_ttl   = 0;
 
-        if ($tier === self::TIER_ADMIN_POLICY) {
+        if ($tier === self::TIER_ADMIN_POLICY && $stored_custom_rule !== null) {
             // 1. Explicit administrator-configured ban: strictly read TTL from the STORED database record
-            $stored_custom_rule = self::get_verified_admin_custom_rule($rule);
             $stored_ban_ttl     = max(0, (int) ($stored_custom_rule['ban_ttl'] ?? 0));
             if ($stored_ban_ttl > 0) {
                 $eligible_for_ip_ban = true;

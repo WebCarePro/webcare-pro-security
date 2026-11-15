@@ -510,13 +510,7 @@ class SecretVault {
         }
 
         @chmod($dest_path, 0600);
-        if (function_exists('fsync') && DIRECTORY_SEPARATOR === '/') {
-            $dir_fp = @fopen(dirname($dest_path), 'r');
-            if ($dir_fp) {
-                @fsync($dir_fp);
-                @fclose($dir_fp);
-            }
-        }
+        $dir_synced = self::sync_directory_metadata(dirname($dest_path));
 
         // 5. Independent validation: Reopen and verify the completed vault archive structure
         $inspect = self::inspect_vault_file($dest_path);
@@ -533,6 +527,7 @@ class SecretVault {
             'orig_sha256' => $orig_sha256,
             'chunks'      => $chunk_idx,
             'format'      => self::VAULT_FORMAT_CHUNKED,
+            'dir_synced'  => $dir_synced,
         ];
     }
 
@@ -759,20 +754,15 @@ class SecretVault {
             }
 
             @chmod($dest_path, 0600);
-            if (function_exists('fsync') && DIRECTORY_SEPARATOR === '/') {
-                $dir_fp = @fopen(dirname($dest_path), 'r');
-                if ($dir_fp) {
-                    @fsync($dir_fp);
-                    @fclose($dir_fp);
-                }
-            }
+            $dir_synced = self::sync_directory_metadata(dirname($dest_path));
 
             return [
-                'success'   => true,
-                'dest_path' => $dest_path,
-                'sha256'    => $expected_sha,
-                'bytes'     => $dec_bytes_total,
-                'format'    => self::VAULT_FORMAT_CHUNKED,
+                'success'    => true,
+                'dest_path'  => $dest_path,
+                'sha256'     => $expected_sha,
+                'bytes'      => $dec_bytes_total,
+                'format'     => self::VAULT_FORMAT_CHUNKED,
+                'dir_synced' => $dir_synced,
             ];
         }
 
@@ -796,28 +786,46 @@ class SecretVault {
                 return ['success' => false, 'error' => 'Inline AEAD decryption failed: Invalid key or corrupted payload.'];
             }
 
-            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
-            file_put_contents($temp_dest, $decrypted, LOCK_EX);
+            // Exclusive binary file creation ('xb') guarantees no symlink following or pre-existing file collision
+            $dst_fp = @fopen($temp_dest, 'xb');
+            if (!$dst_fp) {
+                return ['success' => false, 'error' => 'Failed to exclusively create temporary destination file for inline AEAD restore.'];
+            }
             @chmod($temp_dest, 0600);
+
+            $written = fwrite($dst_fp, $decrypted);
+            if ($written !== strlen($decrypted)) {
+                fclose($dst_fp);
+                wp_delete_file($temp_dest);
+                return ['success' => false, 'error' => 'Disk write failure while writing restored inline AEAD payload.'];
+            }
+
+            $flush_ok = fflush($dst_fp);
+            $sync_ok  = true;
+            if (function_exists('fsync')) {
+                $sync_ok = @fsync($dst_fp);
+            }
+            fclose($dst_fp);
+
+            if ($flush_ok === false || $sync_ok === false) {
+                wp_delete_file($temp_dest);
+                return ['success' => false, 'error' => 'Physical I/O flush or fsync failed during inline AEAD restore.'];
+            }
+
             if (!@rename($temp_dest, $dest_path)) {
                 wp_delete_file($temp_dest);
                 return ['success' => false, 'error' => 'Failed to move restored file into place.'];
             }
             @chmod($dest_path, 0600);
-            if (function_exists('fsync') && DIRECTORY_SEPARATOR === '/') {
-                $dir_fp = @fopen(dirname($dest_path), 'r');
-                if ($dir_fp) {
-                    @fsync($dir_fp);
-                    @fclose($dir_fp);
-                }
-            }
+            $dir_synced = self::sync_directory_metadata(dirname($dest_path));
 
             return [
-                'success'   => true,
-                'dest_path' => $dest_path,
-                'sha256'    => hash_file('sha256', $dest_path),
-                'bytes'     => (int) @filesize($dest_path),
-                'format'    => self::VAULT_FORMAT_INLINE,
+                'success'    => true,
+                'dest_path'  => $dest_path,
+                'sha256'     => hash_file('sha256', $dest_path),
+                'bytes'      => (int) @filesize($dest_path),
+                'format'     => self::VAULT_FORMAT_INLINE,
+                'dir_synced' => $dir_synced,
             ];
         }
 
@@ -838,8 +846,15 @@ class SecretVault {
             return ['success' => false, 'error' => 'Failed to exclusively create destination stream for legacy restore.'];
         }
         @chmod($temp_dest, 0600);
-        stream_copy_to_stream($v_fp, $dst_fp);
+        $copied = stream_copy_to_stream($v_fp, $dst_fp);
         fclose($v_fp);
+
+        if ($copied === false || $copied < 0) {
+            fclose($dst_fp);
+            wp_delete_file($temp_dest);
+            return ['success' => false, 'error' => 'Stream copy failure during legacy restore.'];
+        }
+
         $flush_ok = fflush($dst_fp);
         $sync_ok  = true;
         if (function_exists('fsync')) {
@@ -857,20 +872,15 @@ class SecretVault {
             return ['success' => false, 'error' => 'Failed to move legacy restored file into place.'];
         }
         @chmod($dest_path, 0600);
-        if (function_exists('fsync') && DIRECTORY_SEPARATOR === '/') {
-            $dir_fp = @fopen(dirname($dest_path), 'r');
-            if ($dir_fp) {
-                @fsync($dir_fp);
-                @fclose($dir_fp);
-            }
-        }
+        $dir_synced = self::sync_directory_metadata(dirname($dest_path));
 
         return [
-            'success'   => true,
-            'dest_path' => $dest_path,
-            'sha256'    => hash_file('sha256', $dest_path),
-            'bytes'     => (int) @filesize($dest_path),
-            'format'    => 'LEGACY_PLAINTEXT',
+            'success'    => true,
+            'dest_path'  => $dest_path,
+            'sha256'     => hash_file('sha256', $dest_path),
+            'bytes'      => (int) @filesize($dest_path),
+            'format'     => 'LEGACY_PLAINTEXT',
+            'dir_synced' => $dir_synced,
         ];
     }
 
@@ -941,6 +951,43 @@ class SecretVault {
             'valid'  => true,
             'format' => 'LEGACY_PLAINTEXT',
         ];
+    }
+
+    /**
+     * Platform-aware directory metadata synchronization.
+     *
+     * Atomicity vs. Durability Note:
+     * Atomic file replacement is achieved via rename(), which guarantees that any concurrent
+     * reader sees either the old or the new file. Crash durability of directory entry metadata
+     * (persisting the directory entry linking the inode across system crash or power loss)
+     * requires fsync() on the containing directory.
+     *
+     * On POSIX operating systems (Linux, BSD, macOS) where directory file descriptors can be
+     * opened in read-only mode and fsync() is supported, this method attempts to sync directory metadata.
+     * On platforms/filesystems where directory descriptor fsync is unsupported (e.g. Windows, network shares),
+     * or when open/fsync fails, this method returns false or null rather than claiming guaranteed durability.
+     *
+     * @param string $dir_path Directory path to sync
+     * @return bool|null True if directory fsync succeeded, false if attempted and failed, null if unsupported/unavailable on platform.
+     */
+    public static function sync_directory_metadata(string $dir_path): ?bool {
+        if (!function_exists('fsync') || DIRECTORY_SEPARATOR !== '/') {
+            return null; // Platform does not support POSIX directory fsync (e.g. Windows)
+        }
+
+        if (!is_dir($dir_path)) {
+            return false;
+        }
+
+        $dir_fp = @fopen($dir_path, 'r');
+        if (!$dir_fp) {
+            return false;
+        }
+
+        $synced = @fsync($dir_fp);
+        @fclose($dir_fp);
+
+        return $synced !== false;
     }
     // phpcs:enable WordPress.WP.AlternativeFunctions.file_system_operations_fopen, WordPress.WP.AlternativeFunctions.file_system_operations_fclose, WordPress.WP.AlternativeFunctions.file_system_operations_fwrite, WordPress.WP.AlternativeFunctions.file_system_operations_fread, WordPress.WP.AlternativeFunctions.file_system_operations_chmod, WordPress.WP.AlternativeFunctions.rename_rename
 }

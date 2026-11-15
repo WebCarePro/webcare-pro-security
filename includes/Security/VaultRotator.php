@@ -627,7 +627,7 @@ class VaultRotator {
      * Supports both V2 Chunked Streaming AEAD (constant RAM) and legacy inline archives.
      */
     private static function rotate_encrypted_disk_archives(string $old_binary_key, string $new_binary_key): array {
-        $result     = ['rotated' => 0, 'failed' => []];
+        $result     = ['rotated' => 0, 'failed' => [], 'dir_synced' => 0];
         $upload_dir = wp_upload_dir();
         $base_dir   = trailingslashit($upload_dir['basedir']);
         $candidates = array_merge(
@@ -692,14 +692,9 @@ class VaultRotator {
 
                 // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod
                 @chmod($file_path, 0600);
-                if (function_exists('fsync') && DIRECTORY_SEPARATOR === '/') {
-                    // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
-                    $dir_fp = @fopen(dirname($file_path), 'r');
-                    if ($dir_fp) {
-                        @fsync($dir_fp);
-                        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
-                        @fclose($dir_fp);
-                    }
+                $dir_synced = SecretVault::sync_directory_metadata(dirname($file_path));
+                if ($dir_synced === true) {
+                    $result['dir_synced']++;
                 }
                 $result['rotated']++;
                 continue;
@@ -796,14 +791,9 @@ class VaultRotator {
                             if (@rename($temp_file, $file_path)) {
                                 // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod
                                 @chmod($file_path, 0600);
-                                if (function_exists('fsync') && DIRECTORY_SEPARATOR === '/') {
-                                    // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
-                                    $dir_fp = @fopen(dirname($file_path), 'r');
-                                    if ($dir_fp) {
-                                        @fsync($dir_fp);
-                                        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
-                                        @fclose($dir_fp);
-                                    }
+                                $dir_synced = SecretVault::sync_directory_metadata(dirname($file_path));
+                                if ($dir_synced === true) {
+                                    $result['dir_synced']++;
                                 }
                                 $result['rotated']++;
                                 continue;

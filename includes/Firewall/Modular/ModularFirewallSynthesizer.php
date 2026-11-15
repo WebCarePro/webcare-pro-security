@@ -84,7 +84,8 @@ class ModularFirewallSynthesizer {
     /**
      * Authoritatively verify an incoming rule against the stored database record.
      * Validates that the rule is registered, administrator-authored, and that its
-     * canonical properties (if supplied) match the registered database record.
+     * canonical properties match the registered database record across all definition fields.
+     * Rejects missing, empty, malformed, or divergent fingerprints.
      *
      * @param array $incoming_rule
      * @return array|null The authentic stored rule record, or null if unverified/mismatched.
@@ -100,16 +101,48 @@ class ModularFirewallSynthesizer {
             return null;
         }
 
-        // Canonical integrity verification: if the incoming rule supplies core definition fields,
-        // they must match the stored record (rejecting imposter dictionaries).
-        $fields_to_verify = ['target_uri', 'target_param', 'target_value', 'action', 'category', 'wirefilter_expr'];
-        foreach ($fields_to_verify as $field) {
-            if (isset($incoming_rule[$field]) && isset($stored[$field])) {
-                $incoming_val = strtolower(trim((string) $incoming_rule[$field]));
-                $stored_val   = strtolower(trim((string) $stored[$field]));
-                if ($incoming_val !== '' && $stored_val !== '' && $incoming_val !== $stored_val) {
-                    return null; // Forged or mismatched definition
+        // 1. Authorship Verification: Must be an administrator-authored custom rule
+        if (empty($stored['is_custom']) && ($stored['category'] ?? '') !== 'custom') {
+            return null;
+        }
+
+        // 2. Category Verification: Incoming rule must declare a category matching the stored rule
+        $incoming_cat = strtolower(trim((string) ($incoming_rule['category'] ?? '')));
+        $stored_cat   = strtolower(trim((string) ($stored['category'] ?? '')));
+        if ($incoming_cat === '' || ($incoming_cat !== $stored_cat && !in_array($incoming_cat, ['custom', 'custom modular rule'], true))) {
+            return null; // Missing or mismatched category
+        }
+
+        // 3. Strict Definition Verification:
+        // Every configured target constraint in the stored record MUST be present and match in the incoming rule.
+        // Incomplete fingerprints missing required definition fields are strictly rejected.
+        $target_fields = ['target_uri', 'target_param', 'target_value', 'wirefilter_expr'];
+        foreach ($target_fields as $tf) {
+            $stored_val = strtolower(trim((string) ($stored[$tf] ?? '')));
+            if ($stored_val !== '') {
+                // If stored rule requires a target, incoming rule MUST supply it and match exactly
+                if (!isset($incoming_rule[$tf])) {
+                    return null; // Missing required definition field
                 }
+                $incoming_val = strtolower(trim((string) $incoming_rule[$tf]));
+                if ($incoming_val !== $stored_val) {
+                    return null; // Mismatched or empty definition field
+                }
+            } elseif (isset($incoming_rule[$tf])) {
+                // If stored rule has no target constraint, incoming must also be empty
+                $incoming_val = strtolower(trim((string) $incoming_rule[$tf]));
+                if ($incoming_val !== '') {
+                    return null; // Divergent unexpected definition field
+                }
+            }
+        }
+
+        // 4. Action Verification: If incoming specifies an action, it must match stored action_type
+        if (isset($incoming_rule['action_type']) || isset($incoming_rule['action'])) {
+            $incoming_act = strtolower(trim((string) ($incoming_rule['action_type'] ?? $incoming_rule['action'])));
+            $stored_act   = strtolower(trim((string) ($stored['action_type'] ?? 'block')));
+            if ($incoming_act !== '' && $incoming_act !== $stored_act) {
+                return null; // Mismatched action
             }
         }
 
@@ -1211,6 +1244,11 @@ class ModularFirewallSynthesizer {
             'sync_cloudflare' => $sync_cf,
             'ban_ttl'         => $ban_ttl,
             'exempt_rules'    => is_array($rule['exempt_rules'] ?? null) ? $rule['exempt_rules'] : [],
+            'is_custom'       => !empty($rule['is_custom']),
+            'target_uri'      => (string) ($rule['target_uri'] ?? ''),
+            'target_param'    => (string) ($rule['target_param'] ?? ''),
+            'target_value'    => (string) ($rule['target_value'] ?? ''),
+            'wirefilter_expr' => (string) ($rule['wirefilter_expr'] ?? ''),
         ];
     }
 
