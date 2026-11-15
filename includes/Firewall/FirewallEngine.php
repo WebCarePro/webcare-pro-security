@@ -3162,18 +3162,28 @@ class FirewallEngine {
     }
 
     /**
-     * Inspect URI for any single, mixed-case, or multiply encoded directory traversal attempts.
-     * Handles single-encoded (%2e%2e, %2E%2e, %2e%2E), double-encoded (%252e%252e, %252E%252e),
-     * and triple-encoded (%25252e%25252E) traversal patterns across up to 5 decoding passes.
+     * Inspect URI path for single, mixed-case, or multiply encoded directory traversal attempts.
+     * Evaluates strictly against PHP_URL_PATH (excluding query parameters) and inspects path segments,
+     * eliminating false positives on query strings (e.g. ?search=version..history) and benign filenames
+     * (e.g. report..final.pdf) while strictly blocking single-, double-, and triple-encoded directory traversal.
      *
      * @param string $uri
      * @return bool
      */
     public static function has_path_traversal(string $uri): bool {
-        $decoded = $uri;
+        // 1. Isolate the path component strictly, excluding query parameters and fragments.
+        $raw_path = function_exists('wp_parse_url') ? (string) wp_parse_url($uri, PHP_URL_PATH) : '';
+        if ($raw_path === '') {
+            $parts    = explode('?', $uri, 2);
+            $parts    = explode('#', $parts[0], 2);
+            $raw_path = $parts[0];
+        }
+
+        // 2. Iteratively decode up to 5 passes to catch single-, double-, and triple-encodings (%2e, %252e, etc.)
+        $decoded = (string) $raw_path;
         for ($i = 0; $i < 5; $i++) {
             $normalized = str_replace('\\', '/', $decoded);
-            if (str_contains($normalized, '..')) {
+            if (self::is_traversal_path_segment($normalized)) {
                 return true;
             }
             $prev = $decoded;
@@ -3182,8 +3192,31 @@ class FirewallEngine {
                 break;
             }
         }
+
         $normalized = str_replace('\\', '/', $decoded);
-        return str_contains($normalized, '..');
+        return self::is_traversal_path_segment($normalized);
+    }
+
+    /**
+     * Helper to verify if a normalized slash-delimited path contains directory traversal segments.
+     *
+     * @param string $path
+     * @return bool
+     */
+    private static function is_traversal_path_segment(string $path): bool {
+        if (preg_match('#(?:^|/)\.\.(?:/|$)#', $path)) {
+            return true;
+        }
+
+        $segments = explode('/', $path);
+        foreach ($segments as $seg) {
+            $trimmed = trim($seg, " \t\n\r\0\x0B");
+            if ($trimmed === '..') {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -10130,7 +10163,8 @@ class FirewallEngine {
 
     /**
      * Deep-inspect a role name or role object to determine if it grants elevated/privileged capabilities.
-     * Treats any unknown, non-standard capabilities conservatively during unauthenticated user registration.
+     * Always inspects registered role capabilities—including standard roles like contributor—so a
+     * weaponized or modified role containing elevated capabilities is strictly flagged.
      *
      * @param string $role
      * @return bool
@@ -10141,22 +10175,20 @@ class FirewallEngine {
             return false;
         }
 
-        // Standard WordPress safe content/reader roles are unprivileged
-        if (in_array($r, ['subscriber', 'customer', 'contributor'], true)) {
-            return false;
-        }
-
-        // Known inherently elevated administrative / publishing roles
+        // 1. Known inherently elevated administrative / publishing roles
         if (in_array($r, ['administrator', 'editor', 'author', 'shop_manager', 'super_admin'], true)) {
             return true;
         }
 
-        // If the identifier itself is a privileged capability
+        // 2. If the identifier itself is a privileged capability
         if (self::is_privileged_capability($r)) {
             return true;
         }
 
-        // Baseline allowlist of safe unprivileged capabilities for genuine subscriber/customer/contributor roles
+        // Standard unprivileged reader/authoring baseline roles
+        $standard_unprivileged_roles = ['subscriber', 'customer', 'contributor'];
+
+        // Baseline allowlist of safe unprivileged capabilities for custom roles
         $safe_unprivileged_caps = [
             'read',
             'level_0',
@@ -10172,23 +10204,88 @@ class FirewallEngine {
             'delete_posts',
         ];
 
+        // 3. Always inspect actual registered role capabilities if get_role() is available
         if (function_exists('get_role')) {
             $role_obj = get_role($role);
             if ($role_obj instanceof \WP_Role && is_array($role_obj->capabilities)) {
+                $is_standard = in_array($r, $standard_unprivileged_roles, true);
+
                 foreach ($role_obj->capabilities as $cap => $granted) {
                     if (!$granted) {
                         continue;
                     }
                     $cap_lower = strtolower((string) $cap);
 
+                    // If any capability is privileged (e.g. manage_options, edit_users, activate_plugins), role is elevated
                     if (self::is_privileged_capability($cap_lower)) {
                         return true;
                     }
 
                     // For custom roles: if it contains capabilities beyond the safe unprivileged baseline, treat conservatively as elevated
-                    if (!in_array($cap_lower, $safe_unprivileged_caps, true)) {
+                    if (!$is_standard && !in_array($cap_lower, $safe_unprivileged_caps, true)) {
                         return true;
                     }
+                }
+
+                // If standard role has no privileged capabilities, it is safe
+                if ($is_standard) {
+                    return false;
+                }
+
+                return false;
+            }
+        }
+
+        // 4. Fallback when get_role() is not available or role is not registered
+        if (in_array($r, $standard_unprivileged_roles, true)) {
+            return false;
+        }
+
+        return false;
+    }
+
+    /**
+     * Determine if a WP_User instance holds any elevated or privileged roles or capabilities.
+     * Evaluates all assigned roles, direct capabilities, and effective capabilities (allcaps).
+     *
+     * @param \WP_User $user
+     * @return bool
+     */
+    public static function is_user_privileged(\WP_User $user): bool {
+        // 1. Direct core administrative capabilities check
+        $core_priv_caps = [
+            'manage_options',
+            'administrator',
+            'edit_users',
+            'promote_users',
+            'delete_users',
+            'manage_woocommerce',
+            'edit_plugins',
+            'activate_plugins',
+            'install_plugins',
+            'edit_themes',
+            'switch_themes',
+        ];
+        foreach ($core_priv_caps as $pcap) {
+            if ($user->has_cap($pcap)) {
+                return true;
+            }
+        }
+
+        // 2. Inspect all assigned roles (checking every role, not just $user->roles[0])
+        if (!empty($user->roles) && is_array($user->roles)) {
+            foreach ($user->roles as $role) {
+                if (self::is_privileged_role((string) $role)) {
+                    return true;
+                }
+            }
+        }
+
+        // 3. Inspect effective capabilities across all roles and user-specific caps
+        if (!empty($user->allcaps) && is_array($user->allcaps)) {
+            foreach ($user->allcaps as $cap => $granted) {
+                if ($granted && self::is_privileged_capability((string) $cap)) {
+                    return true;
                 }
             }
         }

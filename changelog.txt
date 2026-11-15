@@ -1,5 +1,9 @@
 ﻿v:2.15.0 - 2026-11-15
 - Zero-Gap Fail-Closed Streaming, Runtime RASP Hardening, Response DLP Redaction & Full Architectural Resilience:
+  * Multi-Role Capability Inspection, Contributor Hardening & Precision Path Traversal:
+    - Expanded unauthenticated target user privilege checks in RuntimeSqlRaspEngine via new centralized FirewallEngine::is_user_privileged() helper, verifying all assigned roles, direct capabilities, and effective allcaps (including edit_users, manage_woocommerce, install_plugins) rather than only checking roles[0].
+    - Eliminated early role-name returns in FirewallEngine::is_privileged_role(), ensuring any modified standard role (e.g. contributor weaponized with manage_options) is strictly detected and flagged as elevated.
+    - Refactored FirewallEngine::has_path_traversal() to strictly evaluate PHP_URL_PATH (excluding query parameters) and inspect discrete path segments, completely eliminating false positives on benign filenames (report..final.pdf) and REST search queries (?search=version..history) while maintaining zero tolerance for single-, double-, and triple-encoded directory traversal.
   * WebAuthn Passkey Pre-Flight Lockout & Containment Hardening (Patch 1):
     - Resolved Fatal PHP 8 ArgumentCountError in WebAuthnManager::verify_login() by supplying the 3 standard arguments to LoginHardening::check_ip_lockout(null, '', '') and safely evaluating WP_Error responses.
     - Corrected EmergencyContainmentManager namespace reference to \WebCareProScanner\Security\EmergencyContainmentManager.

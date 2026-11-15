@@ -366,9 +366,10 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                             $target_user = get_userdata($target_id);
                             if ($target_user instanceof \WP_User) {
                                 if (
-                                    $target_user->has_cap('manage_options')
+                                    (class_exists(FirewallEngine::class) && FirewallEngine::is_user_privileged($target_user))
+                                    || $target_user->has_cap('manage_options')
                                     || $target_user->has_cap('administrator')
-                                    || (class_exists(FirewallEngine::class) && FirewallEngine::is_privileged_role((string) ($target_user->roles[0] ?? '')))
+                                    || $target_user->has_cap('edit_users')
                                 ) {
                                     return false;
                                 }
@@ -377,6 +378,9 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                                 if ($reg_ts && (time() - $reg_ts) > 120) {
                                     return false;
                                 }
+                            } else {
+                                // Target user does not exist; unauthenticated sessions cannot mutate non-existent user records
+                                return false;
                             }
                         }
                     } elseif ($pred_col === 'user_login') {
@@ -385,9 +389,10 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                             $target_user = get_user_by('login', $login_val);
                             if ($target_user instanceof \WP_User) {
                                 if (
-                                    $target_user->has_cap('manage_options')
+                                    (class_exists(FirewallEngine::class) && FirewallEngine::is_user_privileged($target_user))
+                                    || $target_user->has_cap('manage_options')
                                     || $target_user->has_cap('administrator')
-                                    || (class_exists(FirewallEngine::class) && FirewallEngine::is_privileged_role((string) ($target_user->roles[0] ?? '')))
+                                    || $target_user->has_cap('edit_users')
                                 ) {
                                     return false;
                                 }
@@ -396,6 +401,9 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                                 if ($reg_ts && (time() - $reg_ts) > 120) {
                                     return false;
                                 }
+                            } else {
+                                // Target user does not exist; unauthenticated sessions cannot mutate non-existent user records
+                                return false;
                             }
                         }
                     }
