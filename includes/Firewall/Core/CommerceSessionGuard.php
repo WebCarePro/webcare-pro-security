@@ -155,56 +155,54 @@ class CommerceSessionGuard {
             }
         }
 
-        if (empty($_COOKIE) || !is_array($_COOKIE)) {
-            return false;
-        }
-
         // 2. Cryptographically validate `wp_woocommerce_session_*` against `wp_woocommerce_sessions` DB table and `wp_hash()`
-        foreach ($_COOKIE as $cookie_name => $cookie_val) {
-            if (!is_string($cookie_name) || !is_string($cookie_val) || $cookie_val === '') {
-                continue;
-            }
-
-            if (str_starts_with($cookie_name, 'wp_woocommerce_session_')) {
-                $raw_val = wp_unslash($cookie_val);
-                $parts   = explode('||', $raw_val);
-                if (count($parts) !== 4) {
+        if (!empty($_COOKIE) && is_array($_COOKIE)) {
+            foreach ($_COOKIE as $cookie_name => $cookie_val) {
+                if (!is_string($cookie_name) || !is_string($cookie_val) || $cookie_val === '') {
                     continue;
                 }
 
-                [$customer_id, $session_expiration, $session_expiring, $cookie_hash] = $parts;
-                if (
-                    $customer_id === ''
-                    || !ctype_digit((string) $session_expiration)
-                    || !ctype_digit((string) $session_expiring)
-                    || (int) $session_expiration <= time()
-                    || !preg_match('/^[a-f0-9]{32,64}$/i', $cookie_hash)
-                ) {
-                    continue;
-                }
+                if (str_starts_with($cookie_name, 'wp_woocommerce_session_')) {
+                    $raw_val = wp_unslash($cookie_val);
+                    $parts   = explode('||', $raw_val);
+                    if (count($parts) !== 4) {
+                        continue;
+                    }
 
-                // Verify HMAC signature
-                $to_hash = $customer_id . '|' . $session_expiration;
-                if (function_exists('wp_hash')) {
-                    $wp_hash_key = wp_hash($to_hash);
-                } elseif (
-                    defined('AUTH_KEY') && defined('AUTH_SALT')
-                    && is_string(AUTH_KEY) && is_string(AUTH_SALT)
-                    && AUTH_KEY !== '' && AUTH_SALT !== ''
-                    && (!function_exists('has_filter') || !has_filter('salt'))
-                ) {
-                    $wp_hash_key = hash_hmac('md5', $to_hash, AUTH_KEY . AUTH_SALT);
-                } else {
-                    continue;
-                }
+                    [$customer_id, $session_expiration, $session_expiring, $cookie_hash] = $parts;
+                    if (
+                        $customer_id === ''
+                        || !ctype_digit((string) $session_expiration)
+                        || !ctype_digit((string) $session_expiring)
+                        || (int) $session_expiration <= time()
+                        || !preg_match('/^[a-f0-9]{32,64}$/i', $cookie_hash)
+                    ) {
+                        continue;
+                    }
 
-                $expected_hmac = hash_hmac('md5', $to_hash, $wp_hash_key);
-                if (!hash_equals($expected_hmac, $cookie_hash)) {
-                    continue;
-                }
+                    // Verify HMAC signature
+                    $to_hash = $customer_id . '|' . $session_expiration;
+                    if (function_exists('wp_hash')) {
+                        $wp_hash_key = wp_hash($to_hash);
+                    } elseif (
+                        defined('AUTH_KEY') && defined('AUTH_SALT')
+                        && is_string(AUTH_KEY) && is_string(AUTH_SALT)
+                        && AUTH_KEY !== '' && AUTH_SALT !== ''
+                        && (!function_exists('has_filter') || !has_filter('salt'))
+                    ) {
+                        $wp_hash_key = hash_hmac('md5', $to_hash, AUTH_KEY . AUTH_SALT);
+                    } else {
+                        continue;
+                    }
 
-                if (self::is_unexpired_woocommerce_db_session((string) $customer_id)) {
-                    return true;
+                    $expected_hmac = hash_hmac('md5', $to_hash, $wp_hash_key);
+                    if (!hash_equals($expected_hmac, $cookie_hash)) {
+                        continue;
+                    }
+
+                    if (self::is_unexpired_woocommerce_db_session((string) $customer_id)) {
+                        return true;
+                    }
                 }
             }
         }

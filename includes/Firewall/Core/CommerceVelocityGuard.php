@@ -860,18 +860,15 @@ class CommerceVelocityGuard {
             return;
         }
 
-        // 5. E-Commerce & Membership Shopper Immunity
-        if (!empty($settings['waf_ecommerce_safe_mode'])) {
-            if (CommerceSessionGuard::has_active_shopper_session() || CommerceSessionGuard::is_commerce_or_membership_request($raw_uri)) {
-                if (!FirewallEngine::is_high_risk_recon_probe($raw_uri)) {
-                    $parsed_path = wp_parse_url($raw_uri, PHP_URL_PATH) ?: $raw_uri;
-                    $ext = strtolower(pathinfo($parsed_path, PATHINFO_EXTENSION));
-                    $static_asset_exts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'ico', 'css', 'js', 'woff', 'woff2', 'ttf', 'eot', 'avif'];
-                    if (in_array($ext, $static_asset_exts, true) || str_contains($raw_uri, '/wp-content/uploads/')) {
-                        return;
-                    }
-                }
-            }
+        // 5. E-Commerce Shopper & Authenticated User Immunity
+        if (
+            (function_exists('is_user_logged_in') && is_user_logged_in())
+            || (!empty($settings['waf_ecommerce_safe_mode']) && (
+                CommerceSessionGuard::has_active_shopper_session()
+                || CommerceSessionGuard::is_commerce_or_membership_request($raw_uri)
+            ))
+        ) {
+            return;
         }
 
         $threshold        = (int) ($settings['waf_404_threshold'] ?? 10);
@@ -923,8 +920,13 @@ class CommerceVelocityGuard {
                 FirewallEngine::log_incident($rule_triggered, 'detected');
             } else {
                 $incident_id = 'WEBCARE-' . strtoupper(substr(md5($client_ip . microtime(true) . wp_rand()), 0, 8));
-                FirewallEngine::log_incident($rule_triggered, 'blocked', $incident_id);
-                FirewallEngine::render_block_page($rule_triggered, $client_ip, $incident_id);
+                FirewallEngine::log_incident($rule_triggered, 'throttled', $incident_id);
+                if (!headers_sent()) {
+                    status_header(429);
+                    header('Retry-After: ' . max(60, $lockout_duration * 60));
+                    header('Content-Type: text/plain; charset=utf-8');
+                }
+                echo 'Too Many Requests: Temporary 404 rate limit exceeded. Please wait before retrying.';
                 exit;
             }
         } else {

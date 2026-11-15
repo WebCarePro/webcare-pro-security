@@ -829,22 +829,26 @@ class FirewallEngine {
                         // ensure legitimate paying customers are NOT locked out by non-critical automated operational bans
                         // (e.g. 404 or rate-limit bans on shared CGNAT IPs), while preserving manual admin bans and critical exploit bans.
                         $is_manual_admin_ban = ($ban_source === 'manual_admin') || (!empty($block_meta['admin_user']));
-                        $request_uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '/';
                         $ban_rule_id = strtoupper((string) ($block_meta['rule_id'] ?? ''));
                         $is_non_exploit_operational_ban = !$is_manual_admin_ban && (
                             str_contains($ban_rule_id, '404')
                             || str_contains($ban_rule_id, 'RATE-LIMIT')
                             || str_contains($ban_rule_id, 'SCRAPING')
                             || str_contains($ban_rule_id, 'BURST')
+                            || str_contains($ban_rule_id, 'THREAT-SCORE')
+                            || str_contains($ban_rule_id, 'KILLCHAIN')
+                            || str_contains($ban_rule_id, 'BOT-')
+                            || str_contains($ban_rule_id, 'HONEYTOKEN')
+                            || str_contains($ban_rule_id, 'AI-PROMPT')
+                            || str_contains($ban_rule_id, 'XSS')
+                            || str_contains($ban_rule_id, 'FORBIDDEN-USERNAME')
                         );
 
-                        if (
-                            $is_non_exploit_operational_ban
-                            && !empty($settings['waf_ecommerce_safe_mode'])
-                            && self::has_active_shopper_session()
-                            && self::is_commerce_or_membership_request($request_uri)
-                        ) {
-                            // Allow active verified cart session to complete checkout while still running full WAF exploit inspection below
+                        $is_verified_human_session = self::has_active_shopper_session()
+                            || (function_exists('is_user_logged_in') && is_user_logged_in());
+
+                        if ($is_non_exploit_operational_ban && $is_verified_human_session) {
+                            // Allow verified shopper or logged-in user through operational IP bans while still running full WAF exploit inspection below
                             $matching_entry = null;
                         }
 
@@ -1852,22 +1856,26 @@ class FirewallEngine {
                         // ensure legitimate paying customers are NOT locked out by non-critical automated operational bans
                         // (e.g. 404 or rate-limit bans on shared CGNAT IPs), while preserving manual admin bans and critical exploit bans.
                         $is_manual_admin_ban = ($ban_source === 'manual_admin') || (!empty($block_meta['admin_user']));
-                        $request_uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '/';
                         $ban_rule_id = strtoupper((string) ($block_meta['rule_id'] ?? ''));
                         $is_non_exploit_operational_ban = !$is_manual_admin_ban && (
                             str_contains($ban_rule_id, '404')
                             || str_contains($ban_rule_id, 'RATE-LIMIT')
                             || str_contains($ban_rule_id, 'SCRAPING')
                             || str_contains($ban_rule_id, 'BURST')
+                            || str_contains($ban_rule_id, 'THREAT-SCORE')
+                            || str_contains($ban_rule_id, 'KILLCHAIN')
+                            || str_contains($ban_rule_id, 'BOT-')
+                            || str_contains($ban_rule_id, 'HONEYTOKEN')
+                            || str_contains($ban_rule_id, 'AI-PROMPT')
+                            || str_contains($ban_rule_id, 'XSS')
+                            || str_contains($ban_rule_id, 'FORBIDDEN-USERNAME')
                         );
 
-                        if (
-                            $is_non_exploit_operational_ban
-                            && !empty($settings['waf_ecommerce_safe_mode'])
-                            && self::has_active_shopper_session()
-                            && self::is_commerce_or_membership_request($request_uri)
-                        ) {
-                            // Allow active verified cart session to complete checkout while still running full WAF exploit inspection below
+                        $is_verified_human_session = self::has_active_shopper_session()
+                            || (function_exists('is_user_logged_in') && is_user_logged_in());
+
+                        if ($is_non_exploit_operational_ban && $is_verified_human_session) {
+                            // Allow verified shopper or logged-in user through operational IP bans while still running full WAF exploit inspection below
                             $matching_entry = null;
                         }
 
@@ -2689,7 +2697,7 @@ class FirewallEngine {
     /**
      * Render branded 403 Forbidden Error Screen via standard wp_die()
      */
-    private static function render_block_page(array $rule, string $client_ip, ?string $incident_id = null) {
+    public static function render_block_page(array $rule, string $client_ip, ?string $incident_id = null) {
         // Red Team Drill Intercept Handler
         // phpcs:ignore WordPress.Security.NonceVerification.Recommended
         $drill_token = isset($_GET['webcare_drill_token']) ? sanitize_text_field(wp_unslash($_GET['webcare_drill_token'])) : (isset($_SERVER['HTTP_X_WEBCARE_DRILL_TOKEN']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_X_WEBCARE_DRILL_TOKEN'])) : '');
@@ -5225,48 +5233,20 @@ class FirewallEngine {
                 return $user;
             }
 
-            // Immediately permanently block IP with full metadata
             $honeypot_incident_id = 'WEBCARE-' . strtoupper(substr(md5($client_ip . microtime(true) . wp_rand()), 0, 8));
-            self::add_blocked_ip(
-                $client_ip,
-                sprintf('Attacker tried to log in using forbidden honeypot username "%s". Permanently blocked.', esc_html($username)),
-                0,
-                'WAF-FORBIDDEN-USERNAME-TRAP',
-                'Forbidden Honeypot Username Trap',
-                'Identity Defense',
-                $honeypot_incident_id
-            );
-
-            // Log incident
             self::log_incident([
                 'id'          => 'WAF-FORBIDDEN-USERNAME-TRAP',
-                'name'        => 'Forbidden Honeypot Username Trap',
+                'name'        => 'Forbidden Honeypot Username Attempt',
                 'category'    => 'Identity Defense',
-                'description' => sprintf('Attacker IP tried to log in using forbidden honeypot username "%s". IP permanently banned.', esc_html($username)),
-                'match_type'  => 'Honeypot Username',
+                'description' => sprintf('Login attempt using forbidden username "%s" rejected and counted toward login lockout.', esc_html($username)),
+                'match_type'  => 'Forbidden Username',
                 'match_value' => $username,
                 'payload'     => "User: {$username} IP: {$client_ip}",
             ], 'blocked', $honeypot_incident_id);
 
-            // Also lock in LoginHardening
-            if (class_exists('\\WebCareProScanner\\Auth\\LoginHardening')) {
-                $lockouts = \WebCareProScanner\Auth\LoginHardening::get_locked_ips();
-                $now = time();
-                $lockouts[$client_ip] = [
-                    'ip'         => $client_ip,
-                    'attempts'   => 999,
-                    'username'   => $username,
-                    'blocked_at' => gmdate('Y-m-d H:i:s', $now),
-                    'expires_at' => $now + (365 * 86400),
-                    'user_agent' => isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '',
-                ];
-                update_option(\WebCareProScanner\Auth\LoginHardening::OPTION_LOCKOUTS, $lockouts, false);
-            }
-
-            // Return immediate access denied error
             return new \WP_Error(
-                'webcare_forbidden_username_blocked',
-                __('<strong>Access Blocked:</strong> Attempting to sign in with this username is strictly prohibited. Your IP has been permanently banned by the security firewall.', 'webcare-pro-security')
+                'incorrect_password',
+                __('<strong>Error:</strong> The username or password you entered is incorrect.', 'webcare-pro-security')
             );
         }
 
@@ -5688,10 +5668,8 @@ class FirewallEngine {
             'PHP Code Injection',
             'Execution Armor',
             'Path Traversal',
-            'Cross-Site Scripting (XSS)',
             'Malicious File Upload',
             'Virtual Patch',
-            'AI & Agent Defense',
             'Null Byte Poison',
             'SSRF Defense',
         ];
@@ -7336,6 +7314,9 @@ class FirewallEngine {
             return [$raw_input];
         }
 
+        if (!json_validate($raw_input)) {
+            return $extracted;
+        }
         $decoded = json_decode($raw_input, true);
         if (!is_array($decoded) || empty($decoded['requests']) || !is_array($decoded['requests'])) {
             return $extracted;
@@ -7541,19 +7522,14 @@ class FirewallEngine {
         $secure        = function_exists('is_ssl') && is_ssl();
 
         // Issue HttpOnly, Secure, SameSite=Lax cookie
-        if (PHP_VERSION_ID >= 70300) {
-            setcookie('webcare_preload_auth', $val, [
-                'expires'  => $exp,
-                'path'     => $cookie_path,
-                'domain'   => $cookie_domain,
-                'secure'   => $secure,
-                'httponly' => true,
-                'samesite' => 'Lax',
-            ]);
-        } else {
-            // phpcs:ignore WordPress.Security.SafeCookie.SetCookieDomain
-            setcookie('webcare_preload_auth', $val, $exp, $cookie_path . '; samesite=Lax', $cookie_domain, $secure, true);
-        }
+        setcookie('webcare_preload_auth', $val, [
+            'expires'  => $exp,
+            'path'     => $cookie_path,
+            'domain'   => $cookie_domain,
+            'secure'   => $secure,
+            'httponly' => true,
+            'samesite' => 'Lax',
+        ]);
 
         $_COOKIE['webcare_preload_auth'] = $val;
     }
@@ -7569,19 +7545,14 @@ class FirewallEngine {
             $cookie_domain = defined('COOKIE_DOMAIN') ? COOKIE_DOMAIN : '';
             $secure        = function_exists('is_ssl') && is_ssl();
 
-            if (PHP_VERSION_ID >= 70300) {
-                setcookie('webcare_preload_auth', '', [
-                    'expires'  => time() - 3600,
-                    'path'     => $cookie_path,
-                    'domain'   => $cookie_domain,
-                    'secure'   => $secure,
-                    'httponly' => true,
-                    'samesite' => 'Lax',
-                ]);
-            } else {
-                // phpcs:ignore WordPress.Security.SafeCookie.SetCookieDomain
-                setcookie('webcare_preload_auth', '', time() - 3600, $cookie_path, $cookie_domain, $secure, true);
-            }
+            setcookie('webcare_preload_auth', '', [
+                'expires'  => time() - 3600,
+                'path'     => $cookie_path,
+                'domain'   => $cookie_domain,
+                'secure'   => $secure,
+                'httponly' => true,
+                'samesite' => 'Lax',
+            ]);
         }
 
         if (isset($_COOKIE['webcare_preload_auth'])) {

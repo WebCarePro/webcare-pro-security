@@ -1,6 +1,6 @@
 {
   "version": "2.15.0",
-  "generated_at": "2026-11-15T17:23:14.597Z",
+  "generated_at": "2026-11-15T17:38:40.751Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -436,16 +436,16 @@
       "size": 15773
     },
     "includes/Firewall/Core/CommerceSessionGuard.php": {
-      "sha256": "7ddde13616a7571bb0f78d41ec82f4c168ae58bfaa3f3279bc593285a51d8cba",
-      "size": 20681
+      "sha256": "1b5361e94361f1e7e69836034c3ba3b5d227123ad4bc1044b55d6e61f932f704",
+      "size": 20826
     },
     "includes/Firewall/Core/CommerceVelocityGuard.php": {
-      "sha256": "ae6386603284e094e9ea0be0a0afe98334a0738295761c013f984323dc1e6087",
-      "size": 40301
+      "sha256": "98bc5fc0a7ec269553917c2193ccd09416df2693d7a7af1735533e7f753a91d0",
+      "size": 40131
     },
     "includes/Firewall/Core/ExploitSignatureEngine.php": {
-      "sha256": "af50a9957e5e9be79fb957fea0c6da56cd6b763d670e3db3b8f735af3216871f",
-      "size": 102816
+      "sha256": "a8c837c3c26ef3bf9a808fb91635338210d244e495f8ca57643ce86d4156a6b5",
+      "size": 102815
     },
     "includes/Firewall/Core/RaspPrivilegeGuard.php": {
       "sha256": "5743c90a754f51f20d3895ac6fc1d2bb01ca0b8632db9da27a2737dca6c6be29",
@@ -464,8 +464,8 @@
       "size": 14728
     },
     "includes/Firewall/FirewallEngine.php": {
-      "sha256": "da5cb5d01a933f67fb30f9d2ab249ebefb62f9afb4b5baa6d4f395a75358811b",
-      "size": 390603
+      "sha256": "91d0961b42be750006dbc6043e21fd5b28b9a297f582a54d10509efd26adc0f9",
+      "size": 389127
     },
     "includes/Firewall/FormSpamProtectionEngine.php": {
       "sha256": "5826fd51a35f621671072dbf69d71b596224b48db75f9d773cfbe12e261f2cf0",
