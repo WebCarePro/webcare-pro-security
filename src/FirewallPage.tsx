@@ -175,6 +175,10 @@ interface FirewallStatus {
   };
   total_blocks: number;
   blocks_24h: number;
+  blocks_today?: number;
+  today_date?: string;
+  today_date_full?: string;
+  unique_attack_ips?: number;
   top_rules: Array<{ rule_category: string; count: number }>;
   client_ip: string;
   threat_intel?: ThreatIntelStatus;
@@ -2568,34 +2572,48 @@ export const FirewallPage = ({
           );
         })()}
 
-        {/* Total Blocks */}
+        {/* Blocked Attacks Today */}
         <div className="webcare-firewall-kpi-card">
           <div className="webcare-firewall-kpi-label">
-            <span>Total Blocked Attacks</span>
+            <span>Blocked Attacks Today</span>
           </div>
           <div className="webcare-firewall-kpi-val" style={{ color: '#dc2626' }}>
             {(() => {
-              const fromStatus = status?.total_blocks ?? 0;
+              const fromStatus = status?.blocks_today ?? status?.blocks_24h ?? 0;
               const fromLogs = logs.filter(l => l.action_taken === 'blocked').length;
               return Math.max(fromStatus, fromLogs).toLocaleString();
             })()}
           </div>
-          <span className="webcare-firewall-kpi-sub">Cumulative incidents prevented</span>
+          <span className="webcare-firewall-kpi-sub">
+            {status?.total_blocks
+              ? `${status.total_blocks.toLocaleString()} all-time incidents prevented`
+              : `Active Shield (${status?.today_date || 'Today'})`}
+          </span>
         </div>
 
-        {/* 24h Blocks */}
+        {/* Today's Active Date */}
         <div className="webcare-firewall-kpi-card">
           <div className="webcare-firewall-kpi-label">
-            <span>Blocked in Past 24 Hours</span>
+            <span>Today's Date</span>
           </div>
-          <div className="webcare-firewall-kpi-val" style={{ color: '#0284c7' }}>
-            {(() => {
-              const fromStatus = status?.blocks_24h ?? 0;
-              const fromLogs = logs.filter(l => l.action_taken === 'blocked').length;
-              return Math.max(fromStatus, fromLogs).toLocaleString();
-            })()}
+          <div
+            className="webcare-firewall-kpi-val"
+            style={{
+              color: '#0284c7',
+              fontSize: '18px',
+              fontWeight: 700,
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis'
+            }}
+          >
+            {status?.today_date_full || status?.today_date || new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
           </div>
-          <span className="webcare-firewall-kpi-sub">Recent suspicious requests</span>
+          <span className="webcare-firewall-kpi-sub">
+            {status?.unique_attack_ips && status.unique_attack_ips > 0
+              ? `${status.unique_attack_ips.toLocaleString()} unique threat IPs filtered`
+              : 'Zero malicious IPs detected today'}
+          </span>
         </div>
 
         {/* Whitelist IP Quick Action */}

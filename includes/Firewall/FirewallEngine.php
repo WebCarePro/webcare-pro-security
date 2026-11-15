@@ -4304,83 +4304,37 @@ class FirewallEngine {
         $env = self::detect_environment();
 
         $total_blocks = 0;
-        $blocks_24h = 0;
-        $top_rules = [];
+        $blocks_24h   = 0;
+        $blocks_today = 0;
+        $unique_ips   = 0;
+        $top_rules    = [];
 
-        // 1. Fetch aggregate metrics from primary WAF filesystem log engine (WafFileLogger)
-        $file_stats = WafFileLogger::get_log_stats('all');
-        $file_total = (int) ($file_stats['blocked_24h'] ?? 0); // In WafFileLogger, 'blocked_24h' key stores total blocked count across the queried range
-        $top_rules  = array_slice($file_stats['top_categories'] ?? [], 0, 5);
-
-        // Calculate accurate past 24-hour blocked count across active rolling log window
-        $now = time();
-        $cutoff_24h = $now - 86400;
-        $file_24h = 0;
-        $today_file = WafFileLogger::get_storage_dir() . DIRECTORY_SEPARATOR . WafFileLogger::get_daily_filename();
+        // 1. Fetch aggregate metrics scoped strictly to TODAY's single partition file to eliminate multi-month JSON scan overhead
+        $today_file   = WafFileLogger::get_storage_dir() . DIRECTORY_SEPARATOR . WafFileLogger::get_daily_filename();
         $today_exists = file_exists($today_file);
-        $all_available_files = WafFileLogger::get_available_files();
 
-        // Inspect log files from the past 48 hours for precise 24-hour timestamp evaluation
-        foreach ($all_available_files as $finfo) {
-            $fdate_ts = strtotime((string) ($finfo['date'] ?? ''));
-            if ($fdate_ts !== false && $fdate_ts < ($now - 172800)) {
-                continue;
-            }
-            $fpath = WafFileLogger::get_storage_dir() . DIRECTORY_SEPARATOR . $finfo['filename'];
-            if (!file_exists($fpath) || !is_readable($fpath)) {
-                continue;
-            }
-            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen -- Low-memory progressive streaming of partitioned JSONL log files
-            $handle = @fopen($fpath, 'r');
-            if (!$handle) {
-                continue;
-            }
-            while (($line = fgets($handle)) !== false) {
-                $line = trim($line);
-                if ($line === '' || $line[0] !== '{') {
-                    continue;
-                }
-                $rec = json_decode($line, true);
-                if (!is_array($rec)) {
-                    continue;
-                }
-                $rec_ts = (int) ($rec['timestamp'] ?? (isset($rec['created_at']) ? strtotime($rec['created_at']) : 0));
-                if ($rec_ts >= $cutoff_24h && ($rec['action_taken'] ?? '') === 'blocked') {
-                    $file_24h++;
-                }
-            }
-            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
-            fclose($handle);
+        if ($today_exists) {
+            $file_stats   = WafFileLogger::get_log_stats('today');
+            $blocks_today = (int) ($file_stats['blocked_24h'] ?? 0);
+            $unique_ips   = (int) ($file_stats['unique_attack_ips'] ?? 0);
+            $top_rules    = array_slice($file_stats['top_categories'] ?? [], 0, 5);
         }
 
-        // If no attacks have arrived today yet and today's file does not exist, fall back to the most recent day file
-        if ($file_24h === 0 && !$today_exists && !empty($all_available_files)) {
-            $latest_path = WafFileLogger::get_storage_dir() . DIRECTORY_SEPARATOR . $all_available_files[0]['filename'];
-            if (file_exists($latest_path) && is_readable($latest_path)) {
-                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
-                $handle = @fopen($latest_path, 'r');
-                if ($handle) {
-                    while (($line = fgets($handle)) !== false) {
-                        $line = trim($line);
-                        if ($line === '' || $line[0] !== '{') {
-                            continue;
-                        }
-                        $rec = json_decode($line, true);
-                        if (!is_array($rec)) {
-                            continue;
-                        }
-                        if (($rec['action_taken'] ?? '') === 'blocked') {
-                            $file_24h++;
-                        }
-                    }
-                    // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
-                    fclose($handle);
-                }
+        // Fast O(1) lifetime persistent counter in wp_options
+        $lifetime_counter = get_option('webcareproscan_lifetime_blocked_counter', false);
+        if ($lifetime_counter === false) {
+            $lifetime_counter = $blocks_today;
+            update_option('webcareproscan_lifetime_blocked_counter', $lifetime_counter, false);
+        } else {
+            $lifetime_counter = (int) $lifetime_counter;
+            if ($lifetime_counter < $blocks_today) {
+                $lifetime_counter = $blocks_today;
+                update_option('webcareproscan_lifetime_blocked_counter', $lifetime_counter, false);
             }
         }
 
-        $total_blocks = $file_total;
-        $blocks_24h   = $file_24h;
+        $total_blocks = $lifetime_counter;
+        $blocks_24h   = $blocks_today;
 
         // 2. Fallback / merge legacy SQL database table if existing records are present
         // Check if table exists
@@ -4396,6 +4350,7 @@ class FirewallEngine {
             if ($db_total > 0) {
                 $total_blocks += $db_total;
                 $blocks_24h   += $db_24h;
+                $blocks_today += $db_24h;
                 if (empty($top_rules)) {
                     $top_rules = $wpdb->get_results(
                         $top_rules_sql,
@@ -4424,6 +4379,10 @@ class FirewallEngine {
             'environment'        => $env,
             'total_blocks'       => $total_blocks,
             'blocks_24h'         => $blocks_24h,
+            'blocks_today'       => $blocks_today,
+            'today_date'         => current_time('M j, Y'),
+            'today_date_full'    => current_time('F j, Y'),
+            'unique_attack_ips'  => $unique_ips,
             'top_rules'          => $top_rules,
             'client_ip'          => self::get_client_ip(),
             'threat_intel'       => ThreatIntelService::get_status(),

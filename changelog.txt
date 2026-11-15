@@ -7,6 +7,10 @@
     - Integrated $skip_operational_heuristics into Rule 18 execution, ensuring authenticated administrators, whitelisted origins, and verified page builders bypass static file reconnaissance inspection.
     - Added early exemption in is_high_risk_recon_probe() for /wp-json/webcare-pro-security/ endpoints.
     - Hardened handle_rule_violation() to protect authenticated administrator sessions (is_authenticated_administrator()) from non-critical rule blocks and self-lockouts even if their dynamic IP address has not yet been manually saved to waf_whitelisted_ips.
+  * Firewall Overview Page Performance Optimization & Daily KPI Metrics:
+    - Scoped Firewall status endpoint (FirewallEngine::get_status()) strictly to today's active partition file, eliminating CPU and disk I/O overhead from scanning historical JSON log files across months on page load.
+    - Implemented atomic O(1) lifetime blocked incidents counter in wp_options (webcareproscan_lifetime_blocked_counter) incremented in WafFileLogger::log_incident() on each block, decoupling all-time metrics from multi-file disk parsing.
+    - Updated Firewall overview KPI cards to display "Blocked Attacks Today" and "Today's Date", surfacing daily protection counts, active date, and unique threat IPs filtered today with high-contrast theme typography.
   * SVGZ Decompression Bomb Defense & Resource Safety Policy (P1 & P2):
     - Replaced unbounded gzdecode() with bounded decompression enforcing a strict maximum decompressed length ($max_decompressed_bytes, 4 MB) as the primary resource-safety mechanism preventing memory exhaustion.
     - Failed closed (WAF-SVGZ-DECOMPRESSION-BOMB-OR-ERROR) whenever decompression fails, is corrupted, or exceeds the 4 MB ceiling, eliminating worker memory exhaustion and zip-bomb denial of service.

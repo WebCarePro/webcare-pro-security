@@ -262,6 +262,12 @@ class WafFileLogger {
 
         self::append_record_to_file($incident_record);
 
+        // Maintain atomic O(1) lifetime blocked incidents counter in wp_options to eliminate multi-file scan overhead
+        if ($action === 'blocked') {
+            $prev_c = (int) get_option('webcareproscan_lifetime_blocked_counter', 0);
+            update_option('webcareproscan_lifetime_blocked_counter', $prev_c + 1, false);
+        }
+
         return $incident_id;
     }
 
@@ -977,6 +983,8 @@ class WafFileLogger {
                 wp_delete_file($filepath);
             }
         }
+
+        update_option('webcareproscan_lifetime_blocked_counter', 0, false);
 
         return true;
     }

@@ -26,7 +26,7 @@ class WeeklyDigestEngine {
         global $wpdb;
 
         // 1. WAF filesystem stats across past 7 days
-        $waf_stats = class_exists(WafFileLogger::class) ? WafFileLogger::get_log_stats('all') : [];
+        $waf_stats = class_exists(WafFileLogger::class) ? WafFileLogger::get_log_stats('7days') : [];
         $total_blocked = (int) ($waf_stats['blocked_24h'] ?? 0);
         $total_inspected = (int) ($waf_stats['total_events'] ?? 0);
 
