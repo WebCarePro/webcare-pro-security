@@ -844,11 +844,10 @@ class FirewallEngine {
                             || str_contains($ban_rule_id, 'FORBIDDEN-USERNAME')
                         );
 
-                        $is_verified_human_session = self::has_active_shopper_session()
-                            || (function_exists('is_user_logged_in') && is_user_logged_in());
+                        $is_verified_human_session = self::is_exempt_from_operational_ban();
 
                         if ($is_non_exploit_operational_ban && $is_verified_human_session) {
-                            // Allow verified shopper or logged-in user through operational IP bans while still running full WAF exploit inspection below
+                            // Allow verified shopper/member or administrator through operational IP bans while still running full WAF exploit inspection below
                             $matching_entry = null;
                         }
 
@@ -1871,11 +1870,10 @@ class FirewallEngine {
                             || str_contains($ban_rule_id, 'FORBIDDEN-USERNAME')
                         );
 
-                        $is_verified_human_session = self::has_active_shopper_session()
-                            || (function_exists('is_user_logged_in') && is_user_logged_in());
+                        $is_verified_human_session = self::is_exempt_from_operational_ban();
 
                         if ($is_non_exploit_operational_ban && $is_verified_human_session) {
-                            // Allow verified shopper or logged-in user through operational IP bans while still running full WAF exploit inspection below
+                            // Allow verified shopper/member or administrator through operational IP bans while still running full WAF exploit inspection below
                             $matching_entry = null;
                         }
 
@@ -2291,6 +2289,16 @@ class FirewallEngine {
      */
     public static function has_active_shopper_session(): bool {
         return CommerceSessionGuard::has_active_shopper_session();
+    }
+
+    /**
+     * Determine if current session is exempt from operational IP bans.
+     * Narrowly scoped to verified shoppers/members or authenticated administrators.
+     *
+     * @return bool
+     */
+    public static function is_exempt_from_operational_ban(): bool {
+        return CommerceSessionGuard::is_exempt_from_operational_ban();
     }
 
     /**
@@ -5660,9 +5668,26 @@ class FirewallEngine {
             \WebCareProScanner\Firewall\CAF\OriginLoadCircuitBreaker::record_blocked_probe();
         }
 
-        // Record differential threat score event & trigger immediate Cloudflare Edge Ban on critical exploits
+        // Record differential threat score event & trigger containment ban on confirmed exploits or explicit admin policy
         $rule_id_str = (string) ($rule['id'] ?? '');
         $rule_cat    = (string) ($rule['category'] ?? '');
+
+        // Heuristic detection categories (strictly block request; zero automated IP bans)
+        $is_heuristic = in_array($rule_cat, [
+            'Cross-Site Scripting (XSS)',
+            'AI & Agent Defense',
+            'AI Agent Kill-Chain Defense',
+            'Behavioral Defense',
+            'Bot Recon Defense',
+            '404 Scanner Rate Limit',
+            'Protocol Defense',
+            'Security Policy',
+            'File Reconnaissance',
+        ], true) || str_contains($rule_id_str, 'XSS')
+                 || str_contains($rule_id_str, 'AI-PROMPT')
+                 || str_contains($rule_id_str, 'BOT-')
+                 || str_contains($rule_id_str, 'SCANNER-404');
+
         $critical_ban_categories = [
             'SQL Injection',
             'PHP Code Injection',
@@ -5674,7 +5699,9 @@ class FirewallEngine {
             'SSRF Defense',
         ];
 
-        $is_instant_ban_exploit = in_array($rule_cat, $critical_ban_categories, true)
+        // Confirmed high-severity exploits eligible for automated IP containment
+        $is_confirmed_exploit = !$is_heuristic && (
+            in_array($rule_cat, $critical_ban_categories, true)
             || str_contains($rule_id_str, 'VPATCH')
             || str_contains($rule_id_str, 'SQLI')
             || str_contains($rule_id_str, 'RCE')
@@ -5688,15 +5715,35 @@ class FirewallEngine {
             || str_contains($rule_id_str, 'INTERACTIVITY-POISON')
             || str_contains($rule_id_str, 'FORGED-WEBHOOK')
             || str_contains($rule_id_str, 'AUTH-TYPE-CONFUSION')
-            || str_contains($rule_id_str, 'REST-METHOD-SMUGGLE');
+            || str_contains($rule_id_str, 'REST-METHOD-SMUGGLE')
+        );
 
-        $rule_ban_ttl       = max(0, (int) ($rule['ban_ttl'] ?? 0));
-        $has_explicit_sync  = array_key_exists('sync_cloudflare', $rule);
-        $rule_sync_cf       = $has_explicit_sync ? !empty($rule['sync_cloudflare']) : true;
-        $wants_custom_ban   = !empty($rule['sync_cloudflare']) || $rule_ban_ttl > 0;
+        // Explicit administrator-configured custom rule
+        $is_custom_admin_rule = !empty($rule['is_custom'])
+            || ($rule_cat === 'custom')
+            || (!empty($rule['author']) && $rule['author'] === 'administrator');
 
-        if ($is_instant_ban_exploit || $wants_custom_ban) {
-            $effective_ban_ttl = $rule_ban_ttl > 0 ? $rule_ban_ttl : 86400;
+        $rule_ban_ttl        = max(0, (int) ($rule['ban_ttl'] ?? 0));
+        $eligible_for_ip_ban = false;
+        $effective_ban_ttl   = 0;
+
+        if ($is_custom_admin_rule && $rule_ban_ttl > 0) {
+            // 1. Explicit administrator-configured ban: follow administrator's explicit policy
+            $eligible_for_ip_ban = true;
+            $effective_ban_ttl   = $rule_ban_ttl;
+        } elseif ($is_heuristic) {
+            // 2. Heuristic detection: log and block individual request; zero automated IP bans
+            $eligible_for_ip_ban = false;
+        } elseif ($is_confirmed_exploit) {
+            // 3. Confirmed high-severity exploit: automated containment ban
+            $eligible_for_ip_ban = true;
+            $effective_ban_ttl   = $rule_ban_ttl > 0 ? $rule_ban_ttl : 86400;
+        }
+
+        // Cloudflare sync preference only applies if the rule is eligible for an IP ban; never causes a ban independently
+        $rule_sync_cf = $eligible_for_ip_ban && !empty($rule['sync_cloudflare']);
+
+        if ($eligible_for_ip_ban) {
             $ban_reason        = sprintf('[%s] %s', $rule_id_str ?: $rule_cat, $rule['description'] ?? 'Critical WAF exploit intercepted');
             self::add_blocked_ip(
                 $client_ip,

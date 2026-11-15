@@ -742,21 +742,45 @@ class VaultRotator {
 
             try {
                 $reencrypted = SecretVault::rotate_record($payload, $old_binary_key, $new_binary_key);
+
+                // In-memory read-back verification under new key before touching disk
+                $verified_plain = SecretVault::decrypt_with_key($reencrypted, $new_binary_key);
+                if ($verified_plain === false || !hash_equals(hash('sha256', $plain), hash('sha256', $verified_plain))) {
+                    $result['failed'][] = 'archive:' . basename($file_path);
+                    continue;
+                }
+
                 $temp_file   = $file_path . '.rot_' . bin2hex(random_bytes(4));
                 $new_content = $header . $format_prefix . $reencrypted;
                 // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
                 if (@file_put_contents($temp_file, $new_content, LOCK_EX) === strlen($new_content)) {
-                    // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename
-                    if (@rename($temp_file, $file_path)) {
-                        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod
-                        @chmod($file_path, 0600);
-                        $result['rotated']++;
-                        continue;
+                    // On-disk read-back verification from written temporary file before atomic rename
+                    $disk_content = @file_get_contents($temp_file);
+                    if ($disk_content !== false) {
+                        $disk_payload = substr($disk_content, $split_pos);
+                        if ($format_prefix !== '' && str_starts_with($disk_payload, $format_prefix)) {
+                            $disk_payload = substr($disk_payload, strlen($format_prefix));
+                        }
+                        $disk_plain = SecretVault::decrypt_with_key(trim($disk_payload), $new_binary_key);
+                        if ($disk_plain !== false && hash_equals(hash('sha256', $plain), hash('sha256', $disk_plain))) {
+                            // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename
+                            if (@rename($temp_file, $file_path)) {
+                                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod
+                                @chmod($file_path, 0600);
+                                $result['rotated']++;
+                                continue;
+                            }
+                        }
                     }
                 }
-                wp_delete_file($temp_file);
+                if (file_exists($temp_file)) {
+                    wp_delete_file($temp_file);
+                }
                 $result['failed'][] = 'archive:' . basename($file_path);
             } catch (\Throwable $e) {
+                if (isset($temp_file) && file_exists($temp_file)) {
+                    wp_delete_file($temp_file);
+                }
                 $result['failed'][] = 'archive:' . basename($file_path);
             }
         }

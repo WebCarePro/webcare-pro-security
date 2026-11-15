@@ -860,9 +860,9 @@ class CommerceVelocityGuard {
             return;
         }
 
-        // 5. E-Commerce Shopper & Authenticated User Immunity
+        // 5. E-Commerce Shopper & Verified Privilege Immunity (Subscribers do not bypass velocity controls)
         if (
-            (function_exists('is_user_logged_in') && is_user_logged_in())
+            CommerceSessionGuard::is_exempt_from_operational_ban()
             || (!empty($settings['waf_ecommerce_safe_mode']) && (
                 CommerceSessionGuard::has_active_shopper_session()
                 || CommerceSessionGuard::is_commerce_or_membership_request($raw_uri)

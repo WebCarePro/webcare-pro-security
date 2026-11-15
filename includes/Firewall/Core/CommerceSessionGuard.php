@@ -241,6 +241,38 @@ class CommerceSessionGuard {
     }
 
     /**
+     * Determine if the current session qualifies for operational-ban exemption.
+     * Narrowly scoped to verified shoppers/members or authenticated administrators.
+     * Generic subscriber or low-privilege accounts do NOT bypass operational bans.
+     *
+     * @return bool
+     */
+    public static function is_exempt_from_operational_ban(): bool {
+        // 1. Verified WooCommerce / Membership customer or active shopper cart session
+        if (self::has_active_shopper_session()) {
+            return true;
+        }
+
+        // 2. Narrowly-scoped administrator exemption
+        if (function_exists('current_user_can') && current_user_can('manage_options')) {
+            return true;
+        }
+
+        // Early-boot auth cookie validation for administrators prior to current_user_can setup
+        if (function_exists('wp_validate_auth_cookie') && function_exists('get_userdata')) {
+            $admin_uid = (int) wp_validate_auth_cookie('', 'logged_in');
+            if ($admin_uid > 0) {
+                $admin_user = get_userdata($admin_uid);
+                if ($admin_user instanceof \WP_User && (in_array('administrator', (array) $admin_user->roles, true) || $admin_user->has_cap('manage_options'))) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Detect if the incoming URI or request belongs to legitimate E-Commerce, Cart,
      * Checkout, Customer Account, or Payment Gateway Webhook channels.
      *

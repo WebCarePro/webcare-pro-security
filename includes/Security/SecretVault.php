@@ -243,6 +243,14 @@ class SecretVault {
      * Encrypt a plaintext secret with an explicit key using authenticated AES-256-GCM.
      */
     public static function encrypt_with_key(string $value, string $key): string {
+        if (!function_exists('openssl_encrypt')) {
+            throw new \RuntimeException('WebCare SecretVault Error: OpenSSL extension is missing or disabled on this server.');
+        }
+
+        if (!in_array(self::CIPHER_GCM, openssl_get_cipher_methods(), true)) {
+            throw new \RuntimeException('WebCare SecretVault Error: AES-256-GCM cipher is unavailable in server OpenSSL installation.');
+        }
+
         $binary_key = strlen($key) === 64 && ctype_xdigit($key) ? (string) hex2bin($key) : (strlen($key) === 32 ? $key : hash('sha256', $key, true));
         $iv = random_bytes(12);
         $tag = '';
@@ -288,6 +296,14 @@ class SecretVault {
     public static function rotate_record(string $encrypted_value, string $old_key, string $new_key): string {
         if (!self::is_encrypted($encrypted_value)) {
             return $encrypted_value;
+        }
+
+        if (!function_exists('openssl_encrypt') || !function_exists('openssl_decrypt')) {
+            throw new \RuntimeException('WebCare SecretVault Error: OpenSSL extension is missing or disabled on this server.');
+        }
+
+        if (!in_array(self::CIPHER_GCM, openssl_get_cipher_methods(), true)) {
+            throw new \RuntimeException('WebCare SecretVault Error: AES-256-GCM cipher is unavailable in server OpenSSL installation.');
         }
 
         $old_binary_key = strlen($old_key) === 32 ? $old_key : (strlen($old_key) === 64 && ctype_xdigit($old_key) ? (string) hex2bin($old_key) : hash('sha256', $old_key, true));
