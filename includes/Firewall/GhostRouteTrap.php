@@ -66,7 +66,7 @@ class GhostRouteTrap {
     public static function get_settings(): array {
         $defaults = [
             'enabled'              => true,
-            'inject_canary_links'  => true,
+            'inject_canary_links'  => false,
             'block_client_ip'      => false, // Default to monitor/detect mode for zero-breakage safety
             'sync_cloudflare_edge' => false, // Require explicit admin opt-in for automated Cloudflare Edge bans
             'tarpit_duration'      => 0,     // 0 = instant 403, >0 = artificial delay

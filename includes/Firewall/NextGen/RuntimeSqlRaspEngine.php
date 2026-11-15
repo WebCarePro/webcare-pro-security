@@ -679,7 +679,7 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
             $file = isset($fr['file']) ? wp_normalize_path((string) $fr['file']) : '';
 
             // Reject if any third-party plugin (outside WooCommerce) directly called wp_set_password()
-            if ($fn === 'wp_set_password' && $file !== '' && strpos($file, '/wp-content/plugins/') !== false && strpos($file, '/plugins/woocommerce/') === false) {
+            if ($fn === 'wp_set_password' && $file !== '' && str_contains($file, '/wp-content/plugins/') && !str_contains($file, '/plugins/woocommerce/')) {
                 return false;
             }
 
@@ -689,7 +689,11 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                     $in_wp_check_password = true;
                 }
             } elseif ($fn === 'wp_authenticate_username_password' || $fn === 'wp_authenticate_email_password') {
-                $arg_login = isset($fr['args'][1]) && is_string($fr['args'][1]) ? trim($fr['args'][1]) : '';
+                $raw_login = $fr['args'][1] ?? '';
+                if ($raw_login instanceof \SensitiveParameterValue) {
+                    $raw_login = $raw_login->getValue();
+                }
+                $arg_login = is_string($raw_login) ? trim($raw_login) : '';
                 if (
                     $arg_login === ''
                     || strcasecmp($arg_login, $target_user->user_login) === 0
@@ -710,8 +714,12 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                 $arg_login = isset($fr['args'][1]) && is_string($fr['args'][1]) ? trim($fr['args'][1]) : '';
                 if ($arg_login === $target_user->user_login) {
                     $in_reset_password = true;
-                    if (!empty($fr['args'][0]) && is_string($fr['args'][0])) {
-                        $candidate_key_from_frame = trim((string) $fr['args'][0]);
+                    $raw_key = $fr['args'][0] ?? '';
+                    if ($raw_key instanceof \SensitiveParameterValue) {
+                        $raw_key = $raw_key->getValue();
+                    }
+                    if (is_string($raw_key) && $raw_key !== '') {
+                        $candidate_key_from_frame = trim($raw_key);
                     }
                 }
             }
@@ -720,34 +728,26 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
         // Path 1: Legitimate password reset completion inside reset_password() or check_password_reset_key()
         if ($in_reset_password) {
             $existing_key = isset($target_user->user_activation_key) ? trim((string) $target_user->user_activation_key) : '';
-            if ($existing_key === '') {
+            if ($existing_key === '' || !str_contains($existing_key, ':')) {
                 return false;
             }
 
-            // Strict timestamp validation on stored key: must have positive decimal integer prefix
-            if (str_contains($existing_key, ':')) {
-                $time_parts   = explode(':', $existing_key, 2);
-                $key_time_str = $time_parts[0];
-                if (!ctype_digit($key_time_str) || (int) $key_time_str <= 0) {
-                    return false; // Malformed or zero/negative timestamp prefix
-                }
-                $key_ts = (int) $key_time_str;
-                // Reject future timestamps beyond 5 seconds clock skew
-                if ($key_ts > (time() + 5)) {
-                    return false;
-                }
-                // Enforce WordPress password_reset_expiration policy (default 86400s, allows intentional zero/low expiration)
-                // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- Evaluating WordPress Core password reset expiration policy
-                $expiration_duration = function_exists('apply_filters') ? (int) apply_filters('password_reset_expiration', 86400) : 86400;
-                if ((time() - $key_ts) > $expiration_duration) {
-                    return false; // Key has expired
-                }
-            } else {
-                // Key without timestamp prefix is treated as expired/invalid by WordPress Core
+            [$key_time_str, $hash_part] = explode(':', $existing_key, 2);
+            if (!ctype_digit($key_time_str) || (int) $key_time_str <= 0 || $hash_part === '') {
                 return false;
             }
 
-            // If validate_password_reset already recorded verification for this user ID
+            $key_ts = (int) $key_time_str;
+            if ($key_ts > (time() + 5)) {
+                return false;
+            }
+
+            // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound
+            $expiration_duration = function_exists('apply_filters') ? (int) apply_filters('password_reset_expiration', 86400) : 86400;
+            if ((time() - $key_ts) > $expiration_duration) {
+                return false;
+            }
+
             if (!empty(self::$verified_reset_users[$uid])) {
                 $reset_rec  = self::$verified_reset_users[$uid];
                 $saved_key  = is_array($reset_rec) ? ($reset_rec['activation_key'] ?? '') : '';
@@ -759,141 +759,83 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                     && (time() - $saved_time) <= 120
                     && hash_equals($saved_key, $existing_key)
                 ) {
-                    // One-time consume: invalidate immediately to prevent secondary mutations
                     unset(self::$verified_reset_users[$uid]);
                     return true;
                 }
             }
 
-            // Cryptographically verify candidate key using Core's check_password_reset_key() or fallback
             $candidate_key = $candidate_key_from_frame;
-            // phpcs:ignore WordPress.Security.NonceVerification.Recommended, WordPress.Security.NonceVerification.Missing -- RASP password reset key verification
+            // phpcs:disable WordPress.Security.NonceVerification.Recommended, WordPress.Security.NonceVerification.Missing
             if ($candidate_key === '' && !empty($_REQUEST['key']) && is_string($_REQUEST['key'])) {
-                // phpcs:ignore WordPress.Security.NonceVerification.Recommended, WordPress.Security.NonceVerification.Missing
                 $candidate_key = sanitize_text_field(wp_unslash($_REQUEST['key']));
-            // phpcs:ignore WordPress.Security.NonceVerification.Recommended, WordPress.Security.NonceVerification.Missing
             } elseif ($candidate_key === '' && !empty($_REQUEST['rp_key']) && is_string($_REQUEST['rp_key'])) {
-                // phpcs:ignore WordPress.Security.NonceVerification.Recommended, WordPress.Security.NonceVerification.Missing
                 $candidate_key = sanitize_text_field(wp_unslash($_REQUEST['rp_key']));
-            // phpcs:ignore WordPress.Security.NonceVerification.Missing
             } elseif ($candidate_key === '' && !empty($_POST['reset_key']) && is_string($_POST['reset_key'])) {
-                // phpcs:ignore WordPress.Security.NonceVerification.Missing
                 $candidate_key = sanitize_text_field(wp_unslash($_POST['reset_key']));
             } elseif ($candidate_key === '' && !empty($_COOKIE) && is_array($_COOKIE)) {
-                $resetpass_cookie_name = 'wp-resetpass-' . (defined('COOKIEHASH') ? COOKIEHASH : '');
-                if (!empty($_COOKIE[$resetpass_cookie_name]) && is_string($_COOKIE[$resetpass_cookie_name])) {
-                    // phpcs:ignore WordPress.Security.NonceVerification.Recommended, WordPress.Security.NonceVerification.Missing
-                    $cookie_parts = explode(':', sanitize_text_field(wp_unslash($_COOKIE[$resetpass_cookie_name])), 2);
-                    if (count($cookie_parts) === 2 && rawurldecode($cookie_parts[0]) === $target_user->user_login) {
-                        $candidate_key = trim($cookie_parts[1]);
-                    }
-                }
-                if ($candidate_key === '') {
-                    foreach ($_COOKIE as $ck_name => $ck_val) {
-                        if (is_string($ck_name) && strpos($ck_name, 'wp-resetpass-') === 0 && is_string($ck_val)) {
-                            // phpcs:ignore WordPress.Security.NonceVerification.Recommended, WordPress.Security.NonceVerification.Missing
-                            $parts = explode(':', sanitize_text_field(wp_unslash($ck_val)), 2);
-                            if (count($parts) === 2 && rawurldecode($parts[0]) === $target_user->user_login) {
-                                $candidate_key = trim($parts[1]);
-                                break;
-                            }
+                foreach ($_COOKIE as $ck_name => $ck_val) {
+                    if (is_string($ck_name) && str_starts_with($ck_name, 'wp-resetpass-') && is_string($ck_val)) {
+                        $parts = explode(':', sanitize_text_field(wp_unslash($ck_val)), 2);
+                        if (count($parts) === 2 && rawurldecode($parts[0]) === $target_user->user_login) {
+                            $candidate_key = trim($parts[1]);
+                            break;
                         }
                     }
                 }
             }
+            // phpcs:enable WordPress.Security.NonceVerification.Recommended, WordPress.Security.NonceVerification.Missing
 
             if ($candidate_key !== '' && preg_match('/^[a-zA-Z0-9]{16,64}$/', $candidate_key)) {
-                if (function_exists('check_password_reset_key')) {
-                    $core_check = check_password_reset_key($candidate_key, $target_user->user_login);
-                    if ($core_check instanceof \WP_User && (int) $core_check->ID === $uid) {
-                        unset(self::$verified_reset_users[$uid]);
-                        return true;
-                    }
-                } else {
-                    $hash_part = substr($existing_key, strpos($existing_key, ':') + 1);
-                    if (function_exists('wp_verify_fast_hash')) {
-                        if (wp_verify_fast_hash($candidate_key, $hash_part)) {
-                            unset(self::$verified_reset_users[$uid]);
-                            return true;
-                        }
-                    } else {
-                        if (!class_exists('\PasswordHash') && defined('ABSPATH') && defined('WPINC') && file_exists(ABSPATH . WPINC . '/class-phpass.php')) {
-                            require_once ABSPATH . WPINC . '/class-phpass.php';
-                        }
-                        if (class_exists('\PasswordHash')) {
-                            $wp_hasher = new \PasswordHash(8, true);
-                            if ($wp_hasher->CheckPassword($candidate_key, $hash_part)) {
-                                unset(self::$verified_reset_users[$uid]);
-                                return true;
-                            }
-                        }
-                    }
+                if (function_exists('wp_verify_fast_hash') && wp_verify_fast_hash($candidate_key, $hash_part)) {
+                    unset(self::$verified_reset_users[$uid]);
+                    return true;
                 }
             }
 
             return false;
         }
 
-        // Path 2: Legitimate login password rehash inside authentic Core authentication stack
+        // Path 2: Legitimate login password rehash inside authentic WordPress 7.0 Core authentication stack
         if ($in_wp_check_password) {
-            // Require verified runtime authentication from check_password filter
-            if (!empty(self::$verified_password_users[$uid])) {
-                $auth_rec  = self::$verified_password_users[$uid];
-                $op        = is_array($auth_rec) ? ($auth_rec['operation'] ?? '') : '';
-                $auth_hash = is_array($auth_rec) ? ($auth_rec['original_hash'] ?? '') : '';
-                $auth_time = is_array($auth_rec) ? (int) ($auth_rec['timestamp'] ?? 0) : 0;
+            $canonical_user      = defined('ABSPATH') && defined('WPINC') ? wp_normalize_path(ABSPATH . WPINC . '/user.php') : '';
+            $canonical_pluggable = defined('ABSPATH') && defined('WPINC') ? wp_normalize_path(ABSPATH . WPINC . '/pluggable.php') : '';
+            $has_direct_rehash_stack = false;
 
-                // Operation-bound verification: Must specifically authorize password_rehash
-                if ($op !== 'password_rehash') {
-                    return false;
-                }
+            for ($i = 0; $i < count($full_frames); $i++) {
+                $fn = $full_frames[$i]['function'] ?? '';
+                if ($fn === 'wp_set_password') {
+                    $arg_uid     = isset($full_frames[$i]['args'][1]) ? (int) $full_frames[$i]['args'][1] : 0;
+                    $caller_fn   = $full_frames[$i + 1]['function'] ?? '';
+                    $caller_file = isset($full_frames[$i]['file']) ? wp_normalize_path((string) $full_frames[$i]['file']) : '';
 
-                // Verify exact call-stack provenance: wp_set_password() MUST be invoked directly by WordPress Core authentication lifecycle:
-                // In WordPress 6.8+: wp_authenticate_username_password() or wp_authenticate_email_password() in canonical wp-includes/user.php
-                $canonical_user          = defined('ABSPATH') && defined('WPINC') ? wp_normalize_path(ABSPATH . WPINC . '/user.php') : '';
-                $has_direct_rehash_stack = false;
+                    $is_core_auth_caller = (
+                        (($caller_fn === 'wp_authenticate_username_password' || $caller_fn === 'wp_authenticate_email_password')
+                            && $canonical_user !== '' && $caller_file === $canonical_user)
+                        || ($caller_fn === 'wp_check_password'
+                            && $canonical_pluggable !== '' && $caller_file === $canonical_pluggable)
+                    );
 
-                for ($i = 0; $i < count($full_frames); $i++) {
-                    $fn = $full_frames[$i]['function'] ?? '';
-                    if ($fn === 'wp_set_password') {
-                        $arg_uid     = isset($full_frames[$i]['args'][1]) ? (int) $full_frames[$i]['args'][1] : 0;
-                        $caller_fn   = $full_frames[$i + 1]['function'] ?? '';
-                        $caller_file = isset($full_frames[$i]['file']) ? wp_normalize_path((string) $full_frames[$i]['file']) : '';
-
-                        $is_core_auth_caller = (
-                            ($caller_fn === 'wp_authenticate_username_password' || $caller_fn === 'wp_authenticate_email_password')
-                            && ($canonical_user !== '' && $caller_file === $canonical_user)
-                        );
-
-                        if ($arg_uid === $uid && $is_core_auth_caller) {
-                            $has_direct_rehash_stack = true;
-                        }
-                        break;
+                    if ($arg_uid === $uid && $is_core_auth_caller) {
+                        $has_direct_rehash_stack = true;
                     }
-                }
-
-                if (!$has_direct_rehash_stack) {
-                    return false;
-                }
-
-                // Strictly fail closed if wp_password_needs_rehash is missing or returns false
-                if (!function_exists('wp_password_needs_rehash') || !wp_password_needs_rehash($auth_hash, $uid)) {
-                    return false;
-                }
-
-                // Enforce time bound (within 15 seconds of authentication), pre-rehash hash match, and active need for rehash
-                if (
-                    $auth_hash !== ''
-                    && $auth_time > 0
-                    && (time() - $auth_time) <= 15
-                    && hash_equals($auth_hash, (string) $target_user->user_pass)
-                ) {
-                    // One-time consume: invalidate immediately upon observing rehash to prevent secondary or replay mutations
-                    unset(self::$verified_password_users[$uid]);
-                    return true;
+                    break;
                 }
             }
-            return false;
+
+            if (!$has_direct_rehash_stack) {
+                return false;
+            }
+
+            $current_hash = (string) $target_user->user_pass;
+            $needs_rehash = (strlen($current_hash) <= 32)
+                || (function_exists('wp_password_needs_rehash') && wp_password_needs_rehash($current_hash, $uid));
+
+            if (!$needs_rehash) {
+                return false;
+            }
+
+            unset(self::$verified_password_users[$uid]);
+            return true;
         }
 
         return false;

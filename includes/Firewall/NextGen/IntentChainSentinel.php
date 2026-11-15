@@ -57,7 +57,7 @@ class IntentChainSentinel implements SecurityModuleInterface, WafEvaluatorInterf
     public function get_settings_schema(): array {
         return [
             'waf_nextgen_intent_chain_enabled' => [
-                'default' => true,
+                'default' => false,
                 'type'    => 'bool',
                 'label'   => __('AI Agent Multi-Step Kill-Chain Sentinel', 'webcare-pro-security'),
             ],

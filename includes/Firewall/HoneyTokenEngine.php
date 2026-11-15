@@ -379,16 +379,14 @@ class HoneyTokenEngine {
             set_transient($hit_transient, $autofill_hits, 600);
         }
 
-        // 2. Auto-ban bot IP if enabled (for form autofills, require repeated hits to protect innocent users with browser autofill)
-        if (!empty($settings['auto_ban_bot_ip'])) {
-            if (!$is_form_autofill || $autofill_hits >= 2) {
-                self::ban_bot_ip($client_ip, $settings['ban_duration_hours'] ?? 24);
-            }
+        // 2. Auto-ban bot IP if enabled (Form autofills NEVER ban IPs to protect users with password manager extensions)
+        if (!empty($settings['auto_ban_bot_ip']) && !$is_form_autofill) {
+            self::ban_bot_ip($client_ip, $settings['ban_duration_hours'] ?? 24);
         }
 
         // Log incident to WAF Incident Logs
         if (class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine')) {
-            $log_action = (!$is_form_autofill || $autofill_hits >= 2) ? 'blocked' : 'monitored';
+            $log_action = !$is_form_autofill ? 'blocked' : 'monitored';
             FirewallEngine::log_incident([
                 'id'          => 'WAF-HONEYTOKEN-TRAP-BLOCKED',
                 'name'        => 'Honey-Token Bot Decoy Tripped',
@@ -405,8 +403,8 @@ class HoneyTokenEngine {
             sprintf('Honey-Token Trapped Bot IP "%s" via %s (%s).', $client_ip, $trap_type, $context['target'] ?? '')
         );
 
-        // 3. Terminate bot request with HTTP 403 Forbidden for phantom endpoints, canary auth, or repeat form autofills
-        if (!$is_form_autofill || $autofill_hits >= 2) {
+        // 3. Terminate bot request with HTTP 403 Forbidden for phantom endpoints and canary auth (never terminate form autofills)
+        if (!$is_form_autofill) {
             if (php_sapi_name() !== 'cli' && !defined('WEBCAREPROSCAN_TESTING')) {
                 status_header(403);
                 header('Content-Type: text/plain; charset=utf-8');

@@ -994,6 +994,7 @@ class MicroWafCompiler {
         // 6. Mandatory Exploit Signatures: Core zero-tolerance exploit defenses (SQLi, RCE, LFI, Recon)
         // Mandatory signatures execute unconditionally on every request and are NEVER bypassed by custom allow rules or exemptions
         $out .= "        foreach (\$signatures as \$rule_id => \$sig) {\n";
+        $out .= "            if (\$rule_id === 'RECON-DOT' && str_starts_with(\$mod_clean_uri, '/wp-json/webcare-pro-security/v1/') && strpos(\$mod_clean_uri, '..') === false) { continue; }\n";
         $out .= "            if (preg_match(\$sig['pattern'], \$target_text)) {\n";
         $out .= "                webcare_micro_waf_block(\$ip, \$rule_id, \$sig['desc'], \$fail2ban_log);\n";
         $out .= "            }\n";
@@ -1023,13 +1024,18 @@ class MicroWafCompiler {
         $out .= "    \$log_entry = sprintf(\"[%s] [WEBCARE-MICRO-WAF] [BLOCKED] IP: %s | Rule: %s | URI: %s | Method: %s\\n\", \$timestamp, \$ip, \$rule_id, \$uri, \$method);\n";
         $out .= "    @file_put_contents(\$fail2ban_log, \$log_entry, FILE_APPEND | LOCK_EX);\n\n";
 
+        $out .= "    \$is_json_or_ajax = str_contains(\$uri, '/wp-json/') || str_contains(\$uri, 'wc-ajax=') || str_contains(\$uri, 'admin-ajax.php') || str_contains((string) (\$_SERVER['HTTP_ACCEPT'] ?? ''), 'application/json');\n";
         $out .= "    // Respond with HTTP 403 Forbidden\n";
         $out .= "    if (!headers_sent()) {\n";
         $out .= "        http_response_code(403);\n";
         $out .= "        header('HTTP/1.1 403 Forbidden');\n";
-        $out .= "        header('Content-Type: text/html; charset=UTF-8');\n";
+        $out .= "        header(\$is_json_or_ajax ? 'Content-Type: application/json; charset=UTF-8' : 'Content-Type: text/html; charset=UTF-8');\n";
         $out .= "        header('X-WebCare-Defense: Preload-Micro-WAF-Active');\n";
         $out .= "        header('Connection: close');\n";
+        $out .= "    }\n\n";
+        $out .= "    if (\$is_json_or_ajax) {\n";
+        $out .= "        echo json_encode(['code' => 'webcare_preload_waf_blocked', 'message' => 'Access Denied (403)', 'rule_id' => \$rule_id]);\n";
+        $out .= "        exit;\n";
         $out .= "    }\n\n";
 
         $out .= "    echo '<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"UTF-8\"><title>403 Forbidden - WebCare Micro-WAF</title>';\n";

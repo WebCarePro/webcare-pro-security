@@ -43,7 +43,7 @@ class SessionForensicsEngine {
             'impossible_travel_enabled'     => true,
             'impossible_travel_hours'       => 2,
             'auto_revoke_impossible_travel' => false,
-            'detect_ua_hijack'              => true,
+            'detect_ua_hijack'              => false,
             'notify_admin_on_suspicious'    => true,
         ];
         $saved = get_option(self::OPTION_SETTINGS, []);
@@ -84,6 +84,41 @@ class SessionForensicsEngine {
         }
 
         return $updated;
+    }
+
+    /**
+     * Normalize User-Agent to OS Family and Browser Family to avoid false-positive session revocation
+     * on minor/patch browser auto-updates.
+     *
+     * @param string $ua
+     * @return string
+     */
+    public static function normalize_ua_family(string $ua): string {
+        $os = 'UnknownOS';
+        if (str_contains($ua, 'Windows')) {
+            $os = 'Windows';
+        } elseif (str_contains($ua, 'iPhone') || str_contains($ua, 'iPad')) {
+            $os = 'iOS';
+        } elseif (str_contains($ua, 'Macintosh') || str_contains($ua, 'Mac OS X')) {
+            $os = 'macOS';
+        } elseif (str_contains($ua, 'Android')) {
+            $os = 'Android';
+        } elseif (str_contains($ua, 'Linux')) {
+            $os = 'Linux';
+        }
+
+        $browser = 'UnknownBrowser';
+        if (str_contains($ua, 'Edg/')) {
+            $browser = 'Edge';
+        } elseif (str_contains($ua, 'Chrome/') || str_contains($ua, 'CriOS/')) {
+            $browser = 'Chrome';
+        } elseif (str_contains($ua, 'Firefox/') || str_contains($ua, 'FxiOS/')) {
+            $browser = 'Firefox';
+        } elseif (str_contains($ua, 'Safari/') && !str_contains($ua, 'Chrome/')) {
+            $browser = 'Safari';
+        }
+
+        return $os . '|' . $browser;
     }
 
     /**
@@ -156,6 +191,7 @@ class SessionForensicsEngine {
                 'ip'         => $client_ip,
                 'user_agent' => $user_agent,
                 'ua_hash'    => md5($user_agent),
+                'ua_family'  => self::normalize_ua_family($user_agent),
                 'country'    => $geo['country'] ?? 'Unknown',
                 'country_code' => $geo['country_code'] ?? 'XX',
                 'city'       => $geo['city'] ?? 'Unknown',
@@ -227,17 +263,17 @@ class SessionForensicsEngine {
             );
 
             if (!$is_background) {
-                $recorded_ua_hash = $fingerprints[$token_key]['ua_hash'] ?? '';
-                $current_ua_hash  = md5($user_agent);
+                $recorded_family = $fingerprints[$token_key]['ua_family'] ?? '';
+                $current_family  = self::normalize_ua_family($user_agent);
 
-                if (!empty($recorded_ua_hash) && !hash_equals($recorded_ua_hash, $current_ua_hash)) {
+                if (!empty($recorded_family) && $recorded_family !== $current_family) {
                     AuditLogger::log(
                         'session_hijack_detected',
                         sprintf(
-                            'Session Hijacking Alert: User-Agent shift detected on active token for user "%s". Original: %s | Current: %s',
+                            'Session Hijacking Alert: User-Agent OS/Browser family shift detected on active token for user "%s". Original Family: %s | Current Family: %s',
                             $user->user_login,
-                            substr($fingerprints[$token_key]['user_agent'] ?? '', 0, 50),
-                            substr($user_agent, 0, 50)
+                            $recorded_family,
+                            $current_family
                         )
                     );
 

@@ -17,6 +17,15 @@ if (!defined('ABSPATH')) {
     exit; // Exit if accessed directly.
 }
 
+if (PHP_VERSION_ID < 80300 || version_compare($GLOBALS['wp_version'] ?? '7.0', '7.0', '<')) {
+    add_action('admin_notices', static function (): void {
+        echo '<div class="notice notice-error"><p>'
+            . esc_html__('WebCare Pro Security & Firewall requires PHP 8.3+ and WordPress 7.0+.', 'webcare-pro-security')
+            . '</p></div>';
+    });
+    return;
+}
+
 define('WEBCAREPROSCAN_VERSION', '2.15.0');
 define('WEBCAREPROSCAN_FILE', __FILE__);
 define('WEBCAREPROSCAN_PATH', plugin_dir_path(__FILE__));

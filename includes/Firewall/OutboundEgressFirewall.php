@@ -708,9 +708,18 @@ class OutboundEgressFirewall {
             return $dns_cache[$clean_host];
         }
 
-        // Fast-path: Default approved official WordPress infrastructure hosts bypass DNS resolution penalty
-        if (in_array($clean_host, ['api.wordpress.org', 'downloads.wordpress.org', 'wordpress.org', 'plugins.svn.wordpress.org'], true)) {
-            return ($dns_cache[$clean_host] = ['threat' => null, 'reason' => '', 'safe_ip' => '']);
+        // Fast-path: Approved official infrastructure, payment gateways (Stripe, PayPal), and WooCommerce hosts bypass synchronous DNS penalty
+        foreach (self::DEFAULT_APPROVED_HOSTS as $approved_domain) {
+            if ($clean_host === $approved_domain || str_ends_with($clean_host, '.' . $approved_domain)) {
+                return ($dns_cache[$clean_host] = ['threat' => null, 'reason' => '', 'safe_ip' => '']);
+            }
+        }
+
+        // Check 15-minute transient cache for safe resolved hosts
+        $transient_key = 'webcare_egress_dns_' . md5($clean_host);
+        $cached_ip = get_transient($transient_key);
+        if ($cached_ip !== false && is_string($cached_ip)) {
+            return ($dns_cache[$clean_host] = ['threat' => null, 'reason' => '', 'safe_ip' => $cached_ip]);
         }
 
         // Normalize or hard-block shorthand/octal/hex IPv4 representations (e.g. 0177.0.0.1, 127.1, 0x7f.1)
@@ -859,13 +868,18 @@ class OutboundEgressFirewall {
             }
         }
 
-        // Fail-safe: If hostname failed to resolve any valid IP records, block outbound connection to prevent blind routing
+        // Fail-safe: If hostname failed to resolve any valid IP records, only hard-block if it is an IP/hex/octal literal
         if (!$has_records || empty($first_safe_ip)) {
-            return [
-                'threat' => 'unresolvable_host',
-                'reason' => sprintf('Outbound destination host (%s) could not be resolved to a valid IP address.', $clean_host),
-            ];
+            if (preg_match('/^[0-9a-fA-FxX.:]+$/', $clean_host)) {
+                return [
+                    'threat' => 'unresolvable_host',
+                    'reason' => sprintf('Outbound destination host (%s) could not be resolved to a valid IP address.', $clean_host),
+                ];
+            }
+            return ($dns_cache[$clean_host] = ['threat' => null, 'reason' => '', 'safe_ip' => '']);
         }
+
+        set_transient($transient_key, $first_safe_ip, 900); // 15-minute DNS cache
 
         $result = ['threat' => null, 'reason' => '', 'safe_ip' => $first_safe_ip];
         return ($dns_cache[$clean_host] = $result);

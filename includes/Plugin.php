@@ -22,147 +22,71 @@ class Plugin {
         $this->init();
     }
 
-    private function init() {
-        // Performance optimization: check cached in-memory alloptions db version first (0 queries)
-        if (get_option('webcareproscan_db_version') !== '1.13.0') {
-            \WebCareProScanner\Database\Migration::install();
-        }
+    private function init(): void {
+        $is_cli   = (defined('WP_CLI') && WP_CLI);
+        $is_cron  = (defined('DOING_CRON') && DOING_CRON);
+        $is_admin = is_admin();
 
-        // Ensure root uploads/webcare-pro-security storage directory has an index.php directory silence guard
-        self::ensure_uploads_storage_protected();
+        // 1. Always-On Lightweight Runtime Security (WAF, Auth, Session, Headers)
+        \WebCareProScanner\Firewall\WafFileLogger::init();
+        \WebCareProScanner\Firewall\FirewallEngine::init();
+        \WebCareProScanner\Firewall\RescueAssistantManager::init();
+        \WebCareProScanner\Firewall\DistributedVelocityShield::init();
+        \WebCareProScanner\Firewall\FormSpamProtectionEngine::init();
+        \WebCareProScanner\Firewall\OutboundEgressFirewall::init();
+        \WebCareProScanner\Firewall\GhostRouteTrap::init();
+        \WebCareProScanner\Security\EmergencyContainmentManager::init();
+        \WebCareProScanner\Security\PromptInjectionGuard::init();
+        \WebCareProScanner\Hardening\SecurityHeadersEngine::init();
+        \WebCareProScanner\Auth\TwoFactorAuth::init();
+        \WebCareProScanner\Auth\LoginHardening::init();
+        \WebCareProScanner\Auth\SessionSentinel::init();
+        \WebCareProScanner\Auth\LoginHistoryManager::init();
+        \WebCareProScanner\Auth\ApplicationPasswordSentinel::init();
+        \WebCareProScanner\Auth\WebAuthnManager::init();
+        \WebCareProScanner\Identity\SessionForensicsEngine::init();
+        \WebCareProScanner\Content\ScriptInventoryMonitor::init();
+        \WebCareProScanner\Content\BlockDirectiveSanitizer::init();
+        \WebCareProScanner\WordPress\RestApiInventory::init();
+        \WebCareProScanner\Core\ModuleRegistry::boot_all();
 
-        if (class_exists('\\WebCareProScanner\\System\\Cron\\CronControlCenter')) {
-            \WebCareProScanner\System\Cron\CronControlCenter::register_filters();
-        }
-
-        AdminMenu::register();
-        \WebCareProScanner\System\Scheduler::register();
-        
-        if (class_exists('\\WebCareProScanner\\Backup\\DatabaseBackup')) {
-            \WebCareProScanner\Backup\DatabaseBackup::init();
-        }
-
-        if (class_exists('\\WebCareProScanner\\WordPress\\UserRemediationManager')) {
-            \WebCareProScanner\WordPress\UserRemediationManager::init();
-        }
-
-        if (class_exists('\\WebCareProScanner\\System\\WebCareActivityLogger')) {
-            \WebCareProScanner\System\WebCareActivityLogger::init();
-        }
-
-        $audit_logger = new \WebCareProScanner\System\AuditLogger();
-        $audit_logger->init();
-
-        // Firewall & Edge Security Services
-        if (class_exists('\\WebCareProScanner\\Firewall\\WafFileLogger')) {
-            \WebCareProScanner\Firewall\WafFileLogger::init();
-        }
-        if (class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine')) {
-            \WebCareProScanner\Firewall\FirewallEngine::init();
-        }
-        if (class_exists('\\WebCareProScanner\\Firewall\\RescueAssistantManager')) {
-            \WebCareProScanner\Firewall\RescueAssistantManager::init();
-        }
-        if (class_exists('\\WebCareProScanner\\Firewall\\HtaccessShield')) {
-            \WebCareProScanner\Firewall\HtaccessShield::init();
-        }
-        if (class_exists('\\WebCareProScanner\\Firewall\\HtaccessVaultManager')) {
-            \WebCareProScanner\Firewall\HtaccessVaultManager::register_cli();
-        }
-        if (class_exists('\\WebCareProScanner\\Integrity\\ObjectCacheIntegritySentinel')) {
-            \WebCareProScanner\Integrity\ObjectCacheIntegritySentinel::init();
-        }
-
-        if (class_exists('\\WebCareProScanner\\Security\\EmergencyContainmentManager')) {
-            \WebCareProScanner\Security\EmergencyContainmentManager::init();
-        }
-
-        if (class_exists('\\WebCareProScanner\\Hardening\\SecurityHeadersEngine')) {
-            \WebCareProScanner\Hardening\SecurityHeadersEngine::init();
-        }
-        if (class_exists('\\WebCareProScanner\\Auth\\TwoFactorAuth')) {
-            \WebCareProScanner\Auth\TwoFactorAuth::init();
-        }
-        if (class_exists('\\WebCareProScanner\\Auth\\LoginHardening')) {
-            \WebCareProScanner\Auth\LoginHardening::init();
-        }
-        if (class_exists('\\WebCareProScanner\\Auth\\SessionSentinel')) {
-            \WebCareProScanner\Auth\SessionSentinel::init();
-        }
-        if (class_exists('\\WebCareProScanner\\Auth\\LoginHistoryManager')) {
-            \WebCareProScanner\Auth\LoginHistoryManager::init();
-        }
-        if (class_exists('\\WebCareProScanner\\Auth\\ApplicationPasswordSentinel')) {
-            \WebCareProScanner\Auth\ApplicationPasswordSentinel::init();
-        }
-        if (class_exists('\\WebCareProScanner\\Security\\PluginSelfDefense')) {
-            \WebCareProScanner\Security\PluginSelfDefense::init();
-        }
-        if (class_exists('\\WebCareProScanner\\SupplyChain\\UpdateGatekeeperEngine')) {
-            \WebCareProScanner\SupplyChain\UpdateGatekeeperEngine::init();
-        }
-        if (class_exists('\\WebCareProScanner\\Content\\ScriptInventoryMonitor')) {
-            \WebCareProScanner\Content\ScriptInventoryMonitor::init();
-        }
-        if (class_exists('\\WebCareProScanner\\Identity\\SessionForensicsEngine')) {
-            \WebCareProScanner\Identity\SessionForensicsEngine::init();
-        }
-        if (class_exists('\\WebCareProScanner\\Firewall\\GhostRouteTrap')) {
-            \WebCareProScanner\Firewall\GhostRouteTrap::init();
-        }
-        if (class_exists('\\WebCareProScanner\\Firewall\\FormSpamProtectionEngine')) {
-            \WebCareProScanner\Firewall\FormSpamProtectionEngine::init();
-        }
-        if (class_exists('\\WebCareProScanner\\Firewall\\OutboundEgressFirewall')) {
-            \WebCareProScanner\Firewall\OutboundEgressFirewall::init();
-        }
-        if (class_exists('\\WebCareProScanner\\Security\\PromptInjectionGuard')) {
-            \WebCareProScanner\Security\PromptInjectionGuard::init();
-        }
-        if (class_exists('\\WebCareProScanner\\Firewall\\DistributedVelocityShield')) {
-            \WebCareProScanner\Firewall\DistributedVelocityShield::init();
-        }
-        if (class_exists('\\WebCareProScanner\\Content\\BlockDirectiveSanitizer')) {
-            \WebCareProScanner\Content\BlockDirectiveSanitizer::init();
-        }
-        if (class_exists('\\WebCareProScanner\\WordPress\\RestApiInventory')) {
-            \WebCareProScanner\WordPress\RestApiInventory::init();
-        }
-        if (class_exists('\\WebCareProScanner\\Quarantine\\ReinfectionWatchdog')) {
-            \WebCareProScanner\Quarantine\ReinfectionWatchdog::init();
-        }
-        if (class_exists('\\WebCareProScanner\\Firewall\\DomainReputationMonitor')) {
-            \WebCareProScanner\Firewall\DomainReputationMonitor::init();
-        }
-        if (class_exists('\\WebCareProScanner\\Auth\\WebAuthnManager')) {
-            \WebCareProScanner\Auth\WebAuthnManager::init();
-        }
-
-        // Clean up legacy JIT guardian MU plugin if present
-        $mu_jit_file = (defined('WPMU_PLUGIN_DIR') ? WPMU_PLUGIN_DIR : WP_CONTENT_DIR . '/mu-plugins') . '/webcare-jit-guardian.php';
-        if (file_exists($mu_jit_file)) {
-            wp_delete_file($mu_jit_file);
-        }
-
-        // Context-Adaptive Firewall (CAF) Lifecycle Observers & Edge Cron
-        if (class_exists('\\WebCareProScanner\\Firewall\\CAF\\AdaptiveFirewallAdvisor')) {
-            \WebCareProScanner\Firewall\CAF\AdaptiveFirewallAdvisor::register_lifecycle_hooks();
-        }
-        if (class_exists('\\WebCareProScanner\\Firewall\\CAF\\CloudflareIpListSynchronizer')) {
-            \WebCareProScanner\Firewall\CAF\CloudflareIpListSynchronizer::register_cron();
-        }
-
-        // Pluggable Micro-Kernel & Next-Gen Defense Modules
-        if (class_exists('\\WebCareProScanner\\Core\\ModuleRegistry')) {
-            \WebCareProScanner\Core\ModuleRegistry::boot_all();
-        }
-
-        add_action('rest_api_init', function () {
+        // 2. REST API Routes (Loaded lazily only when WP REST API initializes)
+        add_action('rest_api_init', static function (): void {
             ScannerRoutes::register();
         });
 
-        if (defined('WP_CLI') && WP_CLI && class_exists('\\WP_CLI')) {
-            \WP_CLI::add_command('webcare doctor', static function () {
+        // 3. Admin, Cron & WP-CLI Heavy Subsystems (Never booted on public storefront GET/POST)
+        if ($is_admin || $is_cron || $is_cli) {
+            if (get_option('webcareproscan_db_version') !== '1.13.0') {
+                \WebCareProScanner\Database\Migration::install();
+            }
+            self::ensure_uploads_storage_protected();
+            \WebCareProScanner\System\Cron\CronControlCenter::register_filters();
+            AdminMenu::register();
+            \WebCareProScanner\System\Scheduler::register();
+            \WebCareProScanner\Backup\DatabaseBackup::init();
+            \WebCareProScanner\WordPress\UserRemediationManager::init();
+            \WebCareProScanner\System\WebCareActivityLogger::init();
+            (new \WebCareProScanner\System\AuditLogger())->init();
+            \WebCareProScanner\Firewall\HtaccessShield::init();
+            \WebCareProScanner\Firewall\HtaccessVaultManager::register_cli();
+            \WebCareProScanner\Integrity\ObjectCacheIntegritySentinel::init();
+            \WebCareProScanner\Security\PluginSelfDefense::init();
+            \WebCareProScanner\SupplyChain\UpdateGatekeeperEngine::init();
+            \WebCareProScanner\Quarantine\ReinfectionWatchdog::init();
+            \WebCareProScanner\Firewall\DomainReputationMonitor::init();
+            \WebCareProScanner\Firewall\CAF\AdaptiveFirewallAdvisor::register_lifecycle_hooks();
+            \WebCareProScanner\Firewall\CAF\CloudflareIpListSynchronizer::register_cron();
+
+            // Clean up legacy JIT guardian MU plugin if present
+            $mu_jit_file = (defined('WPMU_PLUGIN_DIR') ? WPMU_PLUGIN_DIR : WP_CONTENT_DIR . '/mu-plugins') . '/webcare-jit-guardian.php';
+            if (file_exists($mu_jit_file)) {
+                wp_delete_file($mu_jit_file);
+            }
+        }
+
+        if ($is_cli && class_exists('\\WP_CLI')) {
+            \WP_CLI::add_command('webcare doctor', static function (): void {
                 self::cli_webcare_doctor();
             });
         }

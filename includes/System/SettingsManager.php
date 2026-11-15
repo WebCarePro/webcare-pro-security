@@ -124,6 +124,7 @@ class SettingsManager {
             'waf_404_lockout_duration' => 30,   // Lockout duration in minutes (default 30 mins)
             'waf_allow_uptime_monitors'        => false, // Allow verified Uptime Monitoring services (UptimeRobot, Pingdom, StatusCake, BetterUptime)
             'waf_allow_central_management'     => false, // Allow central WordPress management workers (ManageWP, MainWP, InfiniteWP) via cryptographic handshake
+            'caf_threat_score_enabled'         => false, // Differential Threat Score & Behavioral Pre-Flight Sentinel (CAF Phase 3)
 
             // Enhanced Perimeter & Identity Protection Rules
             'waf_forms_safe_mode'               => true,
@@ -794,6 +795,7 @@ class SettingsManager {
         $clean['waf_404_lockout_duration'] = max(1, min(1440, (int) ($merged['waf_404_lockout_duration'] ?? 30)));
         $clean['waf_allow_uptime_monitors']        = !empty($merged['waf_allow_uptime_monitors']);
         $clean['waf_allow_central_management']     = !empty($merged['waf_allow_central_management']);
+        $clean['caf_threat_score_enabled']         = !empty($merged['caf_threat_score_enabled']);
         $clean['waf_allow_page_builders']          = !empty($merged['waf_allow_page_builders']);
 
         // Enhanced Perimeter & Identity Protection Rules

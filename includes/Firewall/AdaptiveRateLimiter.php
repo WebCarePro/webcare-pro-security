@@ -286,9 +286,9 @@ class AdaptiveRateLimiter {
             str_contains($decoded_uri, 'wc-ajax=add_to_cart') ||
             str_contains($decoded_uri, 'wc-ajax=update_order_review') ||
             str_contains($decoded_uri, 'wc-ajax=get_refreshed_fragments') ||
-            in_array($post_action, ['woocommerce_add_to_cart', 'woocommerce_update_order_review'], true)
+            in_array($post_action, ['woocommerce_add_to_cart', 'woocommerce_update_order_review', 'woocommerce_json_search_products', 'aws_action', 'dgwt_wcas_ajax_search', 'jet_ajax_search'], true)
         ) {
-            // Bucket 3: Cart AJAX (Frequent legit interactions)
+            // Bucket 3: Cart AJAX (Frequent legit interactions & live product search queries)
             $bucket = self::BUCKET_CART_AJAX;
             $limit = (int) ($settings['limit_cart_ajax'] ?? self::LIMIT_CART_AJAX);
             $window = (int) ($settings['window_cart_ajax'] ?? self::WINDOW_CART_AJAX);
@@ -324,40 +324,6 @@ class AdaptiveRateLimiter {
             ThreatScoreTracker::record_event($client_ip, $event_tag, 10.0);
         }
 
-        // Escalation to temporary quarantine if blasting server (> 2.5x threshold)
-        // Never quarantine an active WooCommerce cart/shopper session on cart_ajax or checkout buckets; throttle with JSON 429 instead.
-        $has_shopper_session = class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine') && FirewallEngine::has_active_shopper_session();
-        $is_commerce_bucket  = ($bucket === self::BUCKET_CART_AJAX || $bucket === self::BUCKET_CHECKOUT);
-
-        if (!empty($settings['escalate_to_ban']) && $count > ($limit * 2.5) && !($is_commerce_bucket && $has_shopper_session)) {
-            $ban_lock = 'webcareproscan_rl_ban_log_' . md5($client_ip);
-            if (!get_transient($ban_lock)) {
-                set_transient($ban_lock, 1, 1800);
-                AuditLogger::log(
-                    'rate_limit_escalated_ban',
-                    sprintf('Adaptive Rate Limiter: Client IP "%s" exceeded 2.5x %s velocity limit (%d hits). Temporary quarantine applied.', $client_ip, strtoupper($bucket), $count)
-                );
-            }
-
-            if (class_exists('\\WebCareProScanner\\Firewall\\HoneyTokenEngine')) {
-                HoneyTokenEngine::ban_bot_ip($client_ip, 1);
-            }
-
-            status_header(403);
-            if (wp_is_json_request() || str_contains($decoded_uri, '/wp-json/') || str_contains($decoded_uri, 'wc-ajax=') || $is_commerce_bucket) {
-                header('Content-Type: application/json; charset=utf-8');
-                echo wp_json_encode([
-                    'result'   => 'failure',
-                    'status'   => 403,
-                    'error'    => 'rate_limit_quarantine',
-                    'messages' => '<ul class="woocommerce-error"><li>' . esc_html__('Access temporarily restricted due to excessive request velocity. Please wait and try again.', 'webcare-pro-security') . '</li></ul>',
-                ]);
-            } else {
-                header('Content-Type: text/plain; charset=utf-8');
-                echo 'Access Forbidden: Velocity limit severely violated. IP quarantined by WebCare Adaptive Rate Limiter.';
-            }
-            exit;
-        }
 
         // Record throttle telemetry
         self::record_throttle_incident($client_ip, $bucket, $count, $limit);
