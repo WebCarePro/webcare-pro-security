@@ -934,7 +934,7 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
         $frames = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 15);
         foreach ($frames as $frame) {
             $file = isset($frame['file']) ? wp_normalize_path((string) $frame['file']) : '';
-            if ($file === '' || strpos($file, 'wcp-security-scanner') !== false || strpos($file, 'webcare-pro-security') !== false) {
+            if ($file === '' || strpos($file, 'webcare-pro-security') !== false) {
                 continue;
             }
             if (strpos($file, '/wp-content/plugins/') !== false || strpos($file, '/wp-content/themes/') !== false) {

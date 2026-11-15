@@ -27,7 +27,7 @@ class Engine {
                 return $issues;
             }
         }
-        if (strpos($norm_filepath, '/plugins/webcare-pro-security/') !== false || strpos($norm_filepath, '/plugins/wcp-security-scanner/') !== false || strpos($norm_filepath, '/includes/Scanner/Rules.php') !== false) {
+        if (strpos($norm_filepath, '/plugins/webcare-pro-security/') !== false || strpos($norm_filepath, '/includes/Scanner/Rules.php') !== false) {
             return $issues;
         }
 
@@ -131,7 +131,7 @@ class Engine {
                     }
 
                     // Internal plugin storage and self-plugin exclusions
-                    if (in_array($name, ['.vault', '.backups', 'webcare-backups', 'webcare-pro-security', 'wcp-security-scanner', 'webcare-quarantine', 'webcare-pro-quarantine', 'webcare-vault', 'webcare-waf', '.vscode', '.idea'], true)) {
+                    if (in_array($name, ['.vault', '.backups', 'webcare-backups', 'webcare-pro-security', 'webcare-quarantine', 'webcare-pro-quarantine', 'webcare-vault', 'webcare-waf', '.vscode', '.idea'], true)) {
                         return false;
                     }
                     if (defined('WEBCAREPROSCAN_PATH')) {
@@ -159,7 +159,7 @@ class Engine {
                             continue;
                         }
                     }
-                    if (strpos($pathname, '/plugins/webcare-pro-security/') !== false || strpos($pathname, '/plugins/wcp-security-scanner/') !== false) {
+                    if (strpos($pathname, '/plugins/webcare-pro-security/') !== false) {
                         continue; // Do not enqueue scanner's own files
                     }
 

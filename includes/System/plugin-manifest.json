@@ -1,6 +1,6 @@
 {
   "version": "2.16.0",
-  "generated_at": "2026-11-15T21:38:39.854Z",
+  "generated_at": "2026-11-15T21:44:55.663Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -344,8 +344,8 @@
       "size": 1036
     },
     "includes/Filesystem/FileScanner.php": {
-      "sha256": "30bbf687354527d491f974680ac0a412721444ecd0e2bf86a5eec6785ebb37d9",
-      "size": 13237
+      "sha256": "1887cb85fe6a1c5b9a5ec581188a2e39a1f39e0fad8dc8e93c80e3f3e2223193",
+      "size": 13171
     },
     "includes/Filesystem/PathValidator.php": {
       "sha256": "b0b11e3179e3ff9a43f6ccabe9aa57a8c3a117fc1f9703a499f025bcb9e31110",
@@ -532,8 +532,8 @@
       "size": 11590
     },
     "includes/Firewall/NextGen/RuntimeSqlRaspEngine.php": {
-      "sha256": "a6c5b1cf51593998d5138220705c88dc9233abff71de2d5e64a6a789db760d79",
-      "size": 45372
+      "sha256": "3e11e8b695f532d63ba65f9947504b5a996b9dd82cc50b7647c81190736b54e1",
+      "size": 45321
     },
     "includes/Firewall/NextGen/UpgraderDeltaSentinel.php": {
       "sha256": "66dbb5d1e88c749eda786628392b1319b8d39c6f4e87df1791dfbe1885811782",
@@ -648,40 +648,40 @@
       "size": 10562
     },
     "includes/Malware/DeobfuscationEngine.php": {
-      "sha256": "13088538023f526d0eeb1c01fafcfe926260a14d6e90d5a93af13e5f142025e7",
-      "size": 13069
+      "sha256": "fc05a3e49409267b6577546c906aac9a62f01a4b64f5f1e0ebfb96da059743d3",
+      "size": 13003
     },
     "includes/Malware/HeuristicEngine.php": {
-      "sha256": "9a7d10c37e8ce0b981090622d1d939660a36176fcdff527460b6b3b0cc603d65",
-      "size": 6737
+      "sha256": "7edf706a4f03a667a89e88586861938f6d2a0d662c04454a24e59c2b627e81e3",
+      "size": 6671
     },
     "includes/Malware/JavaScriptSecurityScanner.php": {
-      "sha256": "7dfe33261aa2249834a67973e2bd022dce1ebbe23345e52437eb92fab461e418",
-      "size": 13051
+      "sha256": "472e39d7d46c0e78a43f00c90bd073cc2b17154f8f4993b59515293016056bc7",
+      "size": 12985
     },
     "includes/Malware/KnownHashDetector.php": {
-      "sha256": "fec50933891875716c925e9f9df4a4cd0977fd5e497e783d21f8ea0d20948934",
-      "size": 3484
+      "sha256": "6553ca086b62f7b7fbe7b9e28e73d0a98fe840ca47fdfcf992157e7b385c6e6d",
+      "size": 3418
     },
     "includes/Malware/KnownMalwareManifest.php": {
       "sha256": "21ed2c94c15410c130269228a834592111c91b31a57880066b215fdb229b7091",
       "size": 5385
     },
     "includes/Malware/ObfuscationDetector.php": {
-      "sha256": "d1996497e871840b0250efae913f40a2264133047d7ebac57c4f3b8ecf2f87ad",
-      "size": 8169
+      "sha256": "a0a0a5d1bd8e9bedefc8eec3655e1dd8060aa1c22ca8e3c1ba26a0f11e1bed36",
+      "size": 8103
     },
     "includes/Malware/SuspiciousStringDetector.php": {
-      "sha256": "6c3891f3431c7f7bfc1b4c8613a913cecab01b9cc16837b01954048df7c24ec4",
-      "size": 5469
+      "sha256": "3b1bfadf3d40ffa144b1354dadd02c4cd71cf433256ba32cf817d6f4e92b8f2b",
+      "size": 5403
     },
     "includes/Malware/TaintAnalysisEngine.php": {
-      "sha256": "ac983573bca5db701c4736071d2976b6b388109e4854bbc4e42c57e7b41cc0d0",
-      "size": 45600
+      "sha256": "631f3ffe9ee4b2adc274f75ab6dcf95fba76d45945b9e00b23c14cc01145ab30",
+      "size": 45534
     },
     "includes/Malware/WebshellDetector.php": {
-      "sha256": "e98183fe0ca5b51c06f9e3c1d9aa0095c7a43cdfebcddec94f1f3ceeca99c6cc",
-      "size": 15534
+      "sha256": "90c459488324309c5e080ec55e53bc837c82acf8a3080f461627aa3bd1bef920",
+      "size": 15468
     },
     "includes/Notifications/NotificationDispatcher.php": {
       "sha256": "2a413ed693230bc85f46dcf908c12a28814e28ebaed5923d6205e455c59f64b1",
@@ -748,8 +748,8 @@
       "size": 5515
     },
     "includes/Scanner/Engine.php": {
-      "sha256": "7e61866b34415e299c4acfbb5ef14c395fa942e2bd6c6706730460a70d69ea22",
-      "size": 9460
+      "sha256": "a48c60c4701f06eb1b3fbdbd2a9c8c22f59f40d50adbe275f2dc01e05ee4a85e",
+      "size": 9301
     },
     "includes/Scanner/Rules.php": {
       "sha256": "32b4aab80b70100ef575383f2fb728c29a21e6855ab6f0c9e47432d17c8c5c6d",

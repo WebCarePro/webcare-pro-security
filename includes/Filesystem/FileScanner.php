@@ -46,7 +46,7 @@ class FileScanner {
                 return $findings;
             }
         }
-        if (strpos($norm_path, '/plugins/webcare-pro-security/') !== false || strpos($norm_path, '/plugins/wcp-security-scanner/') !== false) {
+        if (strpos($norm_path, '/plugins/webcare-pro-security/') !== false) {
             return $findings;
         }
 
