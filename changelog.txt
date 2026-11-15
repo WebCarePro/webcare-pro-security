@@ -1,5 +1,7 @@
 ﻿v:2.15.0 - 2026-11-15
 - Zero-Gap Fail-Closed Streaming, Runtime RASP Hardening, Response DLP Redaction & Full Architectural Resilience:
+  * Setup Studio Zero-Trust Identity Streamlining:
+    - Removed unused "Encrypted Magic Login Links" stub from Setup Studio Step 10 (Zero-Trust Identity, 2FA & Passkeys), focusing administrative access exclusively on hardware-backed WebAuthn/FIDO2 passkeys and RFC 6238 TOTP authenticators while eliminating passwordless email takeover vectors.
   * Strict Database Format Validation, Canonical Helper & Relative Date Rejection:
     - Enforced strict WordPress MySQL DATETIME format validation via `DateTimeImmutable::createFromFormat('!Y-m-d H:i:s')` wrapped in a `\Throwable` safety guard, rejecting relative dates ('now', 'tomorrow'), impossible calendar dates ('2026-02-30'), surrounding whitespace, and embedded null bytes without throwing unhandled PHP exceptions.
     - Consolidated `is_within_registration_window()` into a single canonical helper in `FirewallEngine` with fail-closed delegation in `RuntimeSqlRaspEngine`, eliminating duplicate fallbacks.
