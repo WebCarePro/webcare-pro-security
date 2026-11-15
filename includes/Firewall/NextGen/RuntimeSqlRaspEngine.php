@@ -862,7 +862,7 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
 
                         $is_core_auth_caller = (
                             ($caller_fn === 'wp_authenticate_username_password' || $caller_fn === 'wp_authenticate_email_password')
-                            && ($canonical_user === '' || $caller_file === $canonical_user)
+                            && ($canonical_user !== '' && $caller_file === $canonical_user)
                         );
 
                         if ($arg_uid === $uid && $is_core_auth_caller) {

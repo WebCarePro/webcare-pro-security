@@ -1,6 +1,6 @@
 {
   "version": "2.15.0",
-  "generated_at": "2026-11-15T15:45:39.626Z",
+  "generated_at": "2026-11-15T15:51:12.736Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -512,7 +512,7 @@
       "size": 11590
     },
     "includes/Firewall/NextGen/RuntimeSqlRaspEngine.php": {
-      "sha256": "831183f2ff703b6ba235fbe446603e79dbc9901cb4b639eb66a7a6fc2129b3c7",
+      "sha256": "f640337c30c9bb89944c725abefb963d4aae002efc3c7a51a9f9bd05d1c35f16",
       "size": 49906
     },
     "includes/Firewall/NextGen/UpgraderDeltaSentinel.php": {
