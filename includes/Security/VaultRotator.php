@@ -627,7 +627,14 @@ class VaultRotator {
      * Supports both V2 Chunked Streaming AEAD (constant RAM) and legacy inline archives.
      */
     private static function rotate_encrypted_disk_archives(string $old_binary_key, string $new_binary_key): array {
-        $result     = ['rotated' => 0, 'failed' => [], 'dir_synced' => 0];
+        $result = [
+            'rotated'              => 0,
+            'failed'               => [],
+            'dir_synced'           => 0,
+            'dir_sync_failed'      => 0,
+            'dir_sync_unsupported' => 0,
+            'dir_sync_details'     => [],
+        ];
         $upload_dir = wp_upload_dir();
         $base_dir   = trailingslashit($upload_dir['basedir']);
         $candidates = array_merge(
@@ -692,9 +699,17 @@ class VaultRotator {
 
                 // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod
                 @chmod($file_path, 0600);
-                $dir_synced = SecretVault::sync_directory_metadata(dirname($file_path));
+                $dir_synced   = SecretVault::sync_directory_metadata(dirname($file_path));
+                $archive_name = basename($file_path);
                 if ($dir_synced === true) {
                     $result['dir_synced']++;
+                    $result['dir_sync_details'][$archive_name] = 'synced';
+                } elseif ($dir_synced === false) {
+                    $result['dir_sync_failed']++;
+                    $result['dir_sync_details'][$archive_name] = 'failed';
+                } else {
+                    $result['dir_sync_unsupported']++;
+                    $result['dir_sync_details'][$archive_name] = 'unsupported';
                 }
                 $result['rotated']++;
                 continue;
@@ -791,9 +806,17 @@ class VaultRotator {
                             if (@rename($temp_file, $file_path)) {
                                 // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod
                                 @chmod($file_path, 0600);
-                                $dir_synced = SecretVault::sync_directory_metadata(dirname($file_path));
+                                $dir_synced   = SecretVault::sync_directory_metadata(dirname($file_path));
+                                $archive_name = basename($file_path);
                                 if ($dir_synced === true) {
                                     $result['dir_synced']++;
+                                    $result['dir_sync_details'][$archive_name] = 'synced';
+                                } elseif ($dir_synced === false) {
+                                    $result['dir_sync_failed']++;
+                                    $result['dir_sync_details'][$archive_name] = 'failed';
+                                } else {
+                                    $result['dir_sync_unsupported']++;
+                                    $result['dir_sync_details'][$archive_name] = 'unsupported';
                                 }
                                 $result['rotated']++;
                                 continue;

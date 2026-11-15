@@ -846,13 +846,26 @@ class SecretVault {
             return ['success' => false, 'error' => 'Failed to exclusively create destination stream for legacy restore.'];
         }
         @chmod($temp_dest, 0600);
+
+        $stat            = fstat($v_fp);
+        $total_file_size = (int) ($stat['size'] ?? 0);
+        $current_pos     = ftell($v_fp);
+        $expected_bytes  = ($current_pos !== false && $total_file_size >= $current_pos) ? ($total_file_size - $current_pos) : null;
+
         $copied = stream_copy_to_stream($v_fp, $dst_fp);
         fclose($v_fp);
 
-        if ($copied === false || $copied < 0) {
+        if ($copied === false || ($expected_bytes !== null && $copied !== $expected_bytes)) {
             fclose($dst_fp);
             wp_delete_file($temp_dest);
-            return ['success' => false, 'error' => 'Stream copy failure during legacy restore.'];
+            return [
+                'success' => false,
+                'error'   => sprintf(
+                    'Stream copy failure or incomplete copy during legacy restore (expected %d bytes, copied %d bytes).',
+                    (int) $expected_bytes,
+                    (int) $copied
+                ),
+            ];
         }
 
         $flush_ok = fflush($dst_fp);

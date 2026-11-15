@@ -5607,26 +5607,106 @@ class FirewallEngine {
         if (self::$confirmed_exploit_registry === null) {
             self::$confirmed_exploit_registry = [
                 // Core Exploit Signatures (ExploitSignatureEngine & FirewallEngine)
-                'WAF-SQLI-INJECTION'                    => ['category' => 'SQL Injection'],
-                'WAF-SQLI-ARMOR'                        => ['category' => 'SQL Injection'],
-                'WAF-RCE-PHP-INJECTION'                 => ['category' => 'PHP Code Injection'],
-                'WAF-PHP-CODE-INJECTION'                => ['category' => 'PHP Code Injection'],
-                'WAF-LFI-TRAVERSAL'                     => ['category' => 'Path Traversal'],
-                'WAF-PATH-TRAVERSAL'                    => ['category' => 'Path Traversal'],
-                'WAF-OBJECT-STREAM-INJECTION'           => ['category' => 'Execution Armor'],
-                'WAF-AJAX-SHORTCODE-GADGET'             => ['category' => 'PHP Code Injection'],
-                'WAF-NULL-BYTE-POISON'                  => ['category' => 'Null Byte Poison'],
-                'WAF-WP7-INTERACTIVITY-POISON'          => ['category' => 'Execution Armor'],
-                'WAF-SSRF-METADATA'                     => ['category' => 'SSRF Defense'],
-                'WAF-POLYGLOT-UPLOAD-TRAP'              => ['category' => 'Malicious File Upload'],
-                'WAF-SVGZ-DECOMPRESSION-BOMB-OR-ERROR'  => ['category' => 'Malicious File Upload'],
-                'WAF-UPLOAD-SCAN-INCOMPLETE-OR-MUTATED' => ['category' => 'Malicious File Upload'],
-                'WAF-UPLOADS-PHP-DENY'                  => ['category' => 'Execution Armor'],
-                'WAF-UNAUTHORIZED-PUT-UPLOAD'           => ['category' => 'Protocol Defense'],
-                'WAF-FORGED-WEBHOOK-TRAP'               => ['category' => 'Protocol Defense'],
-                'WAF-AUTH-TYPE-CONFUSION'               => ['category' => 'Protocol Defense'],
-                'WAF-REST-METHOD-SMUGGLE'               => ['category' => 'Protocol Defense'],
-                'WAF-LOG-EXFILTRATION-TRAP'             => ['category' => 'Incident Containment'],
+                'WAF-SQLI-INJECTION'                    => [
+                    'category' => 'SQL Injection',
+                    'detector' => 'ExploitSignatureEngine',
+                    'sig_id'   => 'sig:sqli:union_information_schema_sleep',
+                ],
+                'WAF-SQLI-ARMOR'                        => [
+                    'category' => 'SQL Injection',
+                    'detector' => 'ExploitSignatureEngine',
+                    'sig_id'   => 'sig:sqli:armor_blind_polyglot',
+                ],
+                'WAF-RCE-PHP-INJECTION'                 => [
+                    'category' => 'PHP Code Injection',
+                    'detector' => 'ExploitSignatureEngine',
+                    'sig_id'   => 'sig:rce:eval_system_passthru_base64',
+                ],
+                'WAF-PHP-CODE-INJECTION'                => [
+                    'category' => 'PHP Code Injection',
+                    'detector' => 'ExploitSignatureEngine',
+                    'sig_id'   => 'sig:rce:script_tags_dangerous_functions',
+                ],
+                'WAF-LFI-TRAVERSAL'                     => [
+                    'category' => 'Path Traversal',
+                    'detector' => 'ExploitSignatureEngine',
+                    'sig_id'   => 'sig:lfi:dot_slash_etc_passwd_php_wrappers',
+                ],
+                'WAF-PATH-TRAVERSAL'                    => [
+                    'category' => 'Path Traversal',
+                    'detector' => 'ExploitSignatureEngine',
+                    'sig_id'   => 'sig:lfi:canonical_traversal_segments',
+                ],
+                'WAF-OBJECT-STREAM-INJECTION'           => [
+                    'category' => 'Execution Armor',
+                    'detector' => 'ExploitSignatureEngine',
+                    'sig_id'   => 'sig:armor:pop_gadget_phar_stream_wrapper',
+                ],
+                'WAF-AJAX-SHORTCODE-GADGET'             => [
+                    'category' => 'PHP Code Injection',
+                    'detector' => 'ExploitSignatureEngine',
+                    'sig_id'   => 'sig:rce:ajax_shortcode_gadget_chain',
+                ],
+                'WAF-NULL-BYTE-POISON'                  => [
+                    'category' => 'Null Byte Poison',
+                    'detector' => 'ExploitSignatureEngine',
+                    'sig_id'   => 'sig:poison:null_byte_terminator',
+                ],
+                'WAF-WP7-INTERACTIVITY-POISON'          => [
+                    'category' => 'Execution Armor',
+                    'detector' => 'ExploitSignatureEngine',
+                    'sig_id'   => 'sig:armor:wp7_interactivity_attribute_poison',
+                ],
+                'WAF-SSRF-METADATA'                     => [
+                    'category' => 'SSRF Defense',
+                    'detector' => 'ExploitSignatureEngine',
+                    'sig_id'   => 'sig:ssrf:cloud_metadata_link_local',
+                ],
+                'WAF-POLYGLOT-UPLOAD-TRAP'              => [
+                    'category' => 'Malicious File Upload',
+                    'detector' => 'ExploitSignatureEngine',
+                    'sig_id'   => 'sig:upload:polyglot_embedded_script',
+                ],
+                'WAF-SVGZ-DECOMPRESSION-BOMB-OR-ERROR'  => [
+                    'category' => 'Malicious File Upload',
+                    'detector' => 'ExploitSignatureEngine',
+                    'sig_id'   => 'sig:upload:svgz_decompression_bomb',
+                ],
+                'WAF-UPLOAD-SCAN-INCOMPLETE-OR-MUTATED' => [
+                    'category' => 'Malicious File Upload',
+                    'detector' => 'ExploitSignatureEngine',
+                    'sig_id'   => 'sig:upload:incomplete_mutated_stream',
+                ],
+                'WAF-UPLOADS-PHP-DENY'                  => [
+                    'category' => 'Execution Armor',
+                    'detector' => 'ExploitSignatureEngine',
+                    'sig_id'   => 'sig:armor:php_upload_execution_deny',
+                ],
+                'WAF-UNAUTHORIZED-PUT-UPLOAD'           => [
+                    'category' => 'Protocol Defense',
+                    'detector' => 'FirewallEngine',
+                    'sig_id'   => 'sig:proto:unauthorized_put_request',
+                ],
+                'WAF-FORGED-WEBHOOK-TRAP'               => [
+                    'category' => 'Protocol Defense',
+                    'detector' => 'FirewallEngine',
+                    'sig_id'   => 'sig:proto:forged_webhook_signature',
+                ],
+                'WAF-AUTH-TYPE-CONFUSION'               => [
+                    'category' => 'Protocol Defense',
+                    'detector' => 'FirewallEngine',
+                    'sig_id'   => 'sig:proto:auth_header_type_confusion',
+                ],
+                'WAF-REST-METHOD-SMUGGLE'               => [
+                    'category' => 'Protocol Defense',
+                    'detector' => 'FirewallEngine',
+                    'sig_id'   => 'sig:proto:rest_method_override_smuggle',
+                ],
+                'WAF-LOG-EXFILTRATION-TRAP'             => [
+                    'category' => 'Incident Containment',
+                    'detector' => 'FirewallEngine',
+                    'sig_id'   => 'sig:contain:log_poison_and_exfil',
+                ],
             ];
         }
         return self::$confirmed_exploit_registry;
@@ -5635,8 +5715,8 @@ class FirewallEngine {
     /**
      * Authoritatively verify whether a rule matches a genuine, registered exploit signature
      * in the trusted internal signature registry.
-     * Enforces that both the rule ID and its definition category match the authoritative registry entry,
-     * rejecting caller-supplied or forged definitions carrying genuine IDs.
+     * Enforces that both the rule ID, its definition category, and authorized detector provenance
+     * match the authoritative registry entry, rejecting caller-supplied or forged definitions carrying genuine IDs.
      *
      * @param string $rule_id_str Uppercase rule ID
      * @param array  $rule        Rule definition array
@@ -5651,10 +5731,26 @@ class FirewallEngine {
         if (isset($registry[$rule_id_str])) {
             $registered = $registry[$rule_id_str];
             if (!empty($rule)) {
+                // 1. Mandatory Category Verification
                 $incoming_cat  = trim((string) ($rule['category'] ?? ''));
                 $canonical_cat = trim((string) ($registered['category'] ?? ''));
                 if ($incoming_cat === '' || strcasecmp($incoming_cat, $canonical_cat) !== 0) {
                     return false; // Rejects genuine IDs with missing, empty, or forged categories
+                }
+
+                // 2. Authorized Detector Provenance Verification: if incoming rule specifies detector,
+                // it must match the authentic registered detector for this signature.
+                $incoming_detector = trim((string) ($rule['detector'] ?? ($rule['detector_id'] ?? '')));
+                $expected_detector = trim((string) ($registered['detector'] ?? ''));
+                if ($incoming_detector !== '' && strcasecmp($incoming_detector, $expected_detector) !== 0) {
+                    return false; // Rejects unauthorized or mismatched detector provenance claims
+                }
+
+                // 3. Immutable Signature ID Verification: if incoming specifies sig_id, it must match
+                $incoming_sig = trim((string) ($rule['sig_id'] ?? ''));
+                $expected_sig = trim((string) ($registered['sig_id'] ?? ''));
+                if ($incoming_sig !== '' && strcasecmp($incoming_sig, $expected_sig) !== 0) {
+                    return false; // Rejects mismatched signature identifier
                 }
             }
             return true;
@@ -5671,6 +5767,12 @@ class FirewallEngine {
                         $valid_vpatch_cats = ['virtual patch (cve shield)', 'virtual patch', 'cve patch'];
                         if ($incoming_cat === '' || !in_array($incoming_cat, $valid_vpatch_cats, true)) {
                             return false; // Rejects genuine patch IDs carrying forged or missing category
+                        }
+
+                        // Verify VirtualPatchManager detector provenance if supplied
+                        $incoming_detector = trim((string) ($rule['detector'] ?? ($rule['detector_id'] ?? '')));
+                        if ($incoming_detector !== '' && !in_array(strtolower($incoming_detector), ['virtualpatchmanager', 'firewallengine'], true)) {
+                            return false; // Rejects unauthorized detector for virtual patch
                         }
                     }
                     return true;
@@ -5691,8 +5793,10 @@ class FirewallEngine {
         $registry = self::get_confirmed_exploit_registry();
         if (isset($registry[$rule_id_str])) {
             return array_merge([
-                'id'   => $rule_id_str,
-                'tier' => self::TIER_CONFIRMED_EXPLOIT,
+                'id'       => $rule_id_str,
+                'tier'     => self::TIER_CONFIRMED_EXPLOIT,
+                'detector' => $registry[$rule_id_str]['detector'],
+                'sig_id'   => $registry[$rule_id_str]['sig_id'],
             ], $registry[$rule_id_str]);
         }
 
@@ -5706,6 +5810,8 @@ class FirewallEngine {
                     'name'        => $patch['title'] ?? ($patch['name'] ?? 'CVE Virtual Patch'),
                     'category'    => 'Virtual Patch (CVE Shield)',
                     'tier'        => self::TIER_CONFIRMED_EXPLOIT,
+                    'detector'    => 'VirtualPatchManager',
+                    'sig_id'      => 'cve:' . strtolower($patch_id),
                     'description' => $patch['description'] ?? 'Curated CVE Virtual Patch',
                 ];
             }

@@ -137,12 +137,21 @@ class ModularFirewallSynthesizer {
             }
         }
 
-        // 4. Action Verification: If incoming specifies an action, it must match stored action_type
-        if (isset($incoming_rule['action_type']) || isset($incoming_rule['action'])) {
+        // 4. Mandatory Action Verification: Action is part of the complete definition fingerprint.
+        // Incoming rule MUST explicitly declare action_type or action matching the stored record.
+        $stored_act = strtolower(trim((string) ($stored['action_type'] ?? ($stored['action'] ?? ''))));
+        if ($stored_act !== '') {
+            if (!isset($incoming_rule['action_type']) && !isset($incoming_rule['action'])) {
+                return null; // Missing mandatory action definition field
+            }
             $incoming_act = strtolower(trim((string) ($incoming_rule['action_type'] ?? $incoming_rule['action'])));
-            $stored_act   = strtolower(trim((string) ($stored['action_type'] ?? 'block')));
-            if ($incoming_act !== '' && $incoming_act !== $stored_act) {
-                return null; // Mismatched action
+            if ($incoming_act === '' || $incoming_act !== $stored_act) {
+                return null; // Empty or mismatched action
+            }
+        } elseif (isset($incoming_rule['action_type']) || isset($incoming_rule['action'])) {
+            $incoming_act = strtolower(trim((string) ($incoming_rule['action_type'] ?? $incoming_rule['action'])));
+            if ($incoming_act !== '') {
+                return null; // Unexpected divergent action
             }
         }
 
