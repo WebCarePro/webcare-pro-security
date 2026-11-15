@@ -226,15 +226,17 @@ class DistributedVelocityShield {
      */
     public static function record_auth_failure(string $ip = '', string $username = '', string $reason = ''): array {
         static $processed_attempts = [];
-        $sig = md5($ip . '|' . $username . '|' . $reason);
-        if (isset($processed_attempts[$sig])) {
-            return self::get_live_velocity();
-        }
-        $processed_attempts[$sig] = true;
 
         if (empty($ip)) {
             $ip = self::get_client_ip();
         }
+
+        // Deduplicate by resolved IP + normalized username per request (ignoring $reason wording differences)
+        $sig = md5($ip . '|' . strtolower(trim($username)));
+        if (isset($processed_attempts[$sig])) {
+            return self::get_live_velocity();
+        }
+        $processed_attempts[$sig] = true;
 
         if (self::is_exempt_ip($ip)) {
             return self::get_live_velocity();

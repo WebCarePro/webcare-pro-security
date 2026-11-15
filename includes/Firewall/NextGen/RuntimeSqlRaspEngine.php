@@ -244,8 +244,14 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
             'id',
         ];
 
+        // Reject any query containing subqueries, UNIONs, or stacked statements
+        $skeleton = (string) preg_replace("/'(?:\\\\.|[^'\\\\])*'|\"(?:\\\\.|[^\"\\\\])*\"/", "''", $sql);
+        if (preg_match('/\b(?:SELECT|UNION|BENCHMARK|SLEEP|LOAD_FILE)\b|;/i', $skeleton)) {
+            return false;
+        }
+
         // 3. Inspect columns in INSERT or UPDATE query
-        if (preg_match('/INSERT\s+INTO\s+`?[a-zA-Z0-9_]+`?\s*\(([^)]+)\)/i', $sql, $matches)) {
+        if (preg_match('/^\s*INSERT\s+INTO\s+`?[a-zA-Z0-9_]+`?\s*\(([^)]+)\)/i', $skeleton, $matches)) {
             $cols = array_map(function ($c) {
                 return strtolower(trim(str_replace('`', '', $c)));
             }, explode(',', $matches[1]));
@@ -258,9 +264,10 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
             return true;
         }
 
-        if (preg_match('/UPDATE\s+`?[a-zA-Z0-9_]+`?\s+SET\s+(.+?)(?:\s+WHERE\b|$)/is', $sql, $matches)) {
+        // Require an explicit WHERE clause on all UPDATE wp_users statements
+        if (preg_match('/^\s*UPDATE\s+`?[a-zA-Z0-9_]+`?\s+SET\s+(.+?)\s+WHERE\s+(.+)$/is', $skeleton, $matches)) {
             $set_clause = $matches[1];
-            if (preg_match_all('/`?([a-zA-Z0-9_]+)`?\s*=/i', $set_clause, $col_matches)) {
+            if (preg_match_all('/`?([a-zA-Z0-9_]+)`?\s*=/i', $set_clause, $col_matches) && !empty($col_matches[1])) {
                 foreach ($col_matches[1] as $col) {
                     if (!in_array(strtolower($col), $allowed_columns, true)) {
                         return false;

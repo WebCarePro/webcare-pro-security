@@ -155,11 +155,6 @@ class LoginHardening {
                     $reason_label = !empty($custom_msg) ? $custom_msg : $error_code;
                     break;
             }
-        }
-
-        // Record global cross-IP authentication failure for distributed credential-stuffing defense
-        if (class_exists('\\WebCareProScanner\\Firewall\\DistributedVelocityShield')) {
-            \WebCareProScanner\Firewall\DistributedVelocityShield::record_auth_failure($ip, $username, $reason_label);
         } else {
             // Fallback user existence check when caller does not provide WP_Error
             $user_exists = is_email($username) ? (bool) get_user_by('email', $username) : (bool) get_user_by('login', $username);
@@ -168,6 +163,11 @@ class LoginHardening {
             } else {
                 $reason_label = __('Unknown identity (account does not exist)', 'webcare-pro-security');
             }
+        }
+
+        // Record global cross-IP authentication failure AFTER $reason_label is resolved
+        if (class_exists('\\WebCareProScanner\\Firewall\\DistributedVelocityShield')) {
+            \WebCareProScanner\Firewall\DistributedVelocityShield::record_auth_failure($ip, $username, $reason_label);
         }
 
         // Action taken: failed attempt monitored vs locked out threshold

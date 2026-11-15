@@ -433,20 +433,22 @@ class WebAuthnManager {
      * @return array
      */
     public static function verify_login(string $session_id, array $payload): array {
-        $client_ip = class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine')
-            ? \WebCareProScanner\Firewall\FirewallEngine::get_client_ip()
-            : '127.0.0.1';
-
-        // Check LoginHardening IP lockout gate
-        if (class_exists('\\WebCareProScanner\\Auth\\LoginHardening') && \WebCareProScanner\Auth\LoginHardening::check_ip_lockout($client_ip)) {
-            return [
-                'success' => false,
-                'message' => __('Your IP address is temporarily locked out due to multiple failed authentication attempts.', 'webcare-pro-security'),
-            ];
+        // 1. Check LoginHardening IP lockout gate (pass 3 args and check for WP_Error)
+        if (class_exists('\\WebCareProScanner\\Auth\\LoginHardening')) {
+            $lockout_check = \WebCareProScanner\Auth\LoginHardening::check_ip_lockout(null, '', '');
+            if (is_wp_error($lockout_check)) {
+                return [
+                    'success' => false,
+                    'message' => wp_strip_all_tags($lockout_check->get_error_message()),
+                ];
+            }
         }
 
-        // Check Emergency Containment Mode gate
-        if (class_exists('\\WebCareProScanner\\Emergency\\EmergencyContainmentManager') && \WebCareProScanner\Emergency\EmergencyContainmentManager::is_active()) {
+        // 2. Check Emergency Containment Mode gate (correct namespace: Security, not Emergency)
+        if (
+            class_exists('\\WebCareProScanner\\Security\\EmergencyContainmentManager')
+            && \WebCareProScanner\Security\EmergencyContainmentManager::is_active()
+        ) {
             return [
                 'success' => false,
                 'message' => __('Site is in emergency containment mode. Authentication is restricted.', 'webcare-pro-security'),

@@ -3170,7 +3170,7 @@ class FirewallEngine {
     public static function is_high_risk_recon_probe(string $uri): bool {
         $path = strtolower(wp_parse_url($uri, PHP_URL_PATH) ?: $uri);
         $norm_route = self::resolve_normalized_rest_route($uri);
-        if (str_contains($path, '/wp-json/webcare-pro-security/') || str_contains($path, '/webcare-pro-security/') || str_starts_with($norm_route, '/webcare-pro-security/')) {
+        if (str_contains($path, '/wp-json/webcare-pro-security/') || str_starts_with($norm_route, '/webcare-pro-security/')) {
             return false;
         }
 
@@ -3222,8 +3222,10 @@ class FirewallEngine {
         $clean_path = str_replace('\\', '/', $clean_path);
 
         $norm_rest_route = self::resolve_normalized_rest_route($decoded_check_path);
-        $is_plugin_api   = str_contains($clean_path, '/wp-json/webcare-pro-security/') || str_contains($clean_path, '/webcare-pro-security/') || str_starts_with($norm_rest_route, '/webcare-pro-security/');
-        $is_legit_rest   = (str_contains($clean_path, '/wp-json/') || !empty($norm_rest_route)) && !str_contains($clean_path, '..');
+        $is_plugin_api   = str_contains($clean_path, '/wp-json/webcare-pro-security/') || str_starts_with($norm_rest_route, '/webcare-pro-security/');
+        $is_legit_rest   = ($norm_rest_route !== '' || str_contains($clean_path, '/wp-json/'))
+            && !str_contains($clean_path, '..')
+            && !str_contains($clean_path, '/wp-content/');
 
         if ($is_plugin_api || $is_legit_rest) {
             return null;
@@ -10264,28 +10266,31 @@ class FirewallEngine {
             }
 
             // Also inspect stack trace: if originated from core WP_User::set_role / wp_insert_user / register_new_user
+            // strictly for a brand-new registration (within 120s) and with zero elevated capabilities ($has_admin_privilege === false)
             if (!$is_safe_registration_mutation && function_exists('debug_backtrace')) {
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_debug_backtrace -- Context inspection required to distinguish legitimate WordPress core registration from raw unauthenticated SQL/HTTP privilege injections.
-                $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 40);
-                foreach ($trace as $frame) {
-                    $fn = $frame['function'] ?? '';
-                    $cls = $frame['class'] ?? '';
-                    if (
-                        $fn === 'wp_insert_user' ||
-                        $fn === 'wp_create_user' ||
-                        $fn === 'register_new_user' ||
-                        ($cls === 'WP_User' && $fn === 'set_role')
-                    ) {
-                        // Double check that we are not assigning administrator
-                        if ($meta_key === $prefix . 'capabilities' && is_array($meta_value)) {
-                            $has_admin = !empty($meta_value['administrator']) || !empty($meta_value['manage_options']);
-                            if (!$has_admin) {
+                $user_obj = function_exists('get_userdata') ? get_userdata($object_id) : null;
+                $reg_ts   = $user_obj ? strtotime((string) $user_obj->user_registered) : 0;
+                $is_new_account = !$user_obj || ($reg_ts && (time() - $reg_ts) <= 120);
+
+                if ($is_new_account) {
+                    // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_debug_backtrace -- Context inspection required to distinguish legitimate WordPress core registration from raw unauthenticated SQL/HTTP privilege injections.
+                    $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 40);
+                    foreach ($trace as $frame) {
+                        $fn  = $frame['function'] ?? '';
+                        $cls = $frame['class'] ?? '';
+                        if (
+                            $fn === 'wp_insert_user' ||
+                            $fn === 'wp_create_user' ||
+                            $fn === 'register_new_user' ||
+                            ($cls === 'WP_User' && $fn === 'set_role')
+                        ) {
+                            if ($meta_key === $prefix . 'capabilities' && is_array($meta_value) && empty($has_admin_privilege)) {
+                                $is_safe_registration_mutation = true;
+                                break;
+                            } elseif ($meta_key === $prefix . 'user_level' && (int) $meta_value < 7) {
                                 $is_safe_registration_mutation = true;
                                 break;
                             }
-                        } elseif ($meta_key === $prefix . 'user_level' && (int) $meta_value < 7) {
-                            $is_safe_registration_mutation = true;
-                            break;
                         }
                     }
                 }

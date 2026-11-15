@@ -320,21 +320,6 @@ class CronRegistry {
                 'deep_link'           => 'admin.php?page=webcare-pro-firewall',
                 'default_delay'       => 900,
             ],
-            'webcareproscan_ephemeral_admin_expire' => [
-                'id'                  => 'ephemeral_admin_expire',
-                'hook'                => 'webcareproscan_ephemeral_admin_expire',
-                'title'               => __('JIT Temporary Admin Auto-Demotion', 'webcare-pro-security'),
-                'description'         => __('Enforces time-boxed privilege revocation so temporary administrator grants automatically revert to baseline roles.', 'webcare-pro-security'),
-                'category'            => 'background_workers',
-                'kind'                => 'security_safeguard',
-                'default_recurrence'  => 'on_demand',
-                'allowed_recurrences' => [],
-                'can_disable'         => false,
-                'setting_key'         => null,
-                'setting_location'    => __('Identity & Access -> JIT Elevation', 'webcare-pro-security'),
-                'deep_link'           => 'admin.php?page=webcare-pro-auth',
-                'default_delay'       => 0,
-            ],
         ];
 
         if (class_exists('\\WebCareProScanner\\Core\\ModuleRegistry')) {

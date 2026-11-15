@@ -1,5 +1,19 @@
 ﻿v:2.15.0 - 2026-11-15
 - Zero-Gap Fail-Closed Streaming, Runtime RASP Hardening, Response DLP Redaction & Full Architectural Resilience:
+  * WebAuthn Passkey Pre-Flight Lockout & Containment Hardening (Patch 1):
+    - Resolved Fatal PHP 8 ArgumentCountError in WebAuthnManager::verify_login() by supplying the 3 standard arguments to LoginHardening::check_ip_lockout(null, '', '') and safely evaluating WP_Error responses.
+    - Corrected EmergencyContainmentManager namespace reference to \WebCareProScanner\Security\EmergencyContainmentManager.
+  * LoginHardening Detached Conditional & Deduplication Key Alignment (Patch 2):
+    - Re-attached the fallback user-existence check else block in LoginHardening::handle_failed_login() directly to the error instanceof \WP_Error conditional.
+    - Reordered DistributedVelocityShield::record_auth_failure() to resolve the client IP before computing the attempt signature and deduplicated strictly by IP and normalized username, ensuring cross-component failure telemetry is never counted twice.
+  * Precision Reconnaissance Exemption & RASP Registration Window (Patch 3):
+    - Confined reconnaissance bypasses in FirewallEngine to legitimate REST endpoints (str_contains($path, '/wp-json/webcare-pro-security/')), eliminating exemption leaks targeting static plugin files or uploads directories.
+    - Restricted debug_backtrace caller inspection in rasp_guard_user_metadata_injection() strictly to newly registered accounts created within 120 seconds with zero administrative capabilities.
+  * Runtime SQL RASP Subquery Rejection & UPDATE Clause Enclosure (Patch 4):
+    - Hardened RuntimeSqlRaspEngine::is_legitimate_users_table_mutation() by rejecting nested subqueries (SELECT, UNION, BENCHMARK, SLEEP, LOAD_FILE) and stacked statements.
+    - Enforced mandatory WHERE clauses on all UPDATE wp_users queries to prevent arbitrary mass-table password and role modifications.
+  * Purged Orphaned JIT Cron Task in Registry (Patch 5):
+    - Removed orphaned webcareproscan_ephemeral_admin_expire entry from CronRegistry, keeping the Cron Control Center UI cleanly aligned with the decommissioned JIT engine.
   * Complete Decommissioning & Removal of JIT Admin Access:
     - Completely removed Just-In-Time (JIT) ephemeral admin elevation, eliminating temporary administrator accounts, capability escalation vectors, and MU-plugin guardian watchdog complexity.
     - Purged legacy JIT routes (/identity/jit-elevate, /identity/jit-revoke, /users/candidates), MCP tools, and session elevation hooks, enforcing strict standard WordPress administrative identity boundaries.
