@@ -1818,6 +1818,22 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                   const isUser = isUserIssue(issue);
                   const isAppPasswordRisk = Boolean(issue.type?.includes('app_password') || issue.type?.includes('application_password'));
                   const userId = (issue.file_path && issue.file_path.match(/user(?:_id)?[:_]\s*(\d+)/i)?.[1]) || issue.user_id || 1;
+
+                  const isComment = issue.is_comment || issue.engine === 'content-comments' || Boolean(issue.file_path && issue.file_path.startsWith('comment:'));
+                  const commentId = issue.comment_id || (issue.file_path && issue.file_path.match(/comment:\s*(\d+)/i)?.[1]) || '';
+                  const editCommentUrl = commentId ? `comment.php?action=editcomment&c=${commentId}` : 'edit-comments.php';
+
+                  const isPost = !isComment && (issue.is_post || Boolean(issue.post_id) || issue.engine === 'content-spam' || issue.engine === 'content-posts' || issue.engine === 'database-posts' || Boolean(issue.file_path && issue.file_path.startsWith('post:')));
+                  const postId = issue.post_id || (issue.file_path && issue.file_path.match(/post:\s*(\d+)/i)?.[1]) || '';
+                  const isPage = Boolean(issue.post_type === 'page' || (issue.file_path && issue.file_path.toLowerCase().includes('(page)')));
+                  const editPostUrl = issue.edit_url || (postId ? `post.php?post=${postId}&action=edit` : 'edit.php');
+
+                  const isCronHook = issue.engine === 'wordpress-cron' || issue.file_path?.startsWith('cron:') || issue.type?.includes('cron_hook');
+                  const isDbOption = issue.engine === 'database-options' || issue.file_path?.startsWith('wp_options:') || issue.file_path?.startsWith('wp_options.') || issue.type?.includes('option');
+                  const isHook = issue.engine === 'lotl-hook-sentinel' || issue.engine === 'hook-sentinel' || issue.file_path?.startsWith('hook:') || isCronHook;
+                  const isDbTable = !isUser && (issue.is_db_table || issue.engine === 'database-table' || Boolean(issue.file_path && !issue.file_path.includes('/') && !issue.file_path.includes('\\') && (issue.file_path.includes('.') || issue.file_path.includes(' [ID:'))));
+                  const isDbRecord = !isUser && (isDbOption || isDbTable || issue.engine === 'database-scanner' || issue.engine === 'database-micro-anomaly' || issue.file_path?.startsWith('db:') || issue.file_path?.startsWith('table:'));
+
                   const isUpdate = Boolean(
                     issue.engine === 'wordpress-updates' ||
                     issue.is_software_update ||
@@ -1828,6 +1844,13 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                     issue.type === 'outdated_core' ||
                     issue.type === 'vulnerable_core'
                   );
+                  const isDir = Boolean(issue.is_dir) ||
+                    issue.type === 'plugin_checksums_unavailable' ||
+                    issue.type === 'theme_checksums_unavailable' ||
+                    issue.type?.includes('_checksums_unavailable') ||
+                    (issue.engine === 'integrity-theme' && (issue.file_path?.includes('/themes/') || issue.file_path?.includes('\\themes\\')) && !issue.file_path?.match(/\.[a-zA-Z0-9]{2,5}$/)) ||
+                    (issue.engine === 'integrity-plugin' && (issue.file_path?.includes('/plugins/') || issue.file_path?.includes('\\plugins\\')) && !issue.file_path?.match(/\.[a-zA-Z0-9]{2,5}$/));
+
                   const isUnknownFile = Boolean(
                     issue.type?.includes('unknown') ||
                     issue.type?.includes('unrecognized') ||
@@ -1842,7 +1865,44 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                     issue.type?.includes('unauthorized_dropin') ||
                     issue.engine?.includes('uploads')
                   );
-                  const isPhysicalFile = !isUser && !isUpdate && Boolean(issue.file_path) && !issue.is_dir && !issue.file_path.startsWith('cron:') && !issue.file_path.startsWith('wp_options:') && !issue.file_path.startsWith('db:') && !issue.file_path.startsWith('table:') && !issue.file_path.startsWith('user:') && !issue.file_path.startsWith('comment:') && !issue.file_path.startsWith('hook:') && !issue.file_path.startsWith('author:') && (issue.file_path.includes('/') || issue.file_path.includes('\\') || issue.file_path.endsWith('.php') || issue.file_path.includes('.'));
+
+                  const isNonPhysical = Boolean(
+                    isHook ||
+                    isCronHook ||
+                    isDbRecord ||
+                    isDbTable ||
+                    isDbOption ||
+                    isUser ||
+                    isPost ||
+                    isComment ||
+                    isOrphanedAuthor ||
+                    isUpdate ||
+                    !issue.file_path ||
+                    issue.file_path.startsWith('cron:') ||
+                    issue.file_path.startsWith('wp_options:') ||
+                    issue.file_path.startsWith('wp_options.') ||
+                    issue.file_path.startsWith('db:') ||
+                    issue.file_path.startsWith('table:') ||
+                    issue.file_path.startsWith('user:') ||
+                    issue.file_path.startsWith('comment:') ||
+                    issue.file_path.startsWith('post:') ||
+                    issue.file_path.startsWith('hook:') ||
+                    issue.file_path.startsWith('author:') ||
+                    issue.file_path.includes(' [ID:') ||
+                    issue.file_path.includes('user_id_') ||
+                    issue.file_path.includes('_usermeta:') ||
+                    issue.file_path.includes('_users:') ||
+                    issue.engine === 'database-table' ||
+                    issue.engine === 'database-scanner' ||
+                    issue.engine === 'database-micro-anomaly' ||
+                    issue.engine === 'database-options' ||
+                    issue.engine === 'content-spam' ||
+                    issue.engine === 'content-comments' ||
+                    issue.engine === 'content-posts' ||
+                    issue.engine === 'wordpress-users' ||
+                    issue.engine === 'wordpress-cron'
+                  );
+                  const isPhysicalFile = !isNonPhysical && !isDir && (issue.file_path.includes('/') || issue.file_path.includes('\\') || issue.file_path.endsWith('.php'));
 
                   const isCustomOrPremium = Boolean(
                     issue.is_custom ||
@@ -2108,6 +2168,139 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                                   : 'Update Password in WP-Admin ↗'}
                               </span>
                             </a>
+                          )}
+
+                          {/* 1c. Post / Page Action in Cards View */}
+                          {isPost && issue.status === 'open' && (
+                            <a
+                              href={editPostUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="webcare-btn"
+                              style={{
+                                background: '#4f46e5',
+                                color: '#ffffff',
+                                border: 'none',
+                                padding: '6px 14px',
+                                borderRadius: '7px',
+                                fontSize: '12px',
+                                fontWeight: 700,
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                textDecoration: 'none',
+                                boxShadow: '0 2px 6px rgba(79, 70, 229, 0.25)'
+                              }}
+                              title={isPage ? `Open WordPress page editor for #${postId}` : `Open WordPress post editor for #${postId}`}
+                            >
+                              <ExternalLink size={13} />
+                              <span>{isPage ? 'Edit Page in WP-Admin ↗' : 'Edit Post in WP-Admin ↗'}</span>
+                            </a>
+                          )}
+
+                          {/* 1d. Comment Action in Cards View */}
+                          {isComment && issue.status === 'open' && (
+                            <a
+                              href={editCommentUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="webcare-btn"
+                              style={{
+                                background: '#7c3aed',
+                                color: '#ffffff',
+                                border: 'none',
+                                padding: '6px 14px',
+                                borderRadius: '7px',
+                                fontSize: '12px',
+                                fontWeight: 700,
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                textDecoration: 'none',
+                                boxShadow: '0 2px 6px rgba(124, 58, 237, 0.25)'
+                              }}
+                              title={`Moderate comment #${commentId} in WordPress Admin`}
+                            >
+                              <ExternalLink size={13} />
+                              <span>Moderate Comment in WP-Admin ↗</span>
+                            </a>
+                          )}
+
+                          {/* 1e. Database Record Actions in Cards View */}
+                          {(isDbTable || isDbRecord) && issue.status === 'open' && (
+                            <>
+                              <button
+                                type="button"
+                                className="webcare-btn"
+                                style={{
+                                  background: '#6d28d9',
+                                  color: '#ffffff',
+                                  border: 'none',
+                                  padding: '6px 14px',
+                                  borderRadius: '7px',
+                                  fontSize: '12px',
+                                  fontWeight: 700,
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '6px',
+                                  cursor: 'pointer',
+                                  boxShadow: '0 2px 6px rgba(109, 40, 217, 0.25)'
+                                }}
+                                onClick={() => loadDbRow(issue)}
+                                title="Inspect complete database row data and columns"
+                              >
+                                <FileText size={13} />
+                                <span>Inspect Database Row</span>
+                              </button>
+                              <button
+                                type="button"
+                                className="webcare-btn"
+                                style={{
+                                  background: '#fee2e2',
+                                  color: '#dc2626',
+                                  border: '1px solid #fecaca',
+                                  padding: '6px 14px',
+                                  borderRadius: '7px',
+                                  fontSize: '12px',
+                                  fontWeight: 700,
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '6px',
+                                  cursor: 'pointer'
+                                }}
+                                onClick={() => handleRemediateDbRow(issue, 'delete_row')}
+                                title="Safely backup to Quarantine Vault and delete or cleanse this row"
+                              >
+                                <Trash2 size={13} />
+                                <span>Delete Row</span>
+                              </button>
+                            </>
+                          )}
+
+                          {/* 1f. Cron Hook Action in Cards View */}
+                          {isCronHook && issue.status === 'open' && (
+                            <button
+                              type="button"
+                              className="webcare-btn"
+                              style={{
+                                background: '#fee2e2',
+                                color: '#dc2626',
+                                border: '1px solid #fca5a5',
+                                padding: '6px 14px',
+                                borderRadius: '7px',
+                                fontSize: '12px',
+                                fontWeight: 700,
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                cursor: 'pointer'
+                              }}
+                              onClick={() => handleDeleteCronHook(issue)}
+                              title="Delete and unschedule this cron hook from WordPress database"
+                            >
+                              <Trash2 size={13} />
+                              <span>Delete Cron Hook</span>
+                            </button>
                           )}
 
                           {/* 1b. Software Update Action */}
@@ -2443,9 +2636,16 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                       const isExpanded = expandedIssue === issue.id;
                       const isIgnored = issue.status === 'ignored' || Boolean(issue.is_whitelisted);
                       const isComment = issue.is_comment || issue.engine === 'content-comments' || Boolean(issue.file_path && issue.file_path.startsWith('comment:'));
-                      const isPost = !isComment && (issue.is_post || (Boolean(issue.post_id) && issue.engine !== 'content-comments') || issue.engine === 'content-spam');
+                      const commentId = issue.comment_id || (issue.file_path && issue.file_path.match(/comment:\s*(\d+)/i)?.[1]) || '';
+                      const editCommentUrl = commentId ? `comment.php?action=editcomment&c=${commentId}` : 'edit-comments.php';
+
+                      const isPost = !isComment && (issue.is_post || Boolean(issue.post_id) || issue.engine === 'content-spam' || issue.engine === 'content-posts' || issue.engine === 'database-posts' || Boolean(issue.file_path && issue.file_path.startsWith('post:')));
+                      const postId = issue.post_id || (issue.file_path && issue.file_path.match(/post:\s*(\d+)/i)?.[1]) || '';
+                      const isPage = Boolean(issue.post_type === 'page' || (issue.file_path && issue.file_path.toLowerCase().includes('(page)')));
+                      const editPostUrl = issue.edit_url || (postId ? `post.php?post=${postId}&action=edit` : 'edit.php');
+
                       const isCronHook = issue.engine === 'wordpress-cron' || issue.file_path?.startsWith('cron:') || issue.type?.includes('cron_hook');
-                      const isDbOption = issue.engine === 'database-options' || issue.file_path?.startsWith('wp_options:') || issue.type?.includes('option');
+                      const isDbOption = issue.engine === 'database-options' || issue.file_path?.startsWith('wp_options:') || issue.file_path?.startsWith('wp_options.') || issue.type?.includes('option');
                       const isHook = issue.engine === 'lotl-hook-sentinel' || issue.engine === 'hook-sentinel' || issue.file_path?.startsWith('hook:') || isCronHook;
                       const isOrphanedAuthor = Boolean(
                         issue.type === 'orphaned_post_author' ||
@@ -2456,7 +2656,7 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                       const isUser = isUserIssue(issue);
                       const isAppPasswordRisk = Boolean(issue.type?.includes('app_password') || issue.type?.includes('application_password'));
                       const userId = (issue.file_path && issue.file_path.match(/user(?:_id)?[:_]\s*(\d+)/i)?.[1]) || issue.user_id || 1;
-                      const isDbTable = !isUser && (issue.is_db_table || issue.engine === 'database-table' || Boolean(issue.file_path && !issue.file_path.includes('/') && !issue.file_path.includes('\\') && issue.file_path.includes('.') && issue.file_path.includes('[ID:')));
+                      const isDbTable = !isUser && (issue.is_db_table || issue.engine === 'database-table' || Boolean(issue.file_path && !issue.file_path.includes('/') && !issue.file_path.includes('\\') && (issue.file_path.includes('.') || issue.file_path.includes(' [ID:'))));
                       const isDbRecord = !isUser && (isDbOption || isDbTable || issue.engine === 'database-scanner' || issue.engine === 'database-micro-anomaly' || issue.file_path?.startsWith('db:') || issue.file_path?.startsWith('table:'));
                       const isUpdate = Boolean(
                         issue.engine === 'wordpress-updates' ||
@@ -2475,7 +2675,43 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                         (issue.engine === 'integrity-theme' && (issue.file_path?.includes('/themes/') || issue.file_path?.includes('\\themes\\')) && !issue.file_path?.match(/\.[a-zA-Z0-9]{2,5}$/)) ||
                         (issue.engine === 'integrity-plugin' && (issue.file_path?.includes('/plugins/') || issue.file_path?.includes('\\plugins\\')) && !issue.file_path?.match(/\.[a-zA-Z0-9]{2,5}$/));
 
-                      const isPhysicalFile = !isHook && !isDbRecord && !isDbTable && !isUser && !isPost && !isComment && !isUpdate && !isDir && Boolean(issue.file_path) && !issue.file_path.startsWith('cron:') && !issue.file_path.startsWith('wp_options:') && !issue.file_path.startsWith('db:') && !issue.file_path.startsWith('table:') && !issue.file_path.startsWith('user:') && !issue.file_path.startsWith('comment:') && !issue.file_path.startsWith('hook:') && !issue.file_path.startsWith('author:') && (issue.file_path.includes('/') || issue.file_path.includes('\\') || issue.file_path.endsWith('.php') || issue.file_path.includes('.'));
+                      const isNonPhysical = Boolean(
+                        isHook ||
+                        isCronHook ||
+                        isDbRecord ||
+                        isDbTable ||
+                        isDbOption ||
+                        isUser ||
+                        isPost ||
+                        isComment ||
+                        isOrphanedAuthor ||
+                        isUpdate ||
+                        !issue.file_path ||
+                        issue.file_path.startsWith('cron:') ||
+                        issue.file_path.startsWith('wp_options:') ||
+                        issue.file_path.startsWith('wp_options.') ||
+                        issue.file_path.startsWith('db:') ||
+                        issue.file_path.startsWith('table:') ||
+                        issue.file_path.startsWith('user:') ||
+                        issue.file_path.startsWith('comment:') ||
+                        issue.file_path.startsWith('post:') ||
+                        issue.file_path.startsWith('hook:') ||
+                        issue.file_path.startsWith('author:') ||
+                        issue.file_path.includes(' [ID:') ||
+                        issue.file_path.includes('user_id_') ||
+                        issue.file_path.includes('_usermeta:') ||
+                        issue.file_path.includes('_users:') ||
+                        issue.engine === 'database-table' ||
+                        issue.engine === 'database-scanner' ||
+                        issue.engine === 'database-micro-anomaly' ||
+                        issue.engine === 'database-options' ||
+                        issue.engine === 'content-spam' ||
+                        issue.engine === 'content-comments' ||
+                        issue.engine === 'content-posts' ||
+                        issue.engine === 'wordpress-users' ||
+                        issue.engine === 'wordpress-cron'
+                      );
+                      const isPhysicalFile = !isNonPhysical && !isDir && (issue.file_path.includes('/') || issue.file_path.includes('\\') || issue.file_path.endsWith('.php'));
                       const isUnknownFile = Boolean(
                         issue.type?.includes('unknown') ||
                         issue.type?.includes('extra') ||
@@ -2729,6 +2965,136 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                                         : 'Update Password ↗'}
                                     </span>
                                   </a>
+                                )}
+
+                                {/* 1c. Post / Page Action */}
+                                {isPost && issue.status === 'open' && (
+                                  <a
+                                    href={editPostUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="webcare-btn"
+                                    style={{
+                                      background: '#eef2ff',
+                                      color: '#4f46e5',
+                                      border: '1px solid #c7d2fe',
+                                      fontSize: '12px',
+                                      padding: '4px 10px',
+                                      borderRadius: '6px',
+                                      fontWeight: 700,
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '4px',
+                                      textDecoration: 'none'
+                                    }}
+                                    title={isPage ? `Open WordPress page editor for #${postId}` : `Open WordPress post editor for #${postId}`}
+                                  >
+                                    <ExternalLink size={12} />
+                                    <span>{isPage ? 'Edit Page ↗' : 'Edit Post ↗'}</span>
+                                  </a>
+                                )}
+
+                                {/* 1d. Comment Action */}
+                                {isComment && issue.status === 'open' && (
+                                  <a
+                                    href={editCommentUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="webcare-btn"
+                                    style={{
+                                      background: '#f5f3ff',
+                                      color: '#7c3aed',
+                                      border: '1px solid #ddd6fe',
+                                      fontSize: '12px',
+                                      padding: '4px 10px',
+                                      borderRadius: '6px',
+                                      fontWeight: 700,
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '4px',
+                                      textDecoration: 'none'
+                                    }}
+                                    title={`Moderate comment #${commentId} in WordPress Admin`}
+                                  >
+                                    <ExternalLink size={12} />
+                                    <span>Moderate Comment ↗</span>
+                                  </a>
+                                )}
+
+                                {/* 1e. Database Record Actions */}
+                                {(isDbTable || isDbRecord) && issue.status === 'open' && (
+                                  <Fragment>
+                                    <button
+                                      type="button"
+                                      className="webcare-btn"
+                                      style={{
+                                        background: '#f5f3ff',
+                                        color: '#6d28d9',
+                                        border: '1px solid #ddd6fe',
+                                        fontSize: '12px',
+                                        padding: '4px 10px',
+                                        borderRadius: '6px',
+                                        fontWeight: 600,
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '4px',
+                                        cursor: 'pointer'
+                                      }}
+                                      onClick={() => loadDbRow(issue)}
+                                      title="Inspect complete database row data and columns"
+                                    >
+                                      <FileText size={12} />
+                                      <span>Inspect Row</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="webcare-btn"
+                                      style={{
+                                        background: '#fee2e2',
+                                        color: '#dc2626',
+                                        border: '1px solid #fecaca',
+                                        fontSize: '12px',
+                                        padding: '4px 10px',
+                                        borderRadius: '6px',
+                                        fontWeight: 600,
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '4px',
+                                        cursor: 'pointer'
+                                      }}
+                                      onClick={() => handleRemediateDbRow(issue, 'delete_row')}
+                                      title="Safely backup to Quarantine Vault and delete or cleanse this row"
+                                    >
+                                      <Trash2 size={12} />
+                                      <span>Delete Row</span>
+                                    </button>
+                                  </Fragment>
+                                )}
+
+                                {/* 1f. Cron Hook Action */}
+                                {isCronHook && issue.status === 'open' && (
+                                  <button
+                                    type="button"
+                                    className="webcare-btn"
+                                    style={{
+                                      background: '#fee2e2',
+                                      color: '#dc2626',
+                                      border: '1px solid #fca5a5',
+                                      fontSize: '12px',
+                                      padding: '4px 10px',
+                                      borderRadius: '6px',
+                                      fontWeight: 600,
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '4px',
+                                      cursor: 'pointer'
+                                    }}
+                                    onClick={() => handleDeleteCronHook(issue)}
+                                    title="Delete and unschedule this cron hook from WordPress database"
+                                  >
+                                    <Trash2 size={12} />
+                                    <span>Delete Hook</span>
+                                  </button>
                                 )}
 
                                 {/* 1b. Software Update Action */}
