@@ -149,8 +149,11 @@ class ThreatScoreTracker {
             return;
         }
 
-        // Exempt logged-in administrators
+        // Exempt logged-in administrators and active WooCommerce shoppers
         if (function_exists('is_user_logged_in') && is_user_logged_in() && function_exists('current_user_can') && current_user_can('manage_options')) {
+            return;
+        }
+        if (class_exists('\\WebCareProScanner\\Firewall\\CommerceSessionGuard') && \WebCareProScanner\Firewall\CommerceSessionGuard::has_active_shopper_session()) {
             return;
         }
 
@@ -180,6 +183,14 @@ class ThreatScoreTracker {
      * Escalate an IP to local quarantine and push to Cloudflare Edge Ban Queue.
      */
     private static function escalate_to_hard_ban(string $ip, float $score, string $reason): void {
+        // Shopper & Whitelist Immunity: Never escalate active shoppers or whitelisted IPs to automated IP bans
+        if (class_exists('\\WebCareProScanner\\Firewall\\CommerceSessionGuard') && \WebCareProScanner\Firewall\CommerceSessionGuard::has_active_shopper_session()) {
+            return;
+        }
+        if (class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine') && \WebCareProScanner\Firewall\FirewallEngine::is_ip_whitelisted($ip)) {
+            return;
+        }
+
         // Enforce hard quarantine via central FirewallEngine
         if (class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine')) {
             \WebCareProScanner\Firewall\FirewallEngine::add_blocked_ip(

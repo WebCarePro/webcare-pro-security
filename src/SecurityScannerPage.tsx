@@ -1902,7 +1902,7 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                     issue.engine === 'wordpress-users' ||
                     issue.engine === 'wordpress-cron'
                   );
-                  const isPhysicalFile = !isNonPhysical && !isDir && (issue.file_path.includes('/') || issue.file_path.includes('\\') || issue.file_path.endsWith('.php'));
+                  const isPhysicalFile = !isNonPhysical && !isDir && !isPost && !isUser && !isDbRecord && !isDbTable && !isDbOption && !isComment && !isCronHook && !isHook && !isOrphanedAuthor && !isUpdate && Boolean(issue.file_path) && !issue.file_path.startsWith('db:') && !issue.file_path.startsWith('post:') && !issue.file_path.startsWith('user:') && !issue.file_path.startsWith('comment:') && !issue.file_path.startsWith('cron:') && !issue.file_path.startsWith('hook:') && !issue.file_path.startsWith('table:') && !issue.file_path.startsWith('wp_options:') && !issue.file_path.startsWith('wp_options.') && (issue.file_path.includes('/') || issue.file_path.includes('\\') || issue.file_path.endsWith('.php') || issue.file_path.endsWith('.js') || issue.file_path.endsWith('.html'));
 
                   const isCustomOrPremium = Boolean(
                     issue.is_custom ||
@@ -1976,7 +1976,7 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                           </h4>
                           {isUser ? (
                             <span style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', background: 'rgba(99, 102, 241, 0.1)', color: '#6366f1', border: '1px solid rgba(99, 102, 241, 0.2)' }}>
-                              ACCOUNT DEFENSE
+                              {isAppPasswordRisk ? 'APP PASSWORD' : 'ACCOUNT DEFENSE'}
                             </span>
                           ) : isPost ? (
                             <span style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', background: 'rgba(2, 132, 199, 0.1)', color: '#0284c7', border: '1px solid rgba(2, 132, 199, 0.2)' }}>
@@ -2723,7 +2723,7 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                         issue.engine === 'wordpress-users' ||
                         issue.engine === 'wordpress-cron'
                       );
-                      const isPhysicalFile = !isNonPhysical && !isDir && (issue.file_path.includes('/') || issue.file_path.includes('\\') || issue.file_path.endsWith('.php'));
+                      const isPhysicalFile = !isNonPhysical && !isDir && !isPost && !isUser && !isDbRecord && !isDbTable && !isDbOption && !isComment && !isCronHook && !isHook && !isOrphanedAuthor && !isUpdate && Boolean(issue.file_path) && !issue.file_path.startsWith('db:') && !issue.file_path.startsWith('post:') && !issue.file_path.startsWith('user:') && !issue.file_path.startsWith('comment:') && !issue.file_path.startsWith('cron:') && !issue.file_path.startsWith('hook:') && !issue.file_path.startsWith('table:') && !issue.file_path.startsWith('wp_options:') && !issue.file_path.startsWith('wp_options.') && (issue.file_path.includes('/') || issue.file_path.includes('\\') || issue.file_path.endsWith('.php') || issue.file_path.endsWith('.js') || issue.file_path.endsWith('.html'));
                       const isUnknownFile = Boolean(
                         issue.type?.includes('unknown') ||
                         issue.type?.includes('extra') ||
@@ -2838,7 +2838,7 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                                     </span>
                                   ) : isUser ? (
                                     <span className="webcare-type-badge-user" style={{ background: '#f0fdf4', color: '#15803d', border: '1px solid #bbf7d0', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700 }}>
-                                      USER
+                                      {isAppPasswordRisk ? 'APP PASSWORD' : 'USER'}
                                     </span>
                                   ) : (isDbTable || isDbRecord || isDbOption || issue.file_path?.startsWith('db:') || issue.file_path?.startsWith('table:')) ? (
                                     <span className="webcare-type-badge-db" style={{ background: '#faf5ff', color: '#7e22ce', border: '1px solid #e9d5ff', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700 }}>

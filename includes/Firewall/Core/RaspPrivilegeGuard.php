@@ -354,14 +354,31 @@ class RaspPrivilegeGuard {
             return;
         }
 
+        // Exempt legitimate WordPress background cron tasks (e.g. WooCommerce Subscriptions, scheduled renewal/role updates)
+        if (defined('DOING_CRON') && DOING_CRON) {
+            // phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.NonceVerification.Recommended -- RASP runtime inspection of request parameters during background cron
+            if (empty($_POST['role']) && empty($_GET['role']) && empty($_POST['new_role'])) {
+                return;
+            }
+        }
+
         $is_elevated_role = self::is_privileged_role($role);
 
         if ($is_elevated_role) {
             if (FirewallEngine::is_authenticated_administrator()) {
                 return;
             }
-            if (function_exists('is_user_logged_in') && is_user_logged_in() && function_exists('current_user_can') && current_user_can('manage_options')) {
-                return;
+            if (function_exists('is_user_logged_in') && is_user_logged_in() && function_exists('current_user_can')) {
+                if (current_user_can('manage_options')) {
+                    return;
+                }
+                // Allow WooCommerce Shop Managers (manage_woocommerce) to assign non-administrator roles
+                if (current_user_can('manage_woocommerce') && strtolower(trim($role)) !== 'administrator') {
+                    $role_obj = function_exists('get_role') ? get_role($role) : null;
+                    if (!$role_obj || empty($role_obj->capabilities['manage_options'])) {
+                        return;
+                    }
+                }
             }
 
             $client_ip = ClientIpResolver::get_client_ip();
@@ -418,6 +435,14 @@ class RaspPrivilegeGuard {
 
         if (FirewallEngine::is_trusted_plugin_check_or_cli_runtime()) {
             return;
+        }
+
+        // Exempt legitimate background cron tasks
+        if (defined('DOING_CRON') && DOING_CRON) {
+            // phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.NonceVerification.Recommended -- RASP runtime inspection of request parameters during background cron
+            if (empty($_POST['role']) && empty($_GET['role']) && empty($_POST['new_role'])) {
+                return;
+            }
         }
 
         if (FirewallEngine::is_authenticated_administrator()) {
@@ -511,12 +536,24 @@ class RaspPrivilegeGuard {
             return $check;
         }
 
+        // Exempt legitimate WordPress background cron tasks (e.g. WooCommerce Subscriptions renewal, memberships)
+        // phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.NonceVerification.Recommended -- RASP runtime inspection of request state during background cron
+        if (defined('DOING_CRON') && DOING_CRON && empty($_POST) && empty($_GET)) {
+            return $check;
+        }
+
         if (function_exists('is_user_logged_in') && is_user_logged_in()) {
             if (FirewallEngine::is_authenticated_administrator()) {
                 return $check;
             }
-            if (function_exists('current_user_can') && (current_user_can('manage_options') || current_user_can('edit_user', $object_id))) {
-                return $check;
+            if (function_exists('current_user_can')) {
+                if (current_user_can('manage_options') || current_user_can('edit_user', $object_id)) {
+                    return $check;
+                }
+                // Allow WooCommerce Shop Managers to manage non-admin metadata
+                if (current_user_can('manage_woocommerce') && $meta_key !== $prefix . 'capabilities') {
+                    return $check;
+                }
             }
         }
 

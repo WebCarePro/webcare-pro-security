@@ -261,7 +261,9 @@ class LoginHardening {
             }
 
             // Sync brute-force attacker to local blocklist & Cloudflare Edge with automatic TTL expiration
-            if (!empty($settings['cloudflare_auto_sync_bans']) && class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine')) {
+            // Shopper Protection: Never escalate active shopper or customer IPs to sitewide Cloudflare Edge IP bans
+            $is_active_shopper = class_exists('\\WebCareProScanner\\Firewall\\CommerceSessionGuard') && \WebCareProScanner\Firewall\CommerceSessionGuard::has_active_shopper_session();
+            if (!$is_active_shopper && !empty($settings['cloudflare_auto_sync_bans']) && class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine')) {
                 $incident_id = 'WEBCARE-' . strtoupper(substr(md5($ip . microtime(true)), 0, 8));
                 \WebCareProScanner\Firewall\FirewallEngine::add_blocked_ip(
                     $ip,

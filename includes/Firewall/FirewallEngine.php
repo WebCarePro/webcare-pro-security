@@ -3647,6 +3647,17 @@ class FirewallEngine {
             }
         }
 
+        // Safety Guard 4: Automated Ban Immunity for Whitelisted IPs & Active Shoppers.
+        // Refuse automated bans (empty $admin_user) if IP is explicitly whitelisted or belongs to an active shopper.
+        if (empty($admin_user)) {
+            if (self::is_ip_whitelisted($ip)) {
+                return false;
+            }
+            if (class_exists('\\WebCareProScanner\\Firewall\\Core\\CommerceSessionGuard') && \WebCareProScanner\Firewall\Core\CommerceSessionGuard::has_active_shopper_session()) {
+                return false;
+            }
+        }
+
         $settings = SettingsManager::get_settings();
         $current = trim($settings['waf_blocked_ips'] ?? '');
         $lines = array_filter(array_map('trim', explode("\n", str_replace("\r", "", $current))));
@@ -6680,6 +6691,18 @@ class FirewallEngine {
             if (str_starts_with($action_lower, 'wc_') || str_starts_with($action_lower, 'woocommerce_') || strpos($action_lower, 'tax') !== false || strpos($action_lower, 'vat') !== false || strpos($action_lower, 'shipping') !== false) {
                 return; // Auto-pass benign cart/checkout companion plugin actions
             }
+
+            // Checkout Friction Reducer: If an active shopper session exists and request carries a valid same-origin
+            // referer from /cart or /checkout or a valid WordPress nonce, demote unknown action from hard 403 block to monitored log.
+            // This protects 3rd-party checkout extensions (variation swatches, currency switchers, Turnstile, mini-cart drawers)
+            // from breaking guest purchases while keeping bot probes without a shopper session blocked.
+            // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Checking for nonce presence in low-level early firewall inspection before full authentication
+            $has_valid_nonce = !empty($_REQUEST['_wpnonce']) || !empty($_REQUEST['nonce']) || !empty($_SERVER['HTTP_X_WP_NONCE']);
+            if ($same_origin_cart || $has_valid_nonce) {
+                if ($policy === 'block') {
+                    $policy = 'monitor';
+                }
+            }
         }
 
         // 3. Custom Administrator Allowlist Lookup (Case-Insensitive)
@@ -7768,8 +7791,11 @@ class FirewallEngine {
             }
             $rule_id = sanitize_text_field((string) ($entry['rule_id'] ?? 'MOD-CUSTOM'));
             $reason = sanitize_text_field((string) ($entry['reason'] ?? 'Preload Micro-WAF Custom Rule Violation'));
-            $ban_ttl = isset($entry['ban_ttl']) ? (int) $entry['ban_ttl'] : 86400;
-            $effective_ttl = $ban_ttl > 0 ? $ban_ttl : 86400;
+            $ban_ttl = isset($entry['ban_ttl']) ? (int) $entry['ban_ttl'] : 0;
+            if ($ban_ttl <= 0) {
+                continue; // Strictly skip entries with zero or missing ban_ttl; custom rules with ban_ttl=0 must never be promoted to a 24h ban.
+            }
+            $effective_ttl = $ban_ttl;
             $sync_cf = !empty($entry['sync_cloudflare']);
 
             self::add_blocked_ip(

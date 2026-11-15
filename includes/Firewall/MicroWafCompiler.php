@@ -479,6 +479,7 @@ class MicroWafCompiler {
         $out .= "        \$cf_cidrs = ['173.245.48.0/20','103.21.244.0/22','103.22.200.0/22','103.31.4.0/22','141.101.64.0/18','108.162.192.0/18','190.93.240.0/20','188.114.96.0/20','197.234.240.0/22','198.41.128.0/17','162.158.0.0/15','104.16.0.0/13','104.24.0.0/14','172.64.0.0/13','131.0.72.0/22','2400:cb00::/32','2606:4700::/32','2803:f800::/32','2405:b500::/32','2405:8100::/32','2a06:98c0::/29','2c0f:f248::/32'];\n";
         $out .= "        \$is_cf_ip = \$webcare_match_ip_list(\$raw_peer, \$cf_cidrs);\n";
         $out .= "        \$is_custom_proxy = !\$is_cf_ip && \$webcare_match_ip_list(\$raw_peer, \$trusted_proxies);\n";
+        $out .= "        \$is_local_proxy = !\$is_cf_ip && !\$is_custom_proxy && (defined('WEBCARE_TRUST_LOCAL_PROXY') && WEBCARE_TRUST_LOCAL_PROXY && (\$raw_peer === '127.0.0.1' || \$raw_peer === '::1' || filter_var(\$raw_peer, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false));\n";
         $out .= "        if (\$is_cf_ip && isset(\$_SERVER['HTTP_CF_CONNECTING_IP']) && filter_var(\$_SERVER['HTTP_CF_CONNECTING_IP'], FILTER_VALIDATE_IP)) {\n";
         $out .= "            \$ip = trim(\$_SERVER['HTTP_CF_CONNECTING_IP']);\n";
         $out .= "            if (stripos(\$ip, '::ffff:') === 0) {\n";
@@ -487,7 +488,7 @@ class MicroWafCompiler {
         $out .= "                    \$ip = \$mapped_cf;\n";
         $out .= "                }\n";
         $out .= "            }\n";
-        $out .= "        } elseif (\$is_custom_proxy) {\n";
+        $out .= "        } elseif (\$is_custom_proxy || \$is_local_proxy) {\n";
         $out .= "            \$resolved_proxy_client = '';\n";
         $out .= "            if (!empty(\$_SERVER['HTTP_X_FORWARDED_FOR'])) {\n";
         $out .= "                \$xff_parts = array_reverse(array_map('trim', explode(',', (string) \$_SERVER['HTTP_X_FORWARDED_FOR'])));\n";
@@ -941,7 +942,7 @@ class MicroWafCompiler {
         $out .= "                            \$c_hit_reason = 'Suspicious payload blocked by Custom Modular Rule (' . \$c_id . ')';\n";
         $out .= "                        }\n";
         $out .= "                        if (\$c_hit_reason !== '') {\n";
-        $out .= "                            if (!empty(\$c_rule['sync_cloudflare']) || !empty(\$c_rule['ban_ttl'])) {\n";
+        $out .= "                            if (!empty(\$c_rule['ban_ttl']) && (int) \$c_rule['ban_ttl'] > 0) {\n";
         $out .= "                                \$ban_q_file = __DIR__ . '/.preload_ban_queue.json';\n";
         $out .= "                                \$ban_q = file_exists(\$ban_q_file) ? (json_decode((string) @file_get_contents(\$ban_q_file), true) ?: []) : [];\n";
         $out .= "                                if (is_array(\$ban_q) && count(\$ban_q) < 200) {\n";
