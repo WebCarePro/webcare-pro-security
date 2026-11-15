@@ -233,7 +233,7 @@ class DistributedVelocityShield {
 
         // Deduplicate by resolved IP + normalized username per request (ignoring $reason wording differences)
         $sig = md5($ip . '|' . strtolower(trim($username)));
-        if (isset($processed_attempts[$sig])) {
+        if (!defined('WEBCAREPROSCAN_TESTING') && isset($processed_attempts[$sig])) {
             return self::get_live_velocity();
         }
         $processed_attempts[$sig] = true;

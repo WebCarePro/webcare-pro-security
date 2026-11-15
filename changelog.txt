@@ -7,11 +7,13 @@
     - Re-attached the fallback user-existence check else block in LoginHardening::handle_failed_login() directly to the error instanceof \WP_Error conditional.
     - Reordered DistributedVelocityShield::record_auth_failure() to resolve the client IP before computing the attempt signature and deduplicated strictly by IP and normalized username, ensuring cross-component failure telemetry is never counted twice.
   * Precision Reconnaissance Exemption & RASP Registration Window (Patch 3):
-    - Confined reconnaissance bypasses in FirewallEngine to legitimate REST endpoints (str_contains($path, '/wp-json/webcare-pro-security/')), eliminating exemption leaks targeting static plugin files or uploads directories.
-    - Restricted debug_backtrace caller inspection in rasp_guard_user_metadata_injection() strictly to newly registered accounts created within 120 seconds with zero administrative capabilities.
-  * Runtime SQL RASP Subquery Rejection & UPDATE Clause Enclosure (Patch 4):
-    - Hardened RuntimeSqlRaspEngine::is_legitimate_users_table_mutation() by rejecting nested subqueries (SELECT, UNION, BENCHMARK, SLEEP, LOAD_FILE) and stacked statements.
-    - Enforced mandatory WHERE clauses on all UPDATE wp_users queries to prevent arbitrary mass-table password and role modifications.
+    - Confined reconnaissance bypasses in FirewallEngine to legitimate plugin REST endpoints (str_contains($path, '/wp-json/webcare-pro-security/')), eliminating generic /wp-json/ exemption leaks so probes targeting sensitive files (/wp-json/.env, /wp-json/database.sql, /wp-json/wp-config.php.bak) are strictly blocked.
+    - Implemented deep effective-capability validation across all standard and custom roles against a comprehensive 30+ privileged capability policy (inspecting role object capabilities for edit_users, promote_users, unfiltered_html, manage_woocommerce, etc.), preventing privilege escalation via custom roles.
+    - Restricted debug_backtrace caller inspection in rasp_guard_user_metadata_injection() strictly to authentic WordPress/WooCommerce registration stacks combined with the 120-second registration window.
+  * Runtime SQL RASP Bounded Predicate Enforcement & UPDATE Clause Enclosure (Patch 4):
+    - Hardened RuntimeSqlRaspEngine::is_legitimate_users_table_mutation() by rejecting nested subqueries (SELECT, UNION, BENCHMARK, SLEEP, LOAD_FILE, INTO OUTFILE) and stacked statements.
+    - Enforced mandatory, bounded single-row equality predicates on all UPDATE wp_users queries (requiring exact equality matches on ID, user_login, user_email, or user_activation_key).
+    - Strictly rejected tautological predicates (WHERE 1=1, 0=0, true, null is null), range expansions (WHERE ID > 0), inequalities (WHERE ID != 0, user_login != ''), logical disjunctions (OR), and subqueries to eliminate mass-table mutation attacks.
   * Purged Orphaned JIT Cron Task in Registry (Patch 5):
     - Removed orphaned webcareproscan_ephemeral_admin_expire entry from CronRegistry, keeping the Cron Control Center UI cleanly aligned with the decommissioned JIT engine.
   * Complete Decommissioning & Removal of JIT Admin Access:

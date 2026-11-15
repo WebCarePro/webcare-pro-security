@@ -244,13 +244,13 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
             'id',
         ];
 
-        // Reject any query containing subqueries, UNIONs, or stacked statements
+        // Reject any query containing subqueries, UNIONs, stacked statements, or dangerous system functions
         $skeleton = (string) preg_replace("/'(?:\\\\.|[^'\\\\])*'|\"(?:\\\\.|[^\"\\\\])*\"/", "''", $sql);
-        if (preg_match('/\b(?:SELECT|UNION|BENCHMARK|SLEEP|LOAD_FILE)\b|;/i', $skeleton)) {
+        if (preg_match('/\b(?:SELECT|UNION|BENCHMARK|SLEEP|LOAD_FILE|INTO\s+OUTFILE|INTO\s+DUMPFILE)\b|;/i', $skeleton)) {
             return false;
         }
 
-        // 3. Inspect columns in INSERT or UPDATE query
+        // 3. Inspect columns in INSERT query
         if (preg_match('/^\s*INSERT\s+INTO\s+`?[a-zA-Z0-9_]+`?\s*\(([^)]+)\)/i', $skeleton, $matches)) {
             $cols = array_map(function ($c) {
                 return strtolower(trim(str_replace('`', '', $c)));
@@ -264,9 +264,22 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
             return true;
         }
 
-        // Require an explicit WHERE clause on all UPDATE wp_users statements
+        // Require an explicit, bounded single-row WHERE clause on all UPDATE statements
         if (preg_match('/^\s*UPDATE\s+`?[a-zA-Z0-9_]+`?\s+SET\s+(.+?)\s+WHERE\s+(.+)$/is', $skeleton, $matches)) {
-            $set_clause = $matches[1];
+            $set_clause   = $matches[1];
+            $where_clause = trim($matches[2]);
+
+            // Reject tautologies, range expansions, inequalities, comments, and multi-record predicates
+            if (preg_match('/\b(?:1\s*=\s*1|0\s*=\s*0|true|null\s+is\s+null)\b|--|\/\*|\bOR\b|!=|<>|>|<|\bLIKE\b|\bNOT\b|\bIN\b|\bBETWEEN\b/i', $where_clause)) {
+                return false;
+            }
+
+            // The WHERE clause MUST be bounded by a specific equality match on a single user identifier
+            if (!preg_match('/^\s*`?(?:ID|id|user_login|user_email|user_activation_key)`?\s*=\s*(?:\d+|\'\'|\'[^\']*\')(?:\s+LIMIT\s+\d+)?\s*$/i', $where_clause)) {
+                return false;
+            }
+
+            // Inspect columns in SET clause
             if (preg_match_all('/`?([a-zA-Z0-9_]+)`?\s*=/i', $set_clause, $col_matches) && !empty($col_matches[1])) {
                 foreach ($col_matches[1] as $col) {
                     if (!in_array(strtolower($col), $allowed_columns, true)) {

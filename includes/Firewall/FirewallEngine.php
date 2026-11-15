@@ -3223,11 +3223,8 @@ class FirewallEngine {
 
         $norm_rest_route = self::resolve_normalized_rest_route($decoded_check_path);
         $is_plugin_api   = str_contains($clean_path, '/wp-json/webcare-pro-security/') || str_starts_with($norm_rest_route, '/webcare-pro-security/');
-        $is_legit_rest   = ($norm_rest_route !== '' || str_contains($clean_path, '/wp-json/'))
-            && !str_contains($clean_path, '..')
-            && !str_contains($clean_path, '/wp-content/');
 
-        if ($is_plugin_api || $is_legit_rest) {
+        if ($is_plugin_api) {
             return null;
         }
 
@@ -10203,34 +10200,60 @@ class FirewallEngine {
                 $requested_roles = array_keys(array_filter($meta_value));
                 $has_admin_privilege = false;
 
-                // Dangerous capabilities and roles that guests should NEVER be granted
-                $prohibited_privileges = [
-                    'administrator',
-                    'editor',
+                // Comprehensive privileged capability checklist (Core Admin, Roles & WooCommerce)
+                $privileged_capabilities = [
                     'manage_options',
                     'edit_users',
                     'promote_users',
-                    'activate_plugins',
+                    'create_users',
+                    'delete_users',
+                    'list_users',
+                    'remove_users',
                     'edit_plugins',
+                    'activate_plugins',
+                    'delete_plugins',
+                    'install_plugins',
+                    'update_plugins',
                     'edit_themes',
                     'switch_themes',
+                    'delete_themes',
+                    'install_themes',
+                    'update_themes',
+                    'edit_files',
                     'unfiltered_html',
                     'unfiltered_upload',
+                    'export',
+                    'import',
+                    'manage_network',
+                    'manage_network_users',
+                    'manage_network_plugins',
+                    'manage_network_themes',
+                    'manage_network_options',
+                    'manage_woocommerce',
+                    'view_woocommerce_reports',
+                    'edit_others_posts',
+                    'edit_others_pages',
+                    'publish_pages',
                 ];
 
                 foreach ($requested_roles as $role_or_cap) {
-                    $lower_role = strtolower((string) $role_or_cap);
-                    if (in_array($lower_role, $prohibited_privileges, true)) {
+                    $lower_identifier = strtolower((string) $role_or_cap);
+                    if (in_array($lower_identifier, ['administrator', 'editor', 'shop_manager'], true) || in_array($lower_identifier, $privileged_capabilities, true)) {
                         $has_admin_privilege = true;
                         break;
                     }
 
-                    // Check if role has manage_options capability in global role registry
+                    // Deep inspection of effective capabilities in global role registry (for standard or custom roles)
                     if (function_exists('get_role')) {
-                        $role_obj = get_role($lower_role);
-                        if ($role_obj && $role_obj->has_cap('manage_options')) {
-                            $has_admin_privilege = true;
-                            break;
+                        $role_obj = get_role($lower_identifier);
+                        if ($role_obj instanceof \WP_Role) {
+                            $role_caps = array_keys(array_filter((array) $role_obj->capabilities));
+                            foreach ($role_caps as $rcap) {
+                                if (in_array(strtolower($rcap), $privileged_capabilities, true)) {
+                                    $has_admin_privilege = true;
+                                    break 2;
+                                }
+                            }
                         }
                     }
                 }
