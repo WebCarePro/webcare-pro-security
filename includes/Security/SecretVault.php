@@ -240,6 +240,20 @@ class SecretVault {
     }
 
     /**
+     * Encrypt a plaintext secret with an explicit key using authenticated AES-256-GCM.
+     */
+    public static function encrypt_with_key(string $value, string $key): string {
+        $binary_key = strlen($key) === 64 && ctype_xdigit($key) ? (string) hex2bin($key) : (strlen($key) === 32 ? $key : hash('sha256', $key, true));
+        $iv = random_bytes(12);
+        $tag = '';
+        $cipher = openssl_encrypt($value, self::CIPHER_GCM, $binary_key, OPENSSL_RAW_DATA, $iv, $tag, '', 16);
+        if ($cipher === false || strlen($tag) !== 16) {
+            throw new \RuntimeException('WebCare SecretVault Error: Encryption with explicit key failed.');
+        }
+        return self::PREFIX_GCM . base64_encode($iv . $tag . $cipher);
+    }
+
+    /**
      * Decrypt an encrypted secret with an explicit binary key.
      */
     public static function decrypt_with_key(string $value, string $key): string|false {

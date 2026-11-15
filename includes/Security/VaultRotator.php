@@ -741,7 +741,7 @@ class VaultRotator {
             }
 
             try {
-                $reencrypted = SecretVault::encrypt_with_key($plain, $new_binary_key);
+                $reencrypted = SecretVault::rotate_record($payload, $old_binary_key, $new_binary_key);
                 $temp_file   = $file_path . '.rot_' . bin2hex(random_bytes(4));
                 $new_content = $header . $format_prefix . $reencrypted;
                 // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
