@@ -184,6 +184,7 @@ class FormSpamProtectionEngine {
             '  window.addEventListener("scroll", countEntropy, {passive: true});',
             '  function injectArmor(form) {',
             '    if (form.getAttribute("data-webcare-armored")) return;',
+            '    if (form.classList && (form.classList.contains("woocommerce-checkout") || form.classList.contains("checkout") || form.classList.contains("woocommerce-cart-form"))) return;',
             '    form.setAttribute("data-webcare-armored", "1");',
             '    var hpWrap = document.createElement("div");',
             '    hpWrap.style.cssText = "position:absolute!important;left:-9999px!important;top:-9999px!important;opacity:0!important;height:0!important;width:0!important;overflow:hidden!important;pointer-events:none!important;";',
@@ -193,7 +194,11 @@ class FormSpamProtectionEngine {
             '    hpInput.type = "text";',
             '    hpInput.name = cfg.hpName;',
             '    hpInput.value = "";',
-            '    hpInput.autocomplete = "off";',
+            '    hpInput.autocomplete = "new-password";',
+            '    hpInput.setAttribute("data-1p-ignore", "true");',
+            '    hpInput.setAttribute("data-lpignore", "true");',
+            '    hpInput.setAttribute("data-bwignore", "true");',
+            '    hpInput.setAttribute("data-form-type", "other");',
             '    hpInput.tabIndex = -1;',
             '    hpWrap.appendChild(hpInput);',
             '    form.appendChild(hpWrap);',
@@ -361,10 +366,19 @@ class FormSpamProtectionEngine {
                         return new \WP_Error('webcare_spam_speed_gate', __('Submission was completed too quickly for a human visitor. Please take a moment and try again.', 'webcare-pro-security'));
                     }
 
-                    // Stale token (> 48 hours / 172800s to respect full-page caching)
-                    if ($elapsed > 172800) {
-                        self::record_spam_drop('stale_replay_token', $form_source, $client_ip);
-                        return new \WP_Error('webcare_spam_stale_token', __('Form session has expired. Please refresh the page and resubmit.', 'webcare-pro-security'));
+                    // Stale token (> 7 days / 604800s to respect full-page caching); allow if human telemetry delta is valid
+                    if ($elapsed > 604800) {
+                        $has_valid_client_delta = false;
+                        if (isset($request_data['webcare_human_telemetry'])) {
+                            $tel = json_decode((string) base64_decode(sanitize_text_field(wp_unslash($request_data['webcare_human_telemetry']))), true);
+                            if (is_array($tel) && empty($tel['webdriver']) && (int) ($tel['entropy'] ?? 0) > 0 && (int) ($tel['delta'] ?? 0) >= $min_seconds) {
+                                $has_valid_client_delta = true;
+                            }
+                        }
+                        if (!$has_valid_client_delta) {
+                            self::record_spam_drop('stale_replay_token', $form_source, $client_ip);
+                            return new \WP_Error('webcare_spam_stale_token', __('Form session has expired. Please refresh the page and resubmit.', 'webcare-pro-security'));
+                        }
                     }
                 }
             }
@@ -572,6 +586,24 @@ class FormSpamProtectionEngine {
      * @return \WP_Error
      */
     public static function validate_woo_registration($errors, $username, $password, $email) {
+        // Exempt customer account creation during an active WooCommerce Checkout order submission
+        // (Checkout is already protected by payment gateway validation, Rule #38 Carding Shield, and Rule #40 Disposable Email/Velocity Shield)
+        $req_uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '';
+        // phpcs:ignore WordPress.Security.NonceVerification.Recommended, WordPress.Security.NonceVerification.Missing
+        $wc_ajax = isset($_GET['wc-ajax']) ? sanitize_key(wp_unslash($_GET['wc-ajax'])) : '';
+        // phpcs:ignore WordPress.Security.NonceVerification.Missing
+        $is_checkout_post = !empty($_POST['woocommerce-process-checkout-nonce']) || $wc_ajax === 'checkout';
+        $is_store_api_checkout = (defined('REST_REQUEST') && REST_REQUEST && strpos($req_uri, '/wc/store/') !== false);
+
+        if (
+            $is_checkout_post
+            || $is_store_api_checkout
+            || (function_exists('is_checkout') && is_checkout())
+            || did_action('woocommerce_checkout_process') > 0
+        ) {
+            return $errors;
+        }
+
         // phpcs:ignore WordPress.Security.NonceVerification.Missing
         $data = !empty($_POST) ? wp_unslash($_POST) : [];
         $check = self::evaluate_submission($data, 'WooCommerce Registration');

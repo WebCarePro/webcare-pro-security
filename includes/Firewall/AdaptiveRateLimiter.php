@@ -234,11 +234,13 @@ class AdaptiveRateLimiter {
             return true;
         }
 
-        // Exempt logged-in administrators and editor/builders (including early authentication detection at plugins_loaded: 0)
-        if (class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine') && FirewallEngine::is_authenticated_administrator()) {
-            return true;
+        // Exempt logged-in administrators, store managers, and editor/builders (including early authentication detection at plugins_loaded: 0)
+        if (class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine')) {
+            if (FirewallEngine::is_authenticated_administrator() || FirewallEngine::is_authenticated_editor_or_builder()) {
+                return true;
+            }
         }
-        if (function_exists('current_user_can') && current_user_can('manage_options')) {
+        if (function_exists('current_user_can') && (current_user_can('manage_options') || current_user_can('manage_woocommerce'))) {
             return true;
         }
 
@@ -323,7 +325,11 @@ class AdaptiveRateLimiter {
         }
 
         // Escalation to temporary quarantine if blasting server (> 2.5x threshold)
-        if (!empty($settings['escalate_to_ban']) && $count > ($limit * 2.5)) {
+        // Never quarantine an active WooCommerce cart/shopper session on cart_ajax or checkout buckets; throttle with JSON 429 instead.
+        $has_shopper_session = class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine') && FirewallEngine::has_active_shopper_session();
+        $is_commerce_bucket  = ($bucket === self::BUCKET_CART_AJAX || $bucket === self::BUCKET_CHECKOUT);
+
+        if (!empty($settings['escalate_to_ban']) && $count > ($limit * 2.5) && !($is_commerce_bucket && $has_shopper_session)) {
             $ban_lock = 'webcareproscan_rl_ban_log_' . md5($client_ip);
             if (!get_transient($ban_lock)) {
                 set_transient($ban_lock, 1, 1800);
@@ -338,8 +344,18 @@ class AdaptiveRateLimiter {
             }
 
             status_header(403);
-            header('Content-Type: text/plain; charset=utf-8');
-            echo 'Access Forbidden: Velocity limit severely violated. IP quarantined by WebCare Adaptive Rate Limiter.';
+            if (wp_is_json_request() || str_contains($decoded_uri, '/wp-json/') || str_contains($decoded_uri, 'wc-ajax=') || $is_commerce_bucket) {
+                header('Content-Type: application/json; charset=utf-8');
+                echo wp_json_encode([
+                    'result'   => 'failure',
+                    'status'   => 403,
+                    'error'    => 'rate_limit_quarantine',
+                    'messages' => '<ul class="woocommerce-error"><li>' . esc_html__('Access temporarily restricted due to excessive request velocity. Please wait and try again.', 'webcare-pro-security') . '</li></ul>',
+                ]);
+            } else {
+                header('Content-Type: text/plain; charset=utf-8');
+                echo 'Access Forbidden: Velocity limit severely violated. IP quarantined by WebCare Adaptive Rate Limiter.';
+            }
             exit;
         }
 

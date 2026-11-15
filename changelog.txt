@@ -1,5 +1,17 @@
 ﻿v:2.15.0 - 2026-11-15
 - Zero-Gap Fail-Closed Streaming, Runtime RASP Hardening, Response DLP Redaction & Full Architectural Resilience:
+  * Extended Remediation, Seamless WooCommerce & Zero-False-Positive Hardening:
+    - Runtime SQL RASP Auth Lifecycle: Permitted authentic WordPress Core password-reset key writes and login password rehashes on accounts older than 120s while strictly blocking unauthenticated privilege escalations and malicious mutations.
+    - Dynamic Role Privilege Inspection: Dynamically evaluates registered role capabilities for custom roles (B2B, Wholesale, LMS, Forum, Vendor) against privileged capabilities and legacy level_2..level_10, eliminating false-positive bans on unprivileged customer roles.
+    - IntentChainSentinel Logic Inversion & Stage Exemption: Corrected inverted PoW clearance cookie logic, suppressed HTML PoW challenges on JSON/AJAX requests, and exempted WooCommerce checkout/cart routes from false-positive kill-chain stage escalation.
+    - FormSpamProtectionEngine WooCommerce Checkout Hardening: Suppressed honeypots on WooCommerce checkout forms to prevent browser autofill order abortions, extended cached token replay tolerances for interactive human sessions, and exempted checkout registration from speed gates.
+    - Rule #52 Webhook Parity & Validation: Synchronized complete Stripe and PayPal IP/CIDR matrices and added structural signature verification, eliminating false-positive 403 blocks on legitimate gateway webhooks.
+    - Shopper Session Protection: Wired up automated operational ban bypasses for active e-commerce shopper sessions requesting checkout, preventing shared CGNAT/mobile carrier collateral lockouts.
+    - WooCommerce Password Field Masking: Added native WooCommerce password fields (password_current, password_1, password_2, user_password, confirm_user_password) to heuristic masking.
+    - Sensitive File Recon Exemption: Restored internal REST API exemptions in is_high_risk_recon_probe() and check_sensitive_file_probe() for non-traversal requests.
+    - Adaptive Rate Limiter E-Commerce Resilience: Exempted store managers and editors, prevented automated bans on active shopper cart/checkout sessions, and ensured structured JSON error responses on AJAX/REST endpoints.
+    - Ad-Click Buffer Limits & Regional Gateway Allowlisting: Expanded URI/query string buffers to support Google/Meta ad-click parameters, refined XSS on*= event regex, and added regional payment gateways (SSLCommerz, bKash, Nagad, Adyen, Braintree) to trusted redirect domains.
+    - Script Inventory Monitor Payment SDKs: Expanded verified third-party hosts to include Square, Braintree, Klarna, Razorpay, Paystack, Flutterwave, WooPay, and Google Pay SDKs for checkout CSP compatibility.
   * Setup Studio Zero-Trust Identity Streamlining:
     - Removed unused "Encrypted Magic Login Links" stub from Setup Studio Step 10 (Zero-Trust Identity, 2FA & Passkeys), focusing administrative access exclusively on hardware-backed WebAuthn/FIDO2 passkeys and RFC 6238 TOTP authenticators while eliminating passwordless email takeover vectors.
   * Strict Database Format Validation, Canonical Helper & Relative Date Rejection:

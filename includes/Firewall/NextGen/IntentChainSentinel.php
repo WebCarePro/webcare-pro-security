@@ -154,6 +154,11 @@ class IntentChainSentinel implements SecurityModuleInterface, WafEvaluatorInterf
 
         // Trigger enforcement once an offender reaches >= threshold distinct kill-chain stages
         if ($stage_cnt >= $threshold && ($stage === self::STAGE_UNAUTH_MUTATION || $stage === self::STAGE_NONCE_HARVEST || $stage === self::STAGE_SENSITIVE_404)) {
+            // If policy is challenge_pow and the client already holds a verified WebCrypto clearance cookie, permit the request
+            if ($policy === 'challenge_pow' && class_exists(BotReconDefense::class) && BotReconDefense::has_valid_clearance_cookie($ctx->ip, $ctx->userAgent)) {
+                return null;
+            }
+
             $labels = self::describe_bitmask($mask);
             $reason = sprintf(
                 'Autonomous multi-step kill-chain detected (%d stages in 15m: %s)',
@@ -169,7 +174,18 @@ class IntentChainSentinel implements SecurityModuleInterface, WafEvaluatorInterf
                 ]);
             }
 
-            if ($policy === 'challenge_pow' && class_exists(BotReconDefense::class) && !BotReconDefense::has_valid_clearance_cookie($ctx->ip, $ctx->userAgent)) {
+            if ($policy === 'challenge_pow' && class_exists(BotReconDefense::class)) {
+                // Never emit an HTML PoW page inside a WooCommerce AJAX or REST JSON request
+                $is_json_or_wc_ajax = (function_exists('wp_is_json_request') && wp_is_json_request())
+                    || (defined('REST_REQUEST') && REST_REQUEST)
+                    || (function_exists('wp_doing_ajax') && wp_doing_ajax())
+                    || strpos($ctx->uri, 'wc-ajax=') !== false
+                    || strpos($ctx->cleanUri, '/wp-json/') !== false;
+
+                if ($is_json_or_wc_ajax) {
+                    return null;
+                }
+
                 return new WafVerdict('challenge_pow', 'WAF-AI-AGENT-KILLCHAIN', $reason, [
                     'category' => 'AI Agent Kill-Chain Defense',
                     'severity' => 'high',
@@ -204,6 +220,18 @@ class IntentChainSentinel implements SecurityModuleInterface, WafEvaluatorInterf
             return self::STAGE_RECON_README;
         }
 
+        // Exempt legitimate WooCommerce cart/checkout/storefront and public form submissions from Stage 3 & Stage 4
+        if (class_exists(FirewallEngine::class)) {
+            if (FirewallEngine::is_commerce_or_membership_request($ctx->uri) || FirewallEngine::is_form_submission_request($ctx->uri)) {
+                return 0;
+            }
+        }
+
+        $ajax_action = isset($ctx->params['action']) && is_string($ctx->params['action']) ? strtolower(trim($ctx->params['action'])) : '';
+        if ($ajax_action !== '' && (strpos($ajax_action, 'woocommerce_') === 0 || strpos($ajax_action, 'wc_') === 0 || $ajax_action === 'heartbeat')) {
+            return 0;
+        }
+
         // Stage 3: Nonce / AJAX discovery GET probe
         if (
             $ctx->method === 'GET'
@@ -219,7 +247,12 @@ class IntentChainSentinel implements SecurityModuleInterface, WafEvaluatorInterf
             && (
                 strpos($ctx->cleanUri, 'admin-ajax.php') !== false
                 || strpos($ctx->cleanUri, 'admin-post.php') !== false
-                || ($ctx->restRoute !== '' && strpos($ctx->restRoute, '/wp/v2/') !== 0 && strpos($ctx->restRoute, '/webcare-pro-security/') !== 0)
+                || (
+                    $ctx->restRoute !== ''
+                    && strpos($ctx->restRoute, '/wp/v2/') !== 0
+                    && strpos($ctx->restRoute, '/wc/store/') !== 0
+                    && strpos($ctx->restRoute, '/webcare-pro-security/') !== 0
+                )
             )
         ) {
             return self::STAGE_UNAUTH_MUTATION;

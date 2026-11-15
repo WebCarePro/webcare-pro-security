@@ -1017,38 +1017,58 @@ class FirewallEngine {
                         // Shopper & E-Commerce Session Protection:
                         // If the visitor has an active e-commerce / membership cart session (e.g. WooCommerce cart cookies, EDD, SureCart)
                         // or is requesting checkout / payment gateway endpoints (wc-ajax, paypal, stripe),
-                        // ensure legitimate paying customers are NOT permanently locked out by automated or non-admin bans.
+                        // ensure legitimate paying customers are NOT locked out by non-critical automated operational bans
+                        // (e.g. 404 or rate-limit bans on shared CGNAT IPs), while preserving manual admin bans and critical exploit bans.
                         $is_manual_admin_ban = ($ban_source === 'manual_admin') || (!empty($block_meta['admin_user']));
                         $request_uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '/';
+                        $ban_rule_id = strtoupper((string) ($block_meta['rule_id'] ?? ''));
+                        $is_non_exploit_operational_ban = !$is_manual_admin_ban && (
+                            str_contains($ban_rule_id, '404')
+                            || str_contains($ban_rule_id, 'RATE-LIMIT')
+                            || str_contains($ban_rule_id, 'SCRAPING')
+                            || str_contains($ban_rule_id, 'BURST')
+                        );
 
-                        $description = 'Connection blocked by administrator-defined custom IP rule.';
-                        if (!empty($ban_reason)) {
-                            $description = sprintf('Connection blocked: %s', $ban_reason);
-                        } elseif (!empty($ban_rule)) {
-                            $description = sprintf('Connection blocked by automated rule: %s', $ban_rule);
+                        if (
+                            $is_non_exploit_operational_ban
+                            && !empty($settings['waf_ecommerce_safe_mode'])
+                            && self::has_active_shopper_session()
+                            && self::is_commerce_or_membership_request($request_uri)
+                        ) {
+                            // Allow active verified cart session to complete checkout while still running full WAF exploit inspection below
+                            $matching_entry = null;
                         }
 
-                        $rule_triggered = [
-                            'id'             => 'USER-CUSTOM-IP-BLOCK',
-                            'name'           => 'Custom Administrator IP Blocklist',
-                            'category'       => 'Custom IP Blocklist',
-                            'description'    => $description,
-                            'match_type'     => 'Custom Blocklist',
-                            'match_value'    => $matching_entry,
-                            'payload'        => $client_ip,
-                            'ban_reason'     => $ban_reason,
-                            'ban_source'     => $ban_source,
-                            'matching_entry' => $matching_entry,
-                            'expires_at'     => $expires_at,
-                        ];
+                        if ($matching_entry !== null) {
+                            $description = 'Connection blocked by administrator-defined custom IP rule.';
+                            if (!empty($ban_reason)) {
+                                $description = sprintf('Connection blocked: %s', $ban_reason);
+                            } elseif (!empty($ban_rule)) {
+                                $description = sprintf('Connection blocked by automated rule: %s', $ban_rule);
+                            }
 
-                        $mode = $settings['waf_mode'] ?? 'enabled';
-                        if ($mode === 'learning') {
-                            self::log_incident($rule_triggered, 'detected');
-                        } else {
-                            self::log_incident($rule_triggered, 'blocked');
-                            self::render_block_page($rule_triggered, $client_ip);
-                            exit;
+                            $rule_triggered = [
+                                'id'             => 'USER-CUSTOM-IP-BLOCK',
+                                'name'           => 'Custom Administrator IP Blocklist',
+                                'category'       => 'Custom IP Blocklist',
+                                'description'    => $description,
+                                'match_type'     => 'Custom Blocklist',
+                                'match_value'    => $matching_entry,
+                                'payload'        => $client_ip,
+                                'ban_reason'     => $ban_reason,
+                                'ban_source'     => $ban_source,
+                                'matching_entry' => $matching_entry,
+                                'expires_at'     => $expires_at,
+                            ];
+
+                            $mode = $settings['waf_mode'] ?? 'enabled';
+                            if ($mode === 'learning') {
+                                self::log_incident($rule_triggered, 'detected');
+                            } else {
+                                self::log_incident($rule_triggered, 'blocked');
+                                self::render_block_page($rule_triggered, $client_ip);
+                                exit;
+                            }
                         }
                     }
                 }
@@ -1372,8 +1392,8 @@ class FirewallEngine {
             // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Early WAF payload size check executes before nonce lifecycle
             $post_count = !empty($_POST) && is_array($_POST) ? count($_POST, COUNT_RECURSIVE) : 0;
 
-            // Bounded URI buffer guard: Commerce payment callbacks permit up to 4096 bytes; default ceiling is 2048 bytes
-            $max_uri_limit = ($is_commerce_safe || $is_admin_area) ? 4096 : 2048;
+            // Bounded URI buffer guard: Commerce/OAuth callbacks permit up to 8192 bytes; default ceiling is 4096 bytes
+            $max_uri_limit = ($is_commerce_safe || $is_admin_area) ? 8192 : 4096;
             if ($uri_length > $max_uri_limit && !$is_exempt_endpoint) {
                 $rule_triggered = [
                     'id'          => 'WAF-OVERSIZED-URI',
@@ -1387,8 +1407,8 @@ class FirewallEngine {
                 self::handle_rule_violation($rule_triggered, $settings, $client_ip, 414);
             }
 
-            // Bounded Query String guard: Commerce payment redirects permit up to 2048 bytes; default ceiling is 1024 bytes
-            $max_query_limit = ($is_commerce_safe || $is_admin_area) ? 2048 : 1024;
+            // Bounded Query String guard: Commerce/OAuth redirects permit up to 4096 bytes; default ceiling is 2048 bytes
+            $max_query_limit = ($is_commerce_safe || $is_admin_area) ? 4096 : 2048;
             if ($query_length > $max_query_limit && !$is_exempt_endpoint) {
                 $rule_triggered = [
                     'id'          => 'WAF-OVERSIZED-QUERY',
@@ -1647,22 +1667,30 @@ class FirewallEngine {
         }
 
         // Smart Rule #52: Forged Payment Gateway Webhook Signature Spoofing Trap
-        // If an external client presents Stripe-Signature or PayPal transmission headers on a POST webhook endpoint
-        // from an untrusted public IP that does NOT match official gateway CIDRs, block and ban the spoofing IP.
+        // If an external client presents Stripe-Signature or PayPal transmission headers from an untrusted IP:
+        // 1. Validate against the complete unified STRIPE_WEBHOOK_IPS and PAYPAL_WEBHOOK_CIDRS lists.
+        // 2. Block and ban immediately if the header is syntactically forged (e.g., Stripe-Signature missing t=... and v1=...)
+        //    or sent to a non-webhook endpoint (e.g., wp-login.php, admin-ajax.php, xmlrpc.php) to spoof commerce immunity.
         // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash
-        $has_stripe_sig = !empty($_SERVER['HTTP_STRIPE_SIGNATURE']);
+        $raw_stripe_sig = isset($_SERVER['HTTP_STRIPE_SIGNATURE']) ? (string) $_SERVER['HTTP_STRIPE_SIGNATURE'] : '';
         // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash
-        $has_paypal_sig = !empty($_SERVER['HTTP_PAYPAL_TRANSMISSION_SIG']);
+        $raw_paypal_sig = isset($_SERVER['HTTP_PAYPAL_TRANSMISSION_SIG']) ? (string) $_SERVER['HTTP_PAYPAL_TRANSMISSION_SIG'] : '';
+        $has_stripe_sig = ($raw_stripe_sig !== '');
+        $has_paypal_sig = ($raw_paypal_sig !== '');
 
         if (($has_stripe_sig || $has_paypal_sig) && !self::is_server_origin_or_loopback($client_ip) && !self::is_authenticated_administrator()) {
             $is_genuine_webhook_origin = false;
             if ($has_stripe_sig) {
-                $stripe_cidrs = apply_filters('webcareproscan_stripe_webhook_cidrs', [
-                    '3.18.12.63/32', '3.130.192.231/32', '13.235.14.237/32', '13.235.122.149/32',
-                    '18.211.135.69/32', '35.154.171.200/32', '52.15.183.38/32', '54.187.174.169/32',
-                    '54.187.205.235/32', '54.187.216.72/32', '54.241.31.99/32', '54.241.31.102/32',
-                    '54.241.34.107/32',
-                ]);
+                $default_stripe_cidrs = array_map(
+                    static function (string $ip): string {
+                        return strpos($ip, '/') === false ? $ip . '/32' : $ip;
+                    },
+                    array_values(array_unique(array_merge(self::STRIPE_WEBHOOK_IPS, [
+                        '54.241.31.102',
+                        '54.241.34.107',
+                    ])))
+                );
+                $stripe_cidrs = apply_filters('webcareproscan_stripe_webhook_cidrs', $default_stripe_cidrs);
                 foreach ((array) $stripe_cidrs as $stripe_cidr) {
                     if (self::ip_in_range($client_ip, $stripe_cidr)) {
                         $is_genuine_webhook_origin = true;
@@ -1671,10 +1699,12 @@ class FirewallEngine {
                 }
             }
             if (!$is_genuine_webhook_origin && $has_paypal_sig) {
-                $paypal_cidrs = apply_filters('webcareproscan_paypal_webhook_cidrs', [
-                    '173.0.80.0/20', '66.211.168.0/22', '64.4.240.0/21', '64.4.248.0/22',
-                    '185.177.189.0/24', '3.253.0.0/16', '52.212.0.0/15',
-                ]);
+                $default_paypal_cidrs = array_values(array_unique(array_merge(self::PAYPAL_WEBHOOK_CIDRS, [
+                    '185.177.189.0/24',
+                    '3.253.0.0/16',
+                    '52.212.0.0/15',
+                ])));
+                $paypal_cidrs = apply_filters('webcareproscan_paypal_webhook_cidrs', $default_paypal_cidrs);
                 foreach ((array) $paypal_cidrs as $paypal_cidr) {
                     if (self::ip_in_range($client_ip, $paypal_cidr)) {
                         $is_genuine_webhook_origin = true;
@@ -1682,23 +1712,47 @@ class FirewallEngine {
                     }
                 }
             }
+
             if (!$is_genuine_webhook_origin) {
-                $sig_type = $has_stripe_sig ? 'Stripe-Signature' : 'PayPal-Transmission-Sig';
-                $rule_triggered = [
-                    'id'          => 'WAF-FORGED-WEBHOOK-TRAP',
-                    'name'        => 'Forged Payment Gateway Webhook Trap (Rule #52)',
-                    'category'    => 'Execution Armor',
-                    'description' => sprintf(
-                        /* translators: 1: Header name, 2: Spoofed IP address */
-                        esc_html__('Forged %1$s webhook header presented by unauthorized non-gateway IP (%2$s).', 'webcare-pro-security'),
-                        esc_html($sig_type),
-                        esc_html($client_ip)
-                    ),
-                    'match_type'  => 'Webhook Origin Spoofing',
-                    'match_value' => $client_ip,
-                    'payload'     => "Header: {$sig_type} URI: {$request_uri} Spoofed IP: {$client_ip}",
-                ];
-                self::handle_rule_violation($rule_triggered, $settings, $client_ip, 403);
+                // Check if header format itself is a forged spoof or if the target URI is not a webhook endpoint
+                $req_uri_lower = strtolower($request_uri);
+                $is_dedicated_webhook_uri = (
+                    strpos($req_uri_lower, 'wc-api=') !== false
+                    || strpos($req_uri_lower, '/wc-api/') !== false
+                    || strpos($req_uri_lower, '/wp-json/wc-stripe') !== false
+                    || strpos($req_uri_lower, '/wp-json/stripe') !== false
+                    || strpos($req_uri_lower, '/wp-json/paypal') !== false
+                    || strpos($req_uri_lower, '/wp-json/woocommerce') !== false
+                    || strpos($req_uri_lower, 'webhook') !== false
+                );
+
+                $is_malformed_sig = false;
+                if ($has_stripe_sig && !preg_match('/\bt=\d+\b.*?\bv1=[a-f0-9]{64}\b/i', $raw_stripe_sig)) {
+                    $is_malformed_sig = true;
+                }
+                if ($has_paypal_sig && strlen(trim($raw_paypal_sig)) < 32) {
+                    $is_malformed_sig = true;
+                }
+
+                // Block immediately if header is malformed or sent to a non-webhook URI (or during red-team drill)
+                if ($is_malformed_sig || !$is_dedicated_webhook_uri || $is_drill_request) {
+                    $sig_type = $has_stripe_sig ? 'Stripe-Signature' : 'PayPal-Transmission-Sig';
+                    $rule_triggered = [
+                        'id'          => 'WAF-FORGED-WEBHOOK-TRAP',
+                        'name'        => 'Forged Payment Gateway Webhook Trap (Rule #52)',
+                        'category'    => 'Execution Armor',
+                        'description' => sprintf(
+                            /* translators: 1: Header name, 2: Spoofed IP address */
+                            esc_html__('Forged %1$s webhook header presented by unauthorized non-gateway IP (%2$s).', 'webcare-pro-security'),
+                            esc_html($sig_type),
+                            esc_html($client_ip)
+                        ),
+                        'match_type'  => 'Webhook Origin Spoofing',
+                        'match_value' => $client_ip,
+                        'payload'     => "Header: {$sig_type} URI: {$request_uri} Spoofed IP: {$client_ip}",
+                    ];
+                    self::handle_rule_violation($rule_triggered, $settings, $client_ip, 403);
+                }
             }
         }
 
@@ -1986,38 +2040,58 @@ class FirewallEngine {
                         // Shopper & E-Commerce Session Protection:
                         // If the visitor has an active e-commerce / membership cart session (e.g. WooCommerce cart cookies, EDD, SureCart)
                         // or is requesting checkout / payment gateway endpoints (wc-ajax, paypal, stripe),
-                        // ensure legitimate paying customers are NOT permanently locked out by automated or non-admin bans.
+                        // ensure legitimate paying customers are NOT locked out by non-critical automated operational bans
+                        // (e.g. 404 or rate-limit bans on shared CGNAT IPs), while preserving manual admin bans and critical exploit bans.
                         $is_manual_admin_ban = ($ban_source === 'manual_admin') || (!empty($block_meta['admin_user']));
                         $request_uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '/';
+                        $ban_rule_id = strtoupper((string) ($block_meta['rule_id'] ?? ''));
+                        $is_non_exploit_operational_ban = !$is_manual_admin_ban && (
+                            str_contains($ban_rule_id, '404')
+                            || str_contains($ban_rule_id, 'RATE-LIMIT')
+                            || str_contains($ban_rule_id, 'SCRAPING')
+                            || str_contains($ban_rule_id, 'BURST')
+                        );
 
-                        $description = 'Connection blocked by administrator-defined custom IP rule.';
-                        if (!empty($ban_reason)) {
-                            $description = sprintf('Connection blocked: %s', $ban_reason);
-                        } elseif (!empty($ban_rule)) {
-                            $description = sprintf('Connection blocked by automated rule: %s', $ban_rule);
+                        if (
+                            $is_non_exploit_operational_ban
+                            && !empty($settings['waf_ecommerce_safe_mode'])
+                            && self::has_active_shopper_session()
+                            && self::is_commerce_or_membership_request($request_uri)
+                        ) {
+                            // Allow active verified cart session to complete checkout while still running full WAF exploit inspection below
+                            $matching_entry = null;
                         }
 
-                        $rule_triggered = [
-                            'id'             => 'USER-CUSTOM-IP-BLOCK',
-                            'name'           => 'Custom Administrator IP Blocklist',
-                            'category'       => 'Custom IP Blocklist',
-                            'description'    => $description,
-                            'match_type'     => 'Custom Blocklist',
-                            'match_value'    => $matching_entry,
-                            'payload'        => $client_ip,
-                            'ban_reason'     => $ban_reason,
-                            'ban_source'     => $ban_source,
-                            'matching_entry' => $matching_entry,
-                            'expires_at'     => $expires_at,
-                        ];
+                        if ($matching_entry !== null) {
+                            $description = 'Connection blocked by administrator-defined custom IP rule.';
+                            if (!empty($ban_reason)) {
+                                $description = sprintf('Connection blocked: %s', $ban_reason);
+                            } elseif (!empty($ban_rule)) {
+                                $description = sprintf('Connection blocked by automated rule: %s', $ban_rule);
+                            }
 
-                        $mode = $settings['waf_mode'] ?? 'enabled';
-                        if ($mode === 'learning') {
-                            self::log_incident($rule_triggered, 'detected');
-                        } else {
-                            self::log_incident($rule_triggered, 'blocked');
-                            self::render_block_page($rule_triggered, $client_ip);
-                            exit;
+                            $rule_triggered = [
+                                'id'             => 'USER-CUSTOM-IP-BLOCK',
+                                'name'           => 'Custom Administrator IP Blocklist',
+                                'category'       => 'Custom IP Blocklist',
+                                'description'    => $description,
+                                'match_type'     => 'Custom Blocklist',
+                                'match_value'    => $matching_entry,
+                                'payload'        => $client_ip,
+                                'ban_reason'     => $ban_reason,
+                                'ban_source'     => $ban_source,
+                                'matching_entry' => $matching_entry,
+                                'expires_at'     => $expires_at,
+                            ];
+
+                            $mode = $settings['waf_mode'] ?? 'enabled';
+                            if ($mode === 'learning') {
+                                self::log_incident($rule_triggered, 'detected');
+                            } else {
+                                self::log_incident($rule_triggered, 'blocked');
+                                self::render_block_page($rule_triggered, $client_ip);
+                                exit;
+                            }
                         }
                     }
                 }
@@ -2742,7 +2816,7 @@ class FirewallEngine {
                 '/(?:javascript|vbscript|data\s*:\s*text\/html)\s*:/is',
                 '/<iframe\b[^>]*>/is',
                 '/<svg\b[^>]*\bon\w+\s*=/is',
-                '/(?:<[^>]+?\s|\b)on(?:error|load|mouseover|mouseenter|mouseleave|click|dblclick|auxclick|contextmenu|focus|blur|pointerenter|pointerover|pointerdown|toggle|beforetoggle|animationstart|animationend|animationiteration|transitionend|begin|pageshow|pagehide|input|invalid|submit|reset|wheel|drag|drop|copy|cut|paste)\s*=\s*(?:[\'"`][^\'"`]*?(?:\(|javascript:|alert|confirm|prompt|eval|fetch|document\.|window\.|location)|[^\s>&\'"`]+?\()/is',
+                '/(?:<[^>]+?\son(?:error|load|mouseover|mouseenter|mouseleave|click|dblclick|auxclick|contextmenu|focus|blur|pointerenter|pointerover|pointerdown|toggle|beforetoggle|animationstart|animationend|animationiteration|transitionend|begin|pageshow|pagehide|input|invalid|submit|reset|wheel|drag|drop|copy|cut|paste)\s*=\s*(?:[\'"`][^\'"`]*?(?:\(|javascript:|alert|confirm|prompt|eval|fetch|document\.|window\.|location)|[^\s>&\'"`]+?\()|\bon(?:error|load|mouseover|mouseenter|click|focus|blur|toggle|animationstart)\s*=\s*[\'"`]?[^\s>&\'"`]*?(?:javascript:|alert\s*\(|confirm\s*\(|prompt\s*\(|eval\s*\(|fetch\s*\(|document\.cookie|document\.domain|window\.location))/is',
             ];
             foreach ($xss_patterns as $pattern) {
                 if (preg_match($pattern, $uri) || preg_match($pattern, $heuristic_combined) || preg_match($pattern, $heuristic_decoded)) {
@@ -2867,16 +2941,38 @@ class FirewallEngine {
                             // E-Commerce, Membership & Transactional Mailer Intelligence:
                             // Exempt legitimate payment processor redirects and social/mailer OAuth return destinations
                             // (PayPal, Stripe, Mollie, Klarna, Square, Google, Microsoft 365, Zoho, Apple).
-                            $trusted_redirect_domains = [
+                            $trusted_redirect_domains = (array) apply_filters('webcareproscan_trusted_redirect_domains', [
                                 'paypal.com',
+                                'paypalobjects.com',
                                 'stripe.com',
                                 'mollie.com',
                                 'klarna.com',
                                 'squareup.com',
+                                'square.site',
                                 'razorpay.com',
                                 'paystack.co',
                                 '2checkout.com',
                                 'authorize.net',
+                                'braintreegateway.com',
+                                'adyen.com',
+                                'worldpay.com',
+                                'mercadopago.com',
+                                'flutterwave.com',
+                                'sslcommerz.com',
+                                'bkash.com',
+                                'mynagad.com',
+                                'paytm.com',
+                                'phonepe.com',
+                                'paddle.com',
+                                'lemonsqueezy.com',
+                                'amazon.com',
+                                'pay.amazon.com',
+                                'afterpay.com',
+                                'clearpay.co.uk',
+                                'affirm.com',
+                                'wp.com',
+                                'wordpress.com',
+                                'woocommerce.com',
                                 'accounts.google.com',
                                 'login.microsoftonline.com',
                                 'accounts.zoho.com',
@@ -2884,7 +2980,7 @@ class FirewallEngine {
                                 'login.zoho.com',
                                 'facebook.com',
                                 'appleid.apple.com',
-                            ];
+                            ]);
                             $is_trusted_redirect = false;
                             foreach ($trusted_redirect_domains as $td) {
                                 if ($parsed_host === $td || (strlen($parsed_host) > strlen($td) && substr($parsed_host, -(strlen($td) + 1)) === '.' . $td)) {
@@ -3276,6 +3372,15 @@ class FirewallEngine {
         $raw_path       = strtolower((string) (wp_parse_url($uri, PHP_URL_PATH) ?: $uri));
         $raw_path       = str_replace('\\', '/', $raw_path);
 
+        // Exempt internal WebCare Pro REST API routes when no directory traversal is present
+        if (
+            !self::has_path_traversal($uri)
+            && strpos($canonical_path, '/wp-json/webcare-pro-security/') !== false
+            && strpos($canonical_path, '/wp-content/') === false
+        ) {
+            return false;
+        }
+
         $high_risk_patterns = [
             '/\.env($|\.)/i',
             '/\.git(\/|$)/i',
@@ -3318,6 +3423,15 @@ class FirewallEngine {
         $canonical_path = strtolower(self::canonicalize_uri_path($uri));
         $raw_path       = strtolower((string) (wp_parse_url($uri, PHP_URL_PATH) ?: $uri));
         $raw_path       = str_replace('\\', '/', $raw_path);
+
+        // Exempt internal WebCare Pro REST API routes when no directory traversal is present
+        if (
+            !self::has_path_traversal($uri)
+            && strpos($canonical_path, '/wp-json/webcare-pro-security/') !== false
+            && strpos($canonical_path, '/wp-content/') === false
+        ) {
+            return null;
+        }
 
         $sensitive_patterns = [
             '/(?:\/|^)(?:\.env(?:\.[a-z0-9_-]+)?|\.git\/(?:config|HEAD|index|logs(?:\/.*)?)|debug\.log|php_errorlog|error_log|wp-content\/uploads\/wc-logs(?:\/.*)?|auth\.json|docker-compose\.ya?ml|id_rsa(?:\.pub)?)(?:$|\?)/i',
@@ -10128,6 +10242,12 @@ class FirewallEngine {
             'manage_network_options',
             'manage_woocommerce',
             'view_woocommerce_reports',
+            'edit_shop_orders',
+            'edit_others_shop_orders',
+            'delete_shop_orders',
+            'delete_others_shop_orders',
+            'edit_others_products',
+            'delete_others_products',
             'edit_others_posts',
             'edit_others_pages',
             'edit_private_posts',
@@ -10196,60 +10316,31 @@ class FirewallEngine {
             return true;
         }
 
-        // Standard unprivileged reader/authoring baseline roles
-        $standard_unprivileged_roles = ['subscriber', 'customer', 'contributor'];
-
-        // Baseline allowlist of safe unprivileged capabilities for custom roles
-        $safe_unprivileged_caps = [
-            'read',
-            'level_0',
-            'level_1',
-            'exist',
-            'customer',
-            'subscriber',
-            'contributor',
-            'read_product',
-            'read_shop_order',
-            'view_admin_dashboard',
-            'edit_posts',
-            'delete_posts',
-        ];
+        // Elevated legacy user levels (level_2 = Author, level_7 = Editor, level_10 = Admin)
+        $elevated_levels = ['level_2', 'level_3', 'level_4', 'level_5', 'level_6', 'level_7', 'level_8', 'level_9', 'level_10'];
+        if (in_array($r, $elevated_levels, true)) {
+            return true;
+        }
 
         // 3. Always inspect actual registered role capabilities if get_role() is available
         if (function_exists('get_role')) {
             $role_obj = get_role($role);
             if ($role_obj instanceof \WP_Role && is_array($role_obj->capabilities)) {
-                $is_standard = in_array($r, $standard_unprivileged_roles, true);
-
                 foreach ($role_obj->capabilities as $cap => $granted) {
                     if (!$granted) {
                         continue;
                     }
                     $cap_lower = strtolower((string) $cap);
 
-                    // If any capability is privileged (e.g. manage_options, edit_users, activate_plugins), role is elevated
-                    if (self::is_privileged_capability($cap_lower)) {
+                    // If any capability is privileged (e.g. manage_options, edit_users, activate_plugins, manage_woocommerce)
+                    // or grants legacy level_2..level_10, the role is elevated.
+                    if (self::is_privileged_capability($cap_lower) || in_array($cap_lower, $elevated_levels, true)) {
                         return true;
                     }
-
-                    // For custom roles: if it contains capabilities beyond the safe unprivileged baseline, treat conservatively as elevated
-                    if (!$is_standard && !in_array($cap_lower, $safe_unprivileged_caps, true)) {
-                        return true;
-                    }
-                }
-
-                // If standard role has no privileged capabilities, it is safe
-                if ($is_standard) {
-                    return false;
                 }
 
                 return false;
             }
-        }
-
-        // 4. Fallback when get_role() is not available or role is not registered
-        if (in_array($r, $standard_unprivileged_roles, true)) {
-            return false;
         }
 
         return false;
@@ -10766,11 +10857,16 @@ class FirewallEngine {
             'password',
             'pass1',
             'pass2',
+            'password_current',
+            'password_1',
+            'password_2',
             'account_password',
             'user_pass',
             'current_password',
             'new_password',
             'confirm_password',
+            'user_password',
+            'confirm_user_password',
         ];
         foreach ($data as $k => $v) {
             $k_lower = is_string($k) ? strtolower($k) : '';

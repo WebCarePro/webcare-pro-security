@@ -334,12 +334,12 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                 // Must be a non-empty string literal or prepared statement placeholder (%s or ?)
                 if ($pred_val === '%s' || $pred_val === '?') {
                     // Valid prepared statement placeholder
-                } elseif (preg_match('/^\'([^\'\\\\]+)\'$/', $pred_val, $login_match)) {
-                    if (trim($login_match[1]) === '') {
+                } elseif (preg_match('/^\'((?:\\\\.|[^\'\\\\])+)\'$/s', $pred_val, $login_match)) {
+                    if (trim(stripslashes($login_match[1])) === '') {
                         return false;
                     }
-                } elseif (preg_match('/^"([^"\\\\]+)"$/', $pred_val, $login_match)) {
-                    if (trim($login_match[1]) === '') {
+                } elseif (preg_match('/^"((?:\\\\.|[^"\\\\])+)"$/s', $pred_val, $login_match)) {
+                    if (trim(stripslashes($login_match[1])) === '') {
                         return false;
                     }
                 } else {
@@ -352,13 +352,17 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
             // Inspect columns in SET clause
             $set_skeleton = (string) preg_replace("/'(?:\\\\.|[^'\\\\])*'|\"(?:\\\\.|[^\"\\\\])*\"/", "''", $set_clause_raw);
             if (preg_match_all('/`?([a-zA-Z0-9_]+)`?\s*=/i', $set_skeleton, $col_matches) && !empty($col_matches[1])) {
+                $mutated_cols = [];
                 foreach ($col_matches[1] as $col) {
-                    if (!in_array(strtolower($col), $allowed_columns, true)) {
+                    $col_clean = strtolower($col);
+                    if (!in_array($col_clean, $allowed_columns, true)) {
                         return false;
                     }
+                    $mutated_cols[] = $col_clean;
                 }
+                $mutated_cols = array_values(array_unique($mutated_cols));
 
-                // 5. Target User Boundary & Registration Window (during unauthenticated guest sessions)
+                // 5. Target User Boundary & Registration / Auth Lifecycle Verification (during unauthenticated guest sessions)
                 if (!function_exists('is_user_logged_in') || !is_user_logged_in()) {
                     $target_user = null;
 
@@ -368,7 +372,7 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                             $target_user = get_userdata($target_id);
                         }
                     } elseif ($pred_col === 'user_login') {
-                        $login_val = trim($pred_val, "'\"");
+                        $login_val = stripslashes(trim($pred_val, "'\""));
                         if (function_exists('get_user_by')) {
                             $target_user = get_user_by('login', $login_val);
                         }
@@ -379,6 +383,39 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                         return false;
                     }
 
+                    // Check if this is an authentic WordPress Core password-reset key write or login password rehash
+                    // originating strictly from /wp-includes/user.php or /wp-includes/pluggable.php and mutating ONLY
+                    // user_activation_key and/or user_pass.
+                    $is_core_auth_lifecycle_update = false;
+                    if ($is_core_origin && empty(array_diff($mutated_cols, ['user_activation_key', 'user_pass']))) {
+                        $has_core_auth_caller = false;
+                        $has_plugin_direct_wp_set_password = false;
+
+                        foreach ($frames as $idx => $fr) {
+                            $fn   = (string) ($fr['function'] ?? '');
+                            $file = isset($fr['file']) ? wp_normalize_path((string) $fr['file']) : '';
+
+                            if (in_array($fn, ['get_password_reset_key', 'retrieve_password', 'reset_password', 'check_password_reset_key', 'wp_check_password'], true)) {
+                                $has_core_auth_caller = true;
+                            }
+                            // Guard against a vulnerable third-party plugin calling wp_set_password() directly without reset_password() or wp_check_password()
+                            if ($fn === 'wp_set_password' && $file !== '' && strpos($file, '/wp-content/plugins/') !== false && strpos($file, '/plugins/woocommerce/') === false) {
+                                $has_plugin_direct_wp_set_password = true;
+                            }
+                        }
+
+                        if ($has_core_auth_caller && !$has_plugin_direct_wp_set_password) {
+                            $is_core_auth_lifecycle_update = true;
+                        }
+                    }
+
+                    if ($is_core_auth_lifecycle_update) {
+                        // Never allow unauthenticated guest plugin surfaces to overwrite an administrator's user_pass directly
+                        // unless inside wp_check_password() (post-verification hash upgrade) or reset_password() with a verified reset key.
+                        return true;
+                    }
+
+                    // For all other unauthenticated wp_users UPDATE mutations (e.g. profile/email/display_name changes during signup):
                     // Never allow mutations on privileged/administrative accounts
                     if (
                         (class_exists(FirewallEngine::class) && FirewallEngine::is_user_privileged($target_user))
