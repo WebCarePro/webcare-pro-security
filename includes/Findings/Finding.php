@@ -16,6 +16,8 @@ class Finding {
     public $evidence;
     public $description;
     public $taint_chain;
+    public $user_id;
+    public $user_login;
 
     public function __construct($data = []) {
         $this->engine = $data['engine'] ?? 'unknown';
@@ -28,6 +30,8 @@ class Finding {
         $this->evidence = $data['evidence'] ?? null;
         $this->description = $data['description'] ?? '';
         $this->taint_chain = $data['taint_chain'] ?? null;
+        $this->user_id = isset($data['user_id']) ? (int) $data['user_id'] : null;
+        $this->user_login = isset($data['user_login']) ? (string) $data['user_login'] : null;
     }
 
     public function to_array() {
@@ -42,6 +46,8 @@ class Finding {
             'evidence' => $this->evidence,
             'description' => $this->description,
             'taint_chain' => $this->taint_chain,
+            'user_id' => $this->user_id,
+            'user_login' => $this->user_login,
         ];
 
         if (class_exists('\\WebCareProScanner\\Findings\\FindingTranslator')) {

@@ -144,15 +144,38 @@ export const formatEtaRemaining = (seconds?: number | null): string => {
   return `~${mins}m ${rem}s remaining`;
 };
 
+export const isUserIssue = (item: any): boolean => {
+  if (!item) return false;
+  return Boolean(
+    item.is_user ||
+    item.engine === 'wordpress-users' ||
+    item.type?.startsWith('user_') ||
+    item.type?.includes('user_capabilities') ||
+    item.type?.includes('admin_user') ||
+    item.type?.includes('app_password') ||
+    item.type?.includes('application_password') ||
+    item.type?.includes('weak_password') ||
+    item.type === 'generic_admin_username' ||
+    item.type === 'username_enumeration_risk' ||
+    item.file_path?.startsWith('user:') ||
+    item.file_path?.includes('_users:user_id_') ||
+    item.file_path?.includes('_usermeta:user_id_') ||
+    item.file_path?.includes('users.ID')
+  );
+};
+
 export const isCveOrWarningIssue = (item: IssueData) =>
   Boolean(
-    (item.cves && item.cves.length > 0) ||
-    item.is_software_update ||
-    item.engine === 'wordpress-updates' ||
-    ((item.severity === 'medium' || item.severity === 'low' || item.type?.includes('warning')) &&
-      !item.type?.includes('modified') &&
-      !item.type?.includes('integrity') &&
-      !item.engine?.includes('fim'))
+    !isUserIssue(item) &&
+    !item.is_comment &&
+    !item.is_post &&
+    ((item.cves && item.cves.length > 0) ||
+      item.is_software_update ||
+      item.engine === 'wordpress-updates' ||
+      ((item.severity === 'medium' || item.severity === 'low' || item.type?.includes('warning')) &&
+        !item.type?.includes('modified') &&
+        !item.type?.includes('integrity') &&
+        !item.engine?.includes('fim')))
   );
 
 export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
@@ -338,11 +361,10 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
       } else if (categoryFilter === 'cve') {
         if (!isCveOrWarningIssue(item)) return false;
       } else if (categoryFilter === 'spam') {
-        const isSpam = item.is_comment || item.is_post || item.engine?.includes('comment') || item.engine?.includes('database') || item.engine?.includes('spam') || item.type.includes('spam') || (item.file_path && item.file_path.startsWith('comment:'));
+        const isSpam = item.is_comment || item.is_post || item.engine?.includes('comment') || item.engine === 'database-scanner' || item.engine?.includes('spam') || item.type.includes('spam') || (item.file_path && item.file_path.startsWith('comment:'));
         if (!isSpam) return false;
       } else if (categoryFilter === 'users') {
-        const isUser = item.is_user || item.engine?.includes('user') || (item.file_path && item.file_path.startsWith('user:'));
-        if (!isUser) return false;
+        if (!isUserIssue(item)) return false;
       }
 
       if (issueSearch.trim()) {
@@ -416,13 +438,10 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
   // Concept D Smart Recommendation Guidance
   const getFindingRecommendationText = (issue: any): string => {
     if (issue.simple_action) return issue.simple_action;
-    const isUser = Boolean(
-      issue.is_user ||
-      issue.engine === 'wordpress-users' ||
-      issue.type?.startsWith('user_') ||
-      issue.type?.includes('weak_password') ||
-      issue.file_path?.startsWith('user:')
-    );
+    const isUser = isUserIssue(issue);
+    if (issue.type === 'unused_admin_app_password_risk' || issue.type?.includes('app_password')) {
+      return 'Privileged administrator account possesses an active Application Password that has never recorded usage. Review or revoke unused application passwords in WP-Admin > Users > Edit Profile.';
+    }
     if (isUser || issue.type === 'weak_password_detected') {
       return 'Administrator account password is weak or predictable. Navigate to WP-Admin Users to generate a high-entropy passphrase or enroll a WebAuthn Passkey for instant brute-force protection.';
     }
@@ -1680,7 +1699,7 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
               onClick={() => setCategoryFilter('spam')}
             >
               <MessageSquare size={12} color="#8b5cf6" />
-              Comments &amp; Spam ({uniqueIssues.filter(i => i.is_comment || i.is_post || i.engine?.includes('comment') || i.engine?.includes('database') || i.engine?.includes('spam') || i.type.includes('spam') || (i.file_path && i.file_path.startsWith('comment:'))).length})
+              Comments &amp; Spam ({uniqueIssues.filter(i => i.is_comment || i.is_post || i.engine?.includes('comment') || i.engine === 'database-scanner' || i.engine?.includes('spam') || i.type.includes('spam') || (i.file_path && i.file_path.startsWith('comment:'))).length})
             </button>
 
             <button
@@ -1689,7 +1708,7 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
               onClick={() => setCategoryFilter('users')}
             >
               <UserCheck size={12} color="#ea580c" />
-              User Accounts ({uniqueIssues.filter(i => i.is_user || i.engine?.includes('user') || (i.file_path && i.file_path.startsWith('user:'))).length})
+              User Accounts ({uniqueIssues.filter(isUserIssue).length})
             </button>
           </div>
         )}
@@ -1796,13 +1815,9 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                   );
                   const orphanedAuthorId = (issue.file_path && issue.file_path.match(/author:\s*(\d+)/i)?.[1]) || issue.author_id || '';
 
-                  const isUser = Boolean(
-                    issue.is_user ||
-                    issue.engine === 'wordpress-users' ||
-                    issue.type?.startsWith('user_') ||
-                    issue.type?.includes('weak_password') ||
-                    issue.file_path?.startsWith('user:')
-                  );
+                  const isUser = isUserIssue(issue);
+                  const isAppPasswordRisk = Boolean(issue.type?.includes('app_password') || issue.type?.includes('application_password'));
+                  const userId = (issue.file_path && issue.file_path.match(/user(?:_id)?[:_]\s*(\d+)/i)?.[1]) || issue.user_id || 1;
                   const isUpdate = Boolean(
                     issue.engine === 'wordpress-updates' ||
                     issue.is_software_update ||
@@ -1827,7 +1842,7 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                     issue.type?.includes('unauthorized_dropin') ||
                     issue.engine?.includes('uploads')
                   );
-                  const isPhysicalFile = !isUser && Boolean(issue.file_path) && !issue.file_path.startsWith('cron:') && !issue.file_path.startsWith('wp_options:') && !issue.file_path.startsWith('db:') && !issue.file_path.startsWith('table:') && !issue.file_path.startsWith('user:') && !issue.file_path.startsWith('comment:') && (issue.file_path.includes('/') || issue.file_path.includes('\\'));
+                  const isPhysicalFile = !isUser && !isUpdate && Boolean(issue.file_path) && !issue.is_dir && !issue.file_path.startsWith('cron:') && !issue.file_path.startsWith('wp_options:') && !issue.file_path.startsWith('db:') && !issue.file_path.startsWith('table:') && !issue.file_path.startsWith('user:') && !issue.file_path.startsWith('comment:') && !issue.file_path.startsWith('hook:') && !issue.file_path.startsWith('author:') && (issue.file_path.includes('/') || issue.file_path.includes('\\') || issue.file_path.endsWith('.php') || issue.file_path.includes('.'));
 
                   const isCustomOrPremium = Boolean(
                     issue.is_custom ||
@@ -2051,10 +2066,14 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                             </a>
                           )}
 
-                          {/* 1b. User Password / Capability Action */}
+                          {/* 1b. User Password / Capability / App Password Action */}
                           {!isOrphanedAuthor && isUser && issue.status === 'open' && (
                             <a
-                              href={`user-edit.php?user_id=${(issue.file_path && issue.file_path.match(/user:\s*(\d+)/i)?.[1]) || issue.user_id || 1}`}
+                              href={
+                                isAppPasswordRisk
+                                  ? `user-edit.php?user_id=${userId}#application-passwords-section`
+                                  : `user-edit.php?user_id=${userId}`
+                              }
                               target="_blank"
                               rel="noopener noreferrer"
                               className="webcare-btn"
@@ -2072,10 +2091,22 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                                 textDecoration: 'none',
                                 boxShadow: '0 2px 6px rgba(79, 70, 229, 0.25)'
                               }}
-                              title={issue.type === 'user_missing_capabilities' ? 'Open user profile to review or assign role capabilities' : 'Open user profile in new tab to update password'}
+                              title={
+                                isAppPasswordRisk
+                                  ? 'Open user profile to review or revoke application passwords'
+                                  : issue.type === 'user_missing_capabilities'
+                                  ? 'Open user profile to review or assign role capabilities'
+                                  : 'Open user profile in new tab to update password'
+                              }
                             >
-                              {issue.type === 'user_missing_capabilities' ? <UserCheck size={13} /> : <Key size={13} />}
-                              <span>{issue.type === 'user_missing_capabilities' ? 'Fix Capabilities in WP-Admin ↗' : 'Update Password in WP-Admin ↗'}</span>
+                              {isAppPasswordRisk ? <Key size={13} /> : issue.type === 'user_missing_capabilities' ? <UserCheck size={13} /> : <Key size={13} />}
+                              <span>
+                                {isAppPasswordRisk
+                                  ? 'Manage App Passwords in WP-Admin ↗'
+                                  : issue.type === 'user_missing_capabilities'
+                                  ? 'Fix Capabilities in WP-Admin ↗'
+                                  : 'Update Password in WP-Admin ↗'}
+                              </span>
                             </a>
                           )}
 
@@ -2318,7 +2349,7 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
 
                         {/* View Technical Details & Expand Button */}
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          {issue.file_path && !issue.is_dir && !isUser && !isUpdate && (
+                          {isPhysicalFile && !issue.is_dir && (
                             <button
                               type="button"
                               className="webcare-btn"
@@ -2422,18 +2453,11 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                       );
                       const orphanedAuthorId = (issue.file_path && issue.file_path.match(/author:\s*(\d+)/i)?.[1]) || issue.author_id || '';
 
-                      const isUser = Boolean(
-                        issue.is_user ||
-                        issue.engine === 'wordpress-users' ||
-                        issue.type?.startsWith('user_') ||
-                        issue.type?.includes('user_capabilities') ||
-                        issue.type?.includes('admin_user') ||
-                        issue.file_path?.startsWith('user:') ||
-                        issue.file_path?.includes('_users:user_id_') ||
-                        issue.file_path?.includes('users.ID')
-                      );
+                      const isUser = isUserIssue(issue);
+                      const isAppPasswordRisk = Boolean(issue.type?.includes('app_password') || issue.type?.includes('application_password'));
+                      const userId = (issue.file_path && issue.file_path.match(/user(?:_id)?[:_]\s*(\d+)/i)?.[1]) || issue.user_id || 1;
                       const isDbTable = !isUser && (issue.is_db_table || issue.engine === 'database-table' || Boolean(issue.file_path && !issue.file_path.includes('/') && !issue.file_path.includes('\\') && issue.file_path.includes('.') && issue.file_path.includes('[ID:')));
-                      const isDbRecord = !isUser && (isDbOption || isDbTable || issue.engine === 'database-scanner' || issue.file_path?.startsWith('db:') || issue.file_path?.startsWith('table:'));
+                      const isDbRecord = !isUser && (isDbOption || isDbTable || issue.engine === 'database-scanner' || issue.engine === 'database-micro-anomaly' || issue.file_path?.startsWith('db:') || issue.file_path?.startsWith('table:'));
                       const isUpdate = Boolean(
                         issue.engine === 'wordpress-updates' ||
                         issue.is_software_update ||
@@ -2451,7 +2475,7 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                         (issue.engine === 'integrity-theme' && (issue.file_path?.includes('/themes/') || issue.file_path?.includes('\\themes\\')) && !issue.file_path?.match(/\.[a-zA-Z0-9]{2,5}$/)) ||
                         (issue.engine === 'integrity-plugin' && (issue.file_path?.includes('/plugins/') || issue.file_path?.includes('\\plugins\\')) && !issue.file_path?.match(/\.[a-zA-Z0-9]{2,5}$/));
 
-                      const isPhysicalFile = !isHook && !isDbRecord && !isDbTable && !isUser && !isPost && !isComment && !isUpdate && !isDir && Boolean(issue.file_path) && !issue.file_path.startsWith('cron:') && !issue.file_path.startsWith('wp_options:') && !issue.file_path.startsWith('db:') && !issue.file_path.startsWith('table:') && !issue.file_path.startsWith('user:') && !issue.file_path.startsWith('comment:') && (issue.file_path.includes('/') || issue.file_path.includes('\\'));
+                      const isPhysicalFile = !isHook && !isDbRecord && !isDbTable && !isUser && !isPost && !isComment && !isUpdate && !isDir && Boolean(issue.file_path) && !issue.file_path.startsWith('cron:') && !issue.file_path.startsWith('wp_options:') && !issue.file_path.startsWith('db:') && !issue.file_path.startsWith('table:') && !issue.file_path.startsWith('user:') && !issue.file_path.startsWith('comment:') && !issue.file_path.startsWith('hook:') && !issue.file_path.startsWith('author:') && (issue.file_path.includes('/') || issue.file_path.includes('\\') || issue.file_path.endsWith('.php') || issue.file_path.includes('.'));
                       const isUnknownFile = Boolean(
                         issue.type?.includes('unknown') ||
                         issue.type?.includes('extra') ||
@@ -2568,7 +2592,7 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                                     <span className="webcare-type-badge-user" style={{ background: '#f0fdf4', color: '#15803d', border: '1px solid #bbf7d0', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700 }}>
                                       USER
                                     </span>
-                                  ) : isDbTable ? (
+                                  ) : (isDbTable || isDbRecord || isDbOption || issue.file_path?.startsWith('db:') || issue.file_path?.startsWith('table:')) ? (
                                     <span className="webcare-type-badge-db" style={{ background: '#faf5ff', color: '#7e22ce', border: '1px solid #e9d5ff', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700 }}>
                                       DB ROW
                                     </span>
@@ -2664,10 +2688,14 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                                   </a>
                                 )}
 
-                                {/* 1b. User account / weak password: Update Password or Fix Capabilities */}
+                                {/* 1b. User account / weak password / app password: Update Password, Manage App Passwords or Fix Capabilities */}
                                 {!isOrphanedAuthor && isUser && issue.status === 'open' && (
                                   <a
-                                    href={`user-edit.php?user_id=${(issue.file_path && issue.file_path.match(/user:\s*(\d+)/i)?.[1]) || issue.user_id || 1}`}
+                                    href={
+                                      isAppPasswordRisk
+                                        ? `user-edit.php?user_id=${userId}#application-passwords-section`
+                                        : `user-edit.php?user_id=${userId}`
+                                    }
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="webcare-btn"
@@ -2684,10 +2712,22 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                                       gap: '4px',
                                       textDecoration: 'none'
                                     }}
-                                    title={issue.type === 'user_missing_capabilities' ? 'Open user profile to review or assign role capabilities' : 'Open user profile in new tab to update password or manage credentials'}
+                                    title={
+                                      isAppPasswordRisk
+                                        ? 'Open user profile to review or revoke application passwords'
+                                        : issue.type === 'user_missing_capabilities'
+                                        ? 'Open user profile to review or assign role capabilities'
+                                        : 'Open user profile in new tab to update password or manage credentials'
+                                    }
                                   >
-                                    {issue.type === 'user_missing_capabilities' ? <UserCheck size={12} /> : <Key size={12} />}
-                                    <span>{issue.type === 'user_missing_capabilities' ? 'Fix Capabilities ↗' : 'Update Password ↗'}</span>
+                                    {isAppPasswordRisk ? <Key size={12} /> : issue.type === 'user_missing_capabilities' ? <UserCheck size={12} /> : <Key size={12} />}
+                                    <span>
+                                      {isAppPasswordRisk
+                                        ? 'Manage App Passwords ↗'
+                                        : issue.type === 'user_missing_capabilities'
+                                        ? 'Fix Capabilities ↗'
+                                        : 'Update Password ↗'}
+                                    </span>
                                   </a>
                                 )}
 
@@ -2859,7 +2899,7 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                                 )}
 
                                 {/* 6. View Code */}
-                                {issue.file_path && !issue.is_dir && !isUser && !isUpdate && (
+                                {isPhysicalFile && !issue.is_dir && (
                                   <button
                                     type="button"
                                     className="webcare-btn webcare-btn-view-file"

@@ -229,6 +229,8 @@ class RogueAdminAnomalyDetector {
                             'severity'    => 'high',
                             'confidence'  => 90,
                             'file_path'   => "db:{$usermeta_table}:user_id_{$row->user_id}",
+                            'user_id'     => (int) $row->user_id,
+                            'user_login'  => (string) $row->user_login,
                             'description' => "Application Password '{$app_name}' on user '{$row->user_login}' lacks valid UUID. Indicates manual database injection or backdoor token.",
                             'evidence'    => "User: {$row->user_login}, App Name: {$app_name}, Created: " . ($created ? gmdate('Y-m-d H:i:s', $created) : 'Unknown'),
                         ]);
@@ -242,6 +244,8 @@ class RogueAdminAnomalyDetector {
                             'severity'    => 'low',
                             'confidence'  => 75,
                             'file_path'   => "db:{$usermeta_table}:user_id_{$row->user_id}",
+                            'user_id'     => (int) $row->user_id,
+                            'user_login'  => (string) $row->user_login,
                             'description' => "Privileged account '{$row->user_login}' possesses an active Application Password ('{$app_name}') that has never recorded usage. Review and revoke if unauthorized.",
                             'evidence'    => "User: {$row->user_login}, App Name: {$app_name}, UUID: {$uuid}",
                         ]);

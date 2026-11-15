@@ -77,6 +77,15 @@ class FindingTranslator {
 
         // 4. User Accounts & Weak Passwords
         if (strpos($engine, 'user') !== false || strpos($type, 'password') !== false || strpos($type, 'author') !== false) {
+            if (strpos($type, 'app_password') !== false || strpos($type, 'application_password') !== false) {
+                return [
+                    'what_is_this'        => __('An active Application Password was detected on a privileged administrator account with no recorded usage.', 'webcare-pro-security'),
+                    'is_store_safe'       => __('Application Passwords allow REST API access with administrator privileges. Unused credentials increase attack surface if exposed.', 'webcare-pro-security'),
+                    'recommended_action'  => __('Review active application passwords in WP-Admin > Users > Edit Profile and revoke any unused or unrecognized keys.', 'webcare-pro-security'),
+                    'action_button_label' => __('Manage App Passwords', 'webcare-pro-security'),
+                ];
+            }
+
             if (strpos($type, 'weak_password') !== false) {
                 return [
                     'what_is_this'        => __('A user account on your site has a weak password that easily matches their username, email, or a common dictionary word.', 'webcare-pro-security'),
