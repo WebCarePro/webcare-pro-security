@@ -3162,6 +3162,31 @@ class FirewallEngine {
     }
 
     /**
+     * Inspect URI for any single, mixed-case, or multiply encoded directory traversal attempts.
+     * Handles single-encoded (%2e%2e, %2E%2e, %2e%2E), double-encoded (%252e%252e, %252E%252e),
+     * and triple-encoded (%25252e%25252E) traversal patterns across up to 5 decoding passes.
+     *
+     * @param string $uri
+     * @return bool
+     */
+    public static function has_path_traversal(string $uri): bool {
+        $decoded = $uri;
+        for ($i = 0; $i < 5; $i++) {
+            $normalized = str_replace('\\', '/', $decoded);
+            if (str_contains($normalized, '..')) {
+                return true;
+            }
+            $prev = $decoded;
+            $decoded = rawurldecode($decoded);
+            if ($decoded === $prev) {
+                break;
+            }
+        }
+        $normalized = str_replace('\\', '/', $decoded);
+        return str_contains($normalized, '..');
+    }
+
+    /**
      * Decode and canonicalize URI path by resolving directory traversal (..) and redundant slashes.
      *
      * @param string $uri
@@ -3169,7 +3194,7 @@ class FirewallEngine {
      */
     public static function canonicalize_uri_path(string $uri): string {
         $decoded = $uri;
-        for ($i = 0; $i < 3; $i++) {
+        for ($i = 0; $i < 5; $i++) {
             $prev = $decoded;
             $decoded = rawurldecode($decoded);
             if ($decoded === $prev) {
@@ -3226,7 +3251,7 @@ class FirewallEngine {
             }
         }
 
-        if (str_contains($raw_path, '..') || str_contains($uri, '%2e%2e') || str_contains($uri, '%2E%2E')) {
+        if (self::has_path_traversal($uri)) {
             return true;
         }
 
@@ -3279,7 +3304,7 @@ class FirewallEngine {
         }
 
         // Check if there is an attempted directory traversal in the raw URI or decoded path
-        if (str_contains($raw_path, '..') || str_contains($uri, '%2e%2e') || str_contains($uri, '%2E%2E')) {
+        if (self::has_path_traversal($uri)) {
             return [
                 'id'          => 'WAF-PATH-TRAVERSAL',
                 'name'        => 'Directory Traversal Reconnaissance Probe',
@@ -10116,7 +10141,12 @@ class FirewallEngine {
             return false;
         }
 
-        // Known inherently elevated roles
+        // Standard WordPress safe content/reader roles are unprivileged
+        if (in_array($r, ['subscriber', 'customer', 'contributor'], true)) {
+            return false;
+        }
+
+        // Known inherently elevated administrative / publishing roles
         if (in_array($r, ['administrator', 'editor', 'author', 'shop_manager', 'super_admin'], true)) {
             return true;
         }
@@ -10126,16 +10156,20 @@ class FirewallEngine {
             return true;
         }
 
-        // Baseline allowlist of safe unprivileged capabilities for genuine subscriber/customer roles
+        // Baseline allowlist of safe unprivileged capabilities for genuine subscriber/customer/contributor roles
         $safe_unprivileged_caps = [
             'read',
             'level_0',
+            'level_1',
             'exist',
             'customer',
             'subscriber',
+            'contributor',
             'read_product',
             'read_shop_order',
             'view_admin_dashboard',
+            'edit_posts',
+            'delete_posts',
         ];
 
         if (function_exists('get_role')) {
@@ -10399,9 +10433,9 @@ class FirewallEngine {
                     }
                 }
             } elseif ($meta_key === $prefix . 'user_level') {
-                // Strictly allow level 0 (subscriber) during unauthenticated user registration
+                // Allow level 0 (subscriber) and level 1 (contributor) during unauthenticated user registration
                 $level = (int) $meta_value;
-                if ($level <= 0) {
+                if ($level <= 1) {
                     $user_obj = function_exists('get_userdata') ? get_userdata($object_id) : null;
                     if ($user_obj) {
                         $registered_time = strtotime($user_obj->user_registered);

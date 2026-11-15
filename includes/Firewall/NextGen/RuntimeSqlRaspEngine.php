@@ -208,25 +208,49 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
      * @return bool
      */
     public static function is_legitimate_users_table_mutation(string $sql): bool {
-        // 1. Verify caller provenance from WordPress Core or WooCommerce Core
+        // 1. Verify caller provenance: immediate caller invoking $wpdb must be Core or WooCommerce user engine
         // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_debug_backtrace -- Provenance validation for RASP
-        $frames = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 25);
-        $legit_origin = false;
+        $frames = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 20);
+        $origin_frame = null;
+
+        // Skip internal RASP, WAF, and $wpdb database frames to locate the true SQL originator
         foreach ($frames as $frame) {
             $file = isset($frame['file']) ? wp_normalize_path((string) $frame['file']) : '';
-            if (
-                strpos($file, '/wp-includes/user.php') !== false
-                || strpos($file, '/wp-includes/pluggable.php') !== false
-                || strpos($file, '/plugins/woocommerce/includes/wc-user-functions.php') !== false
-                || strpos($file, '/plugins/woocommerce/packages/') !== false
-                || strpos($file, '/plugins/woocommerce/src/StoreApi/') !== false
-            ) {
-                $legit_origin = true;
-                break;
+            if ($file === '') {
+                continue;
             }
+            if (
+                strpos($file, '/includes/Firewall/') !== false
+                || strpos($file, '/wp-includes/class-wpdb.php') !== false
+                || strpos($file, '/wp-includes/wp-db.php') !== false
+            ) {
+                continue;
+            }
+            $origin_frame = $frame;
+            break;
         }
 
-        if (!$legit_origin) {
+        if (!$origin_frame || !isset($origin_frame['file'])) {
+            return false;
+        }
+
+        $origin_file = wp_normalize_path((string) $origin_frame['file']);
+
+        // The query MUST be directly executed by WordPress Core user functions or WooCommerce user data stores
+        $is_core_origin = (
+            strpos($origin_file, '/wp-includes/user.php') !== false
+            || strpos($origin_file, '/wp-includes/pluggable.php') !== false
+        );
+
+        $is_wc_origin = (
+            strpos($origin_file, '/plugins/woocommerce/includes/wc-user-functions.php') !== false
+            || strpos($origin_file, '/plugins/woocommerce/includes/data-stores/class-wc-customer-data-store') !== false
+            || strpos($origin_file, '/plugins/woocommerce/packages/') !== false
+            || strpos($origin_file, '/plugins/woocommerce/src/StoreApi/') !== false
+        );
+
+        if (!$is_core_origin && !$is_wc_origin) {
+            // Origin was a third-party plugin callback or non-core file
             return false;
         }
 
@@ -333,6 +357,50 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                         return false;
                     }
                 }
+
+                // 5. Target User Boundary & Registration Window (during unauthenticated guest sessions)
+                if (!function_exists('is_user_logged_in') || !is_user_logged_in()) {
+                    if ($pred_col === 'id') {
+                        $target_id = (int) $pred_val;
+                        if (function_exists('get_userdata')) {
+                            $target_user = get_userdata($target_id);
+                            if ($target_user instanceof \WP_User) {
+                                if (
+                                    $target_user->has_cap('manage_options')
+                                    || $target_user->has_cap('administrator')
+                                    || (class_exists(FirewallEngine::class) && FirewallEngine::is_privileged_role((string) ($target_user->roles[0] ?? '')))
+                                ) {
+                                    return false;
+                                }
+
+                                $reg_ts = strtotime((string) $target_user->user_registered);
+                                if ($reg_ts && (time() - $reg_ts) > 120) {
+                                    return false;
+                                }
+                            }
+                        }
+                    } elseif ($pred_col === 'user_login') {
+                        $login_val = trim($pred_val, "'\"");
+                        if (function_exists('get_user_by')) {
+                            $target_user = get_user_by('login', $login_val);
+                            if ($target_user instanceof \WP_User) {
+                                if (
+                                    $target_user->has_cap('manage_options')
+                                    || $target_user->has_cap('administrator')
+                                    || (class_exists(FirewallEngine::class) && FirewallEngine::is_privileged_role((string) ($target_user->roles[0] ?? '')))
+                                ) {
+                                    return false;
+                                }
+
+                                $reg_ts = strtotime((string) $target_user->user_registered);
+                                if ($reg_ts && (time() - $reg_ts) > 120) {
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                }
+
                 return true;
             }
         }
