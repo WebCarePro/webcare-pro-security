@@ -65,6 +65,7 @@ class FirewallEngine {
         add_action('wp_login', [__CLASS__, 'on_user_login_preload_auth'], 10, 2);
         add_action('wp_logout', [__CLASS__, 'clear_preload_auth_cookie']);
         add_action('clear_auth_cookie', [__CLASS__, 'clear_preload_auth_cookie']);
+        add_action('woocommerce_cleanup_sessions', [__CLASS__, 'invalidate_woocommerce_session_cache']);
 
         // Smart 404 Scanner Rate Limiter & Reconnaissance Shield (Priority 999: Allow redirection plugins & template logic to process first)
         add_action('template_redirect', [__CLASS__, 'track_404_request'], 999);
@@ -3551,8 +3552,24 @@ class FirewallEngine {
     }
 
     /**
+     * Invalidate the in-memory WooCommerce session verification cache.
+     * Purges specific customer session or entire request cache upon logout or cleanup.
+     *
+     * @param string|null $customer_id Customer ID to purge, or null to purge all request-cached sessions.
+     * @return void
+     */
+    public static function invalidate_woocommerce_session_cache(?string $customer_id = null): void {
+        if ($customer_id !== null && $customer_id !== '') {
+            unset(self::$wc_session_cache[$customer_id]);
+        } else {
+            self::$wc_session_cache = [];
+        }
+    }
+
+    /**
      * Verify whether a WooCommerce session exists and is unexpired in the database.
      * Enforces database-level revocation for both runtime and early-boot shopper sessions.
+     * Request-scoped cache avoids redundant database queries; purged immediately on logout or session cleanup.
      *
      * @param string $customer_id
      * @return bool
@@ -11335,6 +11352,8 @@ class FirewallEngine {
         if (isset($_COOKIE['webcare_preload_auth'])) {
             unset($_COOKIE['webcare_preload_auth']);
         }
+
+        self::invalidate_woocommerce_session_cache();
     }
 
     /**

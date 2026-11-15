@@ -83,16 +83,8 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
 
         // Password rehash is only performed by WordPress Core if the hash actually needs rehashing.
         // In WordPress 6.8+, wp_password_needs_rehash($hash, $user_id) evaluates whether a hash needs migrating to modern bcrypt ($wp).
-        // If the hash is already current, Core will never invoke wp_set_password, so creating an authorization record is unnecessary.
-        $needs_rehash = false;
-        if (function_exists('wp_password_needs_rehash')) {
-            $needs_rehash = wp_password_needs_rehash($hash, $uid);
-        } elseif (strlen($hash) <= 32 || str_starts_with($hash, '$P$')) {
-            // Legacy fallback for pre-6.8 WordPress: MD5 or phpass needing migration
-            $needs_rehash = true;
-        }
-
-        if (!$needs_rehash) {
+        // If wp_password_needs_rehash does not exist or returns false, Core will never invoke wp_set_password. Fail closed.
+        if (!function_exists('wp_password_needs_rehash') || !wp_password_needs_rehash($hash, $uid)) {
             return $check;
         }
 
@@ -857,10 +849,8 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                 }
 
                 // Verify exact call-stack provenance: wp_set_password() MUST be invoked directly by WordPress Core authentication lifecycle:
-                // 1. In WordPress 6.8+: wp_authenticate_username_password() or wp_authenticate_email_password() in canonical wp-includes/user.php
-                // 2. In legacy pre-6.8: wp_check_password() in canonical wp-includes/pluggable.php
+                // In WordPress 6.8+: wp_authenticate_username_password() or wp_authenticate_email_password() in canonical wp-includes/user.php
                 $canonical_user          = defined('ABSPATH') && defined('WPINC') ? wp_normalize_path(ABSPATH . WPINC . '/user.php') : '';
-                $canonical_pluggable     = defined('ABSPATH') && defined('WPINC') ? wp_normalize_path(ABSPATH . WPINC . '/pluggable.php') : '';
                 $has_direct_rehash_stack = false;
 
                 for ($i = 0; $i < count($full_frames); $i++) {
@@ -871,14 +861,8 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                         $caller_file = isset($full_frames[$i]['file']) ? wp_normalize_path((string) $full_frames[$i]['file']) : '';
 
                         $is_core_auth_caller = (
-                            (
-                                ($caller_fn === 'wp_authenticate_username_password' || $caller_fn === 'wp_authenticate_email_password')
-                                && ($canonical_user === '' || $caller_file === $canonical_user)
-                            )
-                            || (
-                                $caller_fn === 'wp_check_password'
-                                && ($canonical_pluggable === '' || $caller_file === $canonical_pluggable)
-                            )
+                            ($caller_fn === 'wp_authenticate_username_password' || $caller_fn === 'wp_authenticate_email_password')
+                            && ($canonical_user === '' || $caller_file === $canonical_user)
                         );
 
                         if ($arg_uid === $uid && $is_core_auth_caller) {
@@ -892,11 +876,9 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                     return false;
                 }
 
-                $active_needs_rehash = false;
-                if (function_exists('wp_password_needs_rehash')) {
-                    $active_needs_rehash = wp_password_needs_rehash($auth_hash, $uid);
-                } elseif (strlen($auth_hash) <= 32 || str_starts_with($auth_hash, '$P$')) {
-                    $active_needs_rehash = true;
+                // Strictly fail closed if wp_password_needs_rehash is missing or returns false
+                if (!function_exists('wp_password_needs_rehash') || !wp_password_needs_rehash($auth_hash, $uid)) {
+                    return false;
                 }
 
                 // Enforce time bound (within 15 seconds of authentication), pre-rehash hash match, and active need for rehash
@@ -905,7 +887,6 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                     && $auth_time > 0
                     && (time() - $auth_time) <= 15
                     && hash_equals($auth_hash, (string) $target_user->user_pass)
-                    && $active_needs_rehash
                 ) {
                     // One-time consume: invalidate immediately upon observing rehash to prevent secondary or replay mutations
                     unset(self::$verified_password_users[$uid]);
