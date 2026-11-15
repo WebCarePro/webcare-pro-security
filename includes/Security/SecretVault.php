@@ -398,6 +398,7 @@ class SecretVault {
             fclose($src_fp);
             return ['success' => false, 'error' => 'Failed to open temporary vault destination for writing.'];
         }
+        @chmod($temp_dest, 0600);
 
         $chunk_size = self::CHUNK_SIZE;
         $total_chunks = (int) ceil(max(1, $file_size) / $chunk_size);
@@ -470,6 +471,9 @@ class SecretVault {
 
         fclose($src_fp);
         fflush($dst_fp);
+        if (function_exists('fsync')) {
+            @fsync($dst_fp);
+        }
         fclose($dst_fp);
 
         // Verification checks (Finding 1.1):
@@ -626,6 +630,7 @@ class SecretVault {
                 fclose($v_fp);
                 return ['success' => false, 'error' => 'Failed to create destination stream.'];
             }
+            @chmod($temp_dest, 0600);
 
             $dec_h_ctx       = hash_init('sha256');
             $dec_bytes_total = 0;
@@ -704,6 +709,9 @@ class SecretVault {
             $trailing = fread($v_fp, 1024);
             fclose($v_fp);
             fflush($dst_fp);
+            if (function_exists('fsync')) {
+                @fsync($dst_fp);
+            }
             fclose($dst_fp);
 
             if ($trailing !== '' && $trailing !== false) {
@@ -789,9 +797,13 @@ class SecretVault {
             fclose($v_fp);
             return ['success' => false, 'error' => 'Failed to create destination stream for legacy restore.'];
         }
+        @chmod($temp_dest, 0600);
         stream_copy_to_stream($v_fp, $dst_fp);
         fclose($v_fp);
         fflush($dst_fp);
+        if (function_exists('fsync')) {
+            @fsync($dst_fp);
+        }
         fclose($dst_fp);
 
         if (!@rename($temp_dest, $dest_path)) {

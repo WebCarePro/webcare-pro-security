@@ -5538,28 +5538,11 @@ class FirewallEngine {
      * @return string 'heuristic' | 'confirmed_exploit' | 'admin_policy'
      */
     public static function get_rule_enforcement_tier(array $rule): string {
-        // 1. Explicit internal classification property on rule array
-        if (!empty($rule['enforcement_tier'])) {
-            $tier = (string) $rule['enforcement_tier'];
-            if (in_array($tier, [self::TIER_HEURISTIC, self::TIER_CONFIRMED_EXPLOIT, self::TIER_ADMIN_POLICY], true)) {
-                return $tier;
-            }
-        }
-
-        // 2. Explicit custom administrator-authored rule policy
-        $is_custom_admin = !empty($rule['is_custom'])
-            || (($rule['category'] ?? '') === 'custom')
-            || (!empty($rule['author']) && $rule['author'] === 'administrator');
-
-        if ($is_custom_admin && max(0, (int) ($rule['ban_ttl'] ?? 0)) > 0) {
-            return self::TIER_ADMIN_POLICY;
-        }
-
-        // 3. Strict whitelisted confirmed high-severity exploit signatures
         $rule_id_str = strtoupper((string) ($rule['id'] ?? ''));
         $rule_cat    = (string) ($rule['category'] ?? '');
 
-        // Heuristic exclusions strictly override exploit patterns (e.g. XSS or AI prompts)
+        // 1. Immutable Heuristic Priority: Heuristic detections ALWAYS resolve to TIER_HEURISTIC.
+        // No metadata, property, or supplied field can ever override this boundary.
         $is_heuristic = in_array($rule_cat, [
             'Cross-Site Scripting (XSS)',
             'AI & Agent Defense',
@@ -5579,6 +5562,14 @@ class FirewallEngine {
             return self::TIER_HEURISTIC;
         }
 
+        // 2. Verified Administrator-Authored Custom Rule Provenance:
+        // Must match a registered rule in the trusted database repository, not unverified array metadata.
+        $rule_ban_ttl = max(0, (int) ($rule['ban_ttl'] ?? 0));
+        if ($rule_ban_ttl > 0 && self::is_verified_admin_custom_rule($rule)) {
+            return self::TIER_ADMIN_POLICY;
+        }
+
+        // 3. Strict whitelisted confirmed high-severity exploit signatures
         $critical_ban_categories = [
             'SQL Injection',
             'PHP Code Injection',
@@ -5610,8 +5601,28 @@ class FirewallEngine {
             return self::TIER_CONFIRMED_EXPLOIT;
         }
 
-        // Fail-safe default: All unclassified or ambiguous rules default to heuristic (no automated IP ban)
+        // 4. Fail-Safe Default: All unclassified or ambiguous rules default to heuristic (no automated IP ban)
         return self::TIER_HEURISTIC;
+    }
+
+    /**
+     * Verify whether a rule corresponds to an authentic, administrator-authored
+     * custom rule stored in the verified modular rules database repository.
+     *
+     * @param array $rule
+     * @return bool
+     */
+    public static function is_verified_admin_custom_rule(array $rule): bool {
+        $rule_id = (string) ($rule['id'] ?? '');
+        if ($rule_id === '') {
+            return false;
+        }
+
+        if (class_exists('\\WebCareProScanner\\Firewall\\Modular\\ModularFirewallSynthesizer')) {
+            return \WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer::is_registered_admin_custom_rule($rule_id);
+        }
+
+        return false;
     }
 
     /**

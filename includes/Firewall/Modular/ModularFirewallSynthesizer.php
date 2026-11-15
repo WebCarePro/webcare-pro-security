@@ -54,6 +54,40 @@ class ModularFirewallSynthesizer {
         return self::$runtime_custom_allow_matched;
     }
 
+    private static ?array $cached_custom_rule_ids = null;
+
+    /**
+     * Authoritatively verify whether a rule ID corresponds to an authentic,
+     * administrator-authored custom rule persisted in the trusted modular rules store.
+     *
+     * @param string $rule_id
+     * @return bool
+     */
+    public static function is_registered_admin_custom_rule(string $rule_id): bool {
+        if ($rule_id === '') {
+            return false;
+        }
+
+        if (self::$cached_custom_rule_ids === null) {
+            self::$cached_custom_rule_ids = [];
+            $rules = self::get_active_rules();
+            foreach ($rules as $r) {
+                if (!empty($r['is_custom']) && !empty($r['id'])) {
+                    self::$cached_custom_rule_ids[(string) $r['id']] = true;
+                }
+            }
+        }
+
+        return isset(self::$cached_custom_rule_ids[$rule_id]);
+    }
+
+    /**
+     * Invalidate in-memory cache of verified custom rule IDs.
+     */
+    public static function reset_custom_rule_cache(): void {
+        self::$cached_custom_rule_ids = null;
+    }
+
     /**
      * Check whether Smart 48-Hour Auto-Pilot is enabled.
      */
@@ -769,6 +803,7 @@ class ModularFirewallSynthesizer {
      * @return bool
      */
     public static function save_rules(array $rules): bool {
+        self::reset_custom_rule_cache();
         $rules   = self::normalize_custom_rule_ordering($rules, true);
         $updated = update_option(self::OPTION_RULES, $rules, false);
 

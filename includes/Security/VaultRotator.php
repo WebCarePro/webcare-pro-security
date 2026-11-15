@@ -652,8 +652,8 @@ class VaultRotator {
                     continue;
                 }
 
-                $temp_dec   = $file_path . '.rot_dec_' . bin2hex(random_bytes(4));
-                $temp_reenc = $file_path . '.rot_enc_' . bin2hex(random_bytes(4));
+                $temp_dec   = $file_path . '.rot_dec_' . bin2hex(random_bytes(8));
+                $temp_reenc = $file_path . '.rot_enc_' . bin2hex(random_bytes(8));
 
                 $dec_res = SecretVault::decrypt_vault_to_file($file_path, $temp_dec, $old_binary_key);
                 if (empty($dec_res['success'])) {
@@ -758,10 +758,15 @@ class VaultRotator {
                 $fp = @fopen($temp_file, 'xb');
                 $written_ok = false;
                 if ($fp !== false) {
+                    // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod
+                    @chmod($temp_file, 0600);
                     // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
                     $written = @fwrite($fp, $new_content);
                     // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fflush
                     @fflush($fp);
+                    if (function_exists('fsync')) {
+                        @fsync($fp);
+                    }
                     // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
                     @fclose($fp);
                     $written_ok = ($written === strlen($new_content));

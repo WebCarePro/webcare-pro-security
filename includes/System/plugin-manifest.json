@@ -1,6 +1,6 @@
 {
-  "version": "2.15.0",
-  "generated_at": "2026-11-15T18:36:15.846Z",
+  "version": "2.16.0",
+  "generated_at": "2026-11-15T18:51:00.265Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -464,8 +464,8 @@
       "size": 14728
     },
     "includes/Firewall/FirewallEngine.php": {
-      "sha256": "2e2b8e433b5c273a3c1d51245cb71f98b3fbb5787476c5a00fda85d4aa0883a6",
-      "size": 392667
+      "sha256": "1fb9b493ca8ab75d8a3eb207d89c7ac9637c324c5a3042ba31c169249ff117e2",
+      "size": 393094
     },
     "includes/Firewall/FormSpamProtectionEngine.php": {
       "sha256": "5826fd51a35f621671072dbf69d71b596224b48db75f9d773cfbe12e261f2cf0",
@@ -504,8 +504,8 @@
       "size": 51311
     },
     "includes/Firewall/Modular/ModularFirewallSynthesizer.php": {
-      "sha256": "be24a524f28458cbecbcdac8c65d674ece43933e5c560e46552f8e39df983076",
-      "size": 120324
+      "sha256": "3c7fc5c5cb8e046cfda48bde4f9f7baa482a165974167345845b8c467c8bdfae",
+      "size": 121450
     },
     "includes/Firewall/Modular/SiteBehavioralAnalyzer.php": {
       "sha256": "c92c4636037957bc1b7b871da2851fa4680562829ade6269f2ca0eaf2ec89879",
@@ -776,12 +776,12 @@
       "size": 30891
     },
     "includes/Security/SecretVault.php": {
-      "sha256": "a88bed8614a128c8b1773e8580a40a990438c09692e21720c150b91a1b17ab63",
-      "size": 39296
+      "sha256": "e6facb12c596074f89a4cc814acbc2fc19e4a83abd5b5b0af400351e8a641386",
+      "size": 39651
     },
     "includes/Security/VaultRotator.php": {
-      "sha256": "89d526056f32c041a0c7ba1dfc0d585be7f1ed0c352296aaadc82b41afdcd680",
-      "size": 35404
+      "sha256": "00d026bb55557acd354946eba9fc6396d4ccd853d89bd53134f74a40ae5af775",
+      "size": 35660
     },
     "includes/SupplyChain/InstallRiskAdvisor.php": {
       "sha256": "efd655f0d6222111f6e9ef7e16f6018f4d198289d78b14680d2d48e38ab64793",
@@ -936,15 +936,15 @@
       "size": 28
     },
     "package.json": {
-      "sha256": "eae4ece4409796d560ade963bee6564a5baff670012430f4c5b1a207b0fafdcc",
+      "sha256": "2331f8d459e8b2915a04ace1d07c6f02e43e141205dad81b84a360093cb6d055",
       "size": 438
     },
     "README.md": {
-      "sha256": "65162be0e83052239c48ccd17552caa3bdae7cf26c9730f73ce71c0cc327db43",
+      "sha256": "0d80057da14bd5862a61e2cf98d0c85c4ddde569b264e65f1bd6abb1e89946d3",
       "size": 26630
     },
     "readme.txt": {
-      "sha256": "bb54193bac5b80bd01cd64125d751c06a2b23e764dc6928466de5f91f270e996",
+      "sha256": "362ede92dea40d2ad2be1e58f058b3e4cbe223ea97a8c6ca94b5530630c0d963",
       "size": 42798
     },
     "uninstall.php": {
@@ -952,7 +952,7 @@
       "size": 10591
     },
     "webcare-pro-security.php": {
-      "sha256": "bbbc3174a916787fbc9fbd69cff1314949a8516b34e2cd0b2e683c4132527bff",
+      "sha256": "aa81547fd8ba2fd669e77226eaaf9aa0064791765bbb89d5c68bc5aaace01d07",
       "size": 7817
     }
   }
