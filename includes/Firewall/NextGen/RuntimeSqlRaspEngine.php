@@ -404,20 +404,30 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
 
     /**
      * Verify whether a target user was authentically registered within the allowed registration window.
-     * Fail-closed: returns false if the timestamp is missing, unparseable, '0000-00-00 00:00:00',
-     * in the future (beyond clock skew tolerance), or older than the allowed window (120 seconds).
+     * Delegates directly to the canonical FirewallEngine::is_within_registration_window helper.
      *
      * @param \WP_User $user
      * @param int      $max_age_seconds Default 120 seconds
      * @return bool
      */
     public static function is_within_registration_window(\WP_User $user, int $max_age_seconds = 120): bool {
+        if (class_exists(FirewallEngine::class)) {
+            return FirewallEngine::is_within_registration_window($user, $max_age_seconds);
+        }
+
         $raw_reg = trim((string) $user->user_registered);
         if ($raw_reg === '' || $raw_reg === '0000-00-00 00:00:00') {
             return false;
         }
 
-        $reg_ts = strtotime($raw_reg);
+        $reg_ts = false;
+        try {
+            $dt = new \DateTimeImmutable($raw_reg, new \DateTimeZone('UTC'));
+            $reg_ts = $dt->getTimestamp();
+        } catch (\Exception $e) {
+            $reg_ts = strtotime($raw_reg . ' UTC');
+        }
+
         if ($reg_ts === false || $reg_ts <= 0) {
             return false;
         }
@@ -425,13 +435,7 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
         $now = time();
         $age = $now - $reg_ts;
 
-        // Reject future timestamps beyond 5 seconds clock drift allowance
-        if ($age < -5) {
-            return false;
-        }
-
-        // Reject accounts registered longer ago than $max_age_seconds (120s)
-        if ($age > $max_age_seconds) {
+        if ($age < -5 || $age > $max_age_seconds) {
             return false;
         }
 

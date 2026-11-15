@@ -1,7 +1,8 @@
 ﻿v:2.15.0 - 2026-11-15
 - Zero-Gap Fail-Closed Streaming, Runtime RASP Hardening, Response DLP Redaction & Full Architectural Resilience:
-  * Fail-Closed Registration Window Validation & Unified Target Lookup:
-    - Replaced loose registration timestamp comparisons with unified, fail-closed `is_within_registration_window()` across both `RuntimeSqlRaspEngine` and `FirewallEngine`.
+  * Fail-Closed Registration Window Validation, Missing-User Elimination & Timezone Invariance:
+    - Eliminated fail-open missing-user fallbacks in FirewallEngine::rasp_guard_user_metadata_injection(), strictly requiring target user records to be verified WP_User instances within the authentic registration window.
+    - Standardized is_within_registration_window() as a canonical, timezone-invariant helper (DateTimeImmutable in UTC) shared across FirewallEngine and RuntimeSqlRaspEngine.
     - Strictly rejects unauthenticated mutations targeting accounts with missing, empty, `'0000-00-00 00:00:00'`, unparseable, or future timestamps, while enforcing the 120-second registration window.
     - Unified `ID` and `user_login` target account resolution in `RuntimeSqlRaspEngine` into a single cohesive validation block to permanently prevent check drift.
   * Multi-Role Capability Inspection, Contributor Hardening & Precision Path Traversal:

@@ -10308,7 +10308,15 @@ class FirewallEngine {
             return false;
         }
 
-        $reg_ts = strtotime($raw_reg);
+        // WordPress stores user_registered strictly in UTC (gmdate). Ensure parsing is timezone-invariant.
+        $reg_ts = false;
+        try {
+            $dt = new \DateTimeImmutable($raw_reg, new \DateTimeZone('UTC'));
+            $reg_ts = $dt->getTimestamp();
+        } catch (\Exception $e) {
+            $reg_ts = strtotime($raw_reg . ' UTC');
+        }
+
         if ($reg_ts === false || $reg_ts <= 0) {
             return false;
         }
@@ -10551,16 +10559,10 @@ class FirewallEngine {
                     }
                 }
 
-                // If no elevated privileges are being assigned, verify the user was created recently or in current registration request
+                // If no elevated privileges are being assigned, verify the user was created recently in authentic registration window
                 if (!$has_admin_privilege) {
                     $user_obj = function_exists('get_userdata') ? get_userdata($object_id) : null;
-                    if ($user_obj instanceof \WP_User) {
-                        // Allow if user registered within the last 120 seconds (standard new account registration window)
-                        if (self::is_within_registration_window($user_obj, 120)) {
-                            $is_safe_registration_mutation = true;
-                        }
-                    } else {
-                        // Brand-new insertion where user row was just created in wp_users
+                    if ($user_obj instanceof \WP_User && self::is_within_registration_window($user_obj, 120)) {
                         $is_safe_registration_mutation = true;
                     }
                 }
@@ -10569,21 +10571,17 @@ class FirewallEngine {
                 $level = (int) $meta_value;
                 if ($level <= 1) {
                     $user_obj = function_exists('get_userdata') ? get_userdata($object_id) : null;
-                    if ($user_obj instanceof \WP_User) {
-                        if (self::is_within_registration_window($user_obj, 120)) {
-                            $is_safe_registration_mutation = true;
-                        }
-                    } else {
+                    if ($user_obj instanceof \WP_User && self::is_within_registration_window($user_obj, 120)) {
                         $is_safe_registration_mutation = true;
                     }
                 }
             }
 
             // Also inspect stack trace: if originated from core WP_User::set_role / wp_insert_user / register_new_user
-            // strictly for a brand-new registration (within 120s) and with zero elevated capabilities ($has_admin_privilege === false)
+            // strictly for an existing, authentic account registered within 120s and with zero elevated capabilities
             if (!$is_safe_registration_mutation && function_exists('debug_backtrace')) {
                 $user_obj = function_exists('get_userdata') ? get_userdata($object_id) : null;
-                $is_new_account = !$user_obj || ($user_obj instanceof \WP_User && self::is_within_registration_window($user_obj, 120));
+                $is_new_account = ($user_obj instanceof \WP_User && self::is_within_registration_window($user_obj, 120));
 
                 if ($is_new_account) {
                     // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_debug_backtrace -- Context inspection required to distinguish legitimate WordPress core registration from raw unauthenticated SQL/HTTP privilege injections.
