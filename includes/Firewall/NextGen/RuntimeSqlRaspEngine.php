@@ -82,8 +82,17 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
         $uid = (int) $user_id;
 
         // Password rehash is only performed by WordPress Core if the hash actually needs rehashing.
+        // In WordPress 6.8+, wp_password_needs_rehash($hash, $user_id) evaluates whether a hash needs migrating to modern bcrypt ($wp).
         // If the hash is already current, Core will never invoke wp_set_password, so creating an authorization record is unnecessary.
-        if (!function_exists('wp_needs_rehash') || !wp_needs_rehash($hash)) {
+        $needs_rehash = false;
+        if (function_exists('wp_password_needs_rehash')) {
+            $needs_rehash = wp_password_needs_rehash($hash, $uid);
+        } elseif (strlen($hash) <= 32 || str_starts_with($hash, '$P$')) {
+            // Legacy fallback for pre-6.8 WordPress: MD5 or phpass needing migration
+            $needs_rehash = true;
+        }
+
+        if (!$needs_rehash) {
             return $check;
         }
 
@@ -682,13 +691,18 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                 return false;
             }
 
-            if (
-                $fn === 'wp_check_password'
-                || $fn === 'wp_authenticate_username_password'
-                || $fn === 'wp_authenticate_email_password'
-            ) {
-                $arg_uid = isset($fr['args'][2]) ? (int) $fr['args'][2] : (isset($fr['args'][1]) ? (int) $fr['args'][1] : 0);
+            if ($fn === 'wp_check_password') {
+                $arg_uid = isset($fr['args'][2]) && is_numeric($fr['args'][2]) ? (int) $fr['args'][2] : 0;
                 if ($arg_uid === 0 || $arg_uid === $uid) {
+                    $in_wp_check_password = true;
+                }
+            } elseif ($fn === 'wp_authenticate_username_password' || $fn === 'wp_authenticate_email_password') {
+                $arg_login = isset($fr['args'][1]) && is_string($fr['args'][1]) ? trim($fr['args'][1]) : '';
+                if (
+                    $arg_login === ''
+                    || strcasecmp($arg_login, $target_user->user_login) === 0
+                    || strcasecmp($arg_login, $target_user->user_email) === 0
+                ) {
                     $in_wp_check_password = true;
                 }
             }
@@ -842,7 +856,10 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                     return false;
                 }
 
-                // Verify exact call-stack provenance: wp_set_password() MUST be called directly by wp_check_password() in canonical pluggable.php
+                // Verify exact call-stack provenance: wp_set_password() MUST be invoked directly by WordPress Core authentication lifecycle:
+                // 1. In WordPress 6.8+: wp_authenticate_username_password() or wp_authenticate_email_password() in canonical wp-includes/user.php
+                // 2. In legacy pre-6.8: wp_check_password() in canonical wp-includes/pluggable.php
+                $canonical_user          = defined('ABSPATH') && defined('WPINC') ? wp_normalize_path(ABSPATH . WPINC . '/user.php') : '';
                 $canonical_pluggable     = defined('ABSPATH') && defined('WPINC') ? wp_normalize_path(ABSPATH . WPINC . '/pluggable.php') : '';
                 $has_direct_rehash_stack = false;
 
@@ -853,11 +870,18 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                         $caller_fn   = $full_frames[$i + 1]['function'] ?? '';
                         $caller_file = isset($full_frames[$i]['file']) ? wp_normalize_path((string) $full_frames[$i]['file']) : '';
 
-                        if (
-                            $arg_uid === $uid
-                            && $caller_fn === 'wp_check_password'
-                            && ($canonical_pluggable === '' || $caller_file === $canonical_pluggable)
-                        ) {
+                        $is_core_auth_caller = (
+                            (
+                                ($caller_fn === 'wp_authenticate_username_password' || $caller_fn === 'wp_authenticate_email_password')
+                                && ($canonical_user === '' || $caller_file === $canonical_user)
+                            )
+                            || (
+                                $caller_fn === 'wp_check_password'
+                                && ($canonical_pluggable === '' || $caller_file === $canonical_pluggable)
+                            )
+                        );
+
+                        if ($arg_uid === $uid && $is_core_auth_caller) {
                             $has_direct_rehash_stack = true;
                         }
                         break;
@@ -868,14 +892,20 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                     return false;
                 }
 
+                $active_needs_rehash = false;
+                if (function_exists('wp_password_needs_rehash')) {
+                    $active_needs_rehash = wp_password_needs_rehash($auth_hash, $uid);
+                } elseif (strlen($auth_hash) <= 32 || str_starts_with($auth_hash, '$P$')) {
+                    $active_needs_rehash = true;
+                }
+
                 // Enforce time bound (within 15 seconds of authentication), pre-rehash hash match, and active need for rehash
                 if (
                     $auth_hash !== ''
                     && $auth_time > 0
                     && (time() - $auth_time) <= 15
                     && hash_equals($auth_hash, (string) $target_user->user_pass)
-                    && function_exists('wp_needs_rehash')
-                    && wp_needs_rehash($auth_hash)
+                    && $active_needs_rehash
                 ) {
                     // One-time consume: invalidate immediately upon observing rehash to prevent secondary or replay mutations
                     unset(self::$verified_password_users[$uid]);

@@ -13,6 +13,7 @@ class FirewallEngine {
     private static $detected_environment = null;
     private static $last_incident_id = null;
     private static $last_ref_code = null;
+    private static array $wc_session_cache = [];
 
     /**
      * Generate a short, unambiguous Customer Support Reference Code (#WEBCARE-XXXX).
@@ -3561,6 +3562,10 @@ class FirewallEngine {
             return false;
         }
 
+        if (isset(self::$wc_session_cache[$customer_id])) {
+            return self::$wc_session_cache[$customer_id];
+        }
+
         global $wpdb;
         if (!isset($wpdb) || !is_object($wpdb) || empty($wpdb->prefix)) {
             return false;
@@ -3580,7 +3585,10 @@ class FirewallEngine {
             )
         );
 
-        return is_numeric($db_expiry) && (int) $db_expiry > time();
+        $is_valid = is_numeric($db_expiry) && (int) $db_expiry > time();
+        self::$wc_session_cache[$customer_id] = $is_valid;
+
+        return $is_valid;
     }
 
     /**
