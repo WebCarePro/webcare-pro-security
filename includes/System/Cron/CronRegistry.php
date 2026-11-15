@@ -333,6 +333,15 @@ class CronRegistry {
     }
 
     /**
+     * Alias for get_tasks() to provide backward and test-suite compatibility.
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    public static function get_registered_tasks(): array {
+        return self::get_tasks();
+    }
+
+    /**
      * Get metadata definition for a single hook name.
      *
      * @param string $hook

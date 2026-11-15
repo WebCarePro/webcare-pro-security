@@ -14,8 +14,9 @@
     - Hardened RuntimeSqlRaspEngine::is_legitimate_users_table_mutation() by rejecting nested subqueries (SELECT, UNION, BENCHMARK, SLEEP, LOAD_FILE, INTO OUTFILE) and stacked statements.
     - Enforced mandatory, bounded single-row equality predicates on all UPDATE wp_users queries (requiring exact equality matches on ID, user_login, user_email, or user_activation_key).
     - Strictly rejected tautological predicates (WHERE 1=1, 0=0, true, null is null), range expansions (WHERE ID > 0), inequalities (WHERE ID != 0, user_login != ''), logical disjunctions (OR), and subqueries to eliminate mass-table mutation attacks.
-  * Purged Orphaned JIT Cron Task in Registry (Patch 5):
+  * Purged Orphaned JIT Cron Task & Added Registry Compatibility Alias (Patch 5):
     - Removed orphaned webcareproscan_ephemeral_admin_expire entry from CronRegistry, keeping the Cron Control Center UI cleanly aligned with the decommissioned JIT engine.
+    - Added CronRegistry::get_registered_tasks() compatibility method to support external verification test suites and legacy diagnostic runners.
   * Complete Decommissioning & Removal of JIT Admin Access:
     - Completely removed Just-In-Time (JIT) ephemeral admin elevation, eliminating temporary administrator accounts, capability escalation vectors, and MU-plugin guardian watchdog complexity.
     - Purged legacy JIT routes (/identity/jit-elevate, /identity/jit-revoke, /users/candidates), MCP tools, and session elevation hooks, enforcing strict standard WordPress administrative identity boundaries.

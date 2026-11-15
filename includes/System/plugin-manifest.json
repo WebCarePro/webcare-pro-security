@@ -1,6 +1,6 @@
 {
   "version": "2.15.0",
-  "generated_at": "2026-11-15T09:13:11.242Z",
+  "generated_at": "2026-11-15T09:21:52.554Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -844,8 +844,8 @@
       "size": 19546
     },
     "includes/System/Cron/CronRegistry.php": {
-      "sha256": "c188fccd11f15160a28daff14aff22436d48c3b6fa3b357808343e9103a36826",
-      "size": 21023
+      "sha256": "d4eef546e88755b281157544e041e9c28e7fde0237ae19d2587a20112a9c9261",
+      "size": 21276
     },
     "includes/System/PulseHealthCheck.php": {
       "sha256": "2595bc5bdbc9cb713be1b843a1fc157464613c6758c904cfe0fbb49a5cc39437",
