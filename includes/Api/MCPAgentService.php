@@ -65,8 +65,6 @@ class MCPAgentService {
         'webcareproscan_quarantine_supply_chain_anchor',
         'webcareproscan_set_route_learning_status',
         'webcareproscan_revoke_user_session',
-        'webcareproscan_grant_ephemeral_elevation',
-        'webcareproscan_revoke_ephemeral_elevation',
         'webcareproscan_sync_threat_intel',
         'webcareproscan_synthesize_virtual_patch',
         'webcareproscan_deploy_synthesized_patch',
@@ -85,7 +83,6 @@ class MCPAgentService {
     const TIER4_TOOLS = [
         'webcareproscan_delete_quarantined_file',
         'webcareproscan_set_containment_mode',
-        'webcareproscan_grant_ephemeral_elevation',
         'webcareproscan_quarantine_supply_chain_anchor',
     ];
 
@@ -659,53 +656,6 @@ class MCPAgentService {
                 ],
             ],
             [
-                'name'        => 'webcareproscan_grant_ephemeral_elevation',
-                'description' => 'Temporarily elevate a user (e.g. editor or contractor) to administrator for a defined time window with auto-expiry via WP-Cron.',
-                'category'    => 'mutating',
-                'isMutating'  => true,
-                'policy'      => self::get_tool_policy('webcareproscan_grant_ephemeral_elevation'),
-                'inputSchema' => [
-                    'type'       => 'object',
-                    'properties' => [
-                        'user_id'          => [
-                            'type'        => 'integer',
-                            'description' => 'User ID to elevate',
-                        ],
-                        'duration_minutes' => [
-                            'type'        => 'integer',
-                            'description' => 'Duration in minutes (e.g. 60, 240, 1440)',
-                            'default'     => 60,
-                        ],
-                        'reason'           => [
-                            'type'        => 'string',
-                            'description' => 'Justification for elevation (e.g. "Emergency bugfix")',
-                        ],
-                    ],
-                    'required' => ['user_id', 'duration_minutes'],
-                ],
-            ],
-            [
-                'name'        => 'webcareproscan_revoke_ephemeral_elevation',
-                'description' => 'Immediately revoke temporary JIT administrator elevation and revert user to their baseline role.',
-                'category'    => 'mutating',
-                'isMutating'  => true,
-                'policy'      => self::get_tool_policy('webcareproscan_revoke_ephemeral_elevation'),
-                'inputSchema' => [
-                    'type'       => 'object',
-                    'properties' => [
-                        'user_id' => [
-                            'type'        => 'integer',
-                            'description' => 'User ID whose elevation is to be revoked',
-                        ],
-                        'reason'  => [
-                            'type'        => 'string',
-                            'description' => 'Revocation reason',
-                        ],
-                    ],
-                    'required' => ['user_id'],
-                ],
-            ],
-            [
                 'name'        => 'webcareproscan_get_threat_intel_network',
                 'description' => 'Retrieve live multi-feed threat intelligence telemetry, active botnet blacklist counts, Tor exit relays, attack consensus hash ring, and top attacking subnets.',
                 'category'    => 'read',
@@ -1258,14 +1208,6 @@ class MCPAgentService {
 
             case 'webcareproscan_revoke_user_session':
                 $response = self::tool_revoke_user_session($args);
-                break;
-
-            case 'webcareproscan_grant_ephemeral_elevation':
-                $response = self::tool_grant_ephemeral_elevation($args);
-                break;
-
-            case 'webcareproscan_revoke_ephemeral_elevation':
-                $response = self::tool_revoke_ephemeral_elevation($args);
                 break;
 
             case 'webcareproscan_get_threat_intel_network':
@@ -2136,8 +2078,6 @@ class MCPAgentService {
     private static function tool_get_identity_forensics(): array {
         $data = [
             'sessions_report'   => class_exists('\WebCareProScanner\Identity\SessionForensicsEngine') ? \WebCareProScanner\Identity\SessionForensicsEngine::get_active_sessions_report() : [],
-            'active_elevations' => class_exists('\WebCareProScanner\Identity\EphemeralAdminEngine') ? \WebCareProScanner\Identity\EphemeralAdminEngine::get_active_elevations() : [],
-            'elevation_history' => class_exists('\WebCareProScanner\Identity\EphemeralAdminEngine') ? \WebCareProScanner\Identity\EphemeralAdminEngine::get_elevation_history(20) : [],
             'hibp_summary'      => class_exists('\WebCareProScanner\Identity\HIBPBreachAuditor') ? \WebCareProScanner\Identity\HIBPBreachAuditor::get_summary() : [],
         ];
 
@@ -2177,69 +2117,6 @@ class MCPAgentService {
             $res = \WebCareProScanner\Identity\SessionForensicsEngine::revoke_session($user_id, $verifier);
         }
 
-        return [
-            'isError' => empty($res['success']),
-            'content' => [
-                [
-                    'type' => 'text',
-                    'text' => wp_json_encode($res, JSON_PRETTY_PRINT),
-                ],
-            ],
-            'result'  => $res,
-        ];
-    }
-
-    private static function tool_grant_ephemeral_elevation(array $args): array {
-        $user_id  = intval($args['user_id'] ?? 0);
-        $duration = intval($args['duration_minutes'] ?? 60);
-        $reason   = sanitize_text_field($args['reason'] ?? '');
-
-        if (!$user_id) {
-            return [
-                'isError' => true,
-                'content' => [['type' => 'text', 'text' => 'Missing parameter: user_id is required.']],
-            ];
-        }
-
-        if (!class_exists('\WebCareProScanner\Identity\EphemeralAdminEngine')) {
-            return [
-                'isError' => true,
-                'content' => [['type' => 'text', 'text' => 'EphemeralAdminEngine not available.']],
-            ];
-        }
-
-        $res = \WebCareProScanner\Identity\EphemeralAdminEngine::grant_elevation($user_id, $duration, $reason);
-        return [
-            'isError' => empty($res['success']),
-            'content' => [
-                [
-                    'type' => 'text',
-                    'text' => wp_json_encode($res, JSON_PRETTY_PRINT),
-                ],
-            ],
-            'result'  => $res,
-        ];
-    }
-
-    private static function tool_revoke_ephemeral_elevation(array $args): array {
-        $user_id = intval($args['user_id'] ?? 0);
-        $reason  = sanitize_text_field($args['reason'] ?? 'Revoked via MCP agent command');
-
-        if (!$user_id) {
-            return [
-                'isError' => true,
-                'content' => [['type' => 'text', 'text' => 'Missing parameter: user_id is required.']],
-            ];
-        }
-
-        if (!class_exists('\WebCareProScanner\Identity\EphemeralAdminEngine')) {
-            return [
-                'isError' => true,
-                'content' => [['type' => 'text', 'text' => 'EphemeralAdminEngine not available.']],
-            ];
-        }
-
-        $res = \WebCareProScanner\Identity\EphemeralAdminEngine::revoke_elevation($user_id, $reason);
         return [
             'isError' => empty($res['success']),
             'content' => [

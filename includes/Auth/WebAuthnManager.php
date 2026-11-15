@@ -433,6 +433,26 @@ class WebAuthnManager {
      * @return array
      */
     public static function verify_login(string $session_id, array $payload): array {
+        $client_ip = class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine')
+            ? \WebCareProScanner\Firewall\FirewallEngine::get_client_ip()
+            : '127.0.0.1';
+
+        // Check LoginHardening IP lockout gate
+        if (class_exists('\\WebCareProScanner\\Auth\\LoginHardening') && \WebCareProScanner\Auth\LoginHardening::check_ip_lockout($client_ip)) {
+            return [
+                'success' => false,
+                'message' => __('Your IP address is temporarily locked out due to multiple failed authentication attempts.', 'webcare-pro-security'),
+            ];
+        }
+
+        // Check Emergency Containment Mode gate
+        if (class_exists('\\WebCareProScanner\\Emergency\\EmergencyContainmentManager') && \WebCareProScanner\Emergency\EmergencyContainmentManager::is_active()) {
+            return [
+                'success' => false,
+                'message' => __('Site is in emergency containment mode. Authentication is restricted.', 'webcare-pro-security'),
+            ];
+        }
+
         if (!self::check_ip_rate_limit('verify', 10, 300)) {
             return [
                 'success' => false,

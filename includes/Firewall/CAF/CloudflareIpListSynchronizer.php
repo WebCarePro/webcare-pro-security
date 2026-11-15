@@ -246,6 +246,12 @@ class CloudflareIpListSynchronizer {
         }
         set_transient('webcare_cf_queue_spawn_debounce', time(), 60);
 
+        $now = time();
+        $random_nonce = function_exists('wp_generate_password') ? wp_generate_password(16, false) : bin2hex(random_bytes(8));
+        $salt = function_exists('wp_salt') ? wp_salt('auth') : 'webcare_cf_fallback_salt';
+        $signature = hash_hmac('sha256', "cf_flush|{$now}|{$random_nonce}", $salt);
+        $token = "{$now}:{$random_nonce}:{$signature}";
+
         $ajax_url = admin_url('admin-ajax.php');
         wp_remote_post($ajax_url, [
             'timeout'   => 0.01,
@@ -254,7 +260,7 @@ class CloudflareIpListSynchronizer {
             'sslverify' => apply_filters('https_local_ssl_verify', false),
             'body'      => [
                 'action' => 'webcare_flush_cf_ban_queue',
-                'nonce'  => wp_create_nonce('webcare_cf_queue_flush_nonce'),
+                'token'  => $token,
             ],
         ]);
     }
@@ -1140,7 +1146,32 @@ class CloudflareIpListSynchronizer {
      * Handle non-blocking loopback queue flush request.
      */
     public static function handle_loopback_flush(): void {
-        check_ajax_referer('webcare_cf_queue_flush_nonce', 'nonce');
+        // phpcs:ignore WordPress.Security.NonceVerification.Missing
+        $token = isset($_POST['token']) ? sanitize_text_field(wp_unslash($_POST['token'])) : '';
+        $parts = explode(':', $token, 3);
+        if (count($parts) !== 3) {
+            wp_send_json_error(['message' => 'Malformed loopback token.'], 403);
+        }
+
+        [$timestamp, $rand_nonce, $sig] = $parts;
+        $now = time();
+        if (abs($now - (int) $timestamp) > 300) {
+            wp_send_json_error(['message' => 'Expired loopback token.'], 403);
+        }
+
+        $salt = function_exists('wp_salt') ? wp_salt('auth') : 'webcare_cf_fallback_salt';
+        $expected_sig = hash_hmac('sha256', "cf_flush|{$timestamp}|{$rand_nonce}", $salt);
+        if (!hash_equals($expected_sig, $sig)) {
+            wp_send_json_error(['message' => 'Invalid loopback signature.'], 403);
+        }
+
+        // Prevent replay attacks by tracking nonce transient
+        $replay_transient = 'webcare_cf_lb_nonce_' . md5($rand_nonce);
+        if (get_transient($replay_transient)) {
+            wp_send_json_error(['message' => 'Replayed loopback token.'], 403);
+        }
+        set_transient($replay_transient, 1, 300);
+
         $sync = new self();
         $sync->process_sync_queue();
         wp_send_json_success(['flushed' => true]);

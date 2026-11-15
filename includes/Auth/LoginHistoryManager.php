@@ -108,8 +108,6 @@ class LoginHistoryManager {
         // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Inspection during wp_login hook to determine if 2FA code was supplied
         } elseif (!empty($_POST['webcareproscan_2fa_code'])) {
             $auth_method = 'Password + 2FA TOTP Verified';
-        } elseif (get_user_meta($user->ID, 'webcareproscan_is_temporary_support', true)) {
-            $auth_method = 'Magic Support Link (Zero-Trust JIT)';
         } elseif (defined('XMLRPC_REQUEST') && XMLRPC_REQUEST) {
             $auth_method = 'XML-RPC Protocol';
         } elseif (defined('REST_REQUEST') && REST_REQUEST) {

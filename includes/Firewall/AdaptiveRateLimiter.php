@@ -161,7 +161,10 @@ class AdaptiveRateLimiter {
         } elseif (wp_using_ext_object_cache()) {
             $data = wp_cache_get($cache_key, 'webcareproscan_rl');
         } else {
-            $data = get_transient($cache_key);
+            $data = self::file_get_rate_limit($cache_key);
+            if ($data === null) {
+                $data = get_transient($cache_key);
+            }
         }
 
         if (!is_array($data) || ($data['window_idx'] ?? 0) !== $current_window_idx) {
@@ -197,9 +200,12 @@ class AdaptiveRateLimiter {
             $has_fast_cache = true;
         }
 
-        // Only fallback to options database writes if external object cache / APCu is unavailable, throttling write frequency
+        // Fallback to secured file storage first, and only transient as last resort
         if (!$has_fast_cache) {
-            set_transient($cache_key, $data, $ttl);
+            $file_written = self::file_set_rate_limit($cache_key, $data, $ttl);
+            if (!$file_written) {
+                set_transient($cache_key, $data, $ttl);
+            }
         }
 
         $allowed = ($effective_count <= (float) $limit);
@@ -437,5 +443,169 @@ class AdaptiveRateLimiter {
                 self::BUCKET_GLOBAL       => 0,
             ],
         ];
+    }
+
+    private const FILE_STORAGE_SUBDIR = 'webcare-pro-security/rate-limits';
+
+    /**
+     * Get storage directory for file-backed rate limiting.
+     *
+     * @return string
+     */
+    private static function get_rate_limit_storage_dir(): string {
+        $upload_dir = wp_upload_dir();
+        $base_dir = $upload_dir['basedir'] ?? '';
+        if (empty($base_dir) && defined('WP_CONTENT_DIR')) {
+            $base_dir = WP_CONTENT_DIR . '/uploads';
+        }
+        return rtrim($base_dir, '/\\') . '/' . self::FILE_STORAGE_SUBDIR;
+    }
+
+    /**
+     * Ensure rate-limit storage directory exists and is secured.
+     *
+     * @return bool
+     */
+    private static function ensure_storage_dir(): bool {
+        $dir = self::get_rate_limit_storage_dir();
+        if (!is_dir($dir)) {
+            // phpcs:ignore WordPress.WP.AlternativeFileSystem.mkdir_mkdir
+            wp_mkdir_p($dir);
+        }
+        if (!is_dir($dir) || !wp_is_writable($dir)) {
+            return false;
+        }
+
+        $htaccess = $dir . '/.htaccess';
+        if (!file_exists($htaccess)) {
+            $content = "# WebCare Pro Security - Protect Rate Limiting State\n<IfModule !mod_authz_core.c>\nOrder deny,allow\nDeny from all\n</IfModule>\n<IfModule mod_authz_core.c>\nRequire all denied\n</IfModule>\n";
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+            @file_put_contents($htaccess, $content);
+        }
+        $index = $dir . '/index.php';
+        if (!file_exists($index)) {
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+            @file_put_contents($index, "<?php\n// Silence is golden.\n");
+        }
+        return true;
+    }
+
+    /**
+     * Read rate-limit data from sharded file buffer.
+     *
+     * @param string $cache_key
+     * @return array|null
+     */
+    private static function file_get_rate_limit(string $cache_key): ?array {
+        $dir = self::get_rate_limit_storage_dir();
+        $shard = substr(md5($cache_key), 0, 2);
+        $file = $dir . "/rl_{$shard}.php";
+        if (!file_exists($file)) {
+            return null;
+        }
+
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
+        $fp = @fopen($file, 'r');
+        if (!$fp) {
+            return null;
+        }
+
+        $locked = @flock($fp, LOCK_SH | LOCK_NB);
+        if (!$locked) {
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+            @fclose($fp);
+            return null;
+        }
+
+        $raw = '';
+        while (!feof($fp)) {
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fread
+            $raw .= fread($fp, 8192);
+        }
+        @flock($fp, LOCK_UN);
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+        @fclose($fp);
+
+        if (str_starts_with($raw, "<?php exit; ?>\n")) {
+            $json = substr($raw, 15);
+            $store = json_decode($json, true);
+            if (is_array($store) && isset($store[$cache_key])) {
+                $item = $store[$cache_key];
+                if (($item['exp'] ?? 0) > time()) {
+                    return $item['data'] ?? null;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Store rate-limit data into sharded file buffer.
+     *
+     * @param string $cache_key
+     * @param array  $data
+     * @param int    $ttl
+     * @return bool
+     */
+    private static function file_set_rate_limit(string $cache_key, array $data, int $ttl): bool {
+        if (!self::ensure_storage_dir()) {
+            return false;
+        }
+
+        $dir = self::get_rate_limit_storage_dir();
+        $shard = substr(md5($cache_key), 0, 2);
+        $file = $dir . "/rl_{$shard}.php";
+
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
+        $fp = @fopen($file, 'c+');
+        if (!$fp) {
+            return false;
+        }
+
+        $locked = @flock($fp, LOCK_EX | LOCK_NB);
+        if (!$locked) {
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+            @fclose($fp);
+            return false;
+        }
+
+        $raw = '';
+        while (!feof($fp)) {
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fread
+            $raw .= fread($fp, 8192);
+        }
+
+        $store = [];
+        if (str_starts_with($raw, "<?php exit; ?>\n")) {
+            $json = substr($raw, 15);
+            $parsed = json_decode($json, true);
+            if (is_array($parsed)) {
+                $store = $parsed;
+            }
+        }
+
+        $now = time();
+        foreach ($store as $k => $v) {
+            if (($v['exp'] ?? 0) <= $now) {
+                unset($store[$k]);
+            }
+        }
+
+        $store[$cache_key] = [
+            'data' => $data,
+            'exp'  => $now + $ttl,
+        ];
+
+        $payload = "<?php exit; ?>\n" . json_encode($store);
+        ftruncate($fp, 0);
+        rewind($fp);
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
+        fwrite($fp, $payload);
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fflush
+        fflush($fp);
+        @flock($fp, LOCK_UN);
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+        @fclose($fp);
+        return true;
     }
 }

@@ -11,7 +11,6 @@ use WebCareProScanner\Firewall\RedirectCanaryEngine;
 use WebCareProScanner\Firewall\RescueAssistantManager;
 use WebCareProScanner\Firewall\ThreatIntelService;
 use WebCareProScanner\Firewall\WafFileLogger;
-use WebCareProScanner\Identity\EphemeralAdminEngine;
 use WebCareProScanner\Notifications\NotificationDispatcher;
 use WebCareProScanner\Quarantine\ReinfectionWatchdog;
 use WebCareProScanner\Security\PluginSelfDefense;
@@ -811,31 +810,6 @@ class CronControlCenter {
                             'status'  => 'success',
                             'summary' => __('Strict WAF blocking re-armed cleanly.', 'webcare-pro-security'),
                         ];
-
-                    case 'webcareproscan_ephemeral_admin_expire':
-                        $uid = isset($cb_args[0]) ? (int) $cb_args[0] : 0;
-                        if ($uid > 0) {
-                            EphemeralAdminEngine::on_cron_expire_elevation($uid);
-                            return [
-                                'status'  => 'success',
-                                /* translators: %d: WordPress user ID */
-                                'summary' => sprintf(__('Reverted expired JIT temporary administrator access for user #%d.', 'webcare-pro-security'), $uid),
-                            ];
-                        }
-                        $before_map = get_option(EphemeralAdminEngine::OPTION_EPHEMERAL_ADMINS, []);
-                        $before_cnt = is_array($before_map) ? count($before_map) : 0;
-                        EphemeralAdminEngine::check_and_expire_elevations();
-                        $after_map  = get_option(EphemeralAdminEngine::OPTION_EPHEMERAL_ADMINS, []);
-                        $after_cnt  = is_array($after_map) ? count($after_map) : 0;
-                        $revoked    = max(0, $before_cnt - $after_cnt);
-                        return [
-                            'status'  => $revoked > 0 ? 'success' : 'skipped',
-                            'summary' => $revoked > 0
-                                /* translators: %d: revoked count */
-                                ? sprintf(__('Revoked %d overdue JIT administrator elevation(s).', 'webcare-pro-security'), $revoked)
-                                : __('Verified active JIT grants; zero overdue elevations pending expiration.', 'webcare-pro-security'),
-                            'metrics' => ['revoked_count' => $revoked, 'remaining_active' => $after_cnt],
-                        ];
                 }
 
                 return ['status' => 'skipped', 'summary' => __('No handler mapped for hook.', 'webcare-pro-security')];
@@ -1010,22 +984,6 @@ class CronControlCenter {
         $ts = wp_next_scheduled($hook);
         if ($ts) {
             return (int) $ts;
-        }
-
-        if ($hook === EphemeralAdminEngine::CRON_HOOK) {
-            $cron_array = _get_cron_array();
-            if (is_array($cron_array)) {
-                $earliest = null;
-                foreach ($cron_array as $timestamp => $hooks) {
-                    if (isset($hooks[$hook]) && is_numeric($timestamp)) {
-                        $t = (int) $timestamp;
-                        if ($earliest === null || $t < $earliest) {
-                            $earliest = $t;
-                        }
-                    }
-                }
-                return $earliest;
-            }
         }
 
         return null;

@@ -445,6 +445,62 @@ class TwoFactorAuth {
     }
 
     /**
+     * Unified TOTP verification with monotonic timestep tracking and 120s hash-based replay cache.
+     *
+     * @param int    $user_id
+     * @param string $code
+     * @return array{valid: bool, error: string, type: string}
+     */
+    public static function verify_totp_attempt(int $user_id, string $code): array {
+        $secret = self::get_user_secret($user_id);
+        if (!$secret) {
+            return ['valid' => false, 'error' => __('2FA secret not configured.', 'webcare-pro-security'), 'type' => ''];
+        }
+
+        $code   = trim($code);
+        $algo   = self::get_user_algorithm($user_id);
+        $digits = self::get_user_digits($user_id);
+
+        if (strlen($code) !== $digits || !ctype_digit($code)) {
+            return ['valid' => false, 'error' => __('Invalid code format.', 'webcare-pro-security'), 'type' => ''];
+        }
+
+        $last_step = (int) get_user_meta($user_id, 'webcareproscan_totp_last_step', true);
+        $current_time = time();
+        $matched_step = null;
+
+        for ($i = -1; $i <= 1; $i++) {
+            $step = (int) floor(($current_time + ($i * 30)) / 30);
+            if ($step <= $last_step) {
+                continue;
+            }
+            $calculated = self::calculate_code($secret, $step * 30, $algo, $digits);
+            if (hash_equals($calculated, $code)) {
+                $matched_step = $step;
+                break;
+            }
+        }
+
+        if ($matched_step === null) {
+            return ['valid' => false, 'error' => __('Invalid or expired verification code.', 'webcare-pro-security'), 'type' => ''];
+        }
+
+        $replay_hash_key = 'webcareproscan_totp_hash_' . hash('sha256', $user_id . ':' . $code);
+        if (get_transient($replay_hash_key)) {
+            return [
+                'valid' => false,
+                'error' => __('This authentication code has already been used. Please wait for the next rotating code in your authenticator app.', 'webcare-pro-security'),
+                'type'  => '',
+            ];
+        }
+
+        update_user_meta($user_id, 'webcareproscan_totp_last_step', $matched_step);
+        set_transient($replay_hash_key, 1, 120);
+
+        return ['valid' => true, 'error' => '', 'type' => 'totp'];
+    }
+
+    /**
      * Generate 8 single-use emergency backup codes
      */
     public static function generate_backup_codes(int $count = 8): array {
@@ -991,50 +1047,7 @@ class TwoFactorAuth {
             return $user; // Trusted device bypass granted!
         }
 
-        // Check if 2FA code was submitted
-        // phpcs:ignore WordPress.Security.NonceVerification.Missing -- WordPress core login form does not carry custom plugin nonce
-        $auth_code = isset($_POST['webcareproscan_2fa_code']) ? sanitize_text_field(wp_unslash($_POST['webcareproscan_2fa_code'])) : '';
-        $secret    = self::get_user_secret($user->ID);
-
-        if (!empty($auth_code)) {
-            $code_valid = false;
-            $code_type  = 'totp';
-            $userAlgo   = self::get_user_algorithm($user->ID);
-            $userDigits = self::get_user_digits($user->ID);
-            // Check TOTP code
-            if ($secret && self::verify_code($secret, $auth_code, 1, $userAlgo, $userDigits)) {
-                $code_valid = true;
-                $code_type  = 'totp';
-            } elseif (self::verify_and_consume_backup_code($user->ID, $auth_code)) {
-                $code_valid = true;
-                $code_type  = 'backup_code';
-            }
-
-            if ($code_valid) {
-                if (class_exists('\\WebCareProScanner\\Auth\\SessionSentinel')) {
-                    \WebCareProScanner\Auth\SessionSentinel::$pending_auth_type = '2fa';
-                    \WebCareProScanner\Auth\SessionSentinel::$pending_auth_label = ($code_type === 'backup_code')
-                        ? __('2FA (Emergency Recovery Code)', 'webcare-pro-security')
-                        : __('2FA (TOTP Authenticator)', 'webcare-pro-security');
-                    \WebCareProScanner\Auth\SessionSentinel::$pending_auth_details = [
-                        'type' => $code_type,
-                    ];
-                }
-                // phpcs:ignore WordPress.Security.NonceVerification.Missing
-                if (!empty($_POST['webcareproscan_2fa_remember_device'])) {
-                    self::set_trusted_device($user->ID, self::get_remember_device_days());
-                }
-                return $user; // Authentication passed!
-            }
-
-            // Invalid code submitted
-            return new \WP_Error(
-                'webcareproscan_2fa_invalid_code',
-                __('<strong>Error:</strong> The two-factor authentication code you entered is invalid or has expired.', 'webcare-pro-security')
-            );
-        }
-
-        // If no 2FA code was provided on initial login submission, create a pending session and redirect to challenge screen
+        // All 2FA verifications must pass through the rate-limited 2FA challenge screen
         $pending_key = wp_generate_password(32, false);
         // phpcs:ignore WordPress.Security.NonceVerification.Missing
         $remember_val = !empty($_POST['rememberme']);
@@ -1110,21 +1123,16 @@ class TwoFactorAuth {
             $userAlgo   = self::get_user_algorithm($user_id);
             $userDigits = self::get_user_digits($user_id);
 
-            // Check TOTP code with replay cache protection
-            if ($secret && self::verify_code($secret, $code, 1, $userAlgo, $userDigits)) {
-                $current_timeslot = (int) floor(time() / 30);
-                $replay_key = 'webcareproscan_totp_used_' . $user_id . '_' . $current_timeslot;
-                if (get_transient($replay_key)) {
-                    $valid = false;
-                    $error_msg = __('This authentication code has already been used. Please wait for the next rotating code in your authenticator app.', 'webcare-pro-security');
-                } else {
-                    // Record replay lock for 90 seconds (covering full drift window)
-                    set_transient($replay_key, 1, 90);
-                    $valid = true;
-                    $code_type = 'totp';
-                }
+            // Check TOTP code via monotonic verification and 120s hash replay cache
+            $totp_res = self::verify_totp_attempt($user_id, $code);
+            if (!empty($totp_res['valid'])) {
+                $valid     = true;
+                $code_type = 'totp';
+            } elseif (!empty($totp_res['error']) && strpos($totp_res['error'], 'already been used') !== false) {
+                $valid     = false;
+                $error_msg = $totp_res['error'];
             } elseif (self::verify_and_consume_backup_code($user_id, $code)) {
-                $valid = true;
+                $valid     = true;
                 $code_type = 'backup_code';
             }
 

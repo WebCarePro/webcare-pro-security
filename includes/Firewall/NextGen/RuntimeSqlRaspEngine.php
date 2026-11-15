@@ -55,7 +55,7 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                 'label'   => __('Runtime SQL Query AST RASP Guard', 'webcare-pro-security'),
             ],
             'waf_nextgen_sql_rasp_auto_ban' => [
-                'default' => true,
+                'default' => false,
                 'type'    => 'bool',
                 'label'   => __('Auto-Ban SQL RASP Offenders on Cloudflare Edge', 'webcare-pro-security'),
             ],
@@ -182,6 +182,9 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
 
         // 3. Unauthenticated critical privilege mutations inside guest plugin contexts
         if (preg_match('/^\s*(?:INSERT\s+(?:IGNORE\s+)?INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM)\s+`?' . $users_tbl . '`?\b/i', $skeleton)) {
+            if (self::is_legitimate_users_table_mutation($trimmed)) {
+                return null;
+            }
             return 'UNAUTH_USERS_TABLE_MUTATION';
         }
         if (
@@ -195,6 +198,79 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
         }
 
         return null;
+    }
+
+    /**
+     * Multi-factor verification for legitimate user registrations, password resets,
+     * and guest checkout mutations on $wpdb->users.
+     *
+     * @param string $sql
+     * @return bool
+     */
+    public static function is_legitimate_users_table_mutation(string $sql): bool {
+        // 1. Verify caller provenance from WordPress Core or WooCommerce Core
+        // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_debug_backtrace -- Provenance validation for RASP
+        $frames = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 25);
+        $legit_origin = false;
+        foreach ($frames as $frame) {
+            $file = isset($frame['file']) ? wp_normalize_path((string) $frame['file']) : '';
+            if (
+                strpos($file, '/wp-includes/user.php') !== false
+                || strpos($file, '/wp-includes/pluggable.php') !== false
+                || strpos($file, '/plugins/woocommerce/includes/wc-user-functions.php') !== false
+                || strpos($file, '/plugins/woocommerce/packages/') !== false
+                || strpos($file, '/plugins/woocommerce/src/StoreApi/') !== false
+            ) {
+                $legit_origin = true;
+                break;
+            }
+        }
+
+        if (!$legit_origin) {
+            return false;
+        }
+
+        // 2. Allowed column boundaries for legitimate user creation/update
+        $allowed_columns = [
+            'user_login',
+            'user_pass',
+            'user_nicename',
+            'user_email',
+            'user_url',
+            'user_registered',
+            'user_activation_key',
+            'user_status',
+            'display_name',
+            'id',
+        ];
+
+        // 3. Inspect columns in INSERT or UPDATE query
+        if (preg_match('/INSERT\s+INTO\s+`?[a-zA-Z0-9_]+`?\s*\(([^)]+)\)/i', $sql, $matches)) {
+            $cols = array_map(function ($c) {
+                return strtolower(trim(str_replace('`', '', $c)));
+            }, explode(',', $matches[1]));
+
+            foreach ($cols as $col) {
+                if (!in_array($col, $allowed_columns, true)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        if (preg_match('/UPDATE\s+`?[a-zA-Z0-9_]+`?\s+SET\s+(.+?)(?:\s+WHERE\b|$)/is', $sql, $matches)) {
+            $set_clause = $matches[1];
+            if (preg_match_all('/`?([a-zA-Z0-9_]+)`?\s*=/i', $set_clause, $col_matches)) {
+                foreach ($col_matches[1] as $col) {
+                    if (!in_array(strtolower($col), $allowed_columns, true)) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

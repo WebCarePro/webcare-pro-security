@@ -655,7 +655,8 @@ class FileIntegrityMonitor {
         ];
         if (in_array($filename, $blocked_exact, true) || 
             preg_match('/(?:^|\/)(?:webcare-vault|quarantine|backups|\.git|\.well-known)\//i', $rel_path) ||
-            preg_match('/(?:secret|credential|password|id_rsa|id_ed25519|\.pem|\.key)$/i', $filename)
+            preg_match('/(?:secret|credential|password|id_rsa|id_ed25519|\.pem|\.key)$/i', $filename) ||
+            preg_match('/^wp-config(?:-[^\\/\\\\]+)?(?:\.php)?\.(?:bak|old|orig|save|txt|backup|swp|dist|inc)$/i', $filename)
         ) {
             return [
                 'success' => false,
@@ -780,9 +781,9 @@ class FileIntegrityMonitor {
         $file_name = basename($real_path);
         if ($file_name === 'wp-config.php') {
             $category = 'config';
-            // Securely mask database credentials and secret authentication salts
+            // Securely mask database credentials, encryption keys, and secret authentication salts
             $sensitive_patterns = [
-                "/(define\s*\(\s*['\"](?:DB_PASSWORD|DB_USER|DB_NAME|DB_HOST|AUTH_KEY|SECURE_AUTH_KEY|LOGGED_IN_KEY|NONCE_KEY|AUTH_SALT|SECURE_AUTH_SALT|LOGGED_IN_SALT|NONCE_SALT)['\"]\s*,\s*['\"])(?:[^'\"]*)(['\"]\s*\);)/i" => '$1********$2',
+                "/(define\s*\(\s*['\"](?:DB_PASSWORD|DB_USER|DB_NAME|DB_HOST|AUTH_KEY|SECURE_AUTH_KEY|LOGGED_IN_KEY|NONCE_KEY|AUTH_SALT|SECURE_AUTH_SALT|LOGGED_IN_SALT|NONCE_SALT|WEBCARE_VAULT_KEY|WEBCARE_MASTER_KEY|WEBCARE_ENCRYPTION_KEY|CLOUDFLARE_API_KEY|CLOUDFLARE_API_TOKEN)['\"]\s*,\s*['\"])(?:[^'\"]*)(['\"]\s*\);)/i" => '$1********$2',
                 "/(\\\$table_prefix\s*=\s*['\"])(?:[^'\"]*)(['\"]\s*;)/i" => '$1********$2',
             ];
             foreach ($sensitive_patterns as $pattern => $replacement) {

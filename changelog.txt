@@ -1,5 +1,38 @@
 ﻿v:2.15.0 - 2026-11-15
-- Zero-Gap Fail-Closed Streaming, Multipart Resource Ceilings, SVGZ Decompression Bomb Defense, Full Upload Integrity & Phar Signature Parity:
+- Zero-Gap Fail-Closed Streaming, Runtime RASP Hardening, Response DLP Redaction & Full Architectural Resilience:
+  * Complete Decommissioning & Removal of JIT Admin Access:
+    - Completely removed Just-In-Time (JIT) ephemeral admin elevation, eliminating temporary administrator accounts, capability escalation vectors, and MU-plugin guardian watchdog complexity.
+    - Purged legacy JIT routes (/identity/jit-elevate, /identity/jit-revoke, /users/candidates), MCP tools, and session elevation hooks, enforcing strict standard WordPress administrative identity boundaries.
+  * Outbound Response DLP Format-Safe Redaction & Viewer Protection:
+    - Replaced blunt 403 blocks and viewer IP auto-banning with format-preserving inline token redaction across all public and REST API responses (HTML and JSON).
+    - Preserved data formats and prevented stored credential DoS while ensuring consistent redaction for all visitors, including verified search engine crawlers.
+  * Runtime SQL RASP Provenance & Column Boundary Validation:
+    - Hardened RuntimeSqlRaspEngine with caller provenance verification via debug_backtrace() for WordPress Core and WooCommerce user management functions.
+    - Added column whitelist validation for wp_users mutations (user_login, user_pass, user_email, user_nicename, user_registered, user_activation_key, display_name), preventing checkout and registration query abortions.
+  * Distributed Velocity Shield Separated Checkout PoW & Store API JSON Protection:
+    - Separated WooCommerce checkout proof-of-work challenges between classic page GET requests and modern Store API /wc/store/v1/checkout endpoints.
+    - Returned structured JSON HTTP 429 with webcare_checkout_pow_required code for REST clients and exempted PayPal, Stripe webhooks, and order confirmation pages.
+    - Added request-level attempt deduplication in record_auth_failure() to prevent double-counting authentication failures.
+  * TOTP 2FA Monotonic Timestep & Hash Replay Protection:
+    - Enforced monotonic timestep checks ($step > $last_step) in TwoFactorAuth to prevent token reuse within the active 30-second time window.
+    - Added a 120-second SHA-256 hash cache (webcareproscan_totp_hash_*) to reject replayed codes across distributed sessions.
+    - Integrated LoginHardening lockout and containment checks into WebAuthnManager authentication pre-flight.
+  * Page-Builder Early Nonce Evaluation in try/finally & REST Prefix Anchoring:
+    - Wrapped user context switching in try ... finally { wp_set_current_user($prev_uid); } within FirewallEngine::is_authenticated_editor_or_builder() to eliminate global user pollution during early nonce checks.
+    - Updated WebAuthn route prefix to /webcare-pro-security/v1/auth/webauthn/ with strictly anchored prefix matching (strpos === 0 or str_starts_with), preventing parameter-injection bypasses.
+    - Enforced dynamic manage_options capability inspection for custom administrative roles in RASP privilege guards.
+  * Cloudflare Queue Loopback HMAC with Timestamps & Replay Nonces:
+    - Replaced user-session nonces in loopback queue flushes with HMAC-SHA256 signed tokens containing timestamps and random salts.
+    - Enforced 300-second freshness validation, hash_equals() constant-time signature verification, and transient replay rejection.
+  * Canary Account Capability Neutralization & Decoy Form Soft Errors:
+    - Seeded dormant canary admin accounts with role => '' (zero capabilities), neutralizing privilege escalation risk if authentication is bypassed.
+    - Handled form autofill honeypot triggers with soft validation errors on the first occurrence to protect real users with browser autofill extensions, reserving IP bans for repeat headless bots and phantom endpoint probes.
+  * Master Secret Masking & Compound Config Backup Matching:
+    - Added WEBCARE_VAULT_KEY, WEBCARE_MASTER_KEY, WEBCARE_ENCRYPTION_KEY, CLOUDFLARE_API_KEY, and CLOUDFLARE_API_TOKEN to configuration masking.
+    - Anchored wp-config backup patterns to compound extensions (wp-config*.php.(bak|old|orig|save|txt|backup)) across file viewers and integrity monitors.
+  * Rate Limiter Secured File-Backed Ring Buffer Fallback:
+    - Implemented a secured, sharded file-backed buffer in uploads/webcare-pro-security/rate-limits/ with non-blocking atomic flock() and 0700/.htaccess protection.
+    - Eliminated database wp_options write contention during rate limiting when external object caching (Redis/Memcached) is unavailable.
   * Sensitive File & Backup Exfiltration Probe Precision & Admin Route Immunity (Rule #53):
     - Eliminated false-positive blocks and self-bans when accessing plugin internal REST API routes (/wp-json/webcare-pro-security/v1/backup/active, /backup/create, /backup/list, /backup/download, etc.).
     - Extracted check_sensitive_file_probe() and anchored sensitive backup/dump patterns to specific archive/database extensions (.(sql|tar|gz|zip|bz2|7z|rar|bak|old|orig|swp)), eliminating false-positive matches on standard content URLs, post slugs, or products containing "backup" or "dump" in their slug.

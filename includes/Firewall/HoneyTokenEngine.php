@@ -224,6 +224,7 @@ class HoneyTokenEngine {
                 'username' => sanitize_text_field(wp_unslash($username)),
                 'payload'  => sanitize_text_field(wp_unslash($_POST[self::FIELD_NAME])),
             ]);
+            return new \WP_Error('honeypot_triggered', esc_html__('Form verification failed. Please try again.', 'webcare-pro-security'));
         }
         // phpcs:enable WordPress.Security.NonceVerification.Missing
         return $user;
@@ -241,6 +242,11 @@ class HoneyTokenEngine {
                 'email'    => sanitize_text_field(wp_unslash($user_email)),
                 'payload'  => sanitize_text_field(wp_unslash($_POST[self::FIELD_NAME])),
             ]);
+            if (!is_wp_error($errors)) {
+                $errors = new \WP_Error();
+            }
+            $errors->add('honeypot_triggered', esc_html__('Registration verification failed. Please try again.', 'webcare-pro-security'));
+            return $errors;
         }
         // phpcs:enable WordPress.Security.NonceVerification.Missing
         return $errors;
@@ -256,6 +262,11 @@ class HoneyTokenEngine {
                 'target'  => 'Comment Form',
                 'payload' => sanitize_text_field(wp_unslash($_POST[self::FIELD_NAME])),
             ]);
+            wp_die(
+                esc_html__('Comment verification failed. Please try again.', 'webcare-pro-security'),
+                esc_html__('Verification Error', 'webcare-pro-security'),
+                ['response' => 400]
+            );
         }
         // phpcs:enable WordPress.Security.NonceVerification.Missing
         return $commentdata;
@@ -360,22 +371,33 @@ class HoneyTokenEngine {
 
         self::record_catch($catch_entry);
 
-        // 2. Auto-ban bot IP if enabled
-        if (!empty($settings['auto_ban_bot_ip'])) {
-            self::ban_bot_ip($client_ip, $settings['ban_duration_hours'] ?? 24);
+        $is_form_autofill = in_array($trap_type, ['login_autofill', 'registration_autofill', 'comment_autofill'], true);
+        $autofill_hits = 1;
+        if ($is_form_autofill) {
+            $hit_transient = 'webcare_honeypot_form_hit_' . md5($client_ip);
+            $autofill_hits = (int) get_transient($hit_transient) + 1;
+            set_transient($hit_transient, $autofill_hits, 600);
         }
 
-        // Log blocked incident to WAF Incident Logs
+        // 2. Auto-ban bot IP if enabled (for form autofills, require repeated hits to protect innocent users with browser autofill)
+        if (!empty($settings['auto_ban_bot_ip'])) {
+            if (!$is_form_autofill || $autofill_hits >= 2) {
+                self::ban_bot_ip($client_ip, $settings['ban_duration_hours'] ?? 24);
+            }
+        }
+
+        // Log incident to WAF Incident Logs
         if (class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine')) {
+            $log_action = (!$is_form_autofill || $autofill_hits >= 2) ? 'blocked' : 'monitored';
             FirewallEngine::log_incident([
                 'id'          => 'WAF-HONEYTOKEN-TRAP-BLOCKED',
                 'name'        => 'Honey-Token Bot Decoy Tripped',
                 'category'    => 'Identity Defense',
-                'description' => sprintf('Bot trapped and quarantined by honeytoken decoy: %s (%s).', esc_html($trap_type), esc_html($context['target'] ?? '')),
+                'description' => sprintf('Bot trapped by honeytoken decoy: %s (%s).', esc_html($trap_type), esc_html($context['target'] ?? '')),
                 'match_type'  => 'Honeytoken Decoy',
                 'match_value' => $trap_type,
-                'payload'     => 'Trap: ' . $trap_type . ' Target: ' . ($context['target'] ?? '') . ' IP: ' . $client_ip,
-            ], 'blocked');
+                'payload'     => 'Trap: ' . $trap_type . ' Target: ' . ($context['target'] ?? '') . ' IP: ' . $client_ip . ($is_form_autofill ? " Hits: {$autofill_hits}" : ''),
+            ], $log_action);
         }
 
         AuditLogger::log(
@@ -383,12 +405,14 @@ class HoneyTokenEngine {
             sprintf('Honey-Token Trapped Bot IP "%s" via %s (%s).', $client_ip, $trap_type, $context['target'] ?? '')
         );
 
-        // 3. Immediately terminate bot request with HTTP 403 Forbidden
-        if (php_sapi_name() !== 'cli' && !defined('WEBCAREPROSCAN_TESTING')) {
-            status_header(403);
-            header('Content-Type: text/plain; charset=utf-8');
-            echo 'Access Denied: Automated bot activity detected and quarantined by WebCare Pro Security.';
-            exit;
+        // 3. Terminate bot request with HTTP 403 Forbidden for phantom endpoints, canary auth, or repeat form autofills
+        if (!$is_form_autofill || $autofill_hits >= 2) {
+            if (php_sapi_name() !== 'cli' && !defined('WEBCAREPROSCAN_TESTING')) {
+                status_header(403);
+                header('Content-Type: text/plain; charset=utf-8');
+                echo 'Access Denied: Automated bot activity detected and quarantined by WebCare Pro Security.';
+                exit;
+            }
         }
     }
 
@@ -649,6 +673,10 @@ class HoneyTokenEngine {
         try {
             $existing = get_user_by('login', self::CANARY_ADMIN_USER);
             if ($existing instanceof \WP_User) {
+                // Neutralize capabilities: canary account must have zero privileges
+                if (!empty($existing->roles) || $existing->has_cap('manage_options')) {
+                    $existing->set_role('');
+                }
                 if (!get_user_meta($existing->ID, self::CANARY_USER_META, true)) {
                     update_user_meta($existing->ID, self::CANARY_USER_META, 1);
                 }
@@ -668,7 +696,7 @@ class HoneyTokenEngine {
                 'user_nicename' => 'security-canary',
                 'display_name'  => 'WebCare Pro Security Canary Admin',
                 'nickname'      => 'canary-admin',
-                'role'          => 'administrator',
+                'role'          => '',
             ]);
 
             if (!is_wp_error($user_id)) {

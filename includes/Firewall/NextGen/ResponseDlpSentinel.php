@@ -53,7 +53,7 @@ class ResponseDlpSentinel implements SecurityModuleInterface {
                 'label'   => __('Outbound Response DLP & Secret Redactor', 'webcare-pro-security'),
             ],
             'waf_nextgen_dlp_auto_ban' => [
-                'default' => true,
+                'default' => false,
                 'type'    => 'bool',
                 'label'   => __('Auto-Ban Offenders Triggering Response DLP', 'webcare-pro-security'),
             ],
@@ -104,6 +104,7 @@ class ResponseDlpSentinel implements SecurityModuleInterface {
 
     /**
      * Pure detector analyzing outbound response text for high-confidence credential/system leaks.
+     * Performs format-aware inline redaction preserving HTML/text content structure.
      *
      * @param string $body
      * @param bool   $is_guest
@@ -120,25 +121,87 @@ class ResponseDlpSentinel implements SecurityModuleInterface {
             return ['leaked' => false, 'pattern' => '', 'safe_body' => $body];
         }
 
-        $patterns = [
-            'WP_CONFIG_SECRET_DEFINE' => '/define\s*\(\s*[\'"](?:DB_PASSWORD|AUTH_KEY|SECURE_AUTH_KEY|LOGGED_IN_KEY|NONCE_KEY|AUTH_SALT|SECURE_AUTH_SALT)[\'"]\s*,/i',
-            'LINUX_PASSWD_FILE_DUMP'  => '/root:[x*]:0:0:/',
-            'AWS_IAM_ACCESS_KEY'      => '/\bAKIA[0-9A-Z]{16}\b/',
-            'PRIVATE_CRYPTO_PEM_KEY'  => '/-----BEGIN (?:RSA |OPENSSH |EC |PGP |ENCRYPTED )?PRIVATE KEY-----/',
-            'RAW_DB_AUTH_ERROR_DUMP'  => '/Access denied for user\s+\'[^\']+\'@\'[^\']+\'|SQLSTATE\[HY000\]\s*\[\d+\]/i',
+        $redactions = [
+            'WP_CONFIG_SECRET_DEFINE' => [
+                'pattern'     => '/(define\s*\(\s*[\'"](?:DB_PASSWORD|AUTH_KEY|SECURE_AUTH_KEY|LOGGED_IN_KEY|NONCE_KEY|AUTH_SALT|SECURE_AUTH_SALT)[\'"]\s*,\s*[\'"])(?:[^\'"]*)([\'"]\s*\))/i',
+                'replacement' => '$1[REDACTED_BY_WEBCARE_DLP]$2',
+            ],
+            'LINUX_PASSWD_FILE_DUMP' => [
+                'pattern'     => '/root:[x*]:0:0:[^:\r\n]*:[^:\r\n]*:[^\r\n]*/',
+                'replacement' => 'root:x:0:0:[REDACTED_BY_WEBCARE_DLP]',
+            ],
+            'AWS_IAM_ACCESS_KEY' => [
+                'pattern'     => '/\bAKIA[0-9A-Z]{16}\b/',
+                'replacement' => '[REDACTED_AWS_KEY]',
+            ],
+            'PRIVATE_CRYPTO_PEM_KEY' => [
+                'pattern'     => '/-----BEGIN (?:RSA |OPENSSH |EC |PGP |ENCRYPTED )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |OPENSSH |EC |PGP |ENCRYPTED )?PRIVATE KEY-----/',
+                'replacement' => '[REDACTED_PRIVATE_KEY_BY_WEBCARE_DLP]',
+            ],
+            'RAW_DB_AUTH_ERROR_DUMP' => [
+                'pattern'     => '/Access denied for user\s+\'[^\']+\'@\'[^\']+\'|SQLSTATE\[HY000\](?:\s*\[\d+\])?(?::\s*[^\r\n<]+)?/i',
+                'replacement' => '[DATABASE_ERROR_REDACTED_BY_WEBCARE_DLP]',
+            ],
         ];
 
-        foreach ($patterns as $name => $rx) {
-            if (preg_match($rx, $body) === 1) {
-                return [
-                    'leaked'    => true,
-                    'pattern'   => $name,
-                    'safe_body' => '403 Forbidden - Response blocked by WebCare Outbound Data-Loss Prevention Policy.',
-                ];
+        $leaked          = false;
+        $matched_pattern = '';
+        $redacted_body   = $body;
+
+        foreach ($redactions as $name => $cfg) {
+            if (preg_match($cfg['pattern'], $redacted_body) === 1) {
+                $leaked = true;
+                if (empty($matched_pattern)) {
+                    $matched_pattern = $name;
+                }
+                $redacted_body = (string) preg_replace($cfg['pattern'], $cfg['replacement'], $redacted_body);
             }
         }
 
-        return ['leaked' => false, 'pattern' => '', 'safe_body' => $body];
+        return [
+            'leaked'    => $leaked,
+            'pattern'   => $matched_pattern,
+            'safe_body' => $redacted_body,
+        ];
+    }
+
+    /**
+     * Recursively inspect and redact strings inside nested arrays or objects (for REST responses).
+     *
+     * @param mixed  $data
+     * @param bool   $has_leak
+     * @param string $matched_pattern
+     * @return mixed
+     */
+    public static function redact_data_recursive($data, bool &$has_leak, string &$matched_pattern) {
+        if (is_string($data)) {
+            $check = self::inspect_and_redact($data, true);
+            if (!empty($check['leaked'])) {
+                $has_leak = true;
+                if (empty($matched_pattern)) {
+                    $matched_pattern = $check['pattern'];
+                }
+                return $check['safe_body'];
+            }
+            return $data;
+        }
+
+        if (is_array($data)) {
+            foreach ($data as $key => $val) {
+                $data[$key] = self::redact_data_recursive($val, $has_leak, $matched_pattern);
+            }
+            return $data;
+        }
+
+        if (is_object($data)) {
+            $vars = get_object_vars($data);
+            foreach ($vars as $prop => $val) {
+                $data->$prop = self::redact_data_recursive($val, $has_leak, $matched_pattern);
+            }
+            return $data;
+        }
+
+        return $data;
     }
 
     /**
@@ -158,6 +221,7 @@ class ResponseDlpSentinel implements SecurityModuleInterface {
 
     /**
      * Output buffer callback inspecting HTML/text guest responses.
+     * Inlines redaction without serving 403s or banning visitors.
      */
     public static function filter_guest_output_buffer(string $buffer): string {
         $result = self::inspect_and_redact($buffer, true);
@@ -166,20 +230,17 @@ class ResponseDlpSentinel implements SecurityModuleInterface {
         }
 
         self::handle_dlp_breach($result['pattern']);
-        if (!headers_sent()) {
-            status_header(403);
-            header('Content-Type: text/plain; charset=UTF-8');
-        }
         return $result['safe_body'];
     }
 
     /**
      * Filter REST API responses for unauthenticated callers.
+     * Scans and redacts object properties recursively while preserving JSON response format.
      *
-     * @param \WP_HTTP_Response $result
-     * @param \WP_REST_Server   $server
-     * @param \WP_REST_Request  $request
-     * @return \WP_HTTP_Response
+     * @param mixed            $result
+     * @param \WP_REST_Server  $server
+     * @param \WP_REST_Request $request
+     * @return mixed
      */
     public static function filter_rest_response($result, $server, $request) {
         if (is_user_logged_in() || (defined('WP_CLI') && WP_CLI)) {
@@ -190,26 +251,25 @@ class ResponseDlpSentinel implements SecurityModuleInterface {
             if (strpos($route, '/webcare-pro-security/') === 0) {
                 return $result;
             }
-            $encoded = (string) wp_json_encode($result->get_data());
-            $check   = self::inspect_and_redact($encoded, true);
-            if (!empty($check['leaked'])) {
-                self::handle_dlp_breach($check['pattern']);
-                return new \WP_REST_Response([
-                    'code'    => 'webcare_dlp_blocked',
-                    'message' => __('Outbound response blocked by security policy.', 'webcare-pro-security'),
-                ], 403);
+            $data            = $result->get_data();
+            $has_leak        = false;
+            $matched_pattern = '';
+            $clean_data      = self::redact_data_recursive($data, $has_leak, $matched_pattern);
+            if ($has_leak) {
+                self::handle_dlp_breach($matched_pattern);
+                $result->set_data($clean_data);
             }
         }
         return $result;
     }
 
     /**
-     * Log redacted DLP incident and auto-ban offending probe IP when enabled.
+     * Log redacted DLP incident without viewer IP auto-banning.
      */
     private static function handle_dlp_breach(string $pattern): void {
         $ip     = class_exists(FirewallEngine::class) ? FirewallEngine::get_client_ip() : '127.0.0.1';
         $uri    = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '';
-        $reason = sprintf('Outbound DLP neutralized secret exfiltration (%s) on guest response [REDACTED].', $pattern);
+        $reason = sprintf('Outbound DLP neutralized secret exfiltration (%s) on response [INLINE REDACTED].', $pattern);
 
         $events = get_option(self::OPTION_EVENTS, []);
         if (!is_array($events)) {
@@ -234,25 +294,8 @@ class ResponseDlpSentinel implements SecurityModuleInterface {
                 'description' => $reason,
                 'match_type'  => $pattern,
                 'match_value' => $pattern,
-                'payload'     => 'URI: ' . $uri . ' | Payload redacted to protect credentials.',
-            ], 'blocked');
-
-            $settings = class_exists('\\WebCareProScanner\\System\\SettingsManager')
-                ? \WebCareProScanner\System\SettingsManager::get_settings()
-                : [];
-            if (!empty($settings['waf_nextgen_dlp_auto_ban']) && !FirewallEngine::is_server_origin_or_loopback($ip)) {
-                FirewallEngine::add_blocked_ip(
-                    $ip,
-                    $reason,
-                    86400,
-                    'WAF-DLP-EXFILTRATION-BLOCKED',
-                    'Outbound Response DLP Sentinel',
-                    'Next-Gen Response DLP',
-                    null,
-                    null,
-                    true
-                );
-            }
+                'payload'     => 'URI: ' . $uri . ' | Token neutralized via inline redaction.',
+            ], 'detected');
         }
     }
 }

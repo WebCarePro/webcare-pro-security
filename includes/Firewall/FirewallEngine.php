@@ -826,8 +826,21 @@ class FirewallEngine {
         // phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.NonceVerification.Recommended
         $action_hint = isset($_POST['action']) ? sanitize_text_field(wp_unslash($_POST['action'])) : (isset($_GET['action']) ? sanitize_text_field(wp_unslash($_GET['action'])) : '');
         if ($nonce !== '' && function_exists('wp_verify_nonce')) {
-            if (wp_verify_nonce($nonce, 'wp_rest') || wp_verify_nonce($nonce, 'elementor_ajax') || wp_verify_nonce($nonce, -1) || ($action_hint !== '' && wp_verify_nonce($nonce, 'wp_ajax_' . $action_hint))) {
-                $nonce_valid = true;
+            $prev_uid = function_exists('get_current_user_id') ? (int) get_current_user_id() : 0;
+            $switched_user = false;
+            if ($verified_user_id > 0 && $prev_uid !== $verified_user_id && function_exists('wp_set_current_user')) {
+                wp_set_current_user($verified_user_id);
+                $switched_user = true;
+            }
+
+            try {
+                if (wp_verify_nonce($nonce, 'wp_rest') || wp_verify_nonce($nonce, 'elementor_ajax') || wp_verify_nonce($nonce, -1) || ($action_hint !== '' && wp_verify_nonce($nonce, 'wp_ajax_' . $action_hint))) {
+                    $nonce_valid = true;
+                }
+            } finally {
+                if ($switched_user && function_exists('wp_set_current_user')) {
+                    wp_set_current_user($prev_uid);
+                }
             }
         }
 
@@ -3157,7 +3170,7 @@ class FirewallEngine {
     public static function is_high_risk_recon_probe(string $uri): bool {
         $path = strtolower(wp_parse_url($uri, PHP_URL_PATH) ?: $uri);
         $norm_route = self::resolve_normalized_rest_route($uri);
-        if (str_starts_with($path, '/wp-json/webcare-pro-security/') || str_starts_with($norm_route, '/webcare-pro-security/')) {
+        if (str_contains($path, '/wp-json/webcare-pro-security/') || str_contains($path, '/webcare-pro-security/') || str_starts_with($norm_route, '/webcare-pro-security/')) {
             return false;
         }
 
@@ -3209,8 +3222,8 @@ class FirewallEngine {
         $clean_path = str_replace('\\', '/', $clean_path);
 
         $norm_rest_route = self::resolve_normalized_rest_route($decoded_check_path);
-        $is_plugin_api   = str_starts_with($clean_path, '/wp-json/webcare-pro-security/') || str_starts_with($norm_rest_route, '/webcare-pro-security/');
-        $is_legit_rest   = (str_starts_with($clean_path, '/wp-json/') || !empty($norm_rest_route)) && !str_contains($clean_path, '..');
+        $is_plugin_api   = str_contains($clean_path, '/wp-json/webcare-pro-security/') || str_contains($clean_path, '/webcare-pro-security/') || str_starts_with($norm_rest_route, '/webcare-pro-security/');
+        $is_legit_rest   = (str_contains($clean_path, '/wp-json/') || !empty($norm_rest_route)) && !str_contains($clean_path, '..');
 
         if ($is_plugin_api || $is_legit_rest) {
             return null;
@@ -4336,29 +4349,30 @@ class FirewallEngine {
         $total_blocks = $lifetime_counter;
         $blocks_24h   = $blocks_today;
 
-        // 2. Fallback / merge legacy SQL database table if existing records are present
-        // Check if table exists
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-        $table_exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table));
-        if ($table_exists) {
-            $total_sql = "SELECT COUNT(*) FROM `{$table}` WHERE action_taken = 'blocked'";
-            $blocks_24h_sql = "SELECT COUNT(*) FROM `{$table}` WHERE action_taken = 'blocked' AND created_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)";
-            $top_rules_sql = "SELECT rule_category, COUNT(*) as count FROM `{$table}` WHERE action_taken = 'blocked' GROUP BY rule_category ORDER BY count DESC LIMIT 5";
-            // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.NotPrepared
-            $db_total = (int) $wpdb->get_var($total_sql);
-            $db_24h   = (int) $wpdb->get_var($blocks_24h_sql);
-            if ($db_total > 0) {
-                $total_blocks += $db_total;
-                $blocks_24h   += $db_24h;
-                $blocks_today += $db_24h;
-                if (empty($top_rules)) {
-                    $top_rules = $wpdb->get_results(
-                        $top_rules_sql,
-                        ARRAY_A
-                    ) ?: [];
+        // 2. Fallback / merge legacy SQL database table only if file logging partition is absent
+        if (!$today_exists) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            $table_exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table));
+            if ($table_exists) {
+                $total_sql = "SELECT COUNT(*) FROM `{$table}` WHERE action_taken = 'blocked'";
+                $blocks_24h_sql = "SELECT COUNT(*) FROM `{$table}` WHERE action_taken = 'blocked' AND created_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)";
+                $top_rules_sql = "SELECT rule_category, COUNT(*) as count FROM `{$table}` WHERE action_taken = 'blocked' GROUP BY rule_category ORDER BY count DESC LIMIT 5";
+                // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.NotPrepared
+                $db_total = (int) $wpdb->get_var($total_sql);
+                $db_24h   = (int) $wpdb->get_var($blocks_24h_sql);
+                if ($db_total > 0) {
+                    $total_blocks += $db_total;
+                    $blocks_24h   += $db_24h;
+                    $blocks_today += $db_24h;
+                    if (empty($top_rules)) {
+                        $top_rules = $wpdb->get_results(
+                            $top_rules_sql,
+                            ARRAY_A
+                        ) ?: [];
+                    }
                 }
+                // phpcs:enable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.NotPrepared
             }
-            // phpcs:enable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.NotPrepared
         }
 
         $active_mode = 'disabled';
@@ -8704,9 +8718,10 @@ class FirewallEngine {
                             '/wc/store/', '/contact-form-7/', '/wpforms/', '/fluentform/',
                             '/ninja-forms/', '/frm/', '/gf/', '/paypal/', '/wc-stripe/',
                             '/stripe/', '/surecart/', '/wp/v2/comments',
+                            '/webcare-pro-security/v1/auth/webauthn/',
                         ];
                         foreach ($safe_sub_prefixes as $ssp) {
-                            if (str_starts_with($sub_path, $ssp) || str_contains($sub_path, $ssp)) {
+                            if (str_starts_with($sub_path, $ssp)) {
                                 $is_sub_safe = true;
                                 break;
                             }
@@ -8753,11 +8768,11 @@ class FirewallEngine {
             '/wp/v2/comments',
             '/akismet/',
             '/jetpack/',
-            '/webcare-pro-security/v1/auth/webauthn/assertion/',
+            '/webcare-pro-security/v1/auth/webauthn/',
         ];
 
         foreach ($safe_prefixes as $prefix) {
-            if (strpos($route, $prefix) === 0 || strpos($route, $prefix) !== false) {
+            if (str_starts_with($route, $prefix) || strpos($route, $prefix) === 0) {
                 return $result;
             }
         }
@@ -9981,22 +9996,23 @@ class FirewallEngine {
             return;
         }
 
-        // If assigning elevated role (administrator or editor)
-        if (in_array(strtolower($role), ['administrator', 'editor'], true)) {
+        // If assigning elevated role (administrator or editor, or any custom role with manage_options / edit_users)
+        $role_lower = strtolower($role);
+        $is_elevated_role = in_array($role_lower, ['administrator', 'editor'], true);
+        if (!$is_elevated_role && function_exists('get_role')) {
+            $role_obj = get_role($role);
+            if ($role_obj && ($role_obj->has_cap('manage_options') || $role_obj->has_cap('edit_users'))) {
+                $is_elevated_role = true;
+            }
+        }
+
+        if ($is_elevated_role) {
             // Verified logged-in administrator with manage_options is legitimate
             if (self::is_authenticated_administrator()) {
                 return;
             }
             if (function_exists('is_user_logged_in') && is_user_logged_in() && function_exists('current_user_can') && current_user_can('manage_options')) {
                 return;
-            }
-
-            // JIT Ephemeral support user activation check (if active)
-            if (class_exists('\\WebCareProScanner\\Identity\\WebCareJitMuGuardian')) {
-                $support_users = get_option(\WebCareProScanner\Identity\WebCareJitMuGuardian::OPTION_SUPPORT_USERS, []);
-                if (isset($support_users[$user_id])) {
-                    return; // Authorized JIT elevation
-                }
             }
 
             $client_ip = self::get_client_ip();
@@ -10065,7 +10081,15 @@ class FirewallEngine {
 
         // If user was created by an unauthenticated guest or non-admin session
         $user = function_exists('get_userdata') ? get_userdata($user_id) : null;
-        if ($user && array_intersect(['administrator', 'editor'], array_map('strtolower', (array) $user->roles))) {
+        $has_elevated_priv = false;
+        if ($user) {
+            if (array_intersect(['administrator', 'editor'], array_map('strtolower', (array) $user->roles))) {
+                $has_elevated_priv = true;
+            } elseif ($user->has_cap('manage_options') || $user->has_cap('edit_users')) {
+                $has_elevated_priv = true;
+            }
+        }
+        if ($user && $has_elevated_priv) {
             // Instantly demote or strip roles
             $user->set_role('subscriber');
 

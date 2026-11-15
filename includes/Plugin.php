@@ -107,9 +107,6 @@ class Plugin {
         if (class_exists('\\WebCareProScanner\\Identity\\SessionForensicsEngine')) {
             \WebCareProScanner\Identity\SessionForensicsEngine::init();
         }
-        if (class_exists('\\WebCareProScanner\\Identity\\EphemeralAdminEngine')) {
-            \WebCareProScanner\Identity\EphemeralAdminEngine::init();
-        }
         if (class_exists('\\WebCareProScanner\\Firewall\\GhostRouteTrap')) {
             \WebCareProScanner\Firewall\GhostRouteTrap::init();
         }
@@ -140,8 +137,11 @@ class Plugin {
         if (class_exists('\\WebCareProScanner\\Auth\\WebAuthnManager')) {
             \WebCareProScanner\Auth\WebAuthnManager::init();
         }
-        if (class_exists('\\WebCareProScanner\\Identity\\WebCareJitMuGuardian')) {
-            \WebCareProScanner\Identity\WebCareJitMuGuardian::ensure_installed();
+
+        // Clean up legacy JIT guardian MU plugin if present
+        $mu_jit_file = (defined('WPMU_PLUGIN_DIR') ? WPMU_PLUGIN_DIR : WP_CONTENT_DIR . '/mu-plugins') . '/webcare-jit-guardian.php';
+        if (file_exists($mu_jit_file)) {
+            wp_delete_file($mu_jit_file);
         }
 
         // Context-Adaptive Firewall (CAF) Lifecycle Observers & Edge Cron

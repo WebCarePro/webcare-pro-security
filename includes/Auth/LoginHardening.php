@@ -129,11 +129,6 @@ class LoginHardening {
         // Store failed count with a sliding 1-hour window
         set_transient($fail_key, $attempts, 3600);
 
-        // Record global cross-IP authentication failure for distributed credential-stuffing defense
-        if (class_exists('\\WebCareProScanner\\Firewall\\DistributedVelocityShield')) {
-            \WebCareProScanner\Firewall\DistributedVelocityShield::record_auth_failure($ip, $username, $reason_label ?? '');
-        }
-
         // Determine specific failure diagnosis (wrong password vs non-existent account)
         $reason_label = __('Unknown failure reason', 'webcare-pro-security');
         $error_code   = '';
@@ -160,6 +155,11 @@ class LoginHardening {
                     $reason_label = !empty($custom_msg) ? $custom_msg : $error_code;
                     break;
             }
+        }
+
+        // Record global cross-IP authentication failure for distributed credential-stuffing defense
+        if (class_exists('\\WebCareProScanner\\Firewall\\DistributedVelocityShield')) {
+            \WebCareProScanner\Firewall\DistributedVelocityShield::record_auth_failure($ip, $username, $reason_label);
         } else {
             // Fallback user existence check when caller does not provide WP_Error
             $user_exists = is_email($username) ? (bool) get_user_by('email', $username) : (bool) get_user_by('login', $username);

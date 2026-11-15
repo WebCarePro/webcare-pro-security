@@ -1592,24 +1592,6 @@ class ScannerRoutes {
             'permission_callback' => $permission,
         ]);
 
-        register_rest_route(self::NAMESPACE, '/identity/jit-elevate', [
-            'methods'             => 'POST',
-            'callback'            => [__CLASS__, 'grant_identity_jit_elevation'],
-            'permission_callback' => $permission,
-        ]);
-
-        register_rest_route(self::NAMESPACE, '/identity/jit-revoke', [
-            'methods'             => 'POST',
-            'callback'            => [__CLASS__, 'revoke_identity_jit_elevation'],
-            'permission_callback' => $permission,
-        ]);
-
-        register_rest_route(self::NAMESPACE, '/users/candidates', [
-            'methods'             => 'GET',
-            'callback'            => [__CLASS__, 'get_candidate_users_route'],
-            'permission_callback' => $permission,
-        ]);
-
         register_rest_route(self::NAMESPACE, '/identity/audit-users', [
             'methods'             => 'POST',
             'callback'            => [__CLASS__, 'audit_identity_privileged_users'],
@@ -8330,8 +8312,8 @@ class ScannerRoutes {
 
         $is_masked = false;
         $file_basename = strtolower(basename($real_path));
-        if (preg_match('/(?:^|[\\/\\\\])wp-config(?:-[^\\/\\\\]+)?\\.php$/i', $real_path) ||
-            preg_match('/^(?:\\.env(?:\\.[a-z0-9_-]+)?|wp-config(?:-[^\\/\\\\]+)?\\.php)$/i', $file_basename)
+        if (preg_match('/(?:^|[\\/\\\\])wp-config(?:-[^\\/\\\\]+)?(?:\.php)?(?:\.(?:bak|old|orig|save|txt|backup|swp|dist|inc))?$/i', $real_path) ||
+            preg_match('/^(?:\\.env(?:\\.[a-z0-9_-]+)?|wp-config(?:-[^\\/\\\\]+)?(?:\.php)?(?:\.(?:bak|old|orig|save|txt|backup|swp|dist|inc))?)$/i', $file_basename)
         ) {
             $masked_res = self::mask_sensitive_config_content($content);
             $content = $masked_res['content'];
@@ -8442,6 +8424,8 @@ class ScannerRoutes {
             'AUTH_SALT', 'SECURE_AUTH_SALT', 'LOGGED_IN_SALT', 'NONCE_SALT',
             'FTP_USER', 'FTP_PASS', 'FTP_HOST', 'FTP_BASE',
             'FTP_SSL', 'FTP_SSH', 'FTP_PUBKEY', 'FTP_PRIKEY',
+            'WEBCARE_VAULT_KEY', 'WEBCARE_MASTER_KEY', 'WEBCARE_ENCRYPTION_KEY',
+            'CLOUDFLARE_API_KEY', 'CLOUDFLARE_API_TOKEN',
         ];
 
         $keys_pattern = implode('|', array_map('preg_quote', $sensitive_keys));
@@ -8461,7 +8445,7 @@ class ScannerRoutes {
         );
 
         // Also mask .env style or assignment style: DB_PASSWORD=xxxx or DB_PASS=xxxx
-        $env_keys = 'DB_PASSWORD|DB_PASS|DB_USER|DB_USERNAME|DB_HOST|DB_NAME|FTP_PASS|FTP_PASSWORD';
+        $env_keys = 'DB_PASSWORD|DB_PASS|DB_USER|DB_USERNAME|DB_HOST|DB_NAME|FTP_PASS|FTP_PASSWORD|WEBCARE_VAULT_KEY|WEBCARE_MASTER_KEY|WEBCARE_ENCRYPTION_KEY|CLOUDFLARE_API_KEY|CLOUDFLARE_API_TOKEN';
         $new_content = preg_replace_callback(
             "/^(\\s*(" . $env_keys . ")\\s*=\\s*)(['\"]?)(.+?)\\3(\\s*(?:#.*)?)$/mi",
             function ($matches) use (&$is_masked) {
@@ -8558,30 +8542,6 @@ class ScannerRoutes {
         $uid = get_current_user_id();
         $is_support = false;
         $restrictions = [];
-        if ($uid) {
-            $support_users = get_option(\WebCareProScanner\Identity\WebCareJitMuGuardian::OPTION_SUPPORT_USERS, []);
-            $is_support = !empty(get_user_meta($uid, 'webcareproscan_is_temporary_support', true)) || (is_array($support_users) && isset($support_users[$uid]));
-            if ($is_support && is_array($support_users) && isset($support_users[$uid])) {
-                $restrictions = $support_users[$uid];
-            }
-        }
-
-        // Redact Secret Vault keys if accessed by temporary support technician
-        if ($is_support) {
-            $secret_keys = [
-                'cloudflare_api_token',
-                'cloudflare_global_api_key',
-                'ai_api_key',
-                'mcp_token',
-                'smtp_password',
-                'webhook_url',
-            ];
-            foreach ($secret_keys as $skey) {
-                if (!empty($settings[$skey])) {
-                    $settings[$skey] = '••••••••••••••••';
-                }
-            }
-        }
 
         return rest_ensure_response([
             'success'                        => true,
@@ -8590,8 +8550,8 @@ class ScannerRoutes {
             'next_scheduled'                 => $time_info['next_scheduled_wp'],
             'schedule_time'                  => $time_info,
             'current_time'                   => $time_info['current_wp_time'],
-            'is_temporary_support'           => $is_support,
-            'temporary_support_restrictions' => $restrictions,
+            'is_temporary_support'           => false,
+            'temporary_support_restrictions' => [],
         ]);
     }
 
@@ -8599,21 +8559,6 @@ class ScannerRoutes {
      * Save plugin settings
      */
     public static function save_settings(\WP_REST_Request $request) {
-        $uid = get_current_user_id();
-        if ($uid) {
-            $support_users = get_option(\WebCareProScanner\Identity\WebCareJitMuGuardian::OPTION_SUPPORT_USERS, []);
-            if (!empty(get_user_meta($uid, 'webcareproscan_is_temporary_support', true)) || (is_array($support_users) && isset($support_users[$uid]))) {
-                $cfg = $support_users[$uid] ?? [];
-                if (!isset($cfg['block_settings_modification']) || !empty($cfg['block_settings_modification'])) {
-                    return new \WP_Error(
-                        'rest_forbidden',
-                        __('Access Denied: Temporary support technicians are prohibited from modifying security settings.', 'webcare-pro-security'),
-                        ['status' => 403]
-                    );
-                }
-            }
-        }
-
         $params = $request->get_json_params();
         if (!is_array($params)) {
             $params = $request->get_body_params();
@@ -8703,18 +8648,6 @@ class ScannerRoutes {
             return new \WP_Error('invalid_import', __('Invalid JSON data.', 'webcare-pro-security'), ['status' => 400]);
         }
 
-        $uid = get_current_user_id();
-        if ($uid) {
-            $support_users = get_option(\WebCareProScanner\Identity\WebCareJitMuGuardian::OPTION_SUPPORT_USERS, []);
-            if (!empty(get_user_meta($uid, 'webcareproscan_is_temporary_support', true)) || (is_array($support_users) && isset($support_users[$uid]))) {
-                return new \WP_Error(
-                    'rest_forbidden',
-                    __('Temporary support technicians are strictly prohibited from importing or overwriting plugin settings.', 'webcare-pro-security'),
-                    ['status' => 403]
-                );
-            }
-        }
-
         try {
             $imported = \WebCareProScanner\System\SettingsManager::import_settings($payload);
             return rest_ensure_response([
@@ -8731,18 +8664,6 @@ class ScannerRoutes {
      * Reset settings to factory defaults
      */
     public static function reset_settings(\WP_REST_Request $request) {
-        $uid = get_current_user_id();
-        if ($uid) {
-            $support_users = get_option(\WebCareProScanner\Identity\WebCareJitMuGuardian::OPTION_SUPPORT_USERS, []);
-            if (!empty(get_user_meta($uid, 'webcareproscan_is_temporary_support', true)) || (is_array($support_users) && isset($support_users[$uid]))) {
-                return new \WP_Error(
-                    'rest_forbidden',
-                    __('Temporary support technicians are strictly prohibited from resetting plugin settings to factory defaults.', 'webcare-pro-security'),
-                    ['status' => 403]
-                );
-            }
-        }
-
         $defaults = \WebCareProScanner\System\SettingsManager::reset_defaults();
         return rest_ensure_response([
             'success'  => true,
@@ -9850,18 +9771,6 @@ class ScannerRoutes {
     }
 
     public static function get_integrity_file_diff(\WP_REST_Request $request) {
-        $uid = get_current_user_id();
-        if ($uid) {
-            $support_users = get_option(\WebCareProScanner\Identity\WebCareJitMuGuardian::OPTION_SUPPORT_USERS, []);
-            if (!empty(get_user_meta($uid, 'webcareproscan_is_temporary_support', true)) || (is_array($support_users) && isset($support_users[$uid]))) {
-                $cfg = $support_users[$uid] ?? [];
-                $scope = $cfg['scope'] ?? 'read_only';
-                if ($scope === 'quarantine_only') {
-                    return new \WP_Error('jit_access_denied', __('Temporary support sessions with quarantine-only scope cannot inspect source diffs.', 'webcare-pro-security'), ['status' => 403]);
-                }
-            }
-        }
-
         $file_path = $request->get_param('file_path') ?: $request->get_param('path');
         if (empty($file_path)) {
             $json_params = $request->get_json_params();
@@ -10284,12 +10193,6 @@ class ScannerRoutes {
      * Database Row Remediation (Delete row or cleanse field with auto-backup snapshot)
      */
     public static function remediate_database_row(\WP_REST_Request $request) {
-        $uid = get_current_user_id();
-        $support_users = get_option(\WebCareProScanner\Identity\WebCareJitMuGuardian::OPTION_SUPPORT_USERS, []);
-        if ($uid && (!empty(get_user_meta($uid, 'webcareproscan_is_temporary_support', true)) || (is_array($support_users) && isset($support_users[$uid])))) {
-            return new \WP_Error('rest_forbidden', __('Access Denied: Database row remediation and deletion is prohibited during temporary support sessions.', 'webcare-pro-security'), ['status' => 403]);
-        }
-
         $params = $request->get_json_params() ?: [];
         $table = !empty($params['table']) ? sanitize_text_field($params['table']) : '';
         $column = !empty($params['column']) ? sanitize_text_field($params['column']) : '';
@@ -10363,12 +10266,6 @@ class ScannerRoutes {
      * Restore Database Row from Auto-Backup Snapshot
      */
     public static function restore_database_row(\WP_REST_Request $request) {
-        $uid = get_current_user_id();
-        $support_users = get_option(\WebCareProScanner\Identity\WebCareJitMuGuardian::OPTION_SUPPORT_USERS, []);
-        if ($uid && (!empty(get_user_meta($uid, 'webcareproscan_is_temporary_support', true)) || (is_array($support_users) && isset($support_users[$uid])))) {
-            return new \WP_Error('rest_forbidden', __('Access Denied: Database restoration is prohibited during temporary support sessions.', 'webcare-pro-security'), ['status' => 403]);
-        }
-
         $params = $request->get_json_params() ?: [];
         $backup_id = !empty($params['backup_id']) ? sanitize_text_field($params['backup_id']) : '';
 
@@ -10395,12 +10292,6 @@ class ScannerRoutes {
      * - 'delete_user': Safely deletes anomalous/ghost account with mandatory pre-action snapshot.
      */
     public static function remediate_user(\WP_REST_Request $request) {
-        $uid = get_current_user_id();
-        $support_users = get_option(\WebCareProScanner\Identity\WebCareJitMuGuardian::OPTION_SUPPORT_USERS, []);
-        if ($uid && (!empty(get_user_meta($uid, 'webcareproscan_is_temporary_support', true)) || (is_array($support_users) && isset($support_users[$uid])))) {
-            return new \WP_Error('rest_forbidden', __('Access Denied: User account remediation is prohibited during temporary support sessions.', 'webcare-pro-security'), ['status' => 403]);
-        }
-
         global $wpdb;
 
         $params = $request->get_json_params() ?: [];
@@ -12443,27 +12334,17 @@ class ScannerRoutes {
         $sessions_report = class_exists('\WebCareProScanner\Identity\SessionForensicsEngine')
             ? \WebCareProScanner\Identity\SessionForensicsEngine::get_active_sessions_report()
             : [];
-        $active_elevations = class_exists('\WebCareProScanner\Identity\EphemeralAdminEngine')
-            ? \WebCareProScanner\Identity\EphemeralAdminEngine::get_active_elevations()
-            : [];
-        $elevation_history = class_exists('\WebCareProScanner\Identity\EphemeralAdminEngine')
-            ? \WebCareProScanner\Identity\EphemeralAdminEngine::get_elevation_history(20)
-            : [];
         $hibp_summary = class_exists('\WebCareProScanner\Identity\HIBPBreachAuditor')
             ? \WebCareProScanner\Identity\HIBPBreachAuditor::get_summary()
-            : [];
-
-        $candidate_users = class_exists('\WebCareProScanner\Identity\EphemeralAdminEngine')
-            ? \WebCareProScanner\Identity\EphemeralAdminEngine::get_candidate_users(200)
             : [];
 
         return rest_ensure_response([
             'success'           => true,
             'sessions_report'   => $sessions_report,
-            'active_elevations' => $active_elevations,
-            'elevation_history' => $elevation_history,
+            'active_elevations' => [],
+            'elevation_history' => [],
             'hibp_summary'      => $hibp_summary,
-            'candidate_users'   => $candidate_users,
+            'candidate_users'   => [],
         ]);
     }
 
@@ -12498,52 +12379,6 @@ class ScannerRoutes {
 
         $res = \WebCareProScanner\Identity\SessionForensicsEngine::revoke_all_sessions($user_id);
         return rest_ensure_response($res);
-    }
-
-    public static function grant_identity_jit_elevation(\WP_REST_Request $request) {
-        $params   = $request->get_json_params() ?: [];
-        $user_id  = intval($params['user_id'] ?? 0);
-        $duration = intval($params['duration_minutes'] ?? 60);
-        $reason   = sanitize_text_field($params['reason'] ?? '');
-
-        if (!$user_id) {
-            return new \WP_Error('missing_user_id', __('User ID is required for elevation.', 'webcare-pro-security'), ['status' => 400]);
-        }
-
-        if (!class_exists('\WebCareProScanner\Identity\EphemeralAdminEngine')) {
-            return new \WP_Error('missing_engine', __('EphemeralAdminEngine not available.', 'webcare-pro-security'), ['status' => 500]);
-        }
-
-        $res = \WebCareProScanner\Identity\EphemeralAdminEngine::grant_elevation($user_id, $duration, $reason);
-        return rest_ensure_response($res);
-    }
-
-    public static function revoke_identity_jit_elevation(\WP_REST_Request $request) {
-        $params  = $request->get_json_params() ?: [];
-        $user_id = intval($params['user_id'] ?? 0);
-        $reason  = sanitize_text_field($params['reason'] ?? 'Manual revocation by administrator');
-
-        if (!$user_id) {
-            return new \WP_Error('missing_user_id', __('User ID is required.', 'webcare-pro-security'), ['status' => 400]);
-        }
-
-        if (!class_exists('\WebCareProScanner\Identity\EphemeralAdminEngine')) {
-            return new \WP_Error('missing_engine', __('EphemeralAdminEngine not available.', 'webcare-pro-security'), ['status' => 500]);
-        }
-
-        $res = \WebCareProScanner\Identity\EphemeralAdminEngine::revoke_elevation($user_id, $reason);
-        return rest_ensure_response($res);
-    }
-
-    public static function get_candidate_users_route(\WP_REST_Request $request) {
-        $users = class_exists('\WebCareProScanner\Identity\EphemeralAdminEngine')
-            ? \WebCareProScanner\Identity\EphemeralAdminEngine::get_candidate_users(200)
-            : [];
-
-        return rest_ensure_response([
-            'success' => true,
-            'users'   => $users,
-        ]);
     }
 
     public static function audit_identity_privileged_users(\WP_REST_Request $request) {

@@ -28,8 +28,9 @@ class SessionSentinel {
         // Capture generated session token during auth cookie issuance
         add_action('set_auth_cookie', [__CLASS__, 'on_set_auth_cookie'], 10, 6);
 
-        // Track session upon login
+        // Track session upon login (priority 20) and cleanup pending auth attributes deferred (priority 99)
         add_action('wp_login', [__CLASS__, 'on_user_login'], 20, 2);
+        add_action('wp_login', [__CLASS__, 'cleanup_pending_auth'], 99);
 
         // Verify session integrity on every authenticated request
         add_action('init', [__CLASS__, 'inspect_active_session'], 2);
@@ -163,20 +164,10 @@ class SessionSentinel {
         $auth_label = !empty(self::$pending_auth_label) ? self::$pending_auth_label : '';
         $auth_details = !empty(self::$pending_auth_details) ? self::$pending_auth_details : [];
 
-        // Reset static pending properties
-        self::$pending_auth_type = '';
-        self::$pending_auth_label = '';
-        self::$pending_auth_details = [];
-
         // If not explicitly set by the calling authenticator, deduce it accurately:
         if (empty($auth_type)) {
-            $is_support = get_user_meta($user->ID, 'webcareproscan_is_temporary_support', true);
-            if ($is_support) {
-                $auth_type = 'magic_link';
-                $auth_label = __('Magic Support Link (Zero-Trust JIT)', 'webcare-pro-security');
-                $auth_details = ['type' => 'magic_link'];
             // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Inspection during session authentication creation to detect 2FA submission
-            } elseif (!empty($_POST['webcareproscan_2fa_code'])) {
+            if (!empty($_POST['webcareproscan_2fa_code'])) {
                 $auth_type = '2fa';
                 $auth_label = __('2FA (TOTP Authenticator)', 'webcare-pro-security');
                 $auth_details = ['type' => 'totp'];
@@ -980,5 +971,14 @@ class SessionSentinel {
             'platform'    => $platform,
             'device_type' => $device_type,
         ];
+    }
+
+    /**
+     * Deferred cleanup of static pending auth factor attributes on wp_login:99.
+     */
+    public static function cleanup_pending_auth(): void {
+        self::$pending_auth_type    = '';
+        self::$pending_auth_label   = '';
+        self::$pending_auth_details = [];
     }
 }

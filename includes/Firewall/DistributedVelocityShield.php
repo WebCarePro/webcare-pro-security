@@ -64,8 +64,14 @@ class DistributedVelocityShield {
             add_action('woocommerce_after_checkout_validation', [__CLASS__, 'on_checkout_validation'], 20, 2);
             add_action('woocommerce_order_status_failed', [__CLASS__, 'on_order_payment_failed'], 10, 1);
 
-            // 2. Hook WooCommerce checkout process early for Under-Attack enforcement
+            // 2. Hook WooCommerce classic checkout process early for Under-Attack enforcement
             add_action('woocommerce_checkout_process', [__CLASS__, 'enforce_checkout_guard'], 1);
+
+            // 3. Hook initial GET /checkout/ page load to challenge browser before order placement
+            add_action('template_redirect', [__CLASS__, 'enforce_classic_checkout_get_challenge'], 1);
+
+            // 4. Hook Store API / Block Checkout (/wc/store/v1/checkout)
+            add_filter('rest_pre_dispatch', [__CLASS__, 'enforce_store_api_checkout_guard'], 10, 3);
         }
 
         // 3. Hook WordPress authentication failure
@@ -219,6 +225,13 @@ class DistributedVelocityShield {
      * @return array Live velocity status
      */
     public static function record_auth_failure(string $ip = '', string $username = '', string $reason = ''): array {
+        static $processed_attempts = [];
+        $sig = md5($ip . '|' . $username . '|' . $reason);
+        if (isset($processed_attempts[$sig])) {
+            return self::get_live_velocity();
+        }
+        $processed_attempts[$sig] = true;
+
         if (empty($ip)) {
             $ip = self::get_client_ip();
         }
@@ -525,6 +538,16 @@ class DistributedVelocityShield {
             return;
         }
 
+        // Exempt order confirmation and payment gateway webhooks
+        if (function_exists('is_order_received_page') && is_order_received_page()) {
+            return;
+        }
+
+        $uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '';
+        if (str_contains($uri, 'wc-api=') || str_contains($uri, '/wc-api/')) {
+            return;
+        }
+
         $ip = self::get_client_ip();
         if (self::is_exempt_ip($ip)) {
             return;
@@ -589,6 +612,114 @@ class DistributedVelocityShield {
         if (class_exists(BotReconDefense::class)) {
             BotReconDefense::render_webcrypto_challenge($ip, $ua);
         }
+    }
+
+    /**
+     * Enforce Under-Attack GET Challenge on classic WooCommerce Checkout page.
+     * Prevents infinite reload loops by challenging the browser on initial page load.
+     *
+     * @return void
+     */
+    public static function enforce_classic_checkout_get_challenge(): void {
+        if (!function_exists('is_checkout') || !is_checkout()) {
+            return;
+        }
+
+        // Exempt order received (confirmation) page and payment gateway webhooks
+        if (function_exists('is_order_received_page') && is_order_received_page()) {
+            return;
+        }
+
+        $uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '';
+        if (str_contains($uri, 'wc-api=') || str_contains($uri, '/wc-api/')) {
+            return;
+        }
+
+        // Only enforce on GET requests (POST is handled by enforce_checkout_guard)
+        $method = isset($_SERVER['REQUEST_METHOD']) ? strtoupper(sanitize_key(wp_unslash($_SERVER['REQUEST_METHOD']))) : 'GET';
+        if ($method !== 'GET') {
+            return;
+        }
+
+        if (!self::is_under_attack()) {
+            return;
+        }
+
+        $ip = self::get_client_ip();
+        if (self::is_exempt_ip($ip)) {
+            return;
+        }
+
+        $ua = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';
+
+        // If client already holds valid clearance cookie, permit page load
+        if (class_exists(BotReconDefense::class) && BotReconDefense::has_valid_clearance_cookie($ip, $ua)) {
+            return;
+        }
+
+        // Render WebCrypto PoW challenge directly on GET
+        if (class_exists(BotReconDefense::class)) {
+            BotReconDefense::render_webcrypto_challenge($ip, $ua);
+        }
+    }
+
+    /**
+     * Enforce Under-Attack PoW guard on WooCommerce Store API checkout (/wc/store/v1/checkout).
+     * Returns structured JSON HTTP 429 instead of HTML.
+     *
+     * @param mixed            $result
+     * @param \WP_REST_Server  $server
+     * @param \WP_REST_Request $request
+     * @return mixed
+     */
+    public static function enforce_store_api_checkout_guard($result, $server, $request) {
+        $route = method_exists($request, 'get_route') ? (string) $request->get_route() : '';
+        if (strpos($route, '/wc/store/v1/checkout') !== 0 && strpos($route, '/wc/store/checkout') !== 0) {
+            return $result;
+        }
+
+        if (!self::is_under_attack()) {
+            return $result;
+        }
+
+        $ip = self::get_client_ip();
+        if (self::is_exempt_ip($ip)) {
+            return $result;
+        }
+
+        $ua = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';
+
+        // 1. Check if client holds clearance cookie
+        if (class_exists(BotReconDefense::class) && BotReconDefense::has_valid_clearance_cookie($ip, $ua)) {
+            return $result;
+        }
+
+        // 2. Check header or body for PoW solution (e.g. X-WebCare-PoW-Solution: challenge:nonce)
+        $pow_hdr = method_exists($request, 'get_header') ? $request->get_header('x-webcare-pow-solution') : '';
+        if (empty($pow_hdr) && isset($_SERVER['HTTP_X_WEBCARE_POW_SOLUTION'])) {
+            $pow_hdr = sanitize_text_field(wp_unslash($_SERVER['HTTP_X_WEBCARE_POW_SOLUTION']));
+        }
+
+        if (!empty($pow_hdr) && strpos($pow_hdr, ':') !== false) {
+            [$ch, $no] = explode(':', $pow_hdr, 2);
+            if (class_exists(BotReconDefense::class) && BotReconDefense::verify_pow_solution($ch, $no, $ip, $ua)) {
+                BotReconDefense::issue_clearance_cookie($ip, $ua);
+                return $result;
+            }
+        }
+
+        // 3. Return structured JSON 429 with challenge parameters
+        $challenge = class_exists(BotReconDefense::class) ? BotReconDefense::generate_challenge($ip, $ua) : '';
+        return new \WP_REST_Response([
+            'code'    => 'webcare_checkout_pow_required',
+            'message' => __('High-velocity automated checkout traffic detected. WebCrypto proof-of-work clearance required.', 'webcare-pro-security'),
+            'data'    => [
+                'status'       => 429,
+                'pow_required' => true,
+                'challenge'    => $challenge,
+                'difficulty'   => 4,
+            ],
+        ], 429);
     }
 
     /**
