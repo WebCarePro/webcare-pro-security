@@ -3550,6 +3550,40 @@ class FirewallEngine {
     }
 
     /**
+     * Verify whether a WooCommerce session exists and is unexpired in the database.
+     * Enforces database-level revocation for both runtime and early-boot shopper sessions.
+     *
+     * @param string $customer_id
+     * @return bool
+     */
+    public static function is_unexpired_woocommerce_db_session(string $customer_id): bool {
+        if ($customer_id === '') {
+            return false;
+        }
+
+        global $wpdb;
+        if (!isset($wpdb) || !is_object($wpdb) || empty($wpdb->prefix)) {
+            return false;
+        }
+
+        $sess_table = $wpdb->prefix . 'woocommerce_sessions';
+        if (!preg_match('/^[a-zA-Z0-9_]+$/', $sess_table)) {
+            return false;
+        }
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Early WAF session authenticity verification
+        $db_expiry = $wpdb->get_var(
+            $wpdb->prepare(
+                'SELECT session_expiry FROM %i WHERE session_key = %s LIMIT 1',
+                $sess_table,
+                $customer_id
+            )
+        );
+
+        return is_numeric($db_expiry) && (int) $db_expiry > time();
+    }
+
+    /**
      * Check if current request has an authentic, cryptographically verified shopper or customer session.
      *
      * Never trusts cookie names, numeric counters, or delimiter counts alone:
@@ -3583,7 +3617,10 @@ class FirewallEngine {
                         if ($wp_hash_key !== '') {
                             $expected_hmac = hash_hmac('md5', $to_hash, $wp_hash_key);
                             if (hash_equals($expected_hmac, (string) $c_hash)) {
-                                return true;
+                                // Strictly verify database existence and unexpired status to enforce session revocation (e.g. on logout/cleanup)
+                                if (self::is_unexpired_woocommerce_db_session((string) $c_id)) {
+                                    return true;
+                                }
                             }
                         }
                     }
@@ -3640,22 +3677,8 @@ class FirewallEngine {
                 }
 
                 // Verify session key actually exists and is unexpired in {$wpdb->prefix}woocommerce_sessions
-                global $wpdb;
-                if (isset($wpdb) && is_object($wpdb) && !empty($wpdb->prefix)) {
-                    $sess_table = $wpdb->prefix . 'woocommerce_sessions';
-                    if (preg_match('/^[a-zA-Z0-9_]+$/', $sess_table)) {
-                        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Early WAF session authenticity verification
-                        $db_expiry = $wpdb->get_var(
-                            $wpdb->prepare(
-                                'SELECT session_expiry FROM %i WHERE session_key = %s LIMIT 1',
-                                $sess_table,
-                                $customer_id
-                            )
-                        );
-                        if (is_numeric($db_expiry) && (int) $db_expiry > time()) {
-                            return true;
-                        }
-                    }
+                if (self::is_unexpired_woocommerce_db_session((string) $customer_id)) {
+                    return true;
                 }
             }
         }

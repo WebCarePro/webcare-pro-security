@@ -733,41 +733,34 @@ class SessionSentinel {
 
                 // Smart Deductive Inference for existing sessions without stored auth_type
                 if (empty($auth_type)) {
-                    $is_support = get_user_meta($admin->ID, 'webcareproscan_is_temporary_support', true);
-                    if ($is_support) {
-                        $auth_type = 'magic_link';
-                        $auth_label = __('Magic Support Link (Zero-Trust JIT)', 'webcare-pro-security');
-                        $auth_details = ['type' => 'magic_link'];
+                    // Check if a passkey was used around the login time
+                    $user_passkeys = class_exists('\\WebCareProScanner\\Auth\\WebAuthnManager') ? \WebCareProScanner\Auth\WebAuthnManager::get_user_credentials($admin->ID) : [];
+                    $matched_pk = null;
+                    foreach ($user_passkeys as $pk) {
+                        if (!empty($pk['last_used']) && abs((int) $pk['last_used'] - $login_ts) <= 180) {
+                            $matched_pk = $pk;
+                            break;
+                        }
+                    }
+                    if ($matched_pk) {
+                        $auth_type = 'passkey';
+                        $auth_label = sprintf(
+                            /* translators: %s: device name */
+                            __('Passkey (%s)', 'webcare-pro-security'),
+                            $matched_pk['name'] ?? 'Windows Hello / FIDO2'
+                        );
+                        $auth_details = [
+                            'type'        => 'passkey',
+                            'device_name' => $matched_pk['name'] ?? 'Hardware Key',
+                        ];
+                    } elseif (class_exists('\\WebCareProScanner\\Auth\\TwoFactorAuth') && \WebCareProScanner\Auth\TwoFactorAuth::is_user_enabled($admin->ID)) {
+                        $auth_type = '2fa';
+                        $auth_label = __('2FA (TOTP Authenticator)', 'webcare-pro-security');
+                        $auth_details = ['type' => 'totp'];
                     } else {
-                        // Check if a passkey was used around the login time
-                        $user_passkeys = class_exists('\\WebCareProScanner\\Auth\\WebAuthnManager') ? \WebCareProScanner\Auth\WebAuthnManager::get_user_credentials($admin->ID) : [];
-                        $matched_pk = null;
-                        foreach ($user_passkeys as $pk) {
-                            if (!empty($pk['last_used']) && abs((int) $pk['last_used'] - $login_ts) <= 180) {
-                                $matched_pk = $pk;
-                                break;
-                            }
-                        }
-                        if ($matched_pk) {
-                            $auth_type = 'passkey';
-                            $auth_label = sprintf(
-                                /* translators: %s: device name */
-                                __('Passkey (%s)', 'webcare-pro-security'),
-                                $matched_pk['name'] ?? 'Windows Hello / FIDO2'
-                            );
-                            $auth_details = [
-                                'type'        => 'passkey',
-                                'device_name' => $matched_pk['name'] ?? 'Hardware Key',
-                            ];
-                        } elseif (class_exists('\\WebCareProScanner\\Auth\\TwoFactorAuth') && \WebCareProScanner\Auth\TwoFactorAuth::is_user_enabled($admin->ID)) {
-                            $auth_type = '2fa';
-                            $auth_label = __('2FA (TOTP Authenticator)', 'webcare-pro-security');
-                            $auth_details = ['type' => 'totp'];
-                        } else {
-                            $auth_type = 'password';
-                            $auth_label = __('Password Only (Single-Factor)', 'webcare-pro-security');
-                            $auth_details = ['type' => 'password'];
-                        }
+                        $auth_type = 'password';
+                        $auth_label = __('Password Only (Single-Factor)', 'webcare-pro-security');
+                        $auth_details = ['type' => 'password'];
                     }
                 }
 
@@ -810,8 +803,6 @@ class SessionSentinel {
                 $security_level = 'hardened';
                 if ($auth_type === 'password') {
                     $security_level = 'at_risk';
-                } elseif ($auth_type === 'magic_link') {
-                    $security_level = 'sandboxed';
                 }
 
                 $risk_factors = [];
@@ -825,9 +816,6 @@ class SessionSentinel {
                         esc_html($ip),
                         esc_html($client_ip)
                     );
-                }
-                if ($auth_type === 'magic_link') {
-                    $risk_factors[] = __('Temporary technician session confined by Zero-Trust MU Guardian.', 'webcare-pro-security');
                 }
 
                 // Expiration calculations

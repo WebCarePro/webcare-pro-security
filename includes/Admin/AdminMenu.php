@@ -550,14 +550,7 @@ class AdminMenu {
                 'timezoneOffset'  => $wp_tz_offset, // in seconds from UTC
                 'gmtOffset'       => (float) get_option('gmt_offset', 0),
                 'siteTime'           => current_time('mysql'),
-                'isTemporarySupport' => (function() {
-                    $uid = get_current_user_id();
-                    if (!$uid) {
-                        return false;
-                    }
-                    $support_users = get_option('webcareproscan_support_active_users', []);
-                    return !empty(get_user_meta($uid, 'webcareproscan_is_temporary_support', true)) || (is_array($support_users) && isset($support_users[$uid]));
-                })(),
+                'isTemporarySupport' => false,
                 'assetsUrl'          => esc_url_raw(WEBCAREPROSCAN_URL . 'assets/'),
                 'logoPngUrl'         => esc_url_raw(WEBCAREPROSCAN_URL . 'assets/logo.png'),
                 'logo3dUrl'          => esc_url_raw(WEBCAREPROSCAN_URL . 'assets/webcare-original-logo-3d.jpg'),

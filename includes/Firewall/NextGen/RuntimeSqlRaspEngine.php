@@ -33,6 +33,10 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
         self::$verified_reset_users    = [];
     }
 
+    public static function get_verified_password_user(int $uid): ?array {
+        return self::$verified_password_users[$uid] ?? null;
+    }
+
     public function get_id(): string {
         return 'runtime-sql-rasp';
     }
@@ -77,6 +81,12 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
 
         $uid = (int) $user_id;
 
+        // Password rehash is only performed by WordPress Core if the hash actually needs rehashing.
+        // If the hash is already current, Core will never invoke wp_set_password, so creating an authorization record is unnecessary.
+        if (!function_exists('wp_needs_rehash') || !wp_needs_rehash($hash)) {
+            return $check;
+        }
+
         // Verify caller provenance: MUST be invoked by WordPress Core's wp_check_password()
         // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_debug_backtrace -- Cryptographic caller verification
         $frames              = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 8);
@@ -119,10 +129,11 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
             return $check;
         }
 
-        // Bind one-time authorization record to user ID and authenticated hash
+        // Bind one-time authorization record strictly to user ID, expected rehash operation, and authenticated hash
         self::$verified_password_users[$uid] = [
-            'hash'      => $hash,
-            'timestamp' => time(),
+            'operation'     => 'password_rehash',
+            'original_hash' => $hash,
+            'timestamp'     => time(),
         ];
 
         return $check;
@@ -822,17 +833,51 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
             // Require verified runtime authentication from check_password filter
             if (!empty(self::$verified_password_users[$uid])) {
                 $auth_rec  = self::$verified_password_users[$uid];
-                $auth_hash = is_array($auth_rec) ? ($auth_rec['hash'] ?? '') : '';
+                $op        = is_array($auth_rec) ? ($auth_rec['operation'] ?? '') : '';
+                $auth_hash = is_array($auth_rec) ? ($auth_rec['original_hash'] ?? '') : '';
                 $auth_time = is_array($auth_rec) ? (int) ($auth_rec['timestamp'] ?? 0) : 0;
 
-                // Enforce time bound (within 30 seconds of authentication) and exact credential hash match
+                // Operation-bound verification: Must specifically authorize password_rehash
+                if ($op !== 'password_rehash') {
+                    return false;
+                }
+
+                // Verify exact call-stack provenance: wp_set_password() MUST be called directly by wp_check_password() in canonical pluggable.php
+                $canonical_pluggable     = defined('ABSPATH') && defined('WPINC') ? wp_normalize_path(ABSPATH . WPINC . '/pluggable.php') : '';
+                $has_direct_rehash_stack = false;
+
+                for ($i = 0; $i < count($full_frames); $i++) {
+                    $fn = $full_frames[$i]['function'] ?? '';
+                    if ($fn === 'wp_set_password') {
+                        $arg_uid     = isset($full_frames[$i]['args'][1]) ? (int) $full_frames[$i]['args'][1] : 0;
+                        $caller_fn   = $full_frames[$i + 1]['function'] ?? '';
+                        $caller_file = isset($full_frames[$i]['file']) ? wp_normalize_path((string) $full_frames[$i]['file']) : '';
+
+                        if (
+                            $arg_uid === $uid
+                            && $caller_fn === 'wp_check_password'
+                            && ($canonical_pluggable === '' || $caller_file === $canonical_pluggable)
+                        ) {
+                            $has_direct_rehash_stack = true;
+                        }
+                        break;
+                    }
+                }
+
+                if (!$has_direct_rehash_stack) {
+                    return false;
+                }
+
+                // Enforce time bound (within 15 seconds of authentication), pre-rehash hash match, and active need for rehash
                 if (
                     $auth_hash !== ''
                     && $auth_time > 0
-                    && (time() - $auth_time) <= 30
+                    && (time() - $auth_time) <= 15
                     && hash_equals($auth_hash, (string) $target_user->user_pass)
+                    && function_exists('wp_needs_rehash')
+                    && wp_needs_rehash($auth_hash)
                 ) {
-                    // One-time consume: invalidate immediately to prevent secondary or replay mutations
+                    // One-time consume: invalidate immediately upon observing rehash to prevent secondary or replay mutations
                     unset(self::$verified_password_users[$uid]);
                     return true;
                 }
