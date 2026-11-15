@@ -79,24 +79,33 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
 
         // Verify caller provenance: MUST be invoked by WordPress Core's wp_check_password()
         // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_debug_backtrace -- Cryptographic caller verification
-        $frames         = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 8);
-        $is_core_caller = false;
+        $frames              = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 8);
+        $own_file            = wp_normalize_path(__FILE__);
+        $canonical_pluggable = defined('ABSPATH') && defined('WPINC') ? wp_normalize_path(ABSPATH . WPINC . '/pluggable.php') : '';
+        $canonical_hook      = defined('ABSPATH') && defined('WPINC') ? wp_normalize_path(ABSPATH . WPINC . '/class-wp-hook.php') : '';
+        $canonical_plugin    = defined('ABSPATH') && defined('WPINC') ? wp_normalize_path(ABSPATH . WPINC . '/plugin.php') : '';
+        $is_core_caller      = false;
 
         for ($i = 0; $i < count($frames); $i++) {
             $file = isset($frames[$i]['file']) ? wp_normalize_path((string) $frames[$i]['file']) : '';
 
-            // Skip hook dispatcher frames
-            if (str_contains($file, '/wp-includes/class-wp-hook.php') || str_contains($file, '/wp-includes/plugin.php')) {
+            // Skip observer's own frame if present
+            if ($file === $own_file) {
                 continue;
             }
 
-            // The direct caller invoking apply_filters('check_password', ...) must be wp-includes/pluggable.php
-            if (str_contains($file, '/wp-includes/pluggable.php')) {
+            // Skip WordPress hook dispatcher frames
+            if ($file === $canonical_hook || $file === $canonical_plugin) {
+                continue;
+            }
+
+            // The direct caller invoking apply_filters('check_password', ...) must be exact canonical wp-includes/pluggable.php
+            if ($canonical_pluggable !== '' && $file === $canonical_pluggable) {
                 $is_core_caller = true;
                 break;
             }
 
-            // If any other file (such as a third-party plugin) invoked the filter, reject immediately
+            // If any other file (such as a third-party plugin or spoofed path) invoked the filter, reject immediately
             break;
         }
 
@@ -138,29 +147,40 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
             return;
         }
 
-        // Verify caller provenance: MUST originate from authentic Core wp-login.php or WooCommerce
+        // Verify caller provenance: MUST originate from authentic Core wp-login.php, user.php, or WooCommerce
         // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_debug_backtrace -- Cryptographic caller verification
-        $frames          = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 8);
-        $is_valid_caller = false;
+        $frames               = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 8);
+        $own_file             = wp_normalize_path(__FILE__);
+        $canonical_hook       = defined('ABSPATH') && defined('WPINC') ? wp_normalize_path(ABSPATH . WPINC . '/class-wp-hook.php') : '';
+        $canonical_plugin     = defined('ABSPATH') && defined('WPINC') ? wp_normalize_path(ABSPATH . WPINC . '/plugin.php') : '';
+        $canonical_login      = defined('ABSPATH') ? wp_normalize_path(ABSPATH . 'wp-login.php') : '';
+        $canonical_user       = defined('ABSPATH') && defined('WPINC') ? wp_normalize_path(ABSPATH . WPINC . '/user.php') : '';
+        $canonical_wc_handler = defined('WP_PLUGIN_DIR') ? wp_normalize_path(WP_PLUGIN_DIR . '/woocommerce/includes/class-wc-form-handler.php') : '';
+        $is_valid_caller      = false;
 
         for ($i = 0; $i < count($frames); $i++) {
             $file = isset($frames[$i]['file']) ? wp_normalize_path((string) $frames[$i]['file']) : '';
 
-            // Skip hook dispatcher frames
-            if (str_contains($file, '/wp-includes/class-wp-hook.php') || str_contains($file, '/wp-includes/plugin.php')) {
+            // Skip observer's own frame if present
+            if ($file === $own_file) {
+                continue;
+            }
+
+            // Skip WordPress hook dispatcher frames
+            if ($file === $canonical_hook || $file === $canonical_plugin) {
                 continue;
             }
 
             if (
-                str_ends_with($file, '/wp-login.php')
-                || str_contains($file, '/plugins/woocommerce/includes/class-wc-form-handler.php')
-                || str_contains($file, '/wp-includes/user.php')
+                ($canonical_login !== '' && $file === $canonical_login)
+                || ($canonical_user !== '' && $file === $canonical_user)
+                || ($canonical_wc_handler !== '' && $file === $canonical_wc_handler)
             ) {
                 $is_valid_caller = true;
                 break;
             }
 
-            // If any other file (such as a third-party plugin) invoked the hook, reject immediately
+            // If any other file (such as a third-party plugin or spoofed path) invoked the hook, reject immediately
             break;
         }
 
@@ -651,9 +671,13 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                 return false;
             }
 
-            if ($fn === 'wp_check_password') {
-                $arg_uid = isset($fr['args'][2]) ? (int) $fr['args'][2] : 0;
-                if ($arg_uid === $uid) {
+            if (
+                $fn === 'wp_check_password'
+                || $fn === 'wp_authenticate_username_password'
+                || $fn === 'wp_authenticate_email_password'
+            ) {
+                $arg_uid = isset($fr['args'][2]) ? (int) $fr['args'][2] : (isset($fr['args'][1]) ? (int) $fr['args'][1] : 0);
+                if ($arg_uid === 0 || $arg_uid === $uid) {
                     $in_wp_check_password = true;
                 }
             }
@@ -676,30 +700,7 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
             }
         }
 
-        // Path 1: Legitimate login password rehash inside wp_check_password()
-        if ($in_wp_check_password) {
-            // Require verified runtime authentication from check_password filter
-            if (!empty(self::$verified_password_users[$uid])) {
-                $auth_rec  = self::$verified_password_users[$uid];
-                $auth_hash = is_array($auth_rec) ? ($auth_rec['hash'] ?? '') : '';
-                $auth_time = is_array($auth_rec) ? (int) ($auth_rec['timestamp'] ?? 0) : 0;
-
-                // Enforce time bound (within 30 seconds of authentication) and exact credential hash match
-                if (
-                    $auth_hash !== ''
-                    && $auth_time > 0
-                    && (time() - $auth_time) <= 30
-                    && hash_equals($auth_hash, (string) $target_user->user_pass)
-                ) {
-                    // One-time consume: invalidate immediately to prevent secondary or replay mutations
-                    unset(self::$verified_password_users[$uid]);
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        // Path 2: Legitimate password reset completion inside reset_password() or check_password_reset_key()
+        // Path 1: Legitimate password reset completion inside reset_password() or check_password_reset_key()
         if ($in_reset_password) {
             $existing_key = isset($target_user->user_activation_key) ? trim((string) $target_user->user_activation_key) : '';
             if ($existing_key === '') {
@@ -718,12 +719,9 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                 if ($key_ts > (time() + 5)) {
                     return false;
                 }
-                // Enforce WordPress password_reset_expiration policy (default 86400s)
+                // Enforce WordPress password_reset_expiration policy (default 86400s, allows intentional zero/low expiration)
                 // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- Evaluating WordPress Core password reset expiration policy
                 $expiration_duration = function_exists('apply_filters') ? (int) apply_filters('password_reset_expiration', 86400) : 86400;
-                if ($expiration_duration <= 0) {
-                    $expiration_duration = 86400;
-                }
                 if ((time() - $key_ts) > $expiration_duration) {
                     return false; // Key has expired
                 }
@@ -816,6 +814,29 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                 }
             }
 
+            return false;
+        }
+
+        // Path 2: Legitimate login password rehash inside authentic Core authentication stack
+        if ($in_wp_check_password) {
+            // Require verified runtime authentication from check_password filter
+            if (!empty(self::$verified_password_users[$uid])) {
+                $auth_rec  = self::$verified_password_users[$uid];
+                $auth_hash = is_array($auth_rec) ? ($auth_rec['hash'] ?? '') : '';
+                $auth_time = is_array($auth_rec) ? (int) ($auth_rec['timestamp'] ?? 0) : 0;
+
+                // Enforce time bound (within 30 seconds of authentication) and exact credential hash match
+                if (
+                    $auth_hash !== ''
+                    && $auth_time > 0
+                    && (time() - $auth_time) <= 30
+                    && hash_equals($auth_hash, (string) $target_user->user_pass)
+                ) {
+                    // One-time consume: invalidate immediately to prevent secondary or replay mutations
+                    unset(self::$verified_password_users[$uid]);
+                    return true;
+                }
+            }
             return false;
         }
 

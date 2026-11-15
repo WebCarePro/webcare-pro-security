@@ -3571,12 +3571,22 @@ class FirewallEngine {
             }
         }
 
-        // 1. If WooCommerce session handler is already initialized in runtime, verify via official API + active session check
+        // 1. If WooCommerce session handler is already initialized in runtime, cryptographically verify via official API + active session check
         if (function_exists('WC') && is_object(WC()) && isset(WC()->session) && is_object(WC()->session)) {
-            if (method_exists(WC()->session, 'has_session') && method_exists(WC()->session, 'get_session_cookie')) {
+            if (method_exists(WC()->session, 'has_session') && method_exists(WC()->session, 'get_session_cookie') && WC()->session->has_session()) {
                 $wc_cookie = WC()->session->get_session_cookie();
-                if (is_array($wc_cookie) && count($wc_cookie) === 4 && !empty($wc_cookie[0]) && WC()->session->has_session()) {
-                    return true;
+                if (is_array($wc_cookie) && count($wc_cookie) === 4 && !empty($wc_cookie[0])) {
+                    [$c_id, $s_exp, $s_expiring, $c_hash] = $wc_cookie;
+                    if (ctype_digit((string) $s_exp) && (int) $s_exp > time() && preg_match('/^[a-f0-9]{32,64}$/i', (string) $c_hash)) {
+                        $to_hash     = $c_id . '|' . $s_exp;
+                        $wp_hash_key = function_exists('wp_hash') ? wp_hash($to_hash) : '';
+                        if ($wp_hash_key !== '') {
+                            $expected_hmac = hash_hmac('md5', $to_hash, $wp_hash_key);
+                            if (hash_equals($expected_hmac, (string) $c_hash)) {
+                                return true;
+                            }
+                        }
+                    }
                 }
             }
         }
