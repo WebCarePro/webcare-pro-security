@@ -75,13 +75,6 @@ class LoginHistoryManager {
         global $wpdb;
         $table = $wpdb->prefix . self::TABLE_NAME;
 
-        // Check if table exists
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-        $table_exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table));
-        if (!$table_exists) {
-            \WebCareProScanner\Database\Migration::install();
-        }
-
         $session_token = !empty(self::$last_auth_token) ? self::$last_auth_token : wp_get_session_token();
         if (empty($session_token)) {
             $manager = \WP_Session_Tokens::get_instance($user->ID);
@@ -381,13 +374,6 @@ class LoginHistoryManager {
                 'success' => false,
                 'message' => 'User not found'
             ];
-        }
-
-        // Ensure table exists
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-        $table_exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table));
-        if (!$table_exists) {
-            \WebCareProScanner\Database\Migration::install();
         }
 
         // Calculate query limit: 0 or values >= 1000 retrieve full history

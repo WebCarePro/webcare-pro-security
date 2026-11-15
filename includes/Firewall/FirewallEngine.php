@@ -1665,6 +1665,8 @@ class FirewallEngine {
                         'id'          => !empty($upload_check['rule_id']) ? $upload_check['rule_id'] : 'WAF-POLYGLOT-UPLOAD-TRAP',
                         'name'        => !empty($upload_check['rule_name']) ? $upload_check['rule_name'] : 'Malicious File Upload Shield (Rule 8)',
                         'category'    => !empty($upload_check['category']) ? $upload_check['category'] : 'Malicious File Upload',
+                        'detector'    => !empty($upload_check['detector']) ? $upload_check['detector'] : 'ExploitSignatureEngine',
+                        'sig_id'      => !empty($upload_check['sig_id']) ? $upload_check['sig_id'] : 'sig:upload:polyglot_embedded_script',
                         'description' => (string) $upload_check['error'],
                         'match_type'  => 'Malicious File Upload',
                         'match_value' => (string) ($uploaded_item['name'] ?? ''),

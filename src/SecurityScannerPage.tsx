@@ -1978,6 +1978,18 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                             <span style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', background: 'rgba(99, 102, 241, 0.1)', color: '#6366f1', border: '1px solid rgba(99, 102, 241, 0.2)' }}>
                               ACCOUNT DEFENSE
                             </span>
+                          ) : isPost ? (
+                            <span style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', background: 'rgba(2, 132, 199, 0.1)', color: '#0284c7', border: '1px solid rgba(2, 132, 199, 0.2)' }}>
+                              {(issue.post_type || (isPage ? 'page' : 'post')).toUpperCase()}
+                            </span>
+                          ) : (isDbTable || isDbRecord || isDbOption) ? (
+                            <span style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', background: 'rgba(126, 34, 206, 0.1)', color: '#7e22ce', border: '1px solid rgba(126, 34, 206, 0.2)' }}>
+                              DATABASE ROW
+                            </span>
+                          ) : isComment ? (
+                            <span style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', background: 'rgba(124, 58, 237, 0.1)', color: '#7c3aed', border: '1px solid rgba(124, 58, 237, 0.2)' }}>
+                              COMMENT
+                            </span>
                           ) : isUpdate ? (
                             <span style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', background: 'rgba(217, 119, 6, 0.1)', color: '#d97706', border: '1px solid rgba(217, 119, 6, 0.2)' }}>
                               SOFTWARE UPDATE
@@ -2822,7 +2834,7 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                                     </span>
                                   ) : isPost ? (
                                     <span className="webcare-type-badge-post">
-                                      {(issue.post_type || 'post').toUpperCase()}
+                                      {(issue.post_type || (isPage ? 'page' : 'post')).toUpperCase()}
                                     </span>
                                   ) : isUser ? (
                                     <span className="webcare-type-badge-user" style={{ background: '#f0fdf4', color: '#15803d', border: '1px solid #bbf7d0', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700 }}>

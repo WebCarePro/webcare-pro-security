@@ -363,7 +363,8 @@ class GeoShieldService {
             $text = trim(wp_strip_all_tags($matches[1]));
             $style_attr = $matches[0];
             $has_visible_override = (bool) preg_match('/(?<![a-z\-])color\s*:\s*(?!transparent|rgba\s*\(\s*0\s*,\s*0\s*,\s*0\s*,\s*0\s*\))[#a-z0-9]/i', $style_attr);
-            if (!empty($text) && !$has_visible_override) {
+            $is_gradient_text = (bool) preg_match('/(?:background-clip\s*:\s*text|-webkit-background-clip\s*:\s*text|linear-gradient|radial-gradient|-webkit-text-fill-color)/i', $style_attr);
+            if (!empty($text) && !$has_visible_override && !$is_gradient_text) {
                 $detections[] = [
                     'type'       => 'geo_transparent_text_cloak',
                     'snippet'    => substr($matches[0], 0, 150),

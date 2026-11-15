@@ -94,7 +94,7 @@ if (file_exists($webcareproscan_server_sec_file)) {
 
 
 $webcareproscan_settings = get_option('webcareproscan_settings', []);
-$webcareproscan_delete_data = false; // Disabled by default to prevent loss of quarantine vault & settings on reinstallation
+$webcareproscan_delete_data = true; // Default to true for clean fresh uninstallation; can be configured in settings
 
 if (is_array($webcareproscan_settings) && array_key_exists('delete_data_on_uninstall', $webcareproscan_settings)) {
     $webcareproscan_delete_data = (bool) $webcareproscan_settings['delete_data_on_uninstall'];

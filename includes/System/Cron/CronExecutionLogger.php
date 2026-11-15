@@ -41,12 +41,10 @@ class CronExecutionLogger {
     }
 
     /**
-     * Ensure table exists cleanly when upgrade runs inline before activation hook.
+     * Ensure table exists cleanly. Database schema is authoritatively installed on plugin activation.
      */
     private static function ensure_table_exists(): void {
-        if (get_option('webcareproscan_db_version') !== '1.13.0' && class_exists('\\WebCareProScanner\\Database\\Migration')) {
-            \WebCareProScanner\Database\Migration::install();
-        }
+        // No-op: all tables are authoritatively initialized on plugin activation.
     }
 
     /**

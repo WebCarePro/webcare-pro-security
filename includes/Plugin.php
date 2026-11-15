@@ -27,11 +27,6 @@ class Plugin {
         $is_cron  = (defined('DOING_CRON') && DOING_CRON);
         $is_admin = is_admin();
 
-        // 0. Fast In-Memory Database Schema Migration Check (0 SQL queries on regular requests via autoloaded 'alloptions')
-        if (get_option('webcareproscan_db_version') !== '1.13.0') {
-            \WebCareProScanner\Database\Migration::install();
-        }
-
         // 1. Always-On Lightweight Runtime Security (WAF, Auth, Session, Headers)
         \WebCareProScanner\Firewall\WafFileLogger::init();
         \WebCareProScanner\Firewall\FirewallEngine::init();
