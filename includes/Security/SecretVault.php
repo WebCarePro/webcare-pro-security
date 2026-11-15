@@ -847,22 +847,42 @@ class SecretVault {
         }
         @chmod($temp_dest, 0600);
 
-        $stat            = fstat($v_fp);
-        $total_file_size = (int) ($stat['size'] ?? 0);
-        $current_pos     = ftell($v_fp);
-        $expected_bytes  = ($current_pos !== false && $total_file_size >= $current_pos) ? ($total_file_size - $current_pos) : null;
+        $stat = @fstat($v_fp);
+        if ($stat === false || !isset($stat['size']) || (int) $stat['size'] < 0) {
+            fclose($v_fp);
+            fclose($dst_fp);
+            wp_delete_file($temp_dest);
+            return [
+                'success' => false,
+                'error'   => 'Failed to determine source stream size via fstat() during legacy restore.',
+            ];
+        }
+        $total_file_size = (int) $stat['size'];
+
+        $current_pos = @ftell($v_fp);
+        if ($current_pos === false || $current_pos < 0 || $current_pos > $total_file_size) {
+            fclose($v_fp);
+            fclose($dst_fp);
+            wp_delete_file($temp_dest);
+            return [
+                'success' => false,
+                'error'   => 'Failed to determine stream position via ftell() during legacy restore.',
+            ];
+        }
+
+        $expected_bytes = $total_file_size - $current_pos;
 
         $copied = stream_copy_to_stream($v_fp, $dst_fp);
         fclose($v_fp);
 
-        if ($copied === false || ($expected_bytes !== null && $copied !== $expected_bytes)) {
+        if ($copied === false || $copied !== $expected_bytes) {
             fclose($dst_fp);
             wp_delete_file($temp_dest);
             return [
                 'success' => false,
                 'error'   => sprintf(
                     'Stream copy failure or incomplete copy during legacy restore (expected %d bytes, copied %d bytes).',
-                    (int) $expected_bytes,
+                    $expected_bytes,
                     (int) $copied
                 ),
             ];

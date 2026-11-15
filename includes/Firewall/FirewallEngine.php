@@ -1407,6 +1407,8 @@ class FirewallEngine {
                     'id'          => 'WAF-UNAUTHORIZED-PUT-UPLOAD',
                     'name'        => 'Unauthorized HTTP PUT File Upload Guard',
                     'category'    => 'Protocol Defense',
+                    'detector'    => 'FirewallEngine',
+                    'sig_id'      => 'sig:proto:unauthorized_put_request',
                     'description' => sprintf(
                         /* translators: %s: Request URI path */
                         esc_html__('Unauthenticated HTTP PUT request rejected on non-REST endpoint "%s" to prevent arbitrary webshell upload.', 'webcare-pro-security'),
@@ -1434,6 +1436,8 @@ class FirewallEngine {
                         'id'          => 'WAF-REST-METHOD-SMUGGLE',
                         'name'        => 'HTTP Method Override Smuggling Guard (Rule #48)',
                         'category'    => 'Execution Armor',
+                        'detector'    => 'FirewallEngine',
+                        'sig_id'      => 'sig:proto:rest_method_override_smuggle',
                         'description' => sprintf(
                             /* translators: %s: Smuggled HTTP method name */
                             esc_html__('Unauthenticated client attempted to smuggle privileged HTTP method (%s) via override parameter/header.', 'webcare-pro-security'),
@@ -1471,6 +1475,8 @@ class FirewallEngine {
                     'id'          => 'WAF-AUTH-TYPE-CONFUSION',
                     'name'        => 'Authentication Array Type-Confusion Trap (Rule #49)',
                     'category'    => 'Brute Force & Auth Armor',
+                    'detector'    => 'FirewallEngine',
+                    'sig_id'      => 'sig:proto:auth_header_type_confusion',
                     'description' => sprintf(
                         /* translators: %s: Parameter name subjected to type confusion */
                         esc_html__('Non-scalar array submitted for authentication credential (%s) to induce type-confusion or error state.', 'webcare-pro-security'),
@@ -1559,6 +1565,8 @@ class FirewallEngine {
                         'id'          => 'WAF-FORGED-WEBHOOK-TRAP',
                         'name'        => 'Forged Payment Gateway Webhook Trap (Rule #52)',
                         'category'    => 'Execution Armor',
+                        'detector'    => 'FirewallEngine',
+                        'sig_id'      => 'sig:proto:forged_webhook_signature',
                         'description' => sprintf(
                             /* translators: 1: Header name, 2: Spoofed IP address */
                             esc_html__('Forged %1$s webhook header presented by unauthorized non-gateway IP (%2$s).', 'webcare-pro-security'),
@@ -1619,6 +1627,8 @@ class FirewallEngine {
                     'id'          => 'WAF-UPLOADS-PHP-DENY',
                     'name'        => 'Uploads Directory PHP Execution Deny',
                     'category'    => 'Execution Armor',
+                    'detector'    => 'FirewallEngine',
+                    'sig_id'      => 'sig:armor:php_upload_execution_deny',
                     'description' => 'Direct execution request to PHP script inside media uploads folder was blocked.',
                     'match_type'  => 'Script Execution Defense',
                     'match_value' => $clean_path,
@@ -5679,7 +5689,7 @@ class FirewallEngine {
                 ],
                 'WAF-UPLOADS-PHP-DENY'                  => [
                     'category' => 'Execution Armor',
-                    'detector' => 'ExploitSignatureEngine',
+                    'detector' => 'FirewallEngine',
                     'sig_id'   => 'sig:armor:php_upload_execution_deny',
                 ],
                 'WAF-UNAUTHORIZED-PUT-UPLOAD'           => [
@@ -5688,17 +5698,17 @@ class FirewallEngine {
                     'sig_id'   => 'sig:proto:unauthorized_put_request',
                 ],
                 'WAF-FORGED-WEBHOOK-TRAP'               => [
-                    'category' => 'Protocol Defense',
+                    'category' => 'Execution Armor',
                     'detector' => 'FirewallEngine',
                     'sig_id'   => 'sig:proto:forged_webhook_signature',
                 ],
                 'WAF-AUTH-TYPE-CONFUSION'               => [
-                    'category' => 'Protocol Defense',
+                    'category' => 'Brute Force & Auth Armor',
                     'detector' => 'FirewallEngine',
                     'sig_id'   => 'sig:proto:auth_header_type_confusion',
                 ],
                 'WAF-REST-METHOD-SMUGGLE'               => [
-                    'category' => 'Protocol Defense',
+                    'category' => 'Execution Armor',
                     'detector' => 'FirewallEngine',
                     'sig_id'   => 'sig:proto:rest_method_override_smuggle',
                 ],
@@ -5715,44 +5725,47 @@ class FirewallEngine {
     /**
      * Authoritatively verify whether a rule matches a genuine, registered exploit signature
      * in the trusted internal signature registry.
-     * Enforces that both the rule ID, its definition category, and authorized detector provenance
-     * match the authoritative registry entry, rejecting caller-supplied or forged definitions carrying genuine IDs.
+     * Enforces that all four trust anchors are present and authentic:
+     * (a) Exact registered rule ID
+     * (b) Matching canonical category
+     * (c) Mandatory authorized detector provenance ('detector' / 'detector_id')
+     * (d) Mandatory immutable signature identifier ('sig_id')
+     * If any is missing, empty, or mismatched, or if $rule is empty, fail-safe to TIER_HEURISTIC (zero automated IP bans).
      *
      * @param string $rule_id_str Uppercase rule ID
      * @param array  $rule        Rule definition array
      * @return bool
      */
     public static function is_registered_confirmed_exploit_rule(string $rule_id_str, array $rule = []): bool {
-        if ($rule_id_str === '') {
+        if ($rule_id_str === '' || empty($rule)) {
             return false;
         }
 
         $registry = self::get_confirmed_exploit_registry();
         if (isset($registry[$rule_id_str])) {
             $registered = $registry[$rule_id_str];
-            if (!empty($rule)) {
-                // 1. Mandatory Category Verification
-                $incoming_cat  = trim((string) ($rule['category'] ?? ''));
-                $canonical_cat = trim((string) ($registered['category'] ?? ''));
-                if ($incoming_cat === '' || strcasecmp($incoming_cat, $canonical_cat) !== 0) {
-                    return false; // Rejects genuine IDs with missing, empty, or forged categories
-                }
 
-                // 2. Authorized Detector Provenance Verification: if incoming rule specifies detector,
-                // it must match the authentic registered detector for this signature.
-                $incoming_detector = trim((string) ($rule['detector'] ?? ($rule['detector_id'] ?? '')));
-                $expected_detector = trim((string) ($registered['detector'] ?? ''));
-                if ($incoming_detector !== '' && strcasecmp($incoming_detector, $expected_detector) !== 0) {
-                    return false; // Rejects unauthorized or mismatched detector provenance claims
-                }
-
-                // 3. Immutable Signature ID Verification: if incoming specifies sig_id, it must match
-                $incoming_sig = trim((string) ($rule['sig_id'] ?? ''));
-                $expected_sig = trim((string) ($registered['sig_id'] ?? ''));
-                if ($incoming_sig !== '' && strcasecmp($incoming_sig, $expected_sig) !== 0) {
-                    return false; // Rejects mismatched signature identifier
-                }
+            // 1. Mandatory Category Verification
+            $incoming_cat  = trim((string) ($rule['category'] ?? ''));
+            $canonical_cat = trim((string) ($registered['category'] ?? ''));
+            if ($incoming_cat === '' || strcasecmp($incoming_cat, $canonical_cat) !== 0) {
+                return false; // Rejects genuine IDs with missing, empty, or forged categories
             }
+
+            // 2. Mandatory Authorized Detector Provenance Verification
+            $incoming_detector = trim((string) ($rule['detector'] ?? ($rule['detector_id'] ?? '')));
+            $expected_detector = trim((string) ($registered['detector'] ?? ''));
+            if ($incoming_detector === '' || strcasecmp($incoming_detector, $expected_detector) !== 0) {
+                return false; // Rejects missing, unauthorized, or mismatched detector provenance claims
+            }
+
+            // 3. Mandatory Immutable Signature ID Verification
+            $incoming_sig = trim((string) ($rule['sig_id'] ?? ''));
+            $expected_sig = trim((string) ($registered['sig_id'] ?? ''));
+            if ($incoming_sig === '' || strcasecmp($incoming_sig, $expected_sig) !== 0) {
+                return false; // Rejects missing or mismatched signature identifier
+            }
+
             return true;
         }
 
@@ -5762,19 +5775,26 @@ class FirewallEngine {
             if (class_exists('\\WebCareProScanner\\Firewall\\VirtualPatchManager')) {
                 $catalog = \WebCareProScanner\Firewall\VirtualPatchManager::get_patch_catalog();
                 if (isset($catalog[$patch_id])) {
-                    if (!empty($rule)) {
-                        $incoming_cat      = strtolower(trim((string) ($rule['category'] ?? '')));
-                        $valid_vpatch_cats = ['virtual patch (cve shield)', 'virtual patch', 'cve patch'];
-                        if ($incoming_cat === '' || !in_array($incoming_cat, $valid_vpatch_cats, true)) {
-                            return false; // Rejects genuine patch IDs carrying forged or missing category
-                        }
-
-                        // Verify VirtualPatchManager detector provenance if supplied
-                        $incoming_detector = trim((string) ($rule['detector'] ?? ($rule['detector_id'] ?? '')));
-                        if ($incoming_detector !== '' && !in_array(strtolower($incoming_detector), ['virtualpatchmanager', 'firewallengine'], true)) {
-                            return false; // Rejects unauthorized detector for virtual patch
-                        }
+                    // 1. Mandatory Category Verification
+                    $incoming_cat      = strtolower(trim((string) ($rule['category'] ?? '')));
+                    $valid_vpatch_cats = ['virtual patch (cve shield)', 'virtual patch', 'cve patch'];
+                    if ($incoming_cat === '' || !in_array($incoming_cat, $valid_vpatch_cats, true)) {
+                        return false; // Rejects genuine patch IDs carrying forged or missing category
                     }
+
+                    // 2. Mandatory Detector Provenance Verification
+                    $incoming_detector = strtolower(trim((string) ($rule['detector'] ?? ($rule['detector_id'] ?? ''))));
+                    if ($incoming_detector !== 'virtualpatchmanager') {
+                        return false; // Rejects missing or unauthorized detector for virtual patch
+                    }
+
+                    // 3. Mandatory Signature ID Verification: must match 'cve:' . strtolower($patch_id)
+                    $incoming_sig = strtolower(trim((string) ($rule['sig_id'] ?? '')));
+                    $expected_sig = 'cve:' . strtolower($patch_id);
+                    if ($incoming_sig !== $expected_sig) {
+                        return false; // Rejects missing or mismatched signature identifier for virtual patch
+                    }
+
                     return true;
                 }
             }

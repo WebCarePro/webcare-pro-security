@@ -480,6 +480,8 @@ class VirtualPatchManager {
             'id'          => 'VPATCH-' . $patch_id,
             'name'        => '[Virtual Patch] ' . $patch['title'],
             'category'    => 'Virtual Patch (CVE Shield)',
+            'detector'    => 'VirtualPatchManager',
+            'sig_id'      => 'cve:' . strtolower($patch_id),
             'match_type'  => $match_type,
             'match_value' => substr($evidence, 0, 120),
         ];

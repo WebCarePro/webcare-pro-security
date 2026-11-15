@@ -181,7 +181,8 @@ class VaultRotator {
         // If all settings records migrated and no failures, rotate <20MB encrypted vault archives on disk before verifying
         if ($state['records_done'] >= $state['records_total']) {
             $disk_rotation = self::rotate_encrypted_disk_archives($old_binary_key, $new_binary_key);
-            $state['archives_rotated'] = (int) ($disk_rotation['rotated'] ?? 0);
+            $state['archives_rotated']         = (int) ($disk_rotation['rotated'] ?? 0);
+            $state['archives_already_current'] = (int) ($disk_rotation['already_current'] ?? 0);
             if (!empty($disk_rotation['failed'])) {
                 $state['failed_records'] = array_merge($state['failed_records'] ?? [], $disk_rotation['failed']);
                 $state['status']         = 'failed';
@@ -629,6 +630,7 @@ class VaultRotator {
     private static function rotate_encrypted_disk_archives(string $old_binary_key, string $new_binary_key): array {
         $result = [
             'rotated'              => 0,
+            'already_current'      => 0,
             'failed'               => [],
             'dir_synced'           => 0,
             'dir_sync_failed'      => 0,
@@ -653,9 +655,10 @@ class VaultRotator {
             // Inspect file format
             $inspect = SecretVault::inspect_vault_file($file_path);
             if ($inspect['format'] === SecretVault::VAULT_FORMAT_CHUNKED) {
-                // If already under new key, count as rotated and proceed
+                // If already under new key, count as already current and record in dir_sync_details
                 if (self::is_chunked_vault_under_key($file_path, $new_binary_key)) {
-                    $result['rotated']++;
+                    $result['already_current']++;
+                    $result['dir_sync_details'][basename($file_path)] = 'already_current';
                     continue;
                 }
 
@@ -749,7 +752,8 @@ class VaultRotator {
                 continue;
             }
             if (self::is_under_key($payload, $new_binary_key)) {
-                $result['rotated']++;
+                $result['already_current']++;
+                $result['dir_sync_details'][basename($file_path)] = 'already_current';
                 continue;
             }
 

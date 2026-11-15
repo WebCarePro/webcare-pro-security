@@ -1,6 +1,6 @@
 {
   "version": "2.16.0",
-  "generated_at": "2026-11-15T19:48:49.356Z",
+  "generated_at": "2026-11-15T20:11:37.688Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -444,8 +444,8 @@
       "size": 40170
     },
     "includes/Firewall/Core/ExploitSignatureEngine.php": {
-      "sha256": "e8d1fea64d51654afd15fe8da7c0d89c153afe4af5296b8b57235b1d272dabdc",
-      "size": 103559
+      "sha256": "365c75abdf6840247b10b45a1b98a8e5cde81a8fd4b31ef33f2dce90afc3ff9a",
+      "size": 104112
     },
     "includes/Firewall/Core/RaspPrivilegeGuard.php": {
       "sha256": "5743c90a754f51f20d3895ac6fc1d2bb01ca0b8632db9da27a2737dca6c6be29",
@@ -464,8 +464,8 @@
       "size": 14728
     },
     "includes/Firewall/FirewallEngine.php": {
-      "sha256": "cf90de4d13f5bb93e8ca4e6700a85fb29d9956d37edbcb7f7502f145ecfb5dac",
-      "size": 406257
+      "sha256": "da3c034a8ce8e0e2910c6758b3c050814f756c7a794565339118b3b93d060f1f",
+      "size": 407260
     },
     "includes/Firewall/FormSpamProtectionEngine.php": {
       "sha256": "5826fd51a35f621671072dbf69d71b596224b48db75f9d773cfbe12e261f2cf0",
@@ -564,8 +564,8 @@
       "size": 21265
     },
     "includes/Firewall/VirtualPatchManager.php": {
-      "sha256": "a2a572fe93e0cb0d8aeeb1e17dba2b7abc3ee8c77e61f23567bcc1777d9f858b",
-      "size": 27363
+      "sha256": "bbe470cf7e4f23cccc9a719d26c0d96b7cd5db86e1314db187a4446c9975e490",
+      "size": 27476
     },
     "includes/Firewall/VirtualPatchSynthesizer.php": {
       "sha256": "e32f52d9df780eb60ade79bc8b9301139ea0c30b066fdf0b9d6e734e8bf37d7b",
@@ -776,12 +776,12 @@
       "size": 30891
     },
     "includes/Security/SecretVault.php": {
-      "sha256": "376bd1ec6997a00bc0f30788eec367c519977fa616482e7b92c2278a11f6a696",
-      "size": 44844
+      "sha256": "3a037bf23426b60e5066b0c84d317216c5781200234c40672a12af45a7dbd906",
+      "size": 45458
     },
     "includes/Security/VaultRotator.php": {
-      "sha256": "b619a2359be04dd3c7a88e2947870917c624382cda45e35f3e62e2a4f85d4253",
-      "size": 37507
+      "sha256": "e6d49cf5045e3740d156393da8b7ba057639b502310b7edba88a3ded4c7fb05d",
+      "size": 37874
     },
     "includes/SupplyChain/InstallRiskAdvisor.php": {
       "sha256": "efd655f0d6222111f6e9ef7e16f6018f4d198289d78b14680d2d48e38ab64793",
