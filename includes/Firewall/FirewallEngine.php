@@ -5550,54 +5550,38 @@ class FirewallEngine {
             'Behavioral Defense',
             'Bot Recon Defense',
             '404 Scanner Rate Limit',
+            'Form Spam Defense',
+            'Login Rate Limit',
             'Protocol Defense',
             'Security Policy',
             'File Reconnaissance',
-        ], true) || str_contains($rule_id_str, 'XSS')
-                 || str_contains($rule_id_str, 'AI-PROMPT')
-                 || str_contains($rule_id_str, 'BOT-')
-                 || str_contains($rule_id_str, 'SCANNER-404');
+        ], true)
+        || str_starts_with($rule_id_str, 'XSS-')
+        || str_starts_with($rule_id_str, 'AI-')
+        || str_starts_with($rule_id_str, 'BEHAVIOR-')
+        || str_starts_with($rule_id_str, 'BOT-')
+        || str_starts_with($rule_id_str, 'RATE-')
+        || str_starts_with($rule_id_str, 'SCANNER-404');
 
         if ($is_heuristic) {
             return self::TIER_HEURISTIC;
         }
 
-        // 2. Verified Administrator-Authored Custom Rule Provenance:
-        // Must match a registered rule in the trusted database repository, not unverified array metadata.
-        $rule_ban_ttl = max(0, (int) ($rule['ban_ttl'] ?? 0));
-        if ($rule_ban_ttl > 0 && self::is_verified_admin_custom_rule($rule)) {
-            return self::TIER_ADMIN_POLICY;
+        // 2. Authoritative Administrator-Authored Custom Rule Provenance:
+        // Must match a registered record in the trusted database repository.
+        // Ban eligibility is authoritatively derived from the STORED record, NOT incoming array metadata.
+        $stored_custom_rule = self::get_verified_admin_custom_rule($rule);
+        if ($stored_custom_rule !== null) {
+            $stored_ban_ttl = max(0, (int) ($stored_custom_rule['ban_ttl'] ?? 0));
+            if ($stored_ban_ttl > 0) {
+                return self::TIER_ADMIN_POLICY;
+            }
         }
 
-        // 3. Strict whitelisted confirmed high-severity exploit signatures
-        $critical_ban_categories = [
-            'SQL Injection',
-            'PHP Code Injection',
-            'Execution Armor',
-            'Path Traversal',
-            'Malicious File Upload',
-            'Virtual Patch',
-            'Null Byte Poison',
-            'SSRF Defense',
-        ];
-
-        $is_explicit_exploit = in_array($rule_cat, $critical_ban_categories, true)
-            || str_contains($rule_id_str, 'VPATCH')
-            || str_contains($rule_id_str, 'SQLI')
-            || str_contains($rule_id_str, 'RCE')
-            || str_contains($rule_id_str, 'NULL-BYTE')
-            || str_contains($rule_id_str, 'SSRF')
-            || str_contains($rule_id_str, 'OBJECT-STREAM')
-            || str_contains($rule_id_str, 'SENSITIVE')
-            || str_contains($rule_id_str, 'LOG-EXFIL')
-            || str_contains($rule_id_str, 'POLYGLOT')
-            || str_contains($rule_id_str, 'SHORTCODE-GADGET')
-            || str_contains($rule_id_str, 'INTERACTIVITY-POISON')
-            || str_contains($rule_id_str, 'FORGED-WEBHOOK')
-            || str_contains($rule_id_str, 'AUTH-TYPE-CONFUSION')
-            || str_contains($rule_id_str, 'REST-METHOD-SMUGGLE');
-
-        if ($is_explicit_exploit) {
+        // 3. Authoritative Confirmed Exploit Signature Registry:
+        // Must match an authentic, registered exploit signature in the trusted internal registry.
+        // Rejects unverified caller-supplied categories, fabricated IDs, or substring claims.
+        if (self::is_registered_confirmed_exploit_rule($rule_id_str, $rule)) {
             return self::TIER_CONFIRMED_EXPLOIT;
         }
 
@@ -5605,24 +5589,104 @@ class FirewallEngine {
         return self::TIER_HEURISTIC;
     }
 
+    private static ?array $confirmed_exploit_registry = null;
+
     /**
-     * Verify whether a rule corresponds to an authentic, administrator-authored
-     * custom rule stored in the verified modular rules database repository.
+     * Authoritative Internal Signature Registry of genuine confirmed exploit rules.
+     * Unknown, unverified, or caller-fabricated rule IDs are strictly excluded.
+     *
+     * @return array<string, array<string, string>>
+     */
+    public static function get_confirmed_exploit_registry(): array {
+        if (self::$confirmed_exploit_registry === null) {
+            self::$confirmed_exploit_registry = [
+                // Core Exploit Signatures (ExploitSignatureEngine & FirewallEngine)
+                'WAF-SQLI-INJECTION'                    => ['category' => 'SQL Injection'],
+                'WAF-SQLI-ARMOR'                        => ['category' => 'SQL Injection'],
+                'WAF-RCE-PHP-INJECTION'                 => ['category' => 'PHP Code Injection'],
+                'WAF-PHP-CODE-INJECTION'                => ['category' => 'PHP Code Injection'],
+                'WAF-LFI-TRAVERSAL'                     => ['category' => 'Path Traversal'],
+                'WAF-PATH-TRAVERSAL'                    => ['category' => 'Path Traversal'],
+                'WAF-OBJECT-STREAM-INJECTION'           => ['category' => 'Execution Armor'],
+                'WAF-AJAX-SHORTCODE-GADGET'             => ['category' => 'PHP Code Injection'],
+                'WAF-NULL-BYTE-POISON'                  => ['category' => 'Null Byte Poison'],
+                'WAF-WP7-INTERACTIVITY-POISON'          => ['category' => 'Execution Armor'],
+                'WAF-SSRF-METADATA'                     => ['category' => 'SSRF Defense'],
+                'WAF-POLYGLOT-UPLOAD-TRAP'              => ['category' => 'Malicious File Upload'],
+                'WAF-SVGZ-DECOMPRESSION-BOMB-OR-ERROR'  => ['category' => 'Malicious File Upload'],
+                'WAF-UPLOAD-SCAN-INCOMPLETE-OR-MUTATED' => ['category' => 'Malicious File Upload'],
+                'WAF-UPLOADS-PHP-DENY'                  => ['category' => 'Execution Armor'],
+                'WAF-UNAUTHORIZED-PUT-UPLOAD'           => ['category' => 'Protocol Defense'],
+                'WAF-FORGED-WEBHOOK-TRAP'               => ['category' => 'Protocol Defense'],
+                'WAF-AUTH-TYPE-CONFUSION'               => ['category' => 'Protocol Defense'],
+                'WAF-REST-METHOD-SMUGGLE'               => ['category' => 'Protocol Defense'],
+                'WAF-LOG-EXFILTRATION-TRAP'             => ['category' => 'Incident Containment'],
+            ];
+        }
+        return self::$confirmed_exploit_registry;
+    }
+
+    /**
+     * Authoritatively verify whether a rule matches a genuine, registered exploit signature
+     * in the trusted internal signature registry.
+     *
+     * @param string $rule_id_str Uppercase rule ID
+     * @param array  $rule        Rule definition array
+     * @return bool
+     */
+    public static function is_registered_confirmed_exploit_rule(string $rule_id_str, array $rule = []): bool {
+        if ($rule_id_str === '') {
+            return false;
+        }
+
+        $registry = self::get_confirmed_exploit_registry();
+        if (isset($registry[$rule_id_str])) {
+            return true;
+        }
+
+        // Curated CVE Virtual Patches (VPATCH-CVE-*) verified against VirtualPatchManager
+        if (str_starts_with($rule_id_str, 'VPATCH-')) {
+            $patch_id = substr($rule_id_str, 7);
+            if (class_exists('\\WebCareProScanner\\Firewall\\VirtualPatchManager')) {
+                $catalog = \WebCareProScanner\Firewall\VirtualPatchManager::get_patch_catalog();
+                if (isset($catalog[$patch_id])) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Authoritatively verify whether a rule corresponds to an authentic,
+     * administrator-authored custom rule stored in the verified modular rules database repository.
+     * Returns the verified stored rule array on success, or null on rejection.
+     *
+     * @param array $rule
+     * @return array|null
+     */
+    public static function get_verified_admin_custom_rule(array $rule): ?array {
+        $rule_id = (string) ($rule['id'] ?? '');
+        if ($rule_id === '') {
+            return null;
+        }
+
+        if (class_exists('\\WebCareProScanner\\Firewall\\Modular\\ModularFirewallSynthesizer')) {
+            return \WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer::verify_admin_custom_rule($rule);
+        }
+
+        return null;
+    }
+
+    /**
+     * Backward-compatible boolean helper.
      *
      * @param array $rule
      * @return bool
      */
     public static function is_verified_admin_custom_rule(array $rule): bool {
-        $rule_id = (string) ($rule['id'] ?? '');
-        if ($rule_id === '') {
-            return false;
-        }
-
-        if (class_exists('\\WebCareProScanner\\Firewall\\Modular\\ModularFirewallSynthesizer')) {
-            return \WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer::is_registered_admin_custom_rule($rule_id);
-        }
-
-        return false;
+        return self::get_verified_admin_custom_rule($rule) !== null;
     }
 
     /**
@@ -5778,9 +5842,13 @@ class FirewallEngine {
         $effective_ban_ttl   = 0;
 
         if ($tier === self::TIER_ADMIN_POLICY) {
-            // 1. Explicit administrator-configured ban: strictly follow administrator's explicit policy
-            $eligible_for_ip_ban = true;
-            $effective_ban_ttl   = max(0, (int) ($rule['ban_ttl'] ?? 0));
+            // 1. Explicit administrator-configured ban: strictly read TTL from the STORED database record
+            $stored_custom_rule = self::get_verified_admin_custom_rule($rule);
+            $stored_ban_ttl     = max(0, (int) ($stored_custom_rule['ban_ttl'] ?? 0));
+            if ($stored_ban_ttl > 0) {
+                $eligible_for_ip_ban = true;
+                $effective_ban_ttl   = $stored_ban_ttl;
+            }
         } elseif ($tier === self::TIER_CONFIRMED_EXPLOIT) {
             // 2. Confirmed high-severity exploit: eligible for automated IP containment ban
             $eligible_for_ip_ban = true;

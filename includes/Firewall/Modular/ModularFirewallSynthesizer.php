@@ -54,38 +54,83 @@ class ModularFirewallSynthesizer {
         return self::$runtime_custom_allow_matched;
     }
 
-    private static ?array $cached_custom_rule_ids = null;
+    private static ?array $cached_verified_custom_rules = null;
 
     /**
-     * Authoritatively verify whether a rule ID corresponds to an authentic,
+     * Authoritatively retrieve and verify whether a rule ID corresponds to an authentic,
      * administrator-authored custom rule persisted in the trusted modular rules store.
+     *
+     * @param string $rule_id
+     * @return array|null Stored rule record on success, or null if unregistered or not a custom rule.
+     */
+    public static function get_verified_admin_custom_rule(string $rule_id): ?array {
+        if ($rule_id === '') {
+            return null;
+        }
+
+        if (self::$cached_verified_custom_rules === null) {
+            self::$cached_verified_custom_rules = [];
+            $rules = self::get_active_rules();
+            foreach ($rules as $r) {
+                if (is_array($r) && !empty($r['id']) && (!empty($r['is_custom']) || ($r['category'] ?? '') === 'custom')) {
+                    self::$cached_verified_custom_rules[(string) $r['id']] = $r;
+                }
+            }
+        }
+
+        return self::$cached_verified_custom_rules[$rule_id] ?? null;
+    }
+
+    /**
+     * Authoritatively verify an incoming rule against the stored database record.
+     * Validates that the rule is registered, administrator-authored, and that its
+     * canonical properties (if supplied) match the registered database record.
+     *
+     * @param array $incoming_rule
+     * @return array|null The authentic stored rule record, or null if unverified/mismatched.
+     */
+    public static function verify_admin_custom_rule(array $incoming_rule): ?array {
+        $rule_id = (string) ($incoming_rule['id'] ?? '');
+        if ($rule_id === '') {
+            return null;
+        }
+
+        $stored = self::get_verified_admin_custom_rule($rule_id);
+        if ($stored === null) {
+            return null;
+        }
+
+        // Canonical integrity verification: if the incoming rule supplies core definition fields,
+        // they must match the stored record (rejecting imposter dictionaries).
+        $fields_to_verify = ['target_uri', 'target_param', 'target_value', 'action', 'category', 'wirefilter_expr'];
+        foreach ($fields_to_verify as $field) {
+            if (isset($incoming_rule[$field]) && isset($stored[$field])) {
+                $incoming_val = strtolower(trim((string) $incoming_rule[$field]));
+                $stored_val   = strtolower(trim((string) $stored[$field]));
+                if ($incoming_val !== '' && $stored_val !== '' && $incoming_val !== $stored_val) {
+                    return null; // Forged or mismatched definition
+                }
+            }
+        }
+
+        return $stored;
+    }
+
+    /**
+     * Backward-compatible boolean helper.
      *
      * @param string $rule_id
      * @return bool
      */
     public static function is_registered_admin_custom_rule(string $rule_id): bool {
-        if ($rule_id === '') {
-            return false;
-        }
-
-        if (self::$cached_custom_rule_ids === null) {
-            self::$cached_custom_rule_ids = [];
-            $rules = self::get_active_rules();
-            foreach ($rules as $r) {
-                if (!empty($r['is_custom']) && !empty($r['id'])) {
-                    self::$cached_custom_rule_ids[(string) $r['id']] = true;
-                }
-            }
-        }
-
-        return isset(self::$cached_custom_rule_ids[$rule_id]);
+        return self::get_verified_admin_custom_rule($rule_id) !== null;
     }
 
     /**
-     * Invalidate in-memory cache of verified custom rule IDs.
+     * Invalidate in-memory cache of verified custom rule records.
      */
     public static function reset_custom_rule_cache(): void {
-        self::$cached_custom_rule_ids = null;
+        self::$cached_verified_custom_rules = null;
     }
 
     /**
@@ -711,6 +756,7 @@ class ModularFirewallSynthesizer {
         $from_shard = BehavioralVaultManager::read_shard(BehavioralVaultManager::SHARD_RULES);
         if (is_array($from_shard)) {
             $normalized = self::normalize_custom_rule_ordering($from_shard, false);
+            self::reset_custom_rule_cache();
             update_option(self::OPTION_RULES, $normalized, false);
             return $normalized;
         }

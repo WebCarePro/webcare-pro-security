@@ -387,16 +387,17 @@ class SecretVault {
             wp_mkdir_p($dest_dir);
         }
 
-        $temp_dest = $dest_path . '.webcare_tmp_' . bin2hex(random_bytes(6));
+        $temp_dest = $dest_path . '.webcare_tmp_' . bin2hex(random_bytes(8));
         $src_fp = @fopen($src_path, 'rb');
         if (!$src_fp) {
             return ['success' => false, 'error' => 'Failed to open source file for reading.'];
         }
 
-        $dst_fp = @fopen($temp_dest, 'wb');
+        // Exclusive binary file creation ('xb') guarantees no symlink following or pre-existing file collision
+        $dst_fp = @fopen($temp_dest, 'xb');
         if (!$dst_fp) {
             fclose($src_fp);
-            return ['success' => false, 'error' => 'Failed to open temporary vault destination for writing.'];
+            return ['success' => false, 'error' => 'Failed to exclusively create temporary vault destination for writing.'];
         }
         @chmod($temp_dest, 0600);
 
@@ -470,11 +471,17 @@ class SecretVault {
         }
 
         fclose($src_fp);
-        fflush($dst_fp);
+        $flush_ok = fflush($dst_fp);
+        $sync_ok  = true;
         if (function_exists('fsync')) {
-            @fsync($dst_fp);
+            $sync_ok = @fsync($dst_fp);
         }
         fclose($dst_fp);
+
+        if ($flush_ok === false || $sync_ok === false) {
+            wp_delete_file($temp_dest);
+            return ['success' => false, 'error' => 'Physical I/O flush or fsync failed during vault write.'];
+        }
 
         // Verification checks (Finding 1.1):
         // 1. Verify total chunks written matches declared chunk count
@@ -503,6 +510,13 @@ class SecretVault {
         }
 
         @chmod($dest_path, 0600);
+        if (function_exists('fsync') && DIRECTORY_SEPARATOR === '/') {
+            $dir_fp = @fopen(dirname($dest_path), 'r');
+            if ($dir_fp) {
+                @fsync($dir_fp);
+                @fclose($dir_fp);
+            }
+        }
 
         // 5. Independent validation: Reopen and verify the completed vault archive structure
         $inspect = self::inspect_vault_file($dest_path);
@@ -603,7 +617,7 @@ class SecretVault {
         if (!is_dir($dest_dir)) {
             wp_mkdir_p($dest_dir);
         }
-        $temp_dest = $dest_path . '.webcare_rst_tmp_' . bin2hex(random_bytes(6));
+        $temp_dest = $dest_path . '.webcare_rst_tmp_' . bin2hex(random_bytes(8));
 
         if ($format === self::VAULT_FORMAT_CHUNKED) {
             $total_chunks  = (int) ($meta['chunks'] ?? 0);
@@ -625,10 +639,11 @@ class SecretVault {
                 return ['success' => false, 'error' => 'Vault metadata validation rejected: invalid chunk schema or hash specification.'];
             }
 
-            $dst_fp = @fopen($temp_dest, 'wb');
+            // Exclusive binary file creation ('xb') guarantees no symlink following or pre-existing file collision
+            $dst_fp = @fopen($temp_dest, 'xb');
             if (!$dst_fp) {
                 fclose($v_fp);
-                return ['success' => false, 'error' => 'Failed to create destination stream.'];
+                return ['success' => false, 'error' => 'Failed to exclusively create destination stream.'];
             }
             @chmod($temp_dest, 0600);
 
@@ -708,11 +723,17 @@ class SecretVault {
             // Check for trailing unexpected data in vault stream
             $trailing = fread($v_fp, 1024);
             fclose($v_fp);
-            fflush($dst_fp);
+            $flush_ok = fflush($dst_fp);
+            $sync_ok  = true;
             if (function_exists('fsync')) {
-                @fsync($dst_fp);
+                $sync_ok = @fsync($dst_fp);
             }
             fclose($dst_fp);
+
+            if ($flush_ok === false || $sync_ok === false) {
+                wp_delete_file($temp_dest);
+                return ['success' => false, 'error' => 'Physical I/O flush or fsync failed during destination stream write.'];
+            }
 
             if ($trailing !== '' && $trailing !== false) {
                 wp_delete_file($temp_dest);
@@ -735,6 +756,15 @@ class SecretVault {
             if (!@rename($temp_dest, $dest_path)) {
                 wp_delete_file($temp_dest);
                 return ['success' => false, 'error' => 'Failed to atomically move restored file into destination path.'];
+            }
+
+            @chmod($dest_path, 0600);
+            if (function_exists('fsync') && DIRECTORY_SEPARATOR === '/') {
+                $dir_fp = @fopen(dirname($dest_path), 'r');
+                if ($dir_fp) {
+                    @fsync($dir_fp);
+                    @fclose($dir_fp);
+                }
             }
 
             return [
@@ -768,9 +798,18 @@ class SecretVault {
 
             // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
             file_put_contents($temp_dest, $decrypted, LOCK_EX);
+            @chmod($temp_dest, 0600);
             if (!@rename($temp_dest, $dest_path)) {
                 wp_delete_file($temp_dest);
                 return ['success' => false, 'error' => 'Failed to move restored file into place.'];
+            }
+            @chmod($dest_path, 0600);
+            if (function_exists('fsync') && DIRECTORY_SEPARATOR === '/') {
+                $dir_fp = @fopen(dirname($dest_path), 'r');
+                if ($dir_fp) {
+                    @fsync($dir_fp);
+                    @fclose($dir_fp);
+                }
             }
 
             return [
@@ -792,23 +831,38 @@ class SecretVault {
             ];
         }
 
-        $dst_fp = @fopen($temp_dest, 'wb');
+        // Exclusive binary file creation ('xb') guarantees no symlink following or pre-existing file collision
+        $dst_fp = @fopen($temp_dest, 'xb');
         if (!$dst_fp) {
             fclose($v_fp);
-            return ['success' => false, 'error' => 'Failed to create destination stream for legacy restore.'];
+            return ['success' => false, 'error' => 'Failed to exclusively create destination stream for legacy restore.'];
         }
         @chmod($temp_dest, 0600);
         stream_copy_to_stream($v_fp, $dst_fp);
         fclose($v_fp);
-        fflush($dst_fp);
+        $flush_ok = fflush($dst_fp);
+        $sync_ok  = true;
         if (function_exists('fsync')) {
-            @fsync($dst_fp);
+            $sync_ok = @fsync($dst_fp);
         }
         fclose($dst_fp);
+
+        if ($flush_ok === false || $sync_ok === false) {
+            wp_delete_file($temp_dest);
+            return ['success' => false, 'error' => 'Physical I/O flush or fsync failed during legacy restore.'];
+        }
 
         if (!@rename($temp_dest, $dest_path)) {
             wp_delete_file($temp_dest);
             return ['success' => false, 'error' => 'Failed to move legacy restored file into place.'];
+        }
+        @chmod($dest_path, 0600);
+        if (function_exists('fsync') && DIRECTORY_SEPARATOR === '/') {
+            $dir_fp = @fopen(dirname($dest_path), 'r');
+            if ($dir_fp) {
+                @fsync($dir_fp);
+                @fclose($dir_fp);
+            }
         }
 
         return [

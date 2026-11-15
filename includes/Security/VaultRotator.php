@@ -692,6 +692,15 @@ class VaultRotator {
 
                 // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod
                 @chmod($file_path, 0600);
+                if (function_exists('fsync') && DIRECTORY_SEPARATOR === '/') {
+                    // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
+                    $dir_fp = @fopen(dirname($file_path), 'r');
+                    if ($dir_fp) {
+                        @fsync($dir_fp);
+                        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+                        @fclose($dir_fp);
+                    }
+                }
                 $result['rotated']++;
                 continue;
             }
@@ -763,13 +772,14 @@ class VaultRotator {
                     // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
                     $written = @fwrite($fp, $new_content);
                     // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fflush
-                    @fflush($fp);
+                    $flush_ok = @fflush($fp);
+                    $sync_ok  = true;
                     if (function_exists('fsync')) {
-                        @fsync($fp);
+                        $sync_ok = @fsync($fp);
                     }
                     // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
                     @fclose($fp);
-                    $written_ok = ($written === strlen($new_content));
+                    $written_ok = ($written === strlen($new_content) && $flush_ok !== false && $sync_ok !== false);
                 }
 
                 if ($written_ok) {
@@ -786,6 +796,15 @@ class VaultRotator {
                             if (@rename($temp_file, $file_path)) {
                                 // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod
                                 @chmod($file_path, 0600);
+                                if (function_exists('fsync') && DIRECTORY_SEPARATOR === '/') {
+                                    // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
+                                    $dir_fp = @fopen(dirname($file_path), 'r');
+                                    if ($dir_fp) {
+                                        @fsync($dir_fp);
+                                        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+                                        @fclose($dir_fp);
+                                    }
+                                }
                                 $result['rotated']++;
                                 continue;
                             }
