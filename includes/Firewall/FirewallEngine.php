@@ -3571,11 +3571,11 @@ class FirewallEngine {
             }
         }
 
-        // 1. If WooCommerce session handler is already initialized in runtime, verify via official API + HMAC check
+        // 1. If WooCommerce session handler is already initialized in runtime, verify via official API + active session check
         if (function_exists('WC') && is_object(WC()) && isset(WC()->session) && is_object(WC()->session)) {
-            if (method_exists(WC()->session, 'get_session_cookie')) {
+            if (method_exists(WC()->session, 'has_session') && method_exists(WC()->session, 'get_session_cookie')) {
                 $wc_cookie = WC()->session->get_session_cookie();
-                if (is_array($wc_cookie) && !empty($wc_cookie[0])) {
+                if (is_array($wc_cookie) && count($wc_cookie) === 4 && !empty($wc_cookie[0]) && WC()->session->has_session()) {
                     return true;
                 }
             }
@@ -3613,10 +3613,15 @@ class FirewallEngine {
                 $to_hash = $customer_id . '|' . $session_expiration;
                 if (function_exists('wp_hash')) {
                     $wp_hash_key = wp_hash($to_hash);
-                } elseif (defined('AUTH_KEY') && defined('AUTH_SALT') && (AUTH_KEY !== '' || AUTH_SALT !== '')) {
+                } elseif (
+                    defined('AUTH_KEY') && defined('AUTH_SALT')
+                    && is_string(AUTH_KEY) && is_string(AUTH_SALT)
+                    && AUTH_KEY !== '' && AUTH_SALT !== ''
+                    && (!function_exists('has_filter') || !has_filter('salt'))
+                ) {
                     $wp_hash_key = hash_hmac('md5', $to_hash, AUTH_KEY . AUTH_SALT);
                 } else {
-                    continue; // Fail closed if pluggable.php and salts are unavailable
+                    continue; // Fail closed if pluggable.php and complete salts are unavailable, or if salt filter is attached
                 }
 
                 $expected_hmac = hash_hmac('md5', $to_hash, $wp_hash_key);
