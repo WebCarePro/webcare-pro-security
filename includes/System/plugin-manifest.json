@@ -1,6 +1,6 @@
 {
   "version": "2.16.0",
-  "generated_at": "2026-11-15T20:57:18.300Z",
+  "generated_at": "2026-11-15T21:38:39.854Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -248,8 +248,8 @@
       "size": 6276
     },
     "includes/Content/GeoShieldService.php": {
-      "sha256": "815be8f9bb57c2fbf1d17c85f6ed8d828adcc2cfdefefb4b5f033bb8c8e8c0d2",
-      "size": 19771
+      "sha256": "c3fa0f380a4426ab463920c29641ee83639c1db2cdd100499e71b367a766c6ed",
+      "size": 20144
     },
     "includes/Content/HTMLAnalyzer.php": {
       "sha256": "d3fcec65e939771b48404c212e241d63e587330e58db12d99a3ab375ca9f772c",
@@ -328,8 +328,8 @@
       "size": 11494
     },
     "includes/Database/TableScanner.php": {
-      "sha256": "4fc32a750318b88b90e9babea7b176b4c20d71690b7d54f0578a3dd0a222bbbe",
-      "size": 14504
+      "sha256": "98d64835c39da216b1b38526bd18eb394e2b3bb861851e3102f45ca63b28fdaf",
+      "size": 15795
     },
     "includes/Filesystem/DirectoryWalker.php": {
       "sha256": "472f3ee30adce4e40a1f2adaf71e9d041d50b075e547ef877ece7b71112bba4c",
@@ -344,8 +344,8 @@
       "size": 1036
     },
     "includes/Filesystem/FileScanner.php": {
-      "sha256": "bc61ba6f6fbb02a989eac1055f76aa8721c87689654d79cd33f97f0c96b828ca",
-      "size": 12563
+      "sha256": "30bbf687354527d491f974680ac0a412721444ecd0e2bf86a5eec6785ebb37d9",
+      "size": 13237
     },
     "includes/Filesystem/PathValidator.php": {
       "sha256": "b0b11e3179e3ff9a43f6ccabe9aa57a8c3a117fc1f9703a499f025bcb9e31110",
@@ -648,40 +648,40 @@
       "size": 10562
     },
     "includes/Malware/DeobfuscationEngine.php": {
-      "sha256": "47d3671474336cfd2b2c0feb732ba3adc1f5aa9db59d458ca6f78c35ecf32858",
-      "size": 12469
+      "sha256": "13088538023f526d0eeb1c01fafcfe926260a14d6e90d5a93af13e5f142025e7",
+      "size": 13069
     },
     "includes/Malware/HeuristicEngine.php": {
-      "sha256": "6cc68dd1f953ff6a4e64c9780db2506cc31a5dc6ce46923597cdf8055e540a1e",
-      "size": 6063
+      "sha256": "9a7d10c37e8ce0b981090622d1d939660a36176fcdff527460b6b3b0cc603d65",
+      "size": 6737
     },
     "includes/Malware/JavaScriptSecurityScanner.php": {
-      "sha256": "722cd9a5e3346bf15c4be4138ef79be8c51352107b0f6e5abf6f7108746a8958",
-      "size": 11678
+      "sha256": "7dfe33261aa2249834a67973e2bd022dce1ebbe23345e52437eb92fab461e418",
+      "size": 13051
     },
     "includes/Malware/KnownHashDetector.php": {
-      "sha256": "3e448848fce89d475b4efc66b04c28acc9104e739f9d7c051f38adf7e0690e6d",
-      "size": 2838
+      "sha256": "fec50933891875716c925e9f9df4a4cd0977fd5e497e783d21f8ea0d20948934",
+      "size": 3484
     },
     "includes/Malware/KnownMalwareManifest.php": {
       "sha256": "21ed2c94c15410c130269228a834592111c91b31a57880066b215fdb229b7091",
       "size": 5385
     },
     "includes/Malware/ObfuscationDetector.php": {
-      "sha256": "7841faf39ab052723615f53580baded9fdede029f6b299b4151c84e0899725b6",
-      "size": 7338
+      "sha256": "d1996497e871840b0250efae913f40a2264133047d7ebac57c4f3b8ecf2f87ad",
+      "size": 8169
     },
     "includes/Malware/SuspiciousStringDetector.php": {
-      "sha256": "76fd7f677ba1773fcfee1c4f7eeb5d594d7702dbd427ef330a53a89bfc895b7d",
-      "size": 4869
+      "sha256": "6c3891f3431c7f7bfc1b4c8613a913cecab01b9cc16837b01954048df7c24ec4",
+      "size": 5469
     },
     "includes/Malware/TaintAnalysisEngine.php": {
-      "sha256": "7653456eb248d23508b0d47a5717842fe07e677a49fb8357696d55bda31c6195",
-      "size": 35740
+      "sha256": "ac983573bca5db701c4736071d2976b6b388109e4854bbc4e42c57e7b41cc0d0",
+      "size": 45600
     },
     "includes/Malware/WebshellDetector.php": {
-      "sha256": "f733a2e2ac2c1ee10b06881cf10d948ce1ab50a224bccf4722a954cb6159bc1e",
-      "size": 14934
+      "sha256": "e98183fe0ca5b51c06f9e3c1d9aa0095c7a43cdfebcddec94f1f3ceeca99c6cc",
+      "size": 15534
     },
     "includes/Notifications/NotificationDispatcher.php": {
       "sha256": "2a413ed693230bc85f46dcf908c12a28814e28ebaed5923d6205e455c59f64b1",
@@ -748,8 +748,8 @@
       "size": 5515
     },
     "includes/Scanner/Engine.php": {
-      "sha256": "79082e590e42428925fd6f6deb0def38a57848457f5ec8fe19a670624ddd0366",
-      "size": 7729
+      "sha256": "7e61866b34415e299c4acfbb5ef14c395fa942e2bd6c6706730460a70d69ea22",
+      "size": 9460
     },
     "includes/Scanner/Rules.php": {
       "sha256": "32b4aab80b70100ef575383f2fb728c29a21e6855ab6f0c9e47432d17c8c5c6d",

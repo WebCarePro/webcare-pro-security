@@ -358,9 +358,12 @@ class GeoShieldService {
         }
 
         // 1. Transparent text color: color: transparent / color: rgba(0,0,0,0)
-        if (preg_match('/(?:style\s*=\s*["\'][^"\']*color\s*:\s*(?:transparent|rgba\s*\(\s*0\s*,\s*0\s*,\s*0\s*,\s*0\s*\))[^"\']*["\'][^>]*>(.*?)<\/(?:p|div|span|h[1-6]|li|a)>)/is', $html, $matches)) {
+        // Strictly matches foreground text color (negative lookbehind ensures background-color or border-color is never matched)
+        if (preg_match('/(?:style\s*=\s*["\'][^"\']*(?<![a-z\-])color\s*:\s*(?:transparent|rgba\s*\(\s*0\s*,\s*0\s*,\s*0\s*,\s*0\s*\))[^"\']*["\'][^>]*>(.*?)<\/(?:p|div|span|h[1-6]|li|a)>)/is', $html, $matches)) {
             $text = trim(wp_strip_all_tags($matches[1]));
-            if (!empty($text)) {
+            $style_attr = $matches[0];
+            $has_visible_override = (bool) preg_match('/(?<![a-z\-])color\s*:\s*(?!transparent|rgba\s*\(\s*0\s*,\s*0\s*,\s*0\s*,\s*0\s*\))[#a-z0-9]/i', $style_attr);
+            if (!empty($text) && !$has_visible_override) {
                 $detections[] = [
                     'type'       => 'geo_transparent_text_cloak',
                     'snippet'    => substr($matches[0], 0, 150),

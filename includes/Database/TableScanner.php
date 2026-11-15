@@ -197,7 +197,7 @@ class TableScanner {
             if ($is_snippets_table) {
                 $is_custom_code_storage = true;
             } elseif ($is_options_table && isset($row['option_name'])) {
-                $is_custom_code_storage = (bool) preg_match('/(header_script|footer_script|custom_js|custom_css|gtm|tag_manager|analytics|pixel|tracking|elementor|theme_mods|forminator)/i', $row['option_name']);
+                $is_custom_code_storage = (bool) preg_match('/(header_script|footer_script|custom_js|custom_css|gtm|tag_manager|analytics|pixel|tracking|elementor|theme_mods|forminator|options|settings|the7|dt_|redux|astra|generatepress|custom_code|snippet|wp_footer|wp_header|head_code|footer_code|inline_script)/i', $row['option_name']);
             } elseif (isset($row['meta_key'])) {
                 $is_custom_code_storage = (bool) preg_match('/(_custom_js|_custom_css|_elementor_data|_elementor_css|_elementor_page_settings)/i', $row['meta_key']);
             }
@@ -257,6 +257,17 @@ class TableScanner {
                                 // Reputable CDNs, verified analytics (Ahrefs, Google), and review/settings scripts (Judge.me, Ahrefs, Cloudflare)
                                 if (preg_match('/(googletagmanager\.com|google-analytics\.com|clarity\.ms|connect\.facebook\.net|cdnjs\.cloudflare\.com|cdn\.jsdelivr\.net|unpkg\.com|code\.jquery\.com|stripe\.com|recaptcha\.net|google\.com\/recaptcha|ahrefs\.com|analytics\.ahrefs\.com|judge\.me|jdgm-settings-script|mutationobserver)/i', $matches[0])) {
                                     continue; // Legitimate analytics/marketing/library script
+                                }
+
+                                // Whitelist check: Benign local jQuery DOM handlers & UI listeners without malicious sinks
+                                if (preg_match('/<script\b[^>]*>([\s\S]*?)<\/script>/i', $matches[0], $script_body_match)) {
+                                    $script_body = trim($script_body_match[1]);
+                                    $has_exploit_sink = (bool) preg_match('/(eval\s*\(|base64_decode\s*\(|document\.write\s*\(\s*unescape|String\.fromCharCode|\bwindow\[[\'"]ev|fetch\s*\(\s*[\'"]https?:|new\s+Function\s*\(|atob\s*\(|fromCharCode|navigator\.sendBeacon|location\.replace\s*\(\s*[\'"]https?:|location\.href\s*=\s*[\'"]https?:)/i', $script_body);
+                                    if (!$has_exploit_sink) {
+                                        if (preg_match('/(?:jQuery\s*\(|\$\s*\(|document\.addEventListener\s*\(\s*[\'"]DOMContentLoaded[\'"]|window\.addEventListener\s*\(\s*[\'"]load[\'"])/i', $script_body)) {
+                                            continue; // Safe local DOM event listener
+                                        }
+                                    }
                                 }
                             }
                             $findings[] = new Finding([

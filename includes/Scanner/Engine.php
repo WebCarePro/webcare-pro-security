@@ -19,9 +19,20 @@ class Engine {
             return $issues;
         }
 
-        // Avoid false positives on scanner's own rule definitions
+        // Avoid false positives on scanner's own rule definitions and plugin files
         $norm_filepath = str_replace('\\', '/', $filepath);
-        if (strpos($norm_filepath, '/includes/Scanner/Rules.php') !== false) {
+        if (defined('WEBCAREPROSCAN_PATH')) {
+            $plugin_root = str_replace('\\', '/', untrailingslashit(WEBCAREPROSCAN_PATH));
+            if ($plugin_root !== '' && str_starts_with($norm_filepath, $plugin_root)) {
+                return $issues;
+            }
+        }
+        if (strpos($norm_filepath, '/plugins/webcare-pro-security/') !== false || strpos($norm_filepath, '/plugins/wcp-security-scanner/') !== false || strpos($norm_filepath, '/includes/Scanner/Rules.php') !== false) {
+            return $issues;
+        }
+
+        // Skip cache files
+        if (preg_match('#/wp-content/(litespeed|cache|wfcache|w3tc-cache|et-cache|wpo-cache|breeze|wp-rocket|autoptimize|sg-cachepress|siteground-cache|hummingbird-assets|fast-velocity-minify|borlabs-cookie)/#i', $norm_filepath)) {
             return $issues;
         }
 
@@ -115,13 +126,19 @@ class Engine {
                         return false;
                     }
                     // Cache and backup folders
-                    if ($skip_cache && in_array($name, ['cache', 'wfcache', 'w3tc-cache', 'et-cache', 'wpo-cache'], true)) {
+                    if ($skip_cache && in_array($name, ['cache', 'wfcache', 'w3tc-cache', 'et-cache', 'wpo-cache', 'litespeed', 'breeze', 'wp-rocket', 'autoptimize', 'sg-cachepress', 'siteground-cache', 'hummingbird-assets', 'fast-velocity-minify', 'borlabs-cookie', 'wp-fastest-cache', 'supercache', 'comet-cache'], true)) {
                         return false;
                     }
 
-                    // Internal plugin storage exclusions
-                    if (in_array($name, ['.vault', '.backups', 'webcare-backups', 'webcare-pro-security', 'webcare-quarantine', 'webcare-pro-quarantine', 'webcare-vault', 'webcare-waf', '.vscode', '.idea'], true)) {
+                    // Internal plugin storage and self-plugin exclusions
+                    if (in_array($name, ['.vault', '.backups', 'webcare-backups', 'webcare-pro-security', 'wcp-security-scanner', 'webcare-quarantine', 'webcare-pro-quarantine', 'webcare-vault', 'webcare-waf', '.vscode', '.idea'], true)) {
                         return false;
+                    }
+                    if (defined('WEBCAREPROSCAN_PATH')) {
+                        $plugin_root = str_replace('\\', '/', untrailingslashit(WEBCAREPROSCAN_PATH));
+                        if ($plugin_root !== '' && str_starts_with($pathname, $plugin_root)) {
+                            return false;
+                        }
                     }
                     if ($has_settings_manager && \WebCareProScanner\System\SettingsManager::is_path_excluded($pathname)) {
                         return false;
@@ -136,7 +153,13 @@ class Engine {
             foreach ($iterator as $item) {
                 if ($item->isFile()) {
                     $pathname = str_replace('\\', '/', $item->getPathname());
-                    if (strpos($pathname, '/plugins/webcare-pro-security/') !== false) {
+                    if (defined('WEBCAREPROSCAN_PATH')) {
+                        $plugin_root = str_replace('\\', '/', untrailingslashit(WEBCAREPROSCAN_PATH));
+                        if ($plugin_root !== '' && str_starts_with($pathname, $plugin_root)) {
+                            continue;
+                        }
+                    }
+                    if (strpos($pathname, '/plugins/webcare-pro-security/') !== false || strpos($pathname, '/plugins/wcp-security-scanner/') !== false) {
                         continue; // Do not enqueue scanner's own files
                     }
 
