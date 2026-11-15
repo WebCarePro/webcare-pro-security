@@ -10314,20 +10314,31 @@ class FirewallEngine {
      * @return bool
      */
     public static function is_within_registration_window(\WP_User $user, int $max_age_seconds = 120): bool {
-        $raw_reg = trim((string) $user->user_registered);
-        if ($raw_reg === '' || $raw_reg === '0000-00-00 00:00:00') {
+        $raw_reg = (string) $user->user_registered;
+
+        // Reject empty, zero-date, surrounding whitespace, or embedded null bytes
+        if (
+            $raw_reg === ''
+            || $raw_reg === '0000-00-00 00:00:00'
+            || str_contains($raw_reg, "\0")
+            || $raw_reg !== trim($raw_reg)
+        ) {
             return false;
         }
 
         // Strict WordPress MySQL DATETIME format validation ('Y-m-d H:i:s') in UTC.
         // Rejects relative strings ('now', 'tomorrow') and impossible calendar dates ('2026-02-30').
-        $dt = \DateTimeImmutable::createFromFormat('!Y-m-d H:i:s', $raw_reg, new \DateTimeZone('UTC'));
-        $errors = \DateTimeImmutable::getLastErrors();
-        if (
-            $dt === false
-            || ($errors !== false && ($errors['warning_count'] > 0 || $errors['error_count'] > 0))
-            || $dt->format('Y-m-d H:i:s') !== $raw_reg
-        ) {
+        try {
+            $dt = \DateTimeImmutable::createFromFormat('!Y-m-d H:i:s', $raw_reg, new \DateTimeZone('UTC'));
+            $errors = \DateTimeImmutable::getLastErrors();
+            if (
+                $dt === false
+                || ($errors !== false && ($errors['warning_count'] > 0 || $errors['error_count'] > 0))
+                || $dt->format('Y-m-d H:i:s') !== $raw_reg
+            ) {
+                return false;
+            }
+        } catch (\Throwable $e) {
             return false;
         }
 
@@ -10339,7 +10350,7 @@ class FirewallEngine {
         $now = time();
         $age = $now - $reg_ts;
 
-        // Reject future timestamps beyond 5 seconds clock drift allowance
+        // Reject future timestamps beyond 5 seconds clock drift allowance (age < -5)
         if ($age < -5) {
             return false;
         }
