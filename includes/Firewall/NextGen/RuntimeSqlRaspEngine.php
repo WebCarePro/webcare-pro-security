@@ -553,9 +553,10 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
         }
 
         // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_debug_backtrace -- RASP call-stack verification with arguments
-        $full_frames = debug_backtrace(0, 20);
-        $in_wp_check_password = false;
-        $in_reset_password    = false;
+        $full_frames              = debug_backtrace(0, 20);
+        $candidate_key_from_frame = '';
+        $in_wp_check_password     = false;
+        $in_reset_password        = false;
 
         foreach ($full_frames as $fr) {
             $fn   = (string) ($fr['function'] ?? '');
@@ -567,17 +568,8 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
             }
 
             if ($fn === 'wp_check_password') {
-                // Verify that wp_check_password($password, $hash, $user_id) was invoked for THIS exact user ID and current password hash
-                $arg_pass = isset($fr['args'][0]) && is_string($fr['args'][0]) ? $fr['args'][0] : '';
-                $arg_hash = isset($fr['args'][1]) && is_string($fr['args'][1]) ? $fr['args'][1] : '';
-                $arg_uid  = isset($fr['args'][2]) ? (int) $fr['args'][2] : 0;
-
-                if (
-                    $arg_uid === $uid
-                    && $arg_pass !== ''
-                    && $arg_hash !== ''
-                    && hash_equals((string) $target_user->user_pass, $arg_hash)
-                ) {
+                $arg_uid = isset($fr['args'][2]) ? (int) $fr['args'][2] : 0;
+                if ($arg_uid === $uid) {
                     $in_wp_check_password = true;
                 }
             }
@@ -588,48 +580,100 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                     $in_reset_password = true;
                 }
             }
+
+            if ($fn === 'check_password_reset_key') {
+                $arg_login = isset($fr['args'][1]) && is_string($fr['args'][1]) ? trim($fr['args'][1]) : '';
+                if ($arg_login === $target_user->user_login) {
+                    $in_reset_password = true;
+                    if (!empty($fr['args'][0]) && is_string($fr['args'][0])) {
+                        $candidate_key_from_frame = trim((string) $fr['args'][0]);
+                    }
+                }
+            }
         }
 
-        // Path 1: Legitimate password hash upgrade inside wp_check_password()
-        if ($in_wp_check_password || !empty(self::$verified_password_users[$uid])) {
-            return true;
+        // Path 1: Legitimate login password rehash inside wp_check_password()
+        if ($in_wp_check_password) {
+            // Require verified runtime authentication from check_password filter
+            if (!empty(self::$verified_password_users[$uid])) {
+                return true;
+            }
+            return false;
         }
 
-        // Path 2: Legitimate password reset completion inside reset_password()
+        // Path 2: Legitimate password reset completion inside reset_password() or check_password_reset_key()
         if ($in_reset_password) {
-            // The user MUST currently have a non-empty user_activation_key in the database
-            $db_act_key = trim((string) $target_user->user_activation_key);
-            if ($db_act_key === '') {
+            $existing_key = isset($target_user->user_activation_key) ? trim((string) $target_user->user_activation_key) : '';
+            if ($existing_key === '') {
                 return false;
             }
 
-            // If validate_password_reset or check_password_reset_key already recorded verification for this user ID
+            // If validate_password_reset already recorded verification for this user ID
             if (!empty(self::$verified_reset_users[$uid])) {
                 return true;
             }
 
-            // Otherwise, verify that the incoming request or wp-resetpass cookie carries a non-empty reset key token
-            // phpcs:ignore WordPress.Security.NonceVerification.Recommended, WordPress.Security.NonceVerification.Missing
-            $candidate_key = isset($_REQUEST['rp_key']) ? sanitize_text_field(wp_unslash($_REQUEST['rp_key']))
+            // Cryptographically verify candidate key against $existing_key (WP fast hash or phpass)
+            $candidate_key = $candidate_key_from_frame;
+            // phpcs:ignore WordPress.Security.NonceVerification.Recommended, WordPress.Security.NonceVerification.Missing -- RASP password reset key verification
+            if ($candidate_key === '' && !empty($_REQUEST['key']) && is_string($_REQUEST['key'])) {
                 // phpcs:ignore WordPress.Security.NonceVerification.Recommended, WordPress.Security.NonceVerification.Missing
-                : (isset($_REQUEST['key']) ? sanitize_text_field(wp_unslash($_REQUEST['key']))
+                $candidate_key = sanitize_text_field(wp_unslash($_REQUEST['key']));
+            // phpcs:ignore WordPress.Security.NonceVerification.Recommended, WordPress.Security.NonceVerification.Missing
+            } elseif ($candidate_key === '' && !empty($_REQUEST['rp_key']) && is_string($_REQUEST['rp_key'])) {
+                // phpcs:ignore WordPress.Security.NonceVerification.Recommended, WordPress.Security.NonceVerification.Missing
+                $candidate_key = sanitize_text_field(wp_unslash($_REQUEST['rp_key']));
+            // phpcs:ignore WordPress.Security.NonceVerification.Missing
+            } elseif ($candidate_key === '' && !empty($_POST['reset_key']) && is_string($_POST['reset_key'])) {
                 // phpcs:ignore WordPress.Security.NonceVerification.Missing
-                : (isset($_POST['reset_key']) ? sanitize_text_field(wp_unslash($_POST['reset_key'])) : ''));
-
-            if ($candidate_key === '' && !empty($_COOKIE) && is_array($_COOKIE)) {
-                foreach ($_COOKIE as $ck_name => $ck_val) {
-                    if (is_string($ck_name) && strpos($ck_name, 'wp-resetpass-') === 0 && is_string($ck_val)) {
-                        $parts = explode(':', wp_unslash($ck_val), 2);
-                        if (count($parts) === 2 && rawurldecode($parts[0]) === $target_user->user_login) {
-                            $candidate_key = $parts[1];
-                            break;
+                $candidate_key = sanitize_text_field(wp_unslash($_POST['reset_key']));
+            } elseif ($candidate_key === '' && !empty($_COOKIE) && is_array($_COOKIE)) {
+                $resetpass_cookie_name = 'wp-resetpass-' . (defined('COOKIEHASH') ? COOKIEHASH : '');
+                if (!empty($_COOKIE[$resetpass_cookie_name]) && is_string($_COOKIE[$resetpass_cookie_name])) {
+                    // phpcs:ignore WordPress.Security.NonceVerification.Recommended, WordPress.Security.NonceVerification.Missing
+                    $cookie_parts = explode(':', sanitize_text_field(wp_unslash($_COOKIE[$resetpass_cookie_name])), 2);
+                    if (count($cookie_parts) === 2 && rawurldecode($cookie_parts[0]) === $target_user->user_login) {
+                        $candidate_key = trim($cookie_parts[1]);
+                    }
+                }
+                if ($candidate_key === '') {
+                    foreach ($_COOKIE as $ck_name => $ck_val) {
+                        if (is_string($ck_name) && strpos($ck_name, 'wp-resetpass-') === 0 && is_string($ck_val)) {
+                            // phpcs:ignore WordPress.Security.NonceVerification.Recommended, WordPress.Security.NonceVerification.Missing
+                            $parts = explode(':', sanitize_text_field(wp_unslash($ck_val)), 2);
+                            if (count($parts) === 2 && rawurldecode($parts[0]) === $target_user->user_login) {
+                                $candidate_key = trim($parts[1]);
+                                break;
+                            }
                         }
                     }
                 }
             }
 
             if ($candidate_key !== '' && preg_match('/^[a-zA-Z0-9]{16,64}$/', $candidate_key)) {
-                return true;
+                $hash_part = str_contains($existing_key, ':') ? substr($existing_key, strpos($existing_key, ':') + 1) : $existing_key;
+                if (str_contains($existing_key, ':')) {
+                    $time_part = (int) substr($existing_key, 0, strpos($existing_key, ':'));
+                    if ($time_part > 0 && (time() - $time_part) > 86400) {
+                        return false;
+                    }
+                }
+
+                if (function_exists('wp_verify_fast_hash')) {
+                    if (wp_verify_fast_hash($candidate_key, $hash_part)) {
+                        return true;
+                    }
+                } else {
+                    if (!class_exists('\PasswordHash') && defined('ABSPATH') && defined('WPINC') && file_exists(ABSPATH . WPINC . '/class-phpass.php')) {
+                        require_once ABSPATH . WPINC . '/class-phpass.php';
+                    }
+                    if (class_exists('\PasswordHash')) {
+                        $wp_hasher = new \PasswordHash(8, true);
+                        if ($wp_hasher->CheckPassword($candidate_key, $hash_part)) {
+                            return true;
+                        }
+                    }
+                }
             }
 
             return false;

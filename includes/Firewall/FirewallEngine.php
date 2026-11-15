@@ -3609,13 +3609,19 @@ class FirewallEngine {
                     continue;
                 }
 
-                // Verify HMAC signature if wp_hash() is loaded
+                // Verify HMAC signature: compute via wp_hash() or fallback to direct AUTH salts during early boot (plugins_loaded:0)
+                $to_hash = $customer_id . '|' . $session_expiration;
                 if (function_exists('wp_hash')) {
-                    $to_hash       = $customer_id . '|' . $session_expiration;
-                    $expected_hmac = hash_hmac('md5', $to_hash, wp_hash($to_hash));
-                    if (!hash_equals($expected_hmac, $cookie_hash)) {
-                        continue;
-                    }
+                    $wp_hash_key = wp_hash($to_hash);
+                } elseif (defined('AUTH_KEY') && defined('AUTH_SALT') && (AUTH_KEY !== '' || AUTH_SALT !== '')) {
+                    $wp_hash_key = hash_hmac('md5', $to_hash, AUTH_KEY . AUTH_SALT);
+                } else {
+                    continue; // Fail closed if pluggable.php and salts are unavailable
+                }
+
+                $expected_hmac = hash_hmac('md5', $to_hash, $wp_hash_key);
+                if (!hash_equals($expected_hmac, $cookie_hash)) {
+                    continue;
                 }
 
                 // Verify session key actually exists and is unexpired in {$wpdb->prefix}woocommerce_sessions
