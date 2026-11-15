@@ -17,6 +17,7 @@
     - Strictly rejected tautological predicates (WHERE 1=1, 0=0, true, null is null), range expansions (WHERE ID > 0), inequalities (WHERE ID != 0, user_login != ''), logical disjunctions (OR), empty strings, and subqueries to eliminate mass-table mutation attacks.
   * Production Packaging Safeguards:
     - Added automated verification in scripts/package.js ensuring the WEBCAREPROSCAN_TESTING constant is never defined in production plugin bootstrap or release packages.
+    - Enforced zero-legacy clean installation policy in uninstall.php, dropping strictly the 7 canonical webcareproscan_* tables with zero legacy table references.
   * Purged Orphaned JIT Cron Task & Added Registry Compatibility Alias (Patch 5):
     - Removed orphaned webcareproscan_ephemeral_admin_expire entry from CronRegistry, keeping the Cron Control Center UI cleanly aligned with the decommissioned JIT engine.
     - Added CronRegistry::get_registered_tasks() compatibility method to support external verification test suites and legacy diagnostic runners.

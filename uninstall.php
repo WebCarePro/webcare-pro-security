@@ -124,12 +124,6 @@ if ($webcareproscan_delete_data) {
             $wpdb->prefix . 'webcareproscan_firewall_logs',
             $wpdb->prefix . 'webcareproscan_login_history',
             $wpdb->prefix . 'webcareproscan_cron_logs',
-            $wpdb->prefix . 'webcare_scans',
-            $wpdb->prefix . 'webcare_scan_issues',
-            $wpdb->prefix . 'webcare_scan_files',
-            $wpdb->prefix . 'webcare_quarantine',
-            $wpdb->prefix . 'webcare_firewall_logs',
-            $wpdb->prefix . 'webcare_login_history',
         ];
 
         foreach ($webcareproscan_tables as $webcareproscan_table) {

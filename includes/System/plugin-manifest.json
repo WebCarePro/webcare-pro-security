@@ -1,6 +1,6 @@
 {
   "version": "2.15.0",
-  "generated_at": "2026-11-15T09:36:26.078Z",
+  "generated_at": "2026-11-15T09:43:06.788Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -928,8 +928,8 @@
       "size": 42798
     },
     "uninstall.php": {
-      "sha256": "3657ad82326080246215b9abae93ae62f86c18ad423e0d1e3f4402eb0908d878",
-      "size": 11239
+      "sha256": "04c765df5f8f4d25fb7e9d74b720f46beebe8420433f1de6d8ea5dab346818e4",
+      "size": 10937
     },
     "webcare-pro-security.php": {
       "sha256": "9c18657041ab85a21c2dda18a3ac8d151368d24e07a977c00ce2cbc3823b44ad",
