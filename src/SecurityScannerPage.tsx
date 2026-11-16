@@ -62,6 +62,7 @@ import { WhitelistManagerTab } from './components/WhitelistManagerTab';
 import { BehavioralBaselineCard } from './components/BehavioralBaselineCard';
 import { RemediationTransactionsCard } from './components/RemediationTransactionsCard';
 import { FindingForensicsDrawer } from './components/FindingForensicsDrawer';
+import { ScanOptionsModal } from './components/ScanOptionsModal';
 import ExportResultsDropdown from './ExportResultsDropdown';
 import { SafeErrorBoundary } from './App';
 import {
@@ -236,6 +237,7 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
   const [dashboardSubTab, setDashboardSubTab] = useState<
     'issues' | 'attack_chain' | 'persistence' | 'baseline' | 'transactions' | 'whitelist' | 'quarantine' | 'files'
   >('issues');
+  const [isScanOptionsModalOpen, setIsScanOptionsModalOpen] = useState<boolean>(false);
 
   const isQuarantinable = (iss: IssueData | null | undefined): boolean => {
     if (typeof canQuarantineIssue === 'function') {
@@ -571,7 +573,7 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
             <button
               type="button"
               className="webcare-btn"
-              onClick={() => onNavigateTab('settings', 'performance')}
+              onClick={() => setIsScanOptionsModalOpen(true)}
               style={{
                 background: 'var(--webcare-bg-surface, #f8fafc)',
                 border: '1px solid var(--webcare-border, #cbd5e1)',
@@ -585,7 +587,7 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                 gap: '6px',
                 cursor: 'pointer'
               }}
-              title="Configure Memory Governor & Pacing Settings"
+              title="Configure Scan Options & Memory Governor Settings"
             >
               <SlidersHorizontal size={14} color="#0284c7" />
               <span>Scan Options</span>
@@ -3859,6 +3861,16 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
           </div>
         )}
       </div>
+
+      {/* Scan Options & Governor Settings Modal */}
+      <ScanOptionsModal
+        isOpen={isScanOptionsModalOpen}
+        onClose={() => setIsScanOptionsModalOpen(false)}
+        apiRequest={apiRequest}
+        onStartScan={onStartScan}
+        showGlobalToast={showGlobalToast}
+        isScanning={scanning}
+      />
     </Fragment>
   );
 };
