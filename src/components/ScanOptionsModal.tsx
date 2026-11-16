@@ -113,7 +113,7 @@ const DEFAULT_SCAN_SETTINGS: ScanSettingsState = {
   max_file_size_kb: 2024,
   scan_uploads_mode: 'deep_raster',
 
-  schedule_enabled: true,
+  schedule_enabled: false,
   schedule_frequency: 'daily',
   schedule_time: '02:00',
   schedule_scan_type: 'plugins_themes',
@@ -169,7 +169,7 @@ export const ScanOptionsModal: React.FC<ScanOptionsModalProps> = ({
             max_file_size_kb: parseInt(s.max_file_size_kb) || DEFAULT_SCAN_SETTINGS.max_file_size_kb,
             scan_uploads_mode: s.scan_uploads_mode || DEFAULT_SCAN_SETTINGS.scan_uploads_mode,
 
-            schedule_enabled: s.schedule_enabled !== false,
+            schedule_enabled: Boolean(s.schedule_enabled),
             schedule_frequency: s.schedule_frequency || DEFAULT_SCAN_SETTINGS.schedule_frequency,
             schedule_time: s.schedule_time || DEFAULT_SCAN_SETTINGS.schedule_time,
             schedule_scan_type: s.schedule_scan_type || DEFAULT_SCAN_SETTINGS.schedule_scan_type,
