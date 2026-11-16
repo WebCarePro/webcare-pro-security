@@ -1,4 +1,5 @@
-import React, { useState, Fragment } from 'react';
+import React, { useState, useEffect, Fragment } from 'react';
+import { __ } from '@wordpress/i18n';
 import {
   ShieldAlert,
   ShieldCheck,
@@ -58,9 +59,18 @@ export const FindingForensicsDrawer: React.FC<FindingForensicsDrawerProps> = ({
   const [showAllCaps, setShowAllCaps] = useState(false);
   const [capsSearch, setCapsSearch] = useState('');
   const [copiedSnippet, setCopiedSnippet] = useState(false);
-  const [targetAdminId, setTargetAdminId] = useState<number>(
-    issue.reassign_target_id || (window as any).webcareScannerSettings?.currentUserId || 1
-  );
+  const [targetAdminId, setTargetAdminId] = useState<number | null>(null);
+  const availableAdminOptions = Array.isArray(issue.admin_options)
+    ? issue.admin_options.filter((admin: any) => Number.isSafeInteger(Number(admin?.id)) && Number(admin.id) > 0)
+    : [];
+  const selectedTargetAdminId = targetAdminId !== null &&
+    availableAdminOptions.some((admin: any) => Number(admin.id) === targetAdminId)
+    ? targetAdminId
+    : null;
+
+  useEffect(() => {
+    setTargetAdminId(null);
+  }, [issue.id]);
 
   // Type Identifiers
   const isUser = Boolean(
@@ -690,6 +700,48 @@ export const FindingForensicsDrawer: React.FC<FindingForensicsDrawerProps> = ({
                   </div>
                 </div>
 
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <label htmlFor={'webcare-reassign-admin-' + issue.id} className="screen-reader-text">
+                    {__('Select an administrator to receive these posts', 'webcare-pro-security')}
+                  </label>
+                  <select
+                    id={'webcare-reassign-admin-' + issue.id}
+                    className="webcare-firewall-input"
+                    value={selectedTargetAdminId ?? ''}
+                    onChange={(event) => {
+                      const selectedId = Number(event.currentTarget.value);
+                      setTargetAdminId(
+                        Number.isSafeInteger(selectedId) &&
+                        availableAdminOptions.some((admin: any) => Number(admin.id) === selectedId)
+                          ? selectedId
+                          : null
+                      );
+                    }}
+                    aria-label={__('Select an administrator to receive these posts', 'webcare-pro-security')}
+                  >
+                    <option value="">{__('Select an administrator', 'webcare-pro-security')}</option>
+                    {availableAdminOptions.map((admin: any) => (
+                      <option key={Number(admin.id)} value={Number(admin.id)}>
+                        {(admin.display_name || admin.user_login || __('Administrator', 'webcare-pro-security')) + ' (#' + Number(admin.id) + ')'}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="webcare-btn-micro webcare-action-btn-clean"
+                    disabled={selectedTargetAdminId === null || !onRemediateUser}
+                    onClick={() => {
+                      if (selectedTargetAdminId !== null) {
+                        onRemediateUser?.(issue, 'reassign_orphaned_posts', undefined, selectedTargetAdminId);
+                      }
+                    }}
+                    title={__('Reassign orphaned posts to the selected administrator', 'webcare-pro-security')}
+                  >
+                    <RotateCcw size={12} />
+                    <span>{__('Reassign Posts', 'webcare-pro-security')}</span>
+                  </button>
+                </div>
+
                 <a
                   href={`edit.php?author=${(issue.file_path && issue.file_path.match(/author:\s*(\d+)/i)?.[1]) || issue.author_id || ''}`}
                   target="_blank"
@@ -710,7 +762,7 @@ export const FindingForensicsDrawer: React.FC<FindingForensicsDrawerProps> = ({
                   }}
                 >
                   <FileText size={13} color="#ffffff" />
-                  <span>Reassign Posts in WP-Admin</span>
+                  <span>{__('View Posts in WP-Admin', 'webcare-pro-security')}</span>
                   <ArrowUpRight size={11} />
                 </a>
               </div>

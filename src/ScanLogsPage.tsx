@@ -72,7 +72,7 @@ interface ScanLogsPageProps {
   handleOpenChangelog: (issue: any) => void;
   canQuarantineIssue: (issue: any) => boolean;
   handleQuarantine: (issue: any) => Promise<void>;
-  handleRemediateUser: (issue: any, action: string, role?: string) => Promise<void>;
+  handleRemediateUser: (issue: any, action: string, role?: string, targetAdminId?: number) => Promise<void>;
   handleRemediateDbRow: (issue: any, action: string) => Promise<void>;
   handleDeleteCronHook: (issue: any) => Promise<void>;
   handleModerateComment: (issue: any, action: string) => Promise<void>;

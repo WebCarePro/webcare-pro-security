@@ -106,7 +106,7 @@ export interface SecurityScannerPageProps {
   handleQuarantine: (issue: IssueData) => Promise<void>;
   handleRestoreQuarantine: (id: number) => Promise<void>;
   handleDeleteQuarantine: (record: any) => Promise<void>;
-  handleRemediateUser: (issue: IssueData, action: string) => Promise<void>;
+  handleRemediateUser: (issue: IssueData, action: string, role?: string, targetAdminId?: number) => Promise<void>;
   handleRemediateDbRow: (issue: IssueData, action: string) => Promise<void>;
   handleDeleteCronHook: (issue: IssueData) => Promise<void>;
   handleModerateComment: (issue: IssueData, action: string) => Promise<void>;

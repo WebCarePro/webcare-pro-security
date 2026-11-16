@@ -7,6 +7,10 @@ if (!defined('ABSPATH')) {
 
 class DirectoryWalker {
 
+    private const CACHE_SCAN_MAX_ENTRIES = 10000;
+    private const CACHE_SCAN_MAX_FINDINGS = 500;
+    private const CACHE_SCAN_BUDGET_SECONDS = 2.0;
+
     /** Directories we never enter */
     private array $exclude_dirs = [
         '.git',
@@ -235,11 +239,15 @@ class DirectoryWalker {
      *
      * @param string $root Root path (e.g. ABSPATH)
      * @param int $max_depth Maximum directory depth to inspect (default: 5)
+     * @param array|null $scan_meta Optional scan metadata populated with entry counts and truncation status
      * @return array List of suspicious executable file paths found inside cache directories
      */
-    public function scan_cache_dirs_for_executables(string $root, int $max_depth = 5): array {
+    public function scan_cache_dirs_for_executables(string $root, int $max_depth = 5, ?array &$scan_meta = null): array {
         $root = rtrim(str_replace('\\', '/', $root), '/');
         $found = [];
+        $entries_examined = 0;
+        $truncated = false;
+        $deadline = microtime(true) + self::CACHE_SCAN_BUDGET_SECONDS;
         $exec_exts = ['php', 'phtml', 'phar', 'php5', 'php7', 'php8', 'inc', 'cgi', 'pl', 'py', 'sh', 'bash'];
 
         $cache_dirs_to_check = [
@@ -257,11 +265,20 @@ class DirectoryWalker {
         ];
 
         foreach ($cache_dirs_to_check as $cache_dir) {
+            if ($truncated) {
+                break;
+            }
             if (!is_dir($cache_dir)) {
                 continue;
             }
-            $this->traverse_cache_dir_bounded($cache_dir, $exec_exts, $found, 1, $max_depth);
+            $this->traverse_cache_dir_bounded($cache_dir, $exec_exts, $found, $entries_examined, $deadline, $truncated, 1, $max_depth);
         }
+
+        $scan_meta = [
+            'entries_examined' => $entries_examined,
+            'files_found'      => count($found),
+            'truncated'        => $truncated,
+        ];
 
         return $found;
     }
@@ -272,12 +289,15 @@ class DirectoryWalker {
      * @param string $dir
      * @param array $exec_exts
      * @param array &$found
+     * @param int &$entries_examined
+     * @param float $deadline
+     * @param bool &$truncated
      * @param int $current_depth
      * @param int $max_depth
      * @return void
      */
-    private function traverse_cache_dir_bounded(string $dir, array $exec_exts, array &$found, int $current_depth, int $max_depth): void {
-        if ($current_depth > $max_depth) {
+    private function traverse_cache_dir_bounded(string $dir, array $exec_exts, array &$found, int &$entries_examined, float $deadline, bool &$truncated, int $current_depth, int $max_depth): void {
+        if ($current_depth > $max_depth || $truncated) {
             return;
         }
 
@@ -286,6 +306,16 @@ class DirectoryWalker {
             $iterator = new \FilesystemIterator($dir, $flags);
 
             foreach ($iterator as $item) {
+                if (
+                    $entries_examined >= self::CACHE_SCAN_MAX_ENTRIES ||
+                    count($found) >= self::CACHE_SCAN_MAX_FINDINGS ||
+                    microtime(true) >= $deadline
+                ) {
+                    $truncated = true;
+                    return;
+                }
+                $entries_examined++;
+
                 if ($item->isLink()) {
                     continue;
                 }
@@ -293,7 +323,10 @@ class DirectoryWalker {
                 $pathname = str_replace('\\', '/', $item->getPathname());
 
                 if ($item->isDir()) {
-                    $this->traverse_cache_dir_bounded($pathname, $exec_exts, $found, $current_depth + 1, $max_depth);
+                    $this->traverse_cache_dir_bounded($pathname, $exec_exts, $found, $entries_examined, $deadline, $truncated, $current_depth + 1, $max_depth);
+                    if ($truncated) {
+                        return;
+                    }
                 } elseif ($item->isFile()) {
                     $ext = strtolower($item->getExtension());
                     if (in_array($ext, $exec_exts, true)) {

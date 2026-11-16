@@ -5626,7 +5626,7 @@ class FirewallEngine {
      *
      * @return array<string, array<string, string>>
      */
-    public static function get_confirmed_exploit_registry(): array {
+    private static function get_confirmed_exploit_registry(): array {
         if (self::$confirmed_exploit_registry === null) {
             self::$confirmed_exploit_registry = [
                 // Core Exploit Signatures (ExploitSignatureEngine & FirewallEngine)
@@ -5749,7 +5749,7 @@ class FirewallEngine {
      * @param array  $rule        Rule definition array
      * @return bool
      */
-    public static function is_registered_confirmed_exploit_rule(string $rule_id_str, array $rule = []): bool {
+    private static function is_registered_confirmed_exploit_rule(string $rule_id_str, array $rule = []): bool {
         if ($rule_id_str === '' || empty($rule)) {
             return false;
         }
@@ -5817,12 +5817,12 @@ class FirewallEngine {
     }
 
     /**
-     * Retrieve the canonical definition of a registered confirmed exploit signature or virtual patch.
+     * Retrieve the canonical definition for the private detector enforcement path.
      *
      * @param string $rule_id_str
      * @return array|null Canonical metadata array or null if not registered.
      */
-    public static function get_confirmed_exploit_definition(string $rule_id_str): ?array {
+    private static function get_confirmed_exploit_definition(string $rule_id_str): ?array {
         $registry = self::get_confirmed_exploit_registry();
         if (isset($registry[$rule_id_str])) {
             return array_merge([
@@ -5893,7 +5893,7 @@ class FirewallEngine {
      * @param int    $status_code
      * @return void
      */
-    public static function handle_rule_violation(array $rule, array $settings, string $client_ip, int $status_code = 403): void {
+    private static function handle_rule_violation(array $rule, array $settings, string $client_ip, int $status_code = 403): void {
         // Honor ModularFirewallSynthesizer runtime exempt rule IDs (WCP-14)
         if (class_exists('\\WebCareProScanner\\Firewall\\Modular\\ModularFirewallSynthesizer')) {
             $modular_exempt_ids = \WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer::get_runtime_exempt_rule_ids();

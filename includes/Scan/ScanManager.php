@@ -51,10 +51,15 @@ class ScanManager {
         $adaptive_batch_size = $monitor->get_adaptive_batch_size($batch_size);
 
         if ($current_phase === 'cache_executables') {
+            $cache_scan_meta = [];
             $cached_files = $cursor['cache_files'] ?? null;
             if ($cached_files === null) {
-                $cached_files = $this->directory_walker->scan_cache_dirs_for_executables(ABSPATH);
+                $cached_files = $this->directory_walker->scan_cache_dirs_for_executables(ABSPATH, 5, $cache_scan_meta);
+                if (!empty($cache_scan_meta['truncated'])) {
+                    $state->set_meta_key('cache_scan_truncated', true);
+                }
             }
+            $cached_files = is_array($cached_files) ? array_slice($cached_files, 0, 500) : [];
             $offset = (int) ($cursor['cache_offset'] ?? 0);
             $files = array_slice($cached_files, $offset, $adaptive_batch_size);
             $new_offset = $offset + count($files);
@@ -164,6 +169,7 @@ class ScanManager {
     }
 
     private function build_response(ScanState $state, array $findings, int $files_scanned, bool $is_complete): array {
+        $cache_scan_truncated = !empty($state->get_meta()['cache_scan_truncated']);
         return [
             'scan_id'                => $state->get_scan_id(),
             'engine'                 => 'filesystem',
@@ -173,6 +179,10 @@ class ScanManager {
             'total_scanned_so_far'   => $state->get_offset(),
             'is_complete'            => $is_complete,
             'memory_peak_mb'         => round($state->get_memory_peak() / 1024 / 1024, 2),
+            'cache_scan_truncated'   => $cache_scan_truncated,
+            'warnings'               => $cache_scan_truncated
+                ? [__('Cache executable inspection reached its resource budget; some cache entries may remain unscanned.', 'webcare-pro-security')]
+                : [],
             'findings'               => array_map(function ($f) {
                 return method_exists($f, 'to_array') ? $f->to_array() : (array) $f;
             }, $findings),

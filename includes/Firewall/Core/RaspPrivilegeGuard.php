@@ -16,6 +16,20 @@ use WebCareProScanner\System\SettingsManager;
  */
 class RaspPrivilegeGuard {
 
+    private static array $role_rollback_in_progress = [];
+
+    /**
+     * Record a RASP violation as a behavioral signal without creating an automated IP ban.
+     *
+     * @param string $client_ip
+     * @return void
+     */
+    private static function record_rasp_behavioral_signal(string $client_ip): void {
+        if (class_exists('\WebCareProScanner\Firewall\CAF\ThreatScoreTracker')) {
+            \WebCareProScanner\Firewall\CAF\ThreatScoreTracker::record_event($client_ip, 'behavioral_anomaly', 25.0);
+        }
+    }
+
     /**
      * Rule #44: In-Memory RASP Hook Firewall - Prevent guest or unprivileged option tampering.
      *
@@ -57,8 +71,6 @@ class RaspPrivilegeGuard {
 
         $client_ip = ClientIpResolver::get_client_ip();
         $incident_id = 'WEBCARE-' . strtoupper(substr(md5($client_ip . $option . microtime(true)), 0, 8));
-        $reason = sprintf('Unauthenticated RASP tamper attempt on core option "%s"', $option);
-
         FirewallEngine::log_incident([
             'id'          => 'WAF-RASP-OPTION-TAMPER',
             'name'        => 'Runtime Privilege Escalation Guard (Rule #44)',
@@ -75,15 +87,7 @@ class RaspPrivilegeGuard {
         ], 'blocked', $incident_id);
 
         if (!FirewallEngine::is_authenticated_administrator() && !ClientIpResolver::is_server_origin_or_loopback($client_ip)) {
-            FirewallEngine::add_blocked_ip(
-                $client_ip,
-                $reason,
-                86400,
-                'WAF-RASP-OPTION-TAMPER',
-                'Runtime Option Tamper Trap',
-                'Runtime RASP Hook Defense',
-                $incident_id
-            );
+            self::record_rasp_behavioral_signal($client_ip);
         }
 
         // Hard Inviolable Revert: return the old value immediately
@@ -345,6 +349,10 @@ class RaspPrivilegeGuard {
      * @return void
      */
     public static function rasp_guard_user_role_assignment(int $user_id, string $role, array $old_roles): void {
+        if (!empty(self::$role_rollback_in_progress[$user_id])) {
+            return;
+        }
+
         $settings = SettingsManager::get_settings();
         if (empty($settings['waf_enabled']) || empty($settings['waf_runtime_rasp_privilege_guard'])) {
             return;
@@ -360,14 +368,18 @@ class RaspPrivilegeGuard {
         $is_elevated_role = self::is_privileged_role($role);
 
         // Also check if previous roles were privileged to protect administrators from unauthorized demotion
+        $previous_roles = [];
         $was_privileged = false;
         $prev_privileged_role = null;
         if (!empty($old_roles) && is_array($old_roles)) {
-            foreach ($old_roles as $old_r) {
-                if (self::is_privileged_role((string) $old_r)) {
+            foreach ($old_roles as $old_role) {
+                if (!is_string($old_role) || $old_role === '' || in_array($old_role, $previous_roles, true)) {
+                    continue;
+                }
+                $previous_roles[] = $old_role;
+                if (self::is_privileged_role($old_role)) {
                     $was_privileged = true;
-                    $prev_privileged_role = (string) $old_r;
-                    break;
+                    $prev_privileged_role = $prev_privileged_role ?? $old_role;
                 }
             }
         }
@@ -390,14 +402,29 @@ class RaspPrivilegeGuard {
             $incident_id = 'WEBCARE-' . strtoupper(substr(md5($client_ip . $role . $user_id . microtime(true)), 0, 8));
 
             if ($was_privileged && !$is_elevated_role) {
-                // Unauthorized Demotion: revert user role back to previous privileged role in DB
-                if ($target_user instanceof \WP_User && !empty($prev_privileged_role)) {
-                    remove_action('set_user_role', [__CLASS__, 'rasp_guard_user_role_assignment'], 9999);
-                    $target_user->set_role($prev_privileged_role);
-                    add_action('set_user_role', [__CLASS__, 'rasp_guard_user_role_assignment'], 9999, 3);
-                }
+                // Restore every role from the pre-change snapshot while the actual FirewallEngine callback is detached.
+                if ($target_user instanceof \WP_User && !empty($previous_roles)) {
+                    self::$role_rollback_in_progress[$user_id] = true;
+                    $role_callback = [FirewallEngine::class, 'rasp_guard_user_role_assignment'];
+                    $role_callback_priority = false;
+                    $role_callback_removed = false;
 
-                $reason = sprintf('Unauthorized role demotion of "%s" (user #%d) to "%s"', $prev_privileged_role, $user_id, $role);
+                    try {
+                        if (function_exists('has_action')) {
+                            $role_callback_priority = has_action('set_user_role', $role_callback);
+                            $role_callback_removed = $role_callback_priority !== false && remove_action('set_user_role', $role_callback, (int) $role_callback_priority);
+                        }
+                        $target_user->set_role($previous_roles[0]);
+                        foreach (array_slice($previous_roles, 1) as $previous_role) {
+                            $target_user->add_role($previous_role);
+                        }
+                    } finally {
+                        if ($role_callback_removed) {
+                            add_action('set_user_role', $role_callback, (int) $role_callback_priority, 3);
+                        }
+                        unset(self::$role_rollback_in_progress[$user_id]);
+                    }
+                }
 
                 FirewallEngine::log_incident([
                     'id'          => 'WAF-RASP-ROLE-DEMOTION',
@@ -416,8 +443,6 @@ class RaspPrivilegeGuard {
                     'payload'     => "User ID: {$user_id} Target Role: {$role} Previous Role: {$prev_privileged_role} Caller: Guest / Non-Admin",
                 ], 'blocked', $incident_id);
             } else {
-                $reason = sprintf('Unauthorized role escalation to "%s" on user #%d', $role, $user_id);
-
                 FirewallEngine::log_incident([
                     'id'          => 'WAF-RASP-ROLE-ESCALATION',
                     'name'        => 'Runtime Privilege Escalation Guard (Rule #44)',
@@ -436,15 +461,7 @@ class RaspPrivilegeGuard {
             }
 
             if (!FirewallEngine::is_authenticated_administrator() && !ClientIpResolver::is_server_origin_or_loopback($client_ip)) {
-                FirewallEngine::add_blocked_ip(
-                    $client_ip,
-                    $reason,
-                    86400,
-                    $was_privileged && !$is_elevated_role ? 'WAF-RASP-ROLE-DEMOTION' : 'WAF-RASP-ROLE-ESCALATION',
-                    'Runtime Role Modification Trap',
-                    'Runtime RASP Hook Defense',
-                    $incident_id
-                );
+                self::record_rasp_behavioral_signal($client_ip);
             }
 
             wp_die(
@@ -486,8 +503,6 @@ class RaspPrivilegeGuard {
 
             $client_ip = ClientIpResolver::get_client_ip();
             $incident_id = 'WEBCARE-' . strtoupper(substr(md5($client_ip . $user->user_login . $user_id . microtime(true)), 0, 8));
-            $reason = sprintf('Unauthenticated registration of elevated account "%s" (#%d)', $user->user_login, $user_id);
-
             FirewallEngine::log_incident([
                 'id'          => 'WAF-RASP-ADMIN-REG-BLOCKED',
                 'name'        => 'Runtime Privilege Escalation Guard (Rule #44)',
@@ -504,15 +519,7 @@ class RaspPrivilegeGuard {
             ], 'blocked', $incident_id);
 
             if (!FirewallEngine::is_authenticated_administrator() && !ClientIpResolver::is_server_origin_or_loopback($client_ip)) {
-                FirewallEngine::add_blocked_ip(
-                    $client_ip,
-                    $reason,
-                    86400,
-                    'WAF-RASP-ADMIN-REG-BLOCKED',
-                    'Unauthorized Admin Registration Trap',
-                    'Runtime RASP Hook Defense',
-                    $incident_id
-                );
+                self::record_rasp_behavioral_signal($client_ip);
             }
         }
     }
@@ -550,6 +557,15 @@ class RaspPrivilegeGuard {
         // Ordinary customer metadata (billing_*, shipping_*, paying_customer, etc.) is never in $guarded_keys
         // and returns immediately here with zero friction for Shop Managers, customers, and cron jobs.
         if (!in_array($meta_key, $guarded_keys, true)) {
+            return $check;
+        }
+
+        // A guarded role demotion rollback must be able to restore its own capabilities and user level.
+        // Keep this bypass limited to those role metadata keys for the same user being rolled back.
+        if (
+            !empty(self::$role_rollback_in_progress[$object_id])
+            && (in_array($meta_key, $cap_keys, true) || in_array($meta_key, $lvl_keys, true))
+        ) {
             return $check;
         }
 
@@ -668,44 +684,84 @@ class RaspPrivilegeGuard {
             $existing = !empty($prev_value) && is_array($prev_value) ? $prev_value : get_user_meta($object_id, '_application_passwords', true);
             if (is_array($existing) && is_array($meta_value) && count($existing) === count($meta_value)) {
                 $existing_map = [];
+                $existing_uuid_set_valid = true;
                 foreach ($existing as $item) {
-                    if (is_array($item) && isset($item['uuid'])) {
-                        $existing_map[$item['uuid']] = $item;
+                    if (!is_array($item) || !isset($item['uuid']) || !is_string($item['uuid']) || $item['uuid'] === '' || isset($existing_map[$item['uuid']])) {
+                        $existing_uuid_set_valid = false;
+                        break;
                     }
+                    $existing_map[$item['uuid']] = $item;
                 }
 
-                $is_only_usage_ping = true;
-                foreach ($meta_value as $new_item) {
-                    if (!is_array($new_item)) {
-                        $is_only_usage_ping = false;
-                        break;
-                    }
-                    $uuid = $new_item['uuid'] ?? '';
-                    if (!isset($existing_map[$uuid])) {
-                        $is_only_usage_ping = false;
-                        break;
-                    }
-                    $old_item = $existing_map[$uuid];
-                    // Core usage-ping (WP_Application_Passwords::record_application_password_usage)
-                    // strictly and exclusively mutates 'last_used' and/or 'last_ip'.
-                    // Password hash, name, created timestamp, and uuid must remain strictly identical.
-                    if (
-                        !hash_equals((string) ($old_item['password'] ?? ''), (string) ($new_item['password'] ?? '')) ||
-                        (string) ($old_item['name'] ?? '') !== (string) ($new_item['name'] ?? '') ||
-                        (int) ($old_item['created'] ?? 0) !== (int) ($new_item['created'] ?? 0)
-                    ) {
-                        $is_only_usage_ping = false;
-                        break;
-                    }
-                    // Verify no unauthorized extra metadata keys were injected into the entry
-                    $diff_keys = array_diff(array_keys($new_item), array_keys($old_item));
-                    if (!empty($diff_keys)) {
-                        $is_only_usage_ping = false;
-                        break;
-                    }
-                }
-
+                $is_only_usage_ping = $existing_uuid_set_valid;
+                $updated_uuid_set = [];
                 if ($is_only_usage_ping) {
+                    foreach ($meta_value as $new_item) {
+                        if (!is_array($new_item) || !isset($new_item['uuid']) || !is_string($new_item['uuid']) || $new_item['uuid'] === '' || isset($updated_uuid_set[$new_item['uuid']])) {
+                            $is_only_usage_ping = false;
+                            break;
+                        }
+
+                        $uuid = $new_item['uuid'];
+                        if (!isset($existing_map[$uuid])) {
+                            $is_only_usage_ping = false;
+                            break;
+                        }
+                        $updated_uuid_set[$uuid] = true;
+                        $old_item = $existing_map[$uuid];
+
+                        // WordPress application-password usage recording may update only last_used and last_ip.
+                        // Preserve the exact field set and every other value, including app_id and the password hash.
+                        if (
+                            count($new_item) !== count($old_item) ||
+                            count(array_diff_key($new_item, $old_item)) > 0 ||
+                            count(array_diff_key($old_item, $new_item)) > 0
+                        ) {
+                            $is_only_usage_ping = false;
+                            break;
+                        }
+
+                        foreach ($old_item as $field => $old_value) {
+                            if ($field === 'last_used' || $field === 'last_ip') {
+                                continue;
+                            }
+                            if (!array_key_exists($field, $new_item)) {
+                                $is_only_usage_ping = false;
+                                break 2;
+                            }
+                            if ($field === 'password') {
+                                if (!is_string($old_value) || !is_string($new_item[$field]) || !hash_equals($old_value, $new_item[$field])) {
+                                    $is_only_usage_ping = false;
+                                    break 2;
+                                }
+                            } elseif ($new_item[$field] !== $old_value) {
+                                $is_only_usage_ping = false;
+                                break 2;
+                            }
+                        }
+
+                        if (array_key_exists('last_used', $new_item) && $new_item['last_used'] !== ($old_item['last_used'] ?? null)) {
+                            if ($new_item['last_used'] !== null && (!is_int($new_item['last_used']) || $new_item['last_used'] < 0)) {
+                                $is_only_usage_ping = false;
+                                break;
+                            }
+                            if (is_int($old_item['last_used'] ?? null) && is_int($new_item['last_used']) && $new_item['last_used'] < $old_item['last_used']) {
+                                $is_only_usage_ping = false;
+                                break;
+                            }
+                        }
+
+                        if (array_key_exists('last_ip', $new_item) && $new_item['last_ip'] !== ($old_item['last_ip'] ?? null)) {
+                            $new_last_ip = $new_item['last_ip'];
+                            if ($new_last_ip !== null && (!is_string($new_last_ip) || filter_var($new_last_ip, FILTER_VALIDATE_IP) === false)) {
+                                $is_only_usage_ping = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if ($is_only_usage_ping && count($updated_uuid_set) === count($existing_map)) {
                     return $check;
                 }
             }
@@ -713,8 +769,6 @@ class RaspPrivilegeGuard {
 
         $client_ip = ClientIpResolver::get_client_ip();
         $incident_id = 'WEBCARE-' . strtoupper(substr(md5($client_ip . $meta_key . $object_id . microtime(true)), 0, 8));
-        $reason = sprintf('Unauthenticated usermeta injection on "%s" for user #%d', $meta_key, $object_id);
-
         FirewallEngine::log_incident([
             'id'          => 'WAF-RASP-META-INJECTION',
             'name'        => 'Runtime Privilege Escalation Guard (Rule #44)',
@@ -732,15 +786,7 @@ class RaspPrivilegeGuard {
         ], 'blocked', $incident_id);
 
         if (!FirewallEngine::is_authenticated_administrator() && !ClientIpResolver::is_server_origin_or_loopback($client_ip)) {
-            FirewallEngine::add_blocked_ip(
-                $client_ip,
-                $reason,
-                86400,
-                'WAF-RASP-META-INJECTION',
-                'Runtime Usermeta Privilege Trap',
-                'Runtime RASP Hook Defense',
-                $incident_id
-            );
+            self::record_rasp_behavioral_signal($client_ip);
         }
 
         return false;

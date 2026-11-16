@@ -1,4 +1,11 @@
 ﻿v:2.16.0 - 2026-11-16
+- Runtime Enforcement & State Integrity:
+  * Fixed administrator rollback to detach the registered FirewallEngine hook, allow only the target user capability and user-level restoration writes, restore every prior role, and reattach the hook in a finally block.
+  * Routed RASP option, role, registration, and usermeta violations through behavioral scoring instead of direct 24-hour IP bans.
+  * Restricted confirmed-exploit bans to FirewallEngine's private detector dispatch; caller-supplied metadata cannot authorize threat-score bans.
+  * Enforced unique, complete application-password UUID matching and preserved all immutable fields, including app_id.
+  * Required an explicitly selected valid administrator for orphaned-post reassignment and removed the user-ID 1 fallback.
+  * Added cache traversal entry, finding, and time budgets with a response warning when inspection is truncated.
 - Scanner Engine False-Positive Eliminations, High-Precision Taint Analysis, Universal Cache Exclusions & Authoritative Trust Boundaries:
   * Administrator Demotion Interception & DB Rollback (RaspPrivilegeGuard.php):
     - In `RaspPrivilegeGuard::rasp_guard_user_role_assignment()`, inspected `$old_roles` to evaluate historical privileges. When an unauthenticated caller or non-admin attempts to downgrade an administrator account to `subscriber` or another unprivileged role, RASP intercepts the execution, restores the user's previous privileged role in the database (`$target_user->set_role($prev_privileged_role)`), logs incident `WAF-RASP-ROLE-DEMOTION`, and terminates the request with HTTP 403.

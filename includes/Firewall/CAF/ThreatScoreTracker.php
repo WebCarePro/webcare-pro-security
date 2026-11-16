@@ -30,8 +30,8 @@ if (!defined('ABSPATH')) {
  *   - T < \theta_{PoW} (default: 40): Normal visitor traffic (no friction)
  *   - \theta_{PoW} <= T < 85: Stateless WebCrypto SHA-256 Proof-of-Work Challenge (k = 16 zero bits)
  *   - T >= 85: Temporary HTTP 429 Throttle (self-healing via decay) + PoW challenge
- *   - Automated 24h IP bans are NEVER triggered by accumulated heuristic scores or behavioral anomalies;
- *     they are strictly reserved for 4-anchor verified exploit signatures (is_registered_confirmed_exploit_rule).
+ *   - Threat-score events never authorize automated IP bans. Confirmed exploit containment is handled
+ *     by FirewallEngine's private detector dispatch path.
  *
  * Author: Mir Alamin (WebCare Pro)
  * Senior Linux SysAdmin & WordPress Security Engineer
@@ -47,10 +47,11 @@ class ThreatScoreTracker {
 
     // Threat Escalation Thresholds
     public const THRESHOLD_POW        = 40.0;      // \theta_{PoW}: Trigger WebCrypto challenge
-    public const THRESHOLD_HARD_BAN   = 85.0;      // Hard drop & Cloudflare Ban Queue
+    public const THRESHOLD_THROTTLE   = 85.0;      // Severe behavioral score: temporary throttle
+    public const THRESHOLD_HARD_BAN   = self::THRESHOLD_THROTTLE; // Deprecated compatibility alias
 
     // Event Score Weights (\Delta S)
-    public const WEIGHT_CRITICAL_EXPLOIT = 85.0; // Immediate hard ban & Cloudflare Edge push on first exploit
+    public const WEIGHT_CRITICAL_EXPLOIT = 85.0; // Deprecated compatibility value; caller claims are demoted
     public const WEIGHT_HONEYPOT         = 25.0;
     public const WEIGHT_DORMANT_SURF     = 15.0;
     public const WEIGHT_AUTH_VIOLATE     = 10.0;
@@ -61,10 +62,10 @@ class ThreatScoreTracker {
      * Record a security event for an IP and compute decayed threat score.
      *
      * @param string $ip Offending Client IP
-     * @param string $event_type Event category ('honeypot', 'dormant_surface', 'auth_fail', 'probe_404', 'header_anomaly', 'critical_exploit')
+     * @param string $event_type Event category; legacy 'critical_exploit' claims are treated as behavioral anomalies
      * @param float|null $custom_weight Optional explicit weight
-     * @param array|null $exploit_context Optional exploit rule context requiring 4-anchor verification
-     * @return array Array containing ['score' => float, 'action' => 'allow'|'challenge'|'throttle'|'ban', 'escalated' => bool]
+     * @param array|null $exploit_context Deprecated compatibility parameter; caller metadata never authorizes a ban
+     * @return array Array containing ['score' => float, 'action' => 'allow'|'challenge'|'throttle', 'escalated' => bool]
      */
     public static function record_event(string $ip, string $event_type, ?float $custom_weight = null, ?array $exploit_context = null): array {
         if (empty($ip) || $ip === '127.0.0.1' || $ip === '::1') {
@@ -79,22 +80,11 @@ class ThreatScoreTracker {
             return ['score' => 0.0, 'action' => 'allow', 'escalated' => false];
         }
 
-        // Provenance Verification: 'critical_exploit' requires authoritative 4-anchor proof.
-        // Unverified exploit claims fail safe and are demoted to behavioral anomaly with capped weight.
-        $is_verified_exploit = false;
+        // Do not treat caller-supplied rule metadata as proof that a detector ran.
+        // Confirmed exploit bans are authorized only by FirewallEngine's private detector dispatch path.
         if ($event_type === 'critical_exploit') {
-            $rule_id = is_array($exploit_context) ? (string) ($exploit_context['id'] ?? '') : '';
-            if (
-                $rule_id !== '' &&
-                is_array($exploit_context) &&
-                class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine') &&
-                \WebCareProScanner\Firewall\FirewallEngine::is_registered_confirmed_exploit_rule($rule_id, $exploit_context)
-            ) {
-                $is_verified_exploit = true;
-            } else {
-                $event_type = 'behavioral_anomaly';
-                $custom_weight = min(25.0, $custom_weight ?? self::WEIGHT_HONEYPOT);
-            }
+            $event_type = 'behavioral_anomaly';
+            $custom_weight = min(25.0, $custom_weight ?? self::WEIGHT_HONEYPOT);
         }
 
         // Determine score increment
@@ -122,22 +112,14 @@ class ThreatScoreTracker {
         ]);
 
         // Determine Action & Escalation:
-        // Policy Invariant: Heuristic/behavioral events NEVER trigger automated 24h IP bans (add_blocked_ip).
-        // Only explicit 'critical_exploit' events can invoke escalate_to_hard_ban(); heuristic accumulation
-        // enforces temporary HTTP 429 throttling / WebCrypto PoW challenges that self-heal via exponential decay.
+        // Threat scores cannot authorize automated IP bans; they only apply temporary throttling or PoW challenges.
         $action = 'allow';
         $escalated = false;
 
-        if ($new_score >= self::THRESHOLD_HARD_BAN) {
-            if ($event_type === 'critical_exploit' && $is_verified_exploit) {
-                $action = 'ban';
-                $escalated = true;
-                self::escalate_to_hard_ban($ip, $new_score, $event_type);
-            } else {
-                $action = 'throttle';
-                $escalated = true;
-                self::mark_for_pow_challenge($ip);
-            }
+        if ($new_score >= self::THRESHOLD_THROTTLE) {
+            $action = 'throttle';
+            $escalated = true;
+            self::mark_for_pow_challenge($ip);
         } elseif ($new_score >= self::THRESHOLD_POW) {
             $action = 'challenge';
             $escalated = true;
@@ -214,7 +196,7 @@ class ThreatScoreTracker {
         }
 
         // Tier 1: Severe threat (score >= 85) -> Temporary HTTP 429 Throttle (self-healing via decay)
-        if ($score >= self::THRESHOLD_HARD_BAN) {
+        if ($score >= self::THRESHOLD_THROTTLE) {
             status_header(429);
             header('Retry-After: 60');
             header('Content-Type: text/plain; charset=utf-8');
@@ -229,55 +211,6 @@ class ThreatScoreTracker {
                 BotReconDefense::verify_or_challenge_client();
             }
         }
-    }
-
-    /**
-     * Escalate an IP to local quarantine and push to Cloudflare Edge Ban Queue.
-     */
-    private static function escalate_to_hard_ban(string $ip, float $score, string $reason): void {
-        // Shopper & Whitelist Immunity: Never escalate active shoppers or whitelisted IPs to automated IP bans
-        if (class_exists('\\WebCareProScanner\\Firewall\\Core\\CommerceSessionGuard') && \WebCareProScanner\Firewall\Core\CommerceSessionGuard::has_active_shopper_session()) {
-            return;
-        }
-        if (class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine') && \WebCareProScanner\Firewall\FirewallEngine::is_ip_whitelisted($ip)) {
-            return;
-        }
-
-        // Enforce hard quarantine via central FirewallEngine
-        if (class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine')) {
-            \WebCareProScanner\Firewall\FirewallEngine::add_blocked_ip(
-                $ip,
-                sprintf('ThreatScore %.1f: %s', $score, $reason),
-                86400,
-                'CAF-THREAT-SCORE',
-                'CAF Autonomous Threat Score Ban',
-                'Context-Adaptive Firewall'
-            );
-        } elseif (class_exists('\\WebCareProScanner\\Firewall\\CAF\\CloudflareIpListSynchronizer')) {
-            CloudflareIpListSynchronizer::queue_ip_ban($ip, sprintf('ThreatScore %.1f: %s', $score, $reason));
-        }
-
-        // Record in high-risk list for local blocklist caching
-        $high_risk = get_option(self::OPTION_HIGH_RISK_IPS, []);
-        if (!is_array($high_risk)) {
-            $high_risk = [];
-        }
-
-        $high_risk[$ip] = [
-            'ip'         => $ip,
-            'score'      => $score,
-            'reason'     => $reason,
-            'banned_at'  => time(),
-            'expires_at' => time() + 86400, // 24-hour quarantine
-        ];
-
-        // Keep top 200 high-risk IPs
-        if (count($high_risk) > 200) {
-            uasort($high_risk, fn($a, $b) => ($b['score'] ?? 0) <=> ($a['score'] ?? 0));
-            $high_risk = array_slice($high_risk, 0, 200, true);
-        }
-
-        update_option(self::OPTION_HIGH_RISK_IPS, $high_risk, false);
     }
 
     /**
@@ -384,7 +317,8 @@ class ThreatScoreTracker {
             'high_risk_ips'       => array_slice($active_high_risk, 0, 25),
             'pow_active_count'    => is_array($pow_ips) ? count($pow_ips) : 0,
             'threshold_pow'       => self::THRESHOLD_POW,
-            'threshold_ban'       => self::THRESHOLD_HARD_BAN,
+            'threshold_throttle'  => self::THRESHOLD_THROTTLE,
+            'threshold_ban'       => self::THRESHOLD_THROTTLE,
             'half_life_seconds'   => self::HALF_LIFE_SECONDS,
         ];
     }
