@@ -199,8 +199,9 @@ class CronControlCenter {
      * @param string      $hook
      * @param int|null    $first_delay
      * @param string|null $fallback_recurrence
+     * @param bool        $force
      */
-    public static function ensure_scheduled(string $hook, ?int $first_delay = null, ?string $fallback_recurrence = null): void {
+    public static function ensure_scheduled(string $hook, ?int $first_delay = null, ?string $fallback_recurrence = null, bool $force = false): void {
         self::register_filters();
 
         $task = CronRegistry::get_task($hook);
@@ -220,7 +221,11 @@ class CronControlCenter {
         }
 
         if ($hook === SettingsManager::CRON_HOOK) {
-            if (!wp_next_scheduled($hook)) {
+            $next_ts = wp_next_scheduled($hook);
+            if ($force || !$next_ts || $next_ts < time()) {
+                if ($next_ts) {
+                    wp_clear_scheduled_hook($hook);
+                }
                 SettingsManager::sync_cron_schedule($settings);
             }
             return;
@@ -234,7 +239,7 @@ class CronControlCenter {
         $next_ts       = wp_next_scheduled($hook);
         $current_sched = $next_ts ? wp_get_schedule($hook) : false;
 
-        if ($next_ts && $current_sched === $desired_recurrence) {
+        if (!$force && $next_ts && $next_ts >= time() && $current_sched === $desired_recurrence) {
             return;
         }
 
@@ -605,6 +610,18 @@ class CronControlCenter {
             );
         }
 
+        if (($task['kind'] ?? '') !== 'recurring') {
+            $next_ts = wp_next_scheduled($hook);
+            if ($next_ts) {
+                wp_clear_scheduled_hook($hook);
+            }
+        } else {
+            $next_ts = wp_next_scheduled($hook);
+            if ($next_ts && $next_ts < time()) {
+                self::ensure_scheduled($hook, (int) ($task['default_delay'] ?? 300), (string) ($task['default_recurrence'] ?? 'daily'), true);
+            }
+        }
+
         $result['task'] = self::format_task_state($hook);
         return $result;
     }
@@ -840,25 +857,41 @@ class CronControlCenter {
     }
 
     /**
-     * Re-schedule all enabled tasks missing from wp_options['cron'].
+     * Re-schedule all enabled tasks missing from wp_options['cron'] or stuck in overdue past timestamps.
      *
      * @return array<string, mixed>
      */
     public static function repair_missing_schedules(): array {
         $repaired = [];
         $settings = SettingsManager::get_settings();
+        $now      = time();
 
         foreach (CronRegistry::get_tasks() as $hook => $task) {
-            if (($task['kind'] ?? '') !== 'recurring') {
-                continue;
-            }
+            $kind    = $task['kind'] ?? 'recurring';
             $enabled = self::is_task_enabled($hook, $settings);
             $dep     = self::get_dependency_status($hook, $settings);
-            if ($enabled && $dep['met'] && !wp_next_scheduled($hook)) {
-                self::ensure_scheduled($hook, (int) ($task['default_delay'] ?? 300), (string) ($task['default_recurrence'] ?? 'daily'));
-                $repaired[] = $hook;
+
+            if (!$enabled || !$dep['met']) {
+                continue;
+            }
+
+            $next_ts = wp_next_scheduled($hook);
+
+            if ($kind === 'recurring') {
+                $is_overdue = ($next_ts !== false && $next_ts < $now);
+                if (!$next_ts || $is_overdue) {
+                    self::ensure_scheduled($hook, (int) ($task['default_delay'] ?? 300), (string) ($task['default_recurrence'] ?? 'daily'), true);
+                    $repaired[] = $hook;
+                }
+            } else {
+                if ($next_ts !== false && $next_ts < $now) {
+                    wp_clear_scheduled_hook($hook);
+                    $repaired[] = $hook;
+                }
             }
         }
+
+        $count = count($repaired);
 
         if (class_exists(WebCareActivityLogger::class) && !empty($repaired)) {
             WebCareActivityLogger::info(
@@ -866,7 +899,7 @@ class CronControlCenter {
                 'system',
                 [
                     /* translators: %d: repaired hook count */
-                    'description' => sprintf(__('Repaired %d missing WP-Cron schedule(s) via Cron Control Center.', 'webcare-pro-security'), count($repaired)),
+                    'description' => sprintf(__('Repaired or rescheduled %d WP-Cron schedule(s) via Cron Control Center.', 'webcare-pro-security'), $count),
                     'hooks'       => $repaired,
                 ]
             );
@@ -874,8 +907,15 @@ class CronControlCenter {
 
         return [
             'success'        => true,
+            'message'        => $count > 0
+                ? sprintf(
+                    /* translators: %d: count */
+                    __('Repaired or rescheduled %d WP-Cron schedule(s).', 'webcare-pro-security'),
+                    $count
+                )
+                : __('All WP-Cron schedules are up to date and active.', 'webcare-pro-security'),
             'repaired_hooks' => $repaired,
-            'repaired_count' => count($repaired),
+            'repaired_count' => $count,
         ];
     }
 

@@ -1,6 +1,6 @@
 {
   "version": "2.17.0",
-  "generated_at": "2026-11-16T22:41:35.324Z",
+  "generated_at": "2026-11-16T22:52:45.109Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -48,12 +48,12 @@
       "size": 293831
     },
     "build/cron-manager.asset.php": {
-      "sha256": "a24cb2d3e627204b99564b05a7559a85b771a65c2619d416846427e61b4ae230",
+      "sha256": "7f75fd82aaa31312236c7fd4bc3c3f7208631d527c3f937da5762dbbf74fe1c9",
       "size": 163
     },
     "build/cron-manager.js": {
-      "sha256": "373fc289c868dce8da87b242a144a336126d7f5a3e50180df9c120da124a605b",
-      "size": 141598
+      "sha256": "2e9c43cc71ec0cdbd6a79dfe1df611873f3af31a4324eb0d8b792de93a95781c",
+      "size": 141605
     },
     "build/fim.asset.php": {
       "sha256": "af9e35ece85b4430dfbef59fe3e9d0770bdbe009032e35ea530ace655d01305d",
@@ -856,8 +856,8 @@
       "size": 33259
     },
     "includes/System/Cron/CronControlCenter.php": {
-      "sha256": "342428a643db0c1d9b7e7e6b7a90878db10f5af91489aa6772f95fb1fef2605f",
-      "size": 49476
+      "sha256": "2b9d1c173d676a6a55a4499841f76cf59d39ec99e79b013ac503516b588ebc50",
+      "size": 51058
     },
     "includes/System/Cron/CronExecutionLogger.php": {
       "sha256": "a6829cf16db27c2488ed7b9644f7f6ea374a7163473a3713d2da3990821d9e30",
