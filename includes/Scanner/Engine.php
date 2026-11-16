@@ -182,6 +182,23 @@ class Engine {
                     }
                 }
             }
+
+            // If cache directories were skipped during general traversal, inspect known cache trees
+            // specifically for rogue dropped executables (.php, .phtml, .phar, etc.) without reading .js/.css
+            if ($skip_cache && ($limit === 0 || $count < $limit)) {
+                $walker = new \WebCareProScanner\Filesystem\DirectoryWalker();
+                $cache_execs = $walker->scan_cache_dirs_for_executables($dir);
+                foreach ($cache_execs as $exec_path) {
+                    if ($has_settings_manager && \WebCareProScanner\System\SettingsManager::is_path_excluded($exec_path)) {
+                        continue;
+                    }
+                    $callback($exec_path);
+                    $count++;
+                    if ($limit > 0 && $count >= $limit) {
+                        break;
+                    }
+                }
+            }
         } catch (\Throwable $e) {
             // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
             error_log('WebCare Pro: File discovery error in ' . $dir . ': ' . $e->getMessage());

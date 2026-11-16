@@ -359,11 +359,24 @@ class RaspPrivilegeGuard {
         // across storefront, Shop Manager, and DOING_CRON (WooCommerce Subscriptions) workflows.
         $is_elevated_role = self::is_privileged_role($role);
 
-        // Also check if the target user already holds privileged capabilities (protect admins from non-admin demotion/tampering)
+        // Also check if previous roles were privileged to protect administrators from unauthorized demotion
+        $was_privileged = false;
+        $prev_privileged_role = null;
+        if (!empty($old_roles) && is_array($old_roles)) {
+            foreach ($old_roles as $old_r) {
+                if (self::is_privileged_role((string) $old_r)) {
+                    $was_privileged = true;
+                    $prev_privileged_role = (string) $old_r;
+                    break;
+                }
+            }
+        }
+
+        // Also check if the target user currently holds privileged capabilities (protect admins from non-admin demotion/tampering)
         $target_user = function_exists('get_userdata') ? get_userdata($user_id) : null;
         $target_is_privileged = ($target_user instanceof \WP_User) && self::is_user_privileged($target_user);
 
-        if ($is_elevated_role || $target_is_privileged) {
+        if ($is_elevated_role || $target_is_privileged || $was_privileged) {
             if (FirewallEngine::is_authenticated_administrator()) {
                 return;
             }
@@ -372,41 +385,70 @@ class RaspPrivilegeGuard {
             }
 
             // Note: Neither DOING_CRON nor Shop Managers (manage_woocommerce without manage_options)
-            // are ever permitted to assign a privileged role ($is_elevated_role === true) or mutate an existing privileged account.
+            // are ever permitted to assign a privileged role ($is_elevated_role === true) or mutate/demote an existing privileged account.
             $client_ip = ClientIpResolver::get_client_ip();
             $incident_id = 'WEBCARE-' . strtoupper(substr(md5($client_ip . $role . $user_id . microtime(true)), 0, 8));
-            $reason = sprintf('Unauthorized role escalation to "%s" on user #%d', $role, $user_id);
 
-            FirewallEngine::log_incident([
-                'id'          => 'WAF-RASP-ROLE-ESCALATION',
-                'name'        => 'Runtime Privilege Escalation Guard (Rule #44)',
-                'category'    => 'Runtime RASP Hook Defense',
-                'description' => sprintf(
-                    /* translators: 1: Role, 2: User ID, 3: Client IP */
-                    __('Unauthorized session from %3$s attempted to assign "%1$s" role to user #%2$d without manage_options capability.', 'webcare-pro-security'),
-                    $role,
-                    $user_id,
-                    $client_ip
-                ),
-                'match_type'  => 'Privilege Escalation Intercept',
-                'match_value' => $role,
-                'payload'     => "User ID: {$user_id} Target Role: {$role} Caller: Guest / Non-Admin",
-            ], 'blocked', $incident_id);
+            if ($was_privileged && !$is_elevated_role) {
+                // Unauthorized Demotion: revert user role back to previous privileged role in DB
+                if ($target_user instanceof \WP_User && !empty($prev_privileged_role)) {
+                    remove_action('set_user_role', [__CLASS__, 'rasp_guard_user_role_assignment'], 9999);
+                    $target_user->set_role($prev_privileged_role);
+                    add_action('set_user_role', [__CLASS__, 'rasp_guard_user_role_assignment'], 9999, 3);
+                }
+
+                $reason = sprintf('Unauthorized role demotion of "%s" (user #%d) to "%s"', $prev_privileged_role, $user_id, $role);
+
+                FirewallEngine::log_incident([
+                    'id'          => 'WAF-RASP-ROLE-DEMOTION',
+                    'name'        => 'Runtime Privilege Demotion Guard (Rule #44)',
+                    'category'    => 'Runtime RASP Hook Defense',
+                    'description' => sprintf(
+                        /* translators: 1: Previous role, 2: User ID, 3: Client IP, 4: Target role */
+                        __('Unauthorized session from %3$s attempted to demote privileged user #%2$d (previous role: "%1$s") to "%4$s" without manage_options capability.', 'webcare-pro-security'),
+                        $prev_privileged_role,
+                        $user_id,
+                        $client_ip,
+                        $role
+                    ),
+                    'match_type'  => 'Privilege Demotion Intercept',
+                    'match_value' => $role,
+                    'payload'     => "User ID: {$user_id} Target Role: {$role} Previous Role: {$prev_privileged_role} Caller: Guest / Non-Admin",
+                ], 'blocked', $incident_id);
+            } else {
+                $reason = sprintf('Unauthorized role escalation to "%s" on user #%d', $role, $user_id);
+
+                FirewallEngine::log_incident([
+                    'id'          => 'WAF-RASP-ROLE-ESCALATION',
+                    'name'        => 'Runtime Privilege Escalation Guard (Rule #44)',
+                    'category'    => 'Runtime RASP Hook Defense',
+                    'description' => sprintf(
+                        /* translators: 1: Role, 2: User ID, 3: Client IP */
+                        __('Unauthorized session from %3$s attempted to assign "%1$s" role to user #%2$d without manage_options capability.', 'webcare-pro-security'),
+                        $role,
+                        $user_id,
+                        $client_ip
+                    ),
+                    'match_type'  => 'Privilege Escalation Intercept',
+                    'match_value' => $role,
+                    'payload'     => "User ID: {$user_id} Target Role: {$role} Caller: Guest / Non-Admin",
+                ], 'blocked', $incident_id);
+            }
 
             if (!FirewallEngine::is_authenticated_administrator() && !ClientIpResolver::is_server_origin_or_loopback($client_ip)) {
                 FirewallEngine::add_blocked_ip(
                     $client_ip,
                     $reason,
                     86400,
-                    'WAF-RASP-ROLE-ESCALATION',
-                    'Runtime Role Escalation Trap',
+                    $was_privileged && !$is_elevated_role ? 'WAF-RASP-ROLE-DEMOTION' : 'WAF-RASP-ROLE-ESCALATION',
+                    'Runtime Role Modification Trap',
                     'Runtime RASP Hook Defense',
                     $incident_id
                 );
             }
 
             wp_die(
-                esc_html__('Security Violation: Unauthorized role escalation intercepted by WebCare Runtime RASP.', 'webcare-pro-security'),
+                esc_html__('Security Violation: Unauthorized role modification intercepted by WebCare Runtime RASP.', 'webcare-pro-security'),
                 esc_html__('Forbidden', 'webcare-pro-security'),
                 ['response' => 403]
             );
@@ -623,20 +665,41 @@ class RaspPrivilegeGuard {
         }
 
         if ($meta_key === '_application_passwords') {
-            $existing = get_user_meta($object_id, '_application_passwords', true);
+            $existing = !empty($prev_value) && is_array($prev_value) ? $prev_value : get_user_meta($object_id, '_application_passwords', true);
             if (is_array($existing) && is_array($meta_value) && count($existing) === count($meta_value)) {
                 $existing_map = [];
                 foreach ($existing as $item) {
-                    if (isset($item['uuid'], $item['password'])) {
-                        $existing_map[$item['uuid']] = $item['password'];
+                    if (is_array($item) && isset($item['uuid'])) {
+                        $existing_map[$item['uuid']] = $item;
                     }
                 }
 
                 $is_only_usage_ping = true;
                 foreach ($meta_value as $new_item) {
+                    if (!is_array($new_item)) {
+                        $is_only_usage_ping = false;
+                        break;
+                    }
                     $uuid = $new_item['uuid'] ?? '';
-                    $pass = $new_item['password'] ?? '';
-                    if (!isset($existing_map[$uuid]) || !hash_equals((string) $existing_map[$uuid], (string) $pass)) {
+                    if (!isset($existing_map[$uuid])) {
+                        $is_only_usage_ping = false;
+                        break;
+                    }
+                    $old_item = $existing_map[$uuid];
+                    // Core usage-ping (WP_Application_Passwords::record_application_password_usage)
+                    // strictly and exclusively mutates 'last_used' and/or 'last_ip'.
+                    // Password hash, name, created timestamp, and uuid must remain strictly identical.
+                    if (
+                        !hash_equals((string) ($old_item['password'] ?? ''), (string) ($new_item['password'] ?? '')) ||
+                        (string) ($old_item['name'] ?? '') !== (string) ($new_item['name'] ?? '') ||
+                        (int) ($old_item['created'] ?? 0) !== (int) ($new_item['created'] ?? 0)
+                    ) {
+                        $is_only_usage_ping = false;
+                        break;
+                    }
+                    // Verify no unauthorized extra metadata keys were injected into the entry
+                    $diff_keys = array_diff(array_keys($new_item), array_keys($old_item));
+                    if (!empty($diff_keys)) {
                         $is_only_usage_ping = false;
                         break;
                     }

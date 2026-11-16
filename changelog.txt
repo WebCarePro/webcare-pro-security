@@ -1,5 +1,19 @@
 ﻿v:2.16.0 - 2026-11-16
 - Scanner Engine False-Positive Eliminations, High-Precision Taint Analysis, Universal Cache Exclusions & Authoritative Trust Boundaries:
+  * Administrator Demotion Interception & DB Rollback (RaspPrivilegeGuard.php):
+    - In `RaspPrivilegeGuard::rasp_guard_user_role_assignment()`, inspected `$old_roles` to evaluate historical privileges. When an unauthenticated caller or non-admin attempts to downgrade an administrator account to `subscriber` or another unprivileged role, RASP intercepts the execution, restores the user's previous privileged role in the database (`$target_user->set_role($prev_privileged_role)`), logs incident `WAF-RASP-ROLE-DEMOTION`, and terminates the request with HTTP 403.
+  * Metadata Protection & Usage-Ping Tampering Rejection (RaspPrivilegeGuard.php):
+    - Hardened `_application_passwords` validation in `rasp_guard_user_metadata_injection()`. Verified identical array entry counts, exact UUID matches, cryptographically verified password hashes via `hash_equals()`, matching application names and created timestamps, and zero extraneous array keys. Tampering attempts modifying names, passwords, timestamps, or injecting extra keys are rejected with `false`.
+  * Deep Cache Inspection & Traversal Integration (DirectoryWalker.php, Engine.php, ScanManager.php):
+    - Re-architected `DirectoryWalker::scan_cache_dirs_for_executables()` with a bounded recursive traversal (up to depth 5) across known cache trees (`wp-content/cache`, `litespeed`, `breeze`, `wp-rocket`, `autoptimize`, `wfcache`, `w3tc-cache`, `sg-cachepress`, `wp-fastest-cache`), detecting rogue webshells (`.php`, `.phtml`, `.phar`, `.inc`, `.cgi`, `.pl`, `.py`, `.sh`, `.bash`) without traversing minified `.js`/`.css` assets.
+    - Integrated cache executable inspection into both `Engine::stream_scannable_files()` and `ScanManager::run_filesystem_batch()` (as the `'cache_executables'` phase).
+  * ThreatScoreTracker Exploit Provenance Enforcement (ThreatScoreTracker.php):
+    - Updated `ThreatScoreTracker::record_event()` signature to accept `$exploit_context`. Strictly requires 4-anchor verification via `FirewallEngine::is_registered_confirmed_exploit_rule()` for `'critical_exploit'` events before invoking `escalate_to_hard_ban()`. Unverified or forged exploit claims fail safe to `'behavioral_anomaly'` with capped weight (25.0) and zero automated bans.
+    - Updated class escalation policy documentation to clarify that score threshold (>= 85) triggers temporary HTTP 429 throttling / PoW challenges rather than permanent 24h bans.
+  * Cloaked Mobile Redirect Flag Parsing (JavaScriptSecurityScanner.php):
+    - Updated `JavaScriptSecurityScanner.php` to handle RegExp flags (`/[a-z]*/`) when matching `.test(navigator.userAgent)` and `.match(...)`.
+  * Production-Readiness 14-Case Regression Suite:
+    - Added and tracked `tests/test_v2161_production_readiness.php`, validating all 14 test cases pass with 100% success on PHP 8.4/8.3.
   * Centralized Ban Protection & Zero-Lockout Shopper Immunity:
     - Added Safety Guard 4 inside `FirewallEngine::add_blocked_ip()` to unconditionally reject automated bans (`empty($admin_user)`) whenever an IP is explicitly whitelisted (`is_ip_whitelisted($ip)`) or belongs to an active, cryptographically verified shopper session (`CommerceSessionGuard::has_active_shopper_session()`).
     - Guarded callers in `ThreatScoreTracker.php` (exempting shoppers in `evaluate_pre_flight()` and guarding `escalate_to_hard_ban()`) and `LoginHardening.php` (exempting shoppers on failed logins from sitewide Cloudflare Edge or local blocklist IP lockouts).

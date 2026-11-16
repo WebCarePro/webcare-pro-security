@@ -1,6 +1,6 @@
 {
   "version": "2.16.0",
-  "generated_at": "2026-11-15T23:39:36.322Z",
+  "generated_at": "2026-11-16T08:32:45.697Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -332,8 +332,8 @@
       "size": 15795
     },
     "includes/Filesystem/DirectoryWalker.php": {
-      "sha256": "e6d43bef491b1d8a5b90dd8e8b65ac8a7186426872a1e6a4417af6e55a597337",
-      "size": 10530
+      "sha256": "28107038a0920e0c72a13d929755b267ef794921c28438862f7d2defefc57399",
+      "size": 11848
     },
     "includes/Filesystem/FileHasher.php": {
       "sha256": "2f7298c696517e59dfa314d7f6350bdd1000292e760c6b5ea8c7ff2e824d8afe",
@@ -428,8 +428,8 @@
       "size": 3084
     },
     "includes/Firewall/CAF/ThreatScoreTracker.php": {
-      "sha256": "8cc1de6e3741249db198f3a790bd64d881ff2be3ead3c8c29a7a90c6465f7630",
-      "size": 14594
+      "sha256": "42ad79922744890faea0a886ea1870916b88059c8cc926a37ce325438e7d8824",
+      "size": 15945
     },
     "includes/Firewall/Core/ClientIpResolver.php": {
       "sha256": "95d371ee733306878a5f86fa1919b878fe3672c352da119d09d6f21a82d39649",
@@ -448,8 +448,8 @@
       "size": 108505
     },
     "includes/Firewall/Core/RaspPrivilegeGuard.php": {
-      "sha256": "935cace639280dcdae12f44d29bb9032718e5d243fbcfc0a99cac0f5285863cd",
-      "size": 28141
+      "sha256": "ea20f29850c6e5ec7b49da7428ed0643aa9a298b6ae609452d67db74ff54ace7",
+      "size": 31855
     },
     "includes/Firewall/CVEIntelligenceService.php": {
       "sha256": "51cbe5c3c07b71d29dadcfd18b2fab95b01145f31b42353cf26c4b3bb2617e52",
@@ -656,8 +656,8 @@
       "size": 6671
     },
     "includes/Malware/JavaScriptSecurityScanner.php": {
-      "sha256": "c68f4c7af32839acf66fff6290ccae96753b03ba5545e5030ec61eea694512c9",
-      "size": 15504
+      "sha256": "1397c03e38b655b82f7ed31dd0af6aa80e5d66a1062dd2396ed6d7187bef040a",
+      "size": 15609
     },
     "includes/Malware/KnownHashDetector.php": {
       "sha256": "6553ca086b62f7b7fbe7b9e28e73d0a98fe840ca47fdfcf992157e7b385c6e6d",
@@ -736,8 +736,8 @@
       "size": 2442
     },
     "includes/Scan/ScanManager.php": {
-      "sha256": "25e43589190b5f88bd4f09de2b6c477693ea12f4f205bf7872df9223888197e1",
-      "size": 6794
+      "sha256": "09e08c65d97c0f3f8649da0f0026decc21776807e08ca8102fa3803ed35f4174",
+      "size": 7683
     },
     "includes/Scan/ScanQueueManager.php": {
       "sha256": "882f005129646206b3b107d99ccf7a4689de1dc45b3b525a8c2c4077fc7f4994",
@@ -748,8 +748,8 @@
       "size": 5515
     },
     "includes/Scanner/Engine.php": {
-      "sha256": "a48c60c4701f06eb1b3fbdbd2a9c8c22f59f40d50adbe275f2dc01e05ee4a85e",
-      "size": 9301
+      "sha256": "88feb3c064ede239d95efe49a55693b589301d8a745f6f5255948b6d81511022",
+      "size": 10191
     },
     "includes/Scanner/Rules.php": {
       "sha256": "32b4aab80b70100ef575383f2fb728c29a21e6855ab6f0c9e47432d17c8c5c6d",

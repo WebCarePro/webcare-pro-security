@@ -29,7 +29,9 @@ if (!defined('ABSPATH')) {
  * Escalation Policy:
  *   - T < \theta_{PoW} (default: 40): Normal visitor traffic (no friction)
  *   - \theta_{PoW} <= T < 85: Stateless WebCrypto SHA-256 Proof-of-Work Challenge (k = 16 zero bits)
- *   - T >= 85: Local hard drop + Async Queue push to Cloudflare Edge Ban List
+ *   - T >= 85: Temporary HTTP 429 Throttle (self-healing via decay) + PoW challenge
+ *   - Automated 24h IP bans are NEVER triggered by accumulated heuristic scores or behavioral anomalies;
+ *     they are strictly reserved for 4-anchor verified exploit signatures (is_registered_confirmed_exploit_rule).
  *
  * Author: Mir Alamin (WebCare Pro)
  * Senior Linux SysAdmin & WordPress Security Engineer
@@ -59,11 +61,12 @@ class ThreatScoreTracker {
      * Record a security event for an IP and compute decayed threat score.
      *
      * @param string $ip Offending Client IP
-     * @param string $event_type Event category ('honeypot', 'dormant_surface', 'auth_fail', 'probe_404', 'header_anomaly')
+     * @param string $event_type Event category ('honeypot', 'dormant_surface', 'auth_fail', 'probe_404', 'header_anomaly', 'critical_exploit')
      * @param float|null $custom_weight Optional explicit weight
-     * @return array Array containing ['score' => float, 'action' => 'allow'|'challenge'|'ban', 'escalated' => bool]
+     * @param array|null $exploit_context Optional exploit rule context requiring 4-anchor verification
+     * @return array Array containing ['score' => float, 'action' => 'allow'|'challenge'|'throttle'|'ban', 'escalated' => bool]
      */
-    public static function record_event(string $ip, string $event_type, ?float $custom_weight = null): array {
+    public static function record_event(string $ip, string $event_type, ?float $custom_weight = null, ?array $exploit_context = null): array {
         if (empty($ip) || $ip === '127.0.0.1' || $ip === '::1') {
             return ['score' => 0.0, 'action' => 'allow', 'escalated' => false];
         }
@@ -74,6 +77,24 @@ class ThreatScoreTracker {
         }
         if (class_exists('\\WebCareProScanner\\Firewall\\Core\\CommerceSessionGuard') && \WebCareProScanner\Firewall\Core\CommerceSessionGuard::has_active_shopper_session()) {
             return ['score' => 0.0, 'action' => 'allow', 'escalated' => false];
+        }
+
+        // Provenance Verification: 'critical_exploit' requires authoritative 4-anchor proof.
+        // Unverified exploit claims fail safe and are demoted to behavioral anomaly with capped weight.
+        $is_verified_exploit = false;
+        if ($event_type === 'critical_exploit') {
+            $rule_id = is_array($exploit_context) ? (string) ($exploit_context['id'] ?? '') : '';
+            if (
+                $rule_id !== '' &&
+                is_array($exploit_context) &&
+                class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine') &&
+                \WebCareProScanner\Firewall\FirewallEngine::is_registered_confirmed_exploit_rule($rule_id, $exploit_context)
+            ) {
+                $is_verified_exploit = true;
+            } else {
+                $event_type = 'behavioral_anomaly';
+                $custom_weight = min(25.0, $custom_weight ?? self::WEIGHT_HONEYPOT);
+            }
         }
 
         // Determine score increment
@@ -108,7 +129,7 @@ class ThreatScoreTracker {
         $escalated = false;
 
         if ($new_score >= self::THRESHOLD_HARD_BAN) {
-            if ($event_type === 'critical_exploit') {
+            if ($event_type === 'critical_exploit' && $is_verified_exploit) {
                 $action = 'ban';
                 $escalated = true;
                 self::escalate_to_hard_ban($ip, $new_score, $event_type);

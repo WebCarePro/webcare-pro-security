@@ -230,15 +230,17 @@ class DirectoryWalker {
 
     /**
      * Inspect known cache directories specifically for dropped executable scripts (.php, .phtml, .phar, etc.)
-     * without descending into thousands of minified .js/.css asset subdirectories.
+     * using a bounded recursive traversal that inspects nested subdirectories without reading or analyzing
+     * thousands of minified .js/.css asset files.
      *
      * @param string $root Root path (e.g. ABSPATH)
+     * @param int $max_depth Maximum directory depth to inspect (default: 5)
      * @return array List of suspicious executable file paths found inside cache directories
      */
-    public function scan_cache_dirs_for_executables(string $root): array {
+    public function scan_cache_dirs_for_executables(string $root, int $max_depth = 5): array {
         $root = rtrim(str_replace('\\', '/', $root), '/');
         $found = [];
-        $exec_exts = ['php', 'phtml', 'phar', 'php5', 'php7', 'php8', 'inc'];
+        $exec_exts = ['php', 'phtml', 'phar', 'php5', 'php7', 'php8', 'inc', 'cgi', 'pl', 'py', 'sh', 'bash'];
 
         $cache_dirs_to_check = [
             $root . '/wp-content/cache',
@@ -248,29 +250,60 @@ class DirectoryWalker {
             $root . '/wp-content/breeze',
             $root . '/wp-content/wp-rocket',
             $root . '/wp-content/autoptimize',
+            $root . '/wp-content/wfcache',
+            $root . '/wp-content/w3tc-cache',
+            $root . '/wp-content/sg-cachepress',
+            $root . '/wp-content/wp-fastest-cache',
         ];
 
         foreach ($cache_dirs_to_check as $cache_dir) {
             if (!is_dir($cache_dir)) {
                 continue;
             }
-            try {
-                $dir_iter = new \DirectoryIterator($cache_dir);
-                foreach ($dir_iter as $item) {
-                    if ($item->isDot() || $item->isDir() || $item->isLink()) {
-                        continue;
-                    }
-                    $ext = strtolower($item->getExtension());
-                    if (in_array($ext, $exec_exts, true)) {
-                        $found[] = str_replace('\\', '/', $item->getPathname());
-                    }
-                }
-            } catch (\Throwable $e) {
-                // Ignore unreadable cache dirs
-            }
+            $this->traverse_cache_dir_bounded($cache_dir, $exec_exts, $found, 1, $max_depth);
         }
 
         return $found;
+    }
+
+    /**
+     * Helper to perform depth-bounded search for rogue executables inside cache trees.
+     *
+     * @param string $dir
+     * @param array $exec_exts
+     * @param array &$found
+     * @param int $current_depth
+     * @param int $max_depth
+     * @return void
+     */
+    private function traverse_cache_dir_bounded(string $dir, array $exec_exts, array &$found, int $current_depth, int $max_depth): void {
+        if ($current_depth > $max_depth) {
+            return;
+        }
+
+        try {
+            $flags = \FilesystemIterator::SKIP_DOTS | \FilesystemIterator::CURRENT_AS_FILEINFO | \FilesystemIterator::UNIX_PATHS;
+            $iterator = new \FilesystemIterator($dir, $flags);
+
+            foreach ($iterator as $item) {
+                if ($item->isLink()) {
+                    continue;
+                }
+
+                $pathname = str_replace('\\', '/', $item->getPathname());
+
+                if ($item->isDir()) {
+                    $this->traverse_cache_dir_bounded($pathname, $exec_exts, $found, $current_depth + 1, $max_depth);
+                } elseif ($item->isFile()) {
+                    $ext = strtolower($item->getExtension());
+                    if (in_array($ext, $exec_exts, true)) {
+                        $found[] = $pathname;
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            // Gracefully ignore filesystem access errors
+        }
     }
 
     private function should_skip_file(string $basename): bool {

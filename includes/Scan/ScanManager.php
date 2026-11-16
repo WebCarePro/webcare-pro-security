@@ -48,13 +48,29 @@ class ScanManager {
 
         $cursor = $state->get_cursor();
         $current_phase = $cursor['phase'] ?? 'plugins';
-        $root_dir = $this->phase_root($current_phase);
-
         $adaptive_batch_size = $monitor->get_adaptive_batch_size($batch_size);
-        $batch = $this->directory_walker->get_batch($root_dir, $cursor, $adaptive_batch_size);
-        $files = $batch['files'] ?? [];
-        $new_cursor = $batch['cursor'] ?? $cursor;
-        $exhausted = !empty($batch['exhausted']);
+
+        if ($current_phase === 'cache_executables') {
+            $cached_files = $cursor['cache_files'] ?? null;
+            if ($cached_files === null) {
+                $cached_files = $this->directory_walker->scan_cache_dirs_for_executables(ABSPATH);
+            }
+            $offset = (int) ($cursor['cache_offset'] ?? 0);
+            $files = array_slice($cached_files, $offset, $adaptive_batch_size);
+            $new_offset = $offset + count($files);
+            $exhausted = $new_offset >= count($cached_files);
+            $new_cursor = [
+                'phase'        => 'cache_executables',
+                'cache_files'  => $cached_files,
+                'cache_offset' => $new_offset,
+            ];
+        } else {
+            $root_dir = $this->phase_root($current_phase);
+            $batch = $this->directory_walker->get_batch($root_dir, $cursor, $adaptive_batch_size);
+            $files = $batch['files'] ?? [];
+            $new_cursor = $batch['cursor'] ?? $cursor;
+            $exhausted = !empty($batch['exhausted']);
+        }
 
         $findings = [];
         $file_rows = [];
@@ -166,17 +182,18 @@ class ScanManager {
     private function phase_root(string $phase): string {
         $uploads = wp_upload_dir();
         return match ($phase) {
-            'plugins'  => WP_PLUGIN_DIR,
-            'themes'   => get_theme_root(),
-            'mu'       => WPMU_PLUGIN_DIR,
-            'uploads'  => untrailingslashit($uploads['basedir']),
-            'core'     => ABSPATH,
-            default    => ABSPATH,
+            'plugins'           => WP_PLUGIN_DIR,
+            'themes'            => get_theme_root(),
+            'mu'                => WPMU_PLUGIN_DIR,
+            'uploads'           => untrailingslashit($uploads['basedir']),
+            'core'              => ABSPATH,
+            'cache_executables' => WP_CONTENT_DIR,
+            default             => ABSPATH,
         };
     }
 
     private function next_phase(string $current): ?string {
-        $order = ['plugins', 'themes', 'mu', 'core', 'uploads'];
+        $order = ['plugins', 'themes', 'mu', 'core', 'uploads', 'cache_executables'];
         $idx = array_search($current, $order, true);
         if ($idx === false || !isset($order[$idx + 1])) {
             return null;
