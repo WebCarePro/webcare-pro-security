@@ -31,8 +31,8 @@ class Engine {
             return $issues;
         }
 
-        // Skip cache files
-        if (preg_match('#/wp-content/(litespeed|cache|wfcache|w3tc-cache|et-cache|wpo-cache|breeze|wp-rocket|autoptimize|sg-cachepress|siteground-cache|hummingbird-assets|fast-velocity-minify|borlabs-cookie)/#i', $norm_filepath)) {
+        // Respect user-defined excluded paths / patterns
+        if (class_exists('\\WebCareProScanner\\System\\SettingsManager') && \WebCareProScanner\System\SettingsManager::is_path_excluded($norm_filepath)) {
             return $issues;
         }
 

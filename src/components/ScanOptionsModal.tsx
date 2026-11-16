@@ -48,7 +48,6 @@ interface ScanSettingsState {
   memory_limit_override: string;
   max_file_size_kb: number;
   scan_uploads_mode: string;
-  auto_quarantine_critical: boolean;
 
   // Scheduled Scans & Automation
   schedule_enabled: boolean;
@@ -71,6 +70,40 @@ interface ScanSettingsState {
   scan_profiling_enabled: boolean;
 }
 
+const DEFAULT_EXCLUDED_PATHS = [
+  'wp-content/cache/*',
+  'wp-content/litespeed/*',
+  'wp-content/w3tc-cache/*',
+  'wp-content/wfcache/*',
+  'wp-content/et-cache/*',
+  'wp-content/wpo-cache/*',
+  'wp-content/breeze/*',
+  'wp-content/wp-rocket/*',
+  'wp-content/autoptimize/*',
+  'wp-content/sg-cachepress/*',
+  'wp-content/siteground-cache/*',
+  'wp-content/hummingbird-assets/*',
+  'wp-content/fast-velocity-minify/*',
+  'wp-content/borlabs-cookie/*',
+  'wp-content/wp-fastest-cache/*',
+  'wp-content/supercache/*',
+  'wp-content/comet-cache/*',
+  'wp-content/upgrade/*',
+  'wp-content/uploads/webcare-pro-security/*',
+  'wp-content/uploads/updraft/*',
+  'node_modules/*',
+  'vendor/*',
+  '.git/*',
+  '.svn/*',
+  '.hg/*',
+  '.vault/*',
+  '.backups/*',
+  '.logs/*',
+  '*.log',
+  '*.tar.gz',
+  '*.zip',
+].join('\n');
+
 const DEFAULT_SCAN_SETTINGS: ScanSettingsState = {
   scan_batch_size: 50,
   scan_memory_safety_envelope: 'balanced',
@@ -79,7 +112,6 @@ const DEFAULT_SCAN_SETTINGS: ScanSettingsState = {
   memory_limit_override: '512M',
   max_file_size_kb: 1024,
   scan_uploads_mode: 'smart_executable',
-  auto_quarantine_critical: false,
 
   schedule_enabled: true,
   schedule_frequency: 'daily',
@@ -87,7 +119,7 @@ const DEFAULT_SCAN_SETTINGS: ScanSettingsState = {
   schedule_scan_type: 'plugins_themes',
   scan_execution_strategy: 'ajax_client',
 
-  excluded_paths: 'wp-content/cache/*\nnode_modules/*\n*.log\n.hidden-custom-dir/*',
+  excluded_paths: DEFAULT_EXCLUDED_PATHS,
   scan_excluded_tables: 'wp_actionscheduler_logs\nwp_redirection_logs\n*_wfhits',
   scan_db_batch_size: 500,
   scan_symlink_policy: 'ignore',
@@ -136,7 +168,6 @@ export const ScanOptionsModal: React.FC<ScanOptionsModalProps> = ({
             memory_limit_override: s.memory_limit_override || DEFAULT_SCAN_SETTINGS.memory_limit_override,
             max_file_size_kb: parseInt(s.max_file_size_kb) || DEFAULT_SCAN_SETTINGS.max_file_size_kb,
             scan_uploads_mode: s.scan_uploads_mode || DEFAULT_SCAN_SETTINGS.scan_uploads_mode,
-            auto_quarantine_critical: Boolean(s.auto_quarantine_critical),
 
             schedule_enabled: s.schedule_enabled !== false,
             schedule_frequency: s.schedule_frequency || DEFAULT_SCAN_SETTINGS.schedule_frequency,
@@ -678,30 +709,6 @@ export const ScanOptionsModal: React.FC<ScanOptionsModalProps> = ({
                       />
                     </div>
                   </div>
-
-                  {/* Auto-Quarantine Critical Threats */}
-                  <div className="webcare-scan-options-toggle-card">
-                    <div className="webcare-scan-options-toggle-info">
-                      <div className="webcare-scan-options-toggle-title">
-                        <span>Automatic 1-Click Vault Quarantine on High-Confidence Malware</span>
-                        <span className="webcare-badge-pill webcare-badge-warn">Optional Guard</span>
-                      </div>
-                      <p className="webcare-scan-options-toggle-desc">
-                        When enabled, verified webshells and backdoors with 95%+ confidence are automatically neutralized and placed into the tamper-sealed quarantine vault immediately upon detection.
-                      </p>
-                    </div>
-                    <label className="webcare-toggle-switch">
-                      <input
-                        type="checkbox"
-                        checked={settings.auto_quarantine_critical}
-                        onChange={(e) => {
-                          setSettings({ ...settings, auto_quarantine_critical: e.target.checked });
-                          setActivePreset('custom');
-                        }}
-                      />
-                      <span className="webcare-toggle-slider" />
-                    </label>
-                  </div>
                 </div>
               )}
 
@@ -820,17 +827,17 @@ export const ScanOptionsModal: React.FC<ScanOptionsModalProps> = ({
                       <span className="webcare-scan-options-hint">Skips specific folders or patterns from all scans</span>
                     </label>
                     <textarea
-                      rows={3}
+                      rows={7}
                       className="webcare-scan-options-textarea"
                       value={settings.excluded_paths}
                       onChange={(e) => {
                         setSettings({ ...settings, excluded_paths: e.target.value });
                         setActivePreset('custom');
                       }}
-                      placeholder={'wp-content/cache/*\nnode_modules/*\n*.log\ncustom-dir/*'}
+                      placeholder={'wp-content/cache/*\nwp-content/litespeed/*\nnode_modules/*\nvendor/*\n*.log'}
                     />
                     <small className="webcare-scan-options-field-note">
-                      Example: <code>wp-content/cache/*</code>, <code>custom-backup/*</code>, <code>*.log</code>
+                      Add or remove directory paths and wildcard patterns to customize the scan scope. All cache plugin folders, package managers, and backup archives are managed here rather than hardcoded.
                     </small>
                   </div>
 

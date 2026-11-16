@@ -11,48 +11,13 @@ class DirectoryWalker {
     private const CACHE_SCAN_MAX_FINDINGS = 500;
     private const CACHE_SCAN_BUDGET_SECONDS = 2.0;
 
-    /** Directories we never enter */
+    /** Internal self-defense and quarantine directories protected from recursive scan loops */
     private array $exclude_dirs = [
-        '.git',
-        '.svn',
-        '.hg',
-        'node_modules',
-        'vendor',
-        'wfcache',
-        'w3tc-cache',
-        'et-cache',
-        'wpo-cache',
-        'litespeed',
-        'breeze',
-        'wp-rocket',
-        'autoptimize',
-        'sg-cachepress',
-        'siteground-cache',
-        'hummingbird-assets',
-        'fast-velocity-minify',
-        'borlabs-cookie',
-        'wp-fastest-cache',
-        'supercache',
-        'comet-cache',
-        'updraft',
-        'webcare-pro-security',
         'webcare-pro-quarantine',
         'webcare-vault',
         'webcare-waf',
         'webcare-quarantine',
         '.vault',
-        '.backups',
-        '.logs',
-        'object-cache-pro',
-        'wp-content/cache',
-        'wp-content/litespeed',
-        'wp-content/et-cache',
-        'wp-content/wpo-cache',
-        'wp-content/breeze',
-        'wp-content/wp-rocket',
-        'wp-content/autoptimize',
-        'wp-content/upgrade',
-        'wp-content/uploads/webcare-pro-security',
     ];
 
     /** Safe media/document extensions we skip early during deep code inspection */

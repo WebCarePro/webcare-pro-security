@@ -70,7 +70,7 @@ class SettingsManager {
             'auto_quarantine_critical'       => false, // Safeguard off by default
 
             // 5. Exclusions & Ignore Rules
-            'excluded_paths'           => "wp-content/cache/*\nnode_modules/*\n*.log\n*.tar.gz\n*.zip",
+            'excluded_paths'           => "wp-content/cache/*\nwp-content/litespeed/*\nwp-content/w3tc-cache/*\nwp-content/wfcache/*\nwp-content/et-cache/*\nwp-content/wpo-cache/*\nwp-content/breeze/*\nwp-content/wp-rocket/*\nwp-content/autoptimize/*\nwp-content/sg-cachepress/*\nwp-content/siteground-cache/*\nwp-content/hummingbird-assets/*\nwp-content/fast-velocity-minify/*\nwp-content/borlabs-cookie/*\nwp-content/wp-fastest-cache/*\nwp-content/supercache/*\nwp-content/comet-cache/*\nwp-content/upgrade/*\nwp-content/uploads/webcare-pro-security/*\nwp-content/uploads/updraft/*\nnode_modules/*\nvendor/*\n.git/*\n.svn/*\n.hg/*\n.vault/*\n.backups/*\n.logs/*\n*.log\n*.tar.gz\n*.zip",
             'custom_extensions'        => 'php, phtml, phps, inc, tpl',
 
             // 6. Developer & Admin Security Tweaks & HTTP Headers
@@ -1618,6 +1618,7 @@ class SettingsManager {
         }
 
         $normalized = str_replace('\\', '/', $file_path);
+        $normalized_slash = rtrim($normalized, '/') . '/';
         $lines = explode("\n", $raw);
 
         foreach ($lines as $line) {
@@ -1626,9 +1627,16 @@ class SettingsManager {
                 continue;
             }
             $pattern = str_replace('\\', '/', $pattern);
-            
-            // Substring or wildcard match
-            if (fnmatch("*{$pattern}*", $normalized) || fnmatch($pattern, $normalized) || stripos($normalized, trim($pattern, '*')) !== false) {
+            $trimmed = trim($pattern, '/*');
+
+            // Substring, directory, or wildcard match
+            if (
+                fnmatch("*{$pattern}*", $normalized) ||
+                fnmatch($pattern, $normalized) ||
+                fnmatch("*{$pattern}*", $normalized_slash) ||
+                ($trimmed !== '' && stripos($normalized, $trimmed) !== false) ||
+                ($trimmed !== '' && stripos($normalized_slash, $trimmed . '/') !== false)
+            ) {
                 return true;
             }
         }
