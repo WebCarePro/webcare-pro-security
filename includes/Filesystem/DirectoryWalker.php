@@ -239,7 +239,7 @@ class DirectoryWalker {
      *
      * @param string $root Root path (e.g. ABSPATH)
      * @param int $max_depth Maximum directory depth to inspect (default: 5)
-     * @param array|null $scan_meta Optional scan metadata populated with entry counts and truncation status
+     * @param array|null $scan_meta Optional scan metadata populated with entry counts and coverage status
      * @return array List of suspicious executable file paths found inside cache directories
      */
     public function scan_cache_dirs_for_executables(string $root, int $max_depth = 5, ?array &$scan_meta = null): array {
@@ -248,6 +248,7 @@ class DirectoryWalker {
         $entries_examined = 0;
         $truncated = false;
         $traversal_errors = 0;
+        $depth_limited = 0;
         $deadline = microtime(true) + self::CACHE_SCAN_BUDGET_SECONDS;
         $exec_exts = ['php', 'phtml', 'phar', 'php5', 'php7', 'php8', 'inc', 'cgi', 'pl', 'py', 'sh', 'bash'];
 
@@ -272,7 +273,7 @@ class DirectoryWalker {
             if (!is_dir($cache_dir)) {
                 continue;
             }
-            $this->traverse_cache_dir_bounded($cache_dir, $exec_exts, $found, $entries_examined, $deadline, $truncated, $traversal_errors, 1, $max_depth);
+            $this->traverse_cache_dir_bounded($cache_dir, $exec_exts, $found, $entries_examined, $deadline, $truncated, $traversal_errors, $depth_limited, 1, $max_depth);
         }
 
         $scan_meta = [
@@ -280,7 +281,8 @@ class DirectoryWalker {
             'files_found'      => count($found),
             'truncated'        => $truncated,
             'traversal_errors' => $traversal_errors,
-            'complete'         => !$truncated && $traversal_errors === 0,
+            'depth_limited'    => $depth_limited,
+            'complete'         => !$truncated && $traversal_errors === 0 && $depth_limited === 0,
         ];
 
         return $found;
@@ -296,12 +298,19 @@ class DirectoryWalker {
      * @param float $deadline
      * @param bool &$truncated
      * @param int &$traversal_errors
+     * @param int &$depth_limited
      * @param int $current_depth
      * @param int $max_depth
      * @return void
      */
-    private function traverse_cache_dir_bounded(string $dir, array $exec_exts, array &$found, int &$entries_examined, float $deadline, bool &$truncated, int &$traversal_errors, int $current_depth, int $max_depth): void {
-        if ($current_depth > $max_depth || $truncated) {
+    private function traverse_cache_dir_bounded(string $dir, array $exec_exts, array &$found, int &$entries_examined, float $deadline, bool &$truncated, int &$traversal_errors, int &$depth_limited, int $current_depth, int $max_depth): void {
+        if ($current_depth > $max_depth) {
+            // This directory subtree is intentionally pruned by the configured recursion limit.
+            $depth_limited++;
+            return;
+        }
+
+        if ($truncated) {
             return;
         }
 
@@ -327,7 +336,7 @@ class DirectoryWalker {
                 $pathname = str_replace('\\', '/', $item->getPathname());
 
                 if ($item->isDir()) {
-                    $this->traverse_cache_dir_bounded($pathname, $exec_exts, $found, $entries_examined, $deadline, $truncated, $traversal_errors, $current_depth + 1, $max_depth);
+                    $this->traverse_cache_dir_bounded($pathname, $exec_exts, $found, $entries_examined, $deadline, $truncated, $traversal_errors, $depth_limited, $current_depth + 1, $max_depth);
                     if ($truncated) {
                         return;
                     }

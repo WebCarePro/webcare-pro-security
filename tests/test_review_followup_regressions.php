@@ -152,11 +152,46 @@ try {
     rmdir(dirname(dirname($blocked_cache_dir)));
     rmdir($cache_root);
 
-    run_review_followup_test('Persisted cache traversal errors produce an incomplete response and warning', static function (): bool {
+    $depth_cache_root = sys_get_temp_dir() . '/wcp_cache_depth_review_' . bin2hex(random_bytes(6));
+    $deep_directory = $depth_cache_root . '/wp-content/cache/level-2/level-3/level-4/level-5/level-6';
+    $deep_executable = $deep_directory . '/depth-hidden.php';
+    wp_mkdir_p($deep_directory);
+    $deep_executable_created = file_put_contents($deep_executable, '<?php echo "fixture";') !== false;
+    $depth_scan_meta = [];
+    $depth_found = (new DirectoryWalker())->scan_cache_dirs_for_executables($depth_cache_root, 5, $depth_scan_meta);
+    run_review_followup_test('Executable below the recursion limit is omitted but marks cache inspection incomplete', static function () use ($deep_executable_created, $depth_scan_meta, $depth_found, $deep_executable): bool {
+        return $deep_executable_created
+            && !in_array(str_replace('\\', '/', $deep_executable), array_map(static function ($path): string {
+            return str_replace('\\', '/', $path);
+        }, $depth_found), true)
+            && (int) ($depth_scan_meta['depth_limited'] ?? 0) > 0
+            && empty($depth_scan_meta['truncated'])
+            && (int) ($depth_scan_meta['traversal_errors'] ?? 0) === 0
+            && empty($depth_scan_meta['complete']);
+    });
+    wp_delete_file($deep_executable);
+    $depth_directories = [
+        $depth_cache_root,
+        $depth_cache_root . '/wp-content',
+        $depth_cache_root . '/wp-content/cache',
+        $depth_cache_root . '/wp-content/cache/level-2',
+        $depth_cache_root . '/wp-content/cache/level-2/level-3',
+        $depth_cache_root . '/wp-content/cache/level-2/level-3/level-4',
+        $depth_cache_root . '/wp-content/cache/level-2/level-3/level-4/level-5',
+        $deep_directory,
+    ];
+    foreach (array_reverse($depth_directories) as $directory) {
+        if (is_dir($directory)) {
+            @rmdir($directory);
+        }
+    }
+
+    run_review_followup_test('Persisted cache traversal errors and depth limits produce incomplete response warnings', static function (): bool {
         $scan_id = 'review-cache-error-' . bin2hex(random_bytes(5));
         $state = new ScanState($scan_id, 'filesystem', 0, [
             'cache_scan_truncated' => false,
             'cache_scan_errors' => 1,
+            'cache_scan_depth_limited' => 2,
             'cache_scan_complete' => false,
         ]);
         $state->save();
@@ -171,7 +206,8 @@ try {
 
         return $response['cache_scan_complete'] === false
             && $response['cache_scan_errors'] === 1
-            && count($response['warnings']) === 1;
+            && $response['cache_scan_depth_limited'] === 2
+            && count($response['warnings']) === 2;
     });
 
     $ip_base = random_int(10, 180);

@@ -57,6 +57,7 @@ class ScanManager {
                 $cached_files = $this->directory_walker->scan_cache_dirs_for_executables(ABSPATH, 5, $cache_scan_meta);
                 $state->set_meta_key('cache_scan_truncated', !empty($cache_scan_meta['truncated']));
                 $state->set_meta_key('cache_scan_errors', max(0, (int) ($cache_scan_meta['traversal_errors'] ?? 0)));
+                $state->set_meta_key('cache_scan_depth_limited', max(0, (int) ($cache_scan_meta['depth_limited'] ?? 0)));
                 $state->set_meta_key('cache_scan_complete', !empty($cache_scan_meta['complete']));
             }
             $cached_files = is_array($cached_files) ? array_slice($cached_files, 0, 500) : [];
@@ -172,6 +173,7 @@ class ScanManager {
         $scan_meta = $state->get_meta();
         $cache_scan_truncated = !empty($scan_meta['cache_scan_truncated']);
         $cache_scan_errors = max(0, (int) ($scan_meta['cache_scan_errors'] ?? 0));
+        $cache_scan_depth_limited = max(0, (int) ($scan_meta['cache_scan_depth_limited'] ?? 0));
         $cache_scan_complete = array_key_exists('cache_scan_complete', $scan_meta)
             ? (bool) $scan_meta['cache_scan_complete']
             : null;
@@ -182,6 +184,9 @@ class ScanManager {
         }
         if ($cache_scan_errors > 0) {
             $warnings[] = __('Cache executable inspection could not access one or more cache directories; findings may be incomplete.', 'webcare-pro-security');
+        }
+        if ($cache_scan_depth_limited > 0) {
+            $warnings[] = __('Cache executable inspection reached its recursion-depth limit; deeper cache entries may remain unscanned.', 'webcare-pro-security');
         }
 
         return [
@@ -195,6 +200,7 @@ class ScanManager {
             'memory_peak_mb'         => round($state->get_memory_peak() / 1024 / 1024, 2),
             'cache_scan_truncated'   => $cache_scan_truncated,
             'cache_scan_errors'      => $cache_scan_errors,
+            'cache_scan_depth_limited' => $cache_scan_depth_limited,
             'cache_scan_complete'    => $cache_scan_complete,
             'warnings'               => $warnings,
             'findings'               => array_map(function ($f) {

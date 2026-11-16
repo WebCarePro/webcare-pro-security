@@ -1,6 +1,6 @@
 {
   "version": "2.16.0",
-  "generated_at": "2026-11-16T10:10:19.478Z",
+  "generated_at": "2026-11-16T15:32:01.739Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -332,8 +332,8 @@
       "size": 15795
     },
     "includes/Filesystem/DirectoryWalker.php": {
-      "sha256": "a606d66363f850869d3f291a5075d58674b388a9f93a229ab99372560d30a28b",
-      "size": 13540
+      "sha256": "e522530c1271658544cda4be13f16db9f844b1c0ae068008e7390a65472358f5",
+      "size": 13897
     },
     "includes/Filesystem/FileHasher.php": {
       "sha256": "2f7298c696517e59dfa314d7f6350bdd1000292e760c6b5ea8c7ff2e824d8afe",
@@ -736,8 +736,8 @@
       "size": 2442
     },
     "includes/Scan/ScanManager.php": {
-      "sha256": "dc5b8ea5a850a7b398d3bc64db73b6fcc38214069583866120e893dd167847ea",
-      "size": 9183
+      "sha256": "58468bef7ba1069fd6021c7e4ff6c4a6300f0ac3ebe5ae41d40bee738338f1d0",
+      "size": 9689
     },
     "includes/Scan/ScanQueueManager.php": {
       "sha256": "882f005129646206b3b107d99ccf7a4689de1dc45b3b525a8c2c4077fc7f4994",
