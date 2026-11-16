@@ -189,15 +189,40 @@ class SessionSentinel {
         }
 
         if ($session_token) {
+            $now = time();
             $verifier = hash('sha256', $session_token);
+            $initial_history = [
+                [
+                    'ip'         => $ip,
+                    'first_seen' => $now,
+                    'last_seen'  => $now,
+                    'count'      => 1,
+                    'is_login'   => true,
+                ],
+            ];
+            $initial_events = [
+                [
+                    'ip'   => $ip,
+                    'time' => $now,
+                    'type' => 'login',
+                    'ua'   => substr(sanitize_text_field($ua), 0, 255),
+                ],
+            ];
             $entry = [
-                'login_time'     => time(),
-                'last_seen'      => time(),
+                'login_time'     => $now,
+                'last_seen'      => $now,
+                'login_ip'       => $ip,
+                'current_ip'     => $ip,
+                'ip_history'     => $initial_history,
+                'ip_events'      => $initial_events,
                 'auth_type'      => $auth_type,
                 'auth_label'     => $auth_label,
                 'auth_details'   => $auth_details,
                 'encrypted_meta' => \WebCareProScanner\Security\SecretVault::encrypt((string) wp_json_encode([
                     'login_ip'     => $ip,
+                    'current_ip'   => $ip,
+                    'ip_history'   => $initial_history,
+                    'ip_events'    => $initial_events,
                     'user_agent'   => substr(sanitize_text_field($ua), 0, 255),
                     'auth_type'    => $auth_type,
                     'auth_label'   => $auth_label,
@@ -259,26 +284,93 @@ class SessionSentinel {
                 $current_login_ip = $session_info['login_ip'] ?? '';
             }
 
-            // Auto-initialize if session was active before sentinel activation or if IP was recorded as Cloudflare proxy or loopback
+            // Auto-initialize if session was active before sentinel activation or if IP was recorded as Cloudflare proxy
             $is_cf_ip = \WebCareProScanner\Firewall\FirewallEngine::is_cloudflare_ip($current_login_ip);
-            $is_local_ip = ($current_login_ip === '127.0.0.1' || $current_login_ip === '::1' || \WebCareProScanner\Firewall\FirewallEngine::is_private_ip($current_login_ip));
 
-            if (!$session_info || empty($current_login_ip) || $is_cf_ip || $is_local_ip) {
+            if (!$session_info || empty($current_login_ip) || $is_cf_ip) {
                 self::anchor_session($user_id, $current_token, $current_verifier, $ip, $session_info ?: []);
                 return;
             }
 
-            // Update last seen timestamp (throttled every 60 seconds to save DB writes)
-            if (time() - ($session_info['last_seen'] ?? 0) > 60) {
-                $sessions_meta[$current_token]['last_seen'] = time();
-                $sessions_meta[$current_verifier]['last_seen'] = time();
-                update_user_meta($user_id, 'webcareproscan_session_meta', $sessions_meta);
-            }
-
-            // Cryptographic Session Binding & ASN Drift Verification
+            $now = time();
             $current_ua = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';
             $current_asn = isset($_SERVER['HTTP_CF_IPASN']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_IPASN'])) : '';
             $recorded_asn = $decoded['asn'] ?? '';
+
+            // Retrieve and maintain unlimited IP access history for this session
+            $raw_ip_history = isset($session_info['ip_history']) && is_array($session_info['ip_history'])
+                ? $session_info['ip_history']
+                : (isset($decoded['ip_history']) && is_array($decoded['ip_history']) ? $decoded['ip_history'] : []);
+
+            if (empty($raw_ip_history) && !empty($current_login_ip)) {
+                $raw_ip_history[] = [
+                    'ip'         => $current_login_ip,
+                    'first_seen' => (int) ($session_info['login_time'] ?? $now),
+                    'last_seen'  => (int) ($session_info['last_seen'] ?? $now),
+                    'count'      => 1,
+                    'is_login'   => true,
+                ];
+            }
+
+            $ip_found_idx = -1;
+            foreach ($raw_ip_history as $idx => $item) {
+                if (isset($item['ip']) && $item['ip'] === $ip) {
+                    $ip_found_idx = $idx;
+                    break;
+                }
+            }
+
+            $raw_ip_events = isset($session_info['ip_events']) && is_array($session_info['ip_events'])
+                ? $session_info['ip_events']
+                : (isset($decoded['ip_events']) && is_array($decoded['ip_events']) ? $decoded['ip_events'] : []);
+
+            $needs_meta_save = false;
+
+            if ($ip_found_idx >= 0) {
+                // Existing IP seen before on this session. Increment access counter throttled to every 30s
+                $last_ip_hit = (int) ($raw_ip_history[$ip_found_idx]['last_seen'] ?? 0);
+                if ($now - $last_ip_hit >= 30) {
+                    $raw_ip_history[$ip_found_idx]['last_seen'] = $now;
+                    $raw_ip_history[$ip_found_idx]['count'] = (int) ($raw_ip_history[$ip_found_idx]['count'] ?? 1) + 1;
+                    $needs_meta_save = true;
+                }
+            } else {
+                // Brand new IP observed for this session! Append to unlimited IP history
+                $raw_ip_history[] = [
+                    'ip'         => $ip,
+                    'first_seen' => $now,
+                    'last_seen'  => $now,
+                    'count'      => 1,
+                    'is_login'   => false,
+                ];
+                $raw_ip_events[] = [
+                    'ip'   => $ip,
+                    'time' => $now,
+                    'type' => 'shift',
+                    'ua'   => substr($current_ua, 0, 255),
+                ];
+                $needs_meta_save = true;
+            }
+
+            // Check overall session last_seen update (throttled every 60s)
+            if ($now - ($session_info['last_seen'] ?? 0) > 60) {
+                $needs_meta_save = true;
+            }
+
+            if (($session_info['current_ip'] ?? '') !== $ip) {
+                $needs_meta_save = true;
+            }
+
+            if ($needs_meta_save) {
+                $session_info['last_seen']  = $now;
+                $session_info['current_ip'] = $ip;
+                $session_info['ip_history'] = $raw_ip_history;
+                $session_info['ip_events']  = $raw_ip_events;
+
+                $sessions_meta[$current_token]    = $session_info;
+                $sessions_meta[$current_verifier] = $session_info;
+                update_user_meta($user_id, 'webcareproscan_session_meta', $sessions_meta);
+            }
 
             $is_ip_valid = self::is_ip_match_or_subnet($current_login_ip, $ip, $decoded, $current_ua);
             $asn_drift = (!empty($recorded_asn) && !empty($current_asn) && $recorded_asn !== $current_asn);
@@ -413,13 +505,63 @@ class SessionSentinel {
             $existing_decoded = is_string($dec) ? (json_decode($dec, true) ?: []) : [];
         }
 
+        $now = time();
+        $login_ip = $existing_info['login_ip'] ?? ($existing_decoded['login_ip'] ?? $ip);
+
+        // Preserve and update unlimited IP history
+        $existing_history = isset($existing_info['ip_history']) && is_array($existing_info['ip_history'])
+            ? $existing_info['ip_history']
+            : (isset($existing_decoded['ip_history']) && is_array($existing_decoded['ip_history']) ? $existing_decoded['ip_history'] : []);
+
+        if (empty($existing_history) && !empty($login_ip)) {
+            $existing_history[] = [
+                'ip'         => $login_ip,
+                'first_seen' => (int) ($existing_info['login_time'] ?? $now),
+                'last_seen'  => $now,
+                'count'      => 1,
+                'is_login'   => true,
+            ];
+        }
+
+        $found_hist = false;
+        foreach ($existing_history as &$h_entry) {
+            if (isset($h_entry['ip']) && $h_entry['ip'] === $ip) {
+                $h_entry['last_seen'] = $now;
+                $h_entry['count'] = (int) ($h_entry['count'] ?? 1) + 1;
+                $found_hist = true;
+                break;
+            }
+        }
+        unset($h_entry);
+
+        if (!$found_hist && !empty($ip)) {
+            $existing_history[] = [
+                'ip'         => $ip,
+                'first_seen' => $now,
+                'last_seen'  => $now,
+                'count'      => 1,
+                'is_login'   => empty($existing_history),
+            ];
+        }
+
+        $existing_events = isset($existing_info['ip_events']) && is_array($existing_info['ip_events'])
+            ? $existing_info['ip_events']
+            : (isset($existing_decoded['ip_events']) && is_array($existing_decoded['ip_events']) ? $existing_decoded['ip_events'] : []);
+
         $entry = [
-            'login_time'     => $existing_info['login_time'] ?? time(),
-            'last_seen'      => time(),
+            'login_time'     => $existing_info['login_time'] ?? $now,
+            'last_seen'      => $now,
+            'login_ip'       => $login_ip,
+            'current_ip'     => $ip,
+            'ip_history'     => $existing_history,
+            'ip_events'      => $existing_events,
             'auth_type'      => $existing_info['auth_type'] ?? ($existing_decoded['auth_type'] ?? 'password'),
             'auth_label'     => $existing_info['auth_label'] ?? ($existing_decoded['auth_label'] ?? 'Password'),
             'encrypted_meta' => \WebCareProScanner\Security\SecretVault::encrypt((string) wp_json_encode([
-                'login_ip'   => $ip,
+                'login_ip'   => $login_ip,
+                'current_ip' => $ip,
+                'ip_history' => $existing_history,
+                'ip_events'  => $existing_events,
                 'alt_ip'     => $existing_decoded['alt_ip'] ?? '',
                 'user_agent' => substr(!empty($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : ($existing_decoded['user_agent'] ?? 'Unknown'), 0, 255),
                 'asn'        => isset($_SERVER['HTTP_CF_IPASN']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_IPASN'])) : ($existing_decoded['asn'] ?? ''),
@@ -805,16 +947,78 @@ class SessionSentinel {
                     $security_level = 'at_risk';
                 }
 
+                $last_seen_ts = isset($meta['last_seen']) ? (int) $meta['last_seen'] : $login_ts;
+
+                // Retrieve unlimited IP access history and determine if IP changed
+                $raw_history = isset($meta['ip_history']) && is_array($meta['ip_history'])
+                    ? $meta['ip_history']
+                    : (isset($decoded['ip_history']) && is_array($decoded['ip_history']) ? $decoded['ip_history'] : []);
+
+                if (empty($raw_history) && !empty($ip) && $ip !== 'Unknown') {
+                    $raw_history[] = [
+                        'ip'         => $ip,
+                        'first_seen' => $login_ts,
+                        'last_seen'  => $last_seen_ts,
+                        'count'      => 1,
+                        'is_login'   => true,
+                    ];
+                }
+
+                $session_active_ip = $meta['current_ip'] ?? ($decoded['current_ip'] ?? ($is_current ? $client_ip : $ip));
+                $distinct_ips = [];
+                $formatted_ip_history = [];
+
+                foreach ($raw_history as $hist) {
+                    $hist_ip = sanitize_text_field($hist['ip'] ?? '');
+                    if (empty($hist_ip)) {
+                        continue;
+                    }
+                    if (!in_array($hist_ip, $distinct_ips, true)) {
+                        $distinct_ips[] = $hist_ip;
+                    }
+                    $first_ts = (int) ($hist['first_seen'] ?? $login_ts);
+                    $last_ts  = (int) ($hist['last_seen'] ?? $last_seen_ts);
+                    $is_login_ip = !empty($hist['is_login']) || ($hist_ip === $ip);
+                    $is_active_ip = ($hist_ip === $session_active_ip);
+
+                    $formatted_ip_history[] = [
+                        'ip'               => $hist_ip,
+                        'first_seen'       => date_i18n('Y-m-d H:i:s', $first_ts),
+                        'first_seen_raw'   => $first_ts,
+                        'first_seen_human' => human_time_diff($first_ts, time()) . ' ago',
+                        'last_seen'        => date_i18n('Y-m-d H:i:s', $last_ts),
+                        'last_seen_raw'    => $last_ts,
+                        'last_seen_human'  => (time() - $last_ts < 90) ? __('Active just now', 'webcare-pro-security') : human_time_diff($last_ts, time()) . ' ago',
+                        'count'            => max(1, (int) ($hist['count'] ?? 1)),
+                        'is_login'         => $is_login_ip,
+                        'is_current'       => $is_active_ip,
+                        'is_local_ip'      => ($hist_ip === '127.0.0.1' || $hist_ip === '::1' || \WebCareProScanner\Firewall\FirewallEngine::is_private_ip($hist_ip)),
+                    ];
+                }
+
+                usort($formatted_ip_history, function ($a, $b) {
+                    if (!empty($a['is_current']) && empty($b['is_current'])) return -1;
+                    if (empty($a['is_current']) && !empty($b['is_current'])) return 1;
+                    return ($b['last_seen_raw'] ?? 0) <=> ($a['last_seen_raw'] ?? 0);
+                });
+
+                $has_ip_changed = count($distinct_ips) > 1 || (!empty($session_active_ip) && !empty($ip) && $session_active_ip !== $ip);
+
+                if ($has_ip_changed && !in_array($session_active_ip, $distinct_ips, true) && !empty($session_active_ip) && $session_active_ip !== 'Unknown') {
+                    $distinct_ips[] = $session_active_ip;
+                }
+
                 $risk_factors = [];
                 if ($auth_type === 'password') {
                     $risk_factors[] = __('Single-factor password login: Account lacks MFA (2FA or Passkey).', 'webcare-pro-security');
                 }
-                if ($ip !== $client_ip && $is_current) {
+                if ($has_ip_changed) {
                     $risk_factors[] = sprintf(
-                        /* translators: 1: login IP, 2: current IP */
-                        __('IP changed since login (%1$s &rarr; %2$s).', 'webcare-pro-security'),
+                        /* translators: 1: login IP, 2: current IP, 3: count */
+                        __('IP changed since login (%1$s &rarr; %2$s). %3$d unique IPs observed.', 'webcare-pro-security'),
                         esc_html($ip),
-                        esc_html($client_ip)
+                        esc_html($session_active_ip),
+                        count($distinct_ips)
                     );
                 }
 
@@ -837,7 +1041,6 @@ class SessionSentinel {
                 }
 
                 // Idle time calculation
-                $last_seen_ts = isset($meta['last_seen']) ? (int) $meta['last_seen'] : $login_ts;
                 $idle_diff = max(0, time() - $last_seen_ts);
                 $idle_human = $idle_diff < 90 ? __('Active just now', 'webcare-pro-security') : sprintf(
                     /* translators: %s: time difference */
@@ -855,9 +1058,15 @@ class SessionSentinel {
                     'avatar_url'               => get_avatar_url($admin->ID, ['size' => 48]),
                     'is_current'               => $is_current,
                     'login_ip'                 => $ip,
-                    'current_ip'               => $client_ip,
-                    'is_same_ip'               => ($ip === $client_ip),
+                    'current_ip'               => $session_active_ip,
+                    'is_same_ip'               => ($ip === $session_active_ip),
                     'is_local_ip'              => ($ip === '127.0.0.1' || $ip === '::1' || \WebCareProScanner\Firewall\FirewallEngine::is_private_ip($ip)),
+                    'has_ip_changed'           => $has_ip_changed,
+                    'distinct_ips'             => $distinct_ips,
+                    'distinct_ip_count'        => count($distinct_ips),
+                    'ip_changes_count'         => max(0, count($distinct_ips) - 1),
+                    'ip_history'               => $formatted_ip_history,
+                    'ip_events'                => $meta['ip_events'] ?? ($decoded['ip_events'] ?? []),
                     'login_time'               => date_i18n('Y-m-d H:i:s', $login_ts),
                     'login_time_raw'           => $login_ts,
                     'login_time_human'         => human_time_diff($login_ts, time()) . ' ago',

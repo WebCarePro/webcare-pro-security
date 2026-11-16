@@ -420,27 +420,48 @@ class AdminMenu {
         // phpcs:ignore WordPress.Security.NonceVerification.Recommended
         $tab_param = isset($_GET['tab']) ? sanitize_key(wp_unslash($_GET['tab'])) : '';
 
-        // Prioritize explicit tab parameter if passed in query string
-        if ($tab_param === 'logs' || $current_page === 'webcare-pro-logs') $active_tab = 'logs';
-        elseif ($tab_param === 'targeted' || $current_page === 'webcare-pro-tools') $active_tab = 'targeted';
-        elseif ($tab_param === 'vulnerabilities' || $current_page === 'webcare-pro-vulnerabilities') $active_tab = 'vulnerabilities';
-        elseif ($tab_param === 'fim' || $current_page === 'webcare-pro-fim') $active_tab = 'fim';
-        elseif ($tab_param === 'quarantine' || $current_page === 'webcare-pro-quarantine') $active_tab = 'quarantine';
-        elseif ($tab_param === 'backup' || $current_page === 'webcare-pro-backup') $active_tab = 'backup';
-        elseif ($tab_param === 'server' || $current_page === 'webcare-pro-server') $active_tab = 'server';
-        elseif ($tab_param === 'forensics' || $current_page === 'webcare-pro-forensics') $active_tab = 'forensics';
-        elseif ($tab_param === 'vault' || $current_page === 'webcare-pro-vault') $active_tab = 'vault';
-        elseif ($tab_param === 'waf_logs' || $current_page === 'webcare-pro-waf-logs') $active_tab = 'waf_logs';
-        elseif (in_array($tab_param, ['firewall', 'vpatch', 'caf'], true) || in_array($current_page, ['webcare-pro-firewall', 'webcare-pro-vpatch', 'webcare-pro-caf'], true)) $active_tab = 'firewall';
-        elseif ($tab_param === 'auth' || $current_page === 'webcare-pro-auth') $active_tab = 'auth';
-        elseif ($tab_param === 'notifications' || $current_page === 'webcare-pro-notifications') $active_tab = 'notifications';
-        elseif ($tab_param === 'activity_logs' || $current_page === 'webcare-pro-activity-logs') $active_tab = 'activity_logs';
-        elseif ($tab_param === 'cron_manager' || $current_page === 'webcare-pro-cron-manager') $active_tab = 'cron_manager';
-        elseif ($tab_param === 'settings' || $current_page === 'webcare-pro-settings') $active_tab = 'settings';
-        elseif ($tab_param === 'about' || $current_page === 'webcare-pro-about') $active_tab = 'about';
-        elseif ($tab_param === 'wizard' || $current_page === 'webcare-pro-wizard') $active_tab = 'wizard';
-        elseif ($tab_param === 'modular_waf' || $current_page === 'webcare-pro-modular-waf') $active_tab = 'modular_waf';
-        elseif ($current_page === 'webcare-pro-scan' || $tab_param === 'scan') $active_tab = 'scan';
+        // Resolve active cluster tab: check dedicated page slug first, then fallback to tab parameter
+        if ($current_page === 'webcare-pro-auth') $active_tab = 'auth';
+        elseif ($current_page === 'webcare-pro-logs') $active_tab = 'logs';
+        elseif ($current_page === 'webcare-pro-tools') $active_tab = 'targeted';
+        elseif ($current_page === 'webcare-pro-vulnerabilities') $active_tab = 'vulnerabilities';
+        elseif ($current_page === 'webcare-pro-fim') $active_tab = 'fim';
+        elseif ($current_page === 'webcare-pro-quarantine') $active_tab = 'quarantine';
+        elseif ($current_page === 'webcare-pro-backup') $active_tab = 'backup';
+        elseif ($current_page === 'webcare-pro-server') $active_tab = 'server';
+        elseif ($current_page === 'webcare-pro-forensics') $active_tab = 'forensics';
+        elseif ($current_page === 'webcare-pro-vault') $active_tab = 'vault';
+        elseif ($current_page === 'webcare-pro-waf-logs') $active_tab = 'waf_logs';
+        elseif (in_array($current_page, ['webcare-pro-firewall', 'webcare-pro-vpatch', 'webcare-pro-caf'], true)) $active_tab = 'firewall';
+        elseif ($current_page === 'webcare-pro-notifications') $active_tab = 'notifications';
+        elseif ($current_page === 'webcare-pro-activity-logs') $active_tab = 'activity_logs';
+        elseif ($current_page === 'webcare-pro-cron-manager') $active_tab = 'cron_manager';
+        elseif ($current_page === 'webcare-pro-settings') $active_tab = 'settings';
+        elseif ($current_page === 'webcare-pro-about') $active_tab = 'about';
+        elseif ($current_page === 'webcare-pro-wizard') $active_tab = 'wizard';
+        elseif ($current_page === 'webcare-pro-modular-waf') $active_tab = 'modular_waf';
+        elseif ($current_page === 'webcare-pro-scan') $active_tab = 'scan';
+        // Tab parameter fallback for main portal / sub-tab navigation
+        elseif ($tab_param === 'logs') $active_tab = 'logs';
+        elseif ($tab_param === 'targeted') $active_tab = 'targeted';
+        elseif ($tab_param === 'vulnerabilities') $active_tab = 'vulnerabilities';
+        elseif ($tab_param === 'fim') $active_tab = 'fim';
+        elseif ($tab_param === 'quarantine') $active_tab = 'quarantine';
+        elseif ($tab_param === 'backup') $active_tab = 'backup';
+        elseif ($tab_param === 'server') $active_tab = 'server';
+        elseif ($tab_param === 'forensics') $active_tab = 'forensics';
+        elseif ($tab_param === 'vault') $active_tab = 'vault';
+        elseif ($tab_param === 'waf_logs') $active_tab = 'waf_logs';
+        elseif (in_array($tab_param, ['firewall', 'vpatch', 'caf'], true)) $active_tab = 'firewall';
+        elseif ($tab_param === 'auth') $active_tab = 'auth';
+        elseif ($tab_param === 'notifications') $active_tab = 'notifications';
+        elseif ($tab_param === 'activity_logs') $active_tab = 'activity_logs';
+        elseif ($tab_param === 'cron_manager') $active_tab = 'cron_manager';
+        elseif ($tab_param === 'settings') $active_tab = 'settings';
+        elseif ($tab_param === 'about') $active_tab = 'about';
+        elseif ($tab_param === 'wizard') $active_tab = 'wizard';
+        elseif ($tab_param === 'modular_waf') $active_tab = 'modular_waf';
+        elseif ($tab_param === 'scan') $active_tab = 'scan';
 
         $global_css_file = WEBCAREPROSCAN_PATH . 'build/global.css';
         $global_js_file  = WEBCAREPROSCAN_PATH . 'build/global.js';
