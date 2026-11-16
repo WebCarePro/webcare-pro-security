@@ -726,12 +726,63 @@ run_review_followup_test('RemediationManager rejects unauthorized hosts and path
     return $res_host === null && $res_trav === null && $res_null === null;
 });
 
-run_review_followup_test('Preload micro-WAF normalizes encoded rest_route query parameter', static function () use ($plugin_root): bool {
+run_review_followup_test('Preload and runtime REST query normalization agree for encoded and edge-case routes', static function () use ($plugin_root): bool {
     require_once $plugin_root . '/includes/Firewall/MicroWafCompiler.php';
-    \WebCareProScanner\Firewall\MicroWafCompiler::compile();
-    $compiled_file = \WebCareProScanner\Firewall\MicroWafCompiler::get_compiled_file_path();
-    $code = file_exists($compiled_file) ? (string) file_get_contents($compiled_file) : '';
-    return strpos($code, "\$normalize_preload_path(\$_GET['rest_route'])") !== false;
+    require_once $plugin_root . '/includes/Firewall/FirewallEngine.php';
+
+    $compiler = new \ReflectionClass(\WebCareProScanner\Firewall\MicroWafCompiler::class);
+    $generator = $compiler->getMethod('generate_standalone_code');
+    $generator->setAccessible(true);
+    $code = $generator->invoke(null, [], [], sys_get_temp_dir() . '/wcp-preload-route-test.log', 'route-test-token');
+    $marker = '$normalize_preload_rest_route = static function';
+    $closure_start = strpos($code, $marker);
+    $closure_end = $closure_start === false ? false : strpos($code, "        };\n", $closure_start);
+    if ($closure_start === false || $closure_end === false) {
+        return false;
+    }
+
+    $closure_source = substr($code, $closure_start, $closure_end + strlen('        };') - $closure_start);
+    $original_get = $_GET;
+    try {
+        eval($closure_source);
+        if (!isset($normalize_preload_rest_route) || !is_callable($normalize_preload_rest_route)) {
+            return false;
+        }
+
+        $cases = [
+            ['/wp%2Fv2%2Fposts', '/wp/v2/posts'],
+            ['/wp%252Fv2%252Fposts', '/wp/v2/posts'],
+            ['/wp%25252Fv2%25252Fposts', '/wp/v2/posts'],
+            ['/wp%00/v2%0d%0a/posts', '/wp/v2/posts'],
+            ['/WP/V2/Posts', '/WP/V2/Posts'],
+            ['/wp/v2/../users', '/wp/v2/../users'],
+            ['/wp/v2/' . chr(92) . chr(0) . 'posts', '/wp/v2/posts'],
+            ['/wp/v2/' . chr(92) . chr(13) . 'posts', '/wp/v2/posts'],
+            ['/wp/v2/' . chr(92) . chr(10) . 'posts', '/wp/v2/posts'],
+            ['/wp/v2/' . chr(92) . '%00posts', '/wp/v2/posts'],
+            ['/wp/v2/' . chr(92) . "'posts", "/wp/v2/'posts"],
+        ];
+
+        foreach ($cases as [$input, $expected]) {
+            $_GET = ['rest_route' => $input];
+            $preload_route = $normalize_preload_rest_route($input);
+            $runtime_route = \WebCareProScanner\Firewall\FirewallEngine::resolve_normalized_rest_route('/');
+            if ($preload_route !== $expected || $runtime_route !== $expected) {
+                fwrite(STDERR, 'REST route mismatch: input=' . bin2hex($input) . ' preload=' . bin2hex($preload_route) . ' runtime=' . bin2hex($runtime_route) . ' expected=' . bin2hex($expected) . "\n");
+                return false;
+            }
+        }
+
+        token_get_all($code, TOKEN_PARSE);
+        return strpos($code, "\$normalize_preload_rest_route(\$_GET['rest_route'])") !== false
+            && strpos($code, '$mod_rest_q_match = strtolower($mod_rest_q)') !== false
+            && strpos($code, '$rest_q = $mod_rest_q_match') !== false;
+    } catch (Throwable $exception) {
+        fwrite(STDERR, 'REST route normalization test exception: ' . $exception->getMessage() . "\n");
+        return false;
+    } finally {
+        $_GET = $original_get;
+    }
 });
 
 run_review_followup_test('Theme inspection reports incomplete when wp_get_themes() is unavailable', static function () use ($plugin_root): bool {

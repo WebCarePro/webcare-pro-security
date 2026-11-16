@@ -1,6 +1,6 @@
 {
   "version": "2.17.0",
-  "generated_at": "2026-11-16T18:49:20.142Z",
+  "generated_at": "2026-11-16T19:00:57.117Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -492,7 +492,7 @@
       "size": 15983
     },
     "includes/Firewall/MicroWafCompiler.php": {
-      "sha256": "a11245211885f7c93e2eecd339aaed19fd87d0970b1b379121631095e3247d40",
+      "sha256": "efa8f04fb43727f610eb55dbfdd021117dfb726d0645c68c0d65274828afb642",
       "size": 95577
     },
     "includes/Firewall/Modular/BehavioralVaultManager.php": {
@@ -944,8 +944,8 @@
       "size": 26630
     },
     "readme.txt": {
-      "sha256": "993dc41bd377bf62e8215fca12b1de69927eabd014f7ca10ca07c4ef0387f88a",
-      "size": 44063
+      "sha256": "ab53d4313fcb0535d1bb0e132d60d1eb096927163111f9eb802ab4efd4dfa44f",
+      "size": 44164
     },
     "uninstall.php": {
       "sha256": "38617ff46e244653fae189b3165b76caea95498dfe31f300cb5887cbd28809c3",
