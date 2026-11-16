@@ -16,10 +16,202 @@ if (!defined('ABSPATH')) {
  */
 class SessionSentinel {
 
+    const VAULT_FOLDER = 'webcare-pro-security/auth-vault';
+    const VAULT_FILE   = 'admin_session_history.vault.json';
+    const RETENTION_PERIOD_SECONDS = 2592000; // 30 days (30 * 86400)
+
     private static $last_auth_token = '';
     public static string $pending_auth_type = '';
     public static string $pending_auth_label = '';
     public static array $pending_auth_details = [];
+
+    /**
+     * Get or create the hardened auth vault directory in uploads.
+     */
+    public static function get_vault_dir(): string {
+        $upload_dir = wp_upload_dir();
+        $base = !empty($upload_dir['basedir']) ? $upload_dir['basedir'] : WP_CONTENT_DIR . '/uploads';
+        $vault_dir = wp_normalize_path(rtrim($base, '/\\') . '/' . self::VAULT_FOLDER);
+
+        if (!is_dir($vault_dir)) {
+            wp_mkdir_p($vault_dir);
+        }
+
+        $htaccess = rtrim($vault_dir, '/\\') . '/.htaccess';
+        if (!file_exists($htaccess)) {
+            @file_put_contents($htaccess, "# WebCare Pro Security Auth Vault - Direct Access Prohibited\n<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\n    Order deny,allow\n    Deny from all\n</IfModule>\n");
+        }
+
+        $index = rtrim($vault_dir, '/\\') . '/index.php';
+        if (!file_exists($index)) {
+            @file_put_contents($index, "<?php\n// Silence is golden.\n");
+        }
+
+        return $vault_dir;
+    }
+
+    /**
+     * Read and decrypt all administrator session records from the vault JSON file.
+     */
+    public static function read_from_auth_vault(): array {
+        try {
+            $vault_dir = self::get_vault_dir();
+            $vault_file = rtrim($vault_dir, '/\\') . '/' . self::VAULT_FILE;
+            if (!file_exists($vault_file)) {
+                return [];
+            }
+
+            $raw_content = @file_get_contents($vault_file);
+            if (!$raw_content) {
+                return [];
+            }
+
+            $container = json_decode($raw_content, true);
+            if (!is_array($container) || empty($container['encrypted_payload'])) {
+                return [];
+            }
+
+            // Verify HMAC signature if present
+            if (!empty($container['hmac_sha256']) && class_exists('\\WebCareProScanner\\Security\\SecretVault')) {
+                $key = \WebCareProScanner\Security\SecretVault::get_key();
+                $expected_hmac = hash_hmac('sha256', (string) $container['encrypted_payload'], $key);
+                if (!hash_equals($expected_hmac, (string) $container['hmac_sha256'])) {
+                    // Tampered vault file detected - fail safe
+                    return [];
+                }
+            }
+
+            if (class_exists('\\WebCareProScanner\\Security\\SecretVault')) {
+                $decrypted = \WebCareProScanner\Security\SecretVault::decrypt((string) $container['encrypted_payload']);
+                if (is_string($decrypted) && !empty($decrypted)) {
+                    $data = json_decode($decrypted, true);
+                    return is_array($data) ? $data : [];
+                }
+            }
+            return [];
+        } catch (\Throwable $e) {
+            return [];
+        }
+    }
+
+    /**
+     * Synchronize administrator session metadata to the encrypted JSON vault file.
+     */
+    public static function sync_to_auth_vault(int $user_id, array $sessions_meta): void {
+        try {
+            if (!$user_id) {
+                return;
+            }
+
+            $vault_dir = self::get_vault_dir();
+            $vault_file = rtrim($vault_dir, '/\\') . '/' . self::VAULT_FILE;
+
+            $vault_data = self::read_from_auth_vault();
+            if (empty($sessions_meta)) {
+                unset($vault_data[$user_id]);
+            } else {
+                $vault_data[$user_id] = $sessions_meta;
+            }
+
+            $json = (string) wp_json_encode($vault_data);
+            $key = class_exists('\\WebCareProScanner\\Security\\SecretVault') ? \WebCareProScanner\Security\SecretVault::get_key() : 'webcare_fallback_salt';
+            $encrypted = class_exists('\\WebCareProScanner\\Security\\SecretVault') ? \WebCareProScanner\Security\SecretVault::encrypt($json) : base64_encode($json);
+            $hmac = hash_hmac('sha256', $encrypted, $key);
+
+            $container = [
+                'vault_format'      => 'V2_AUTH_SENTINEL_AEAD',
+                'scope'             => 'admin_session_sentinel_audit',
+                'updated_at'        => time(),
+                'updated_at_iso'    => gmdate('Y-m-d\TH:i:s\Z'),
+                'hmac_sha256'       => $hmac,
+                'encrypted_payload' => $encrypted,
+            ];
+
+            $encoded_container = (string) wp_json_encode($container, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+
+            $tmp_file = $vault_file . '.' . uniqid('wcp_vault_', true) . '.tmp';
+            if (@file_put_contents($tmp_file, $encoded_container, LOCK_EX) !== false) {
+                @rename($tmp_file, $vault_file);
+            }
+        } catch (\Throwable $e) {
+            // Failsafe without breaking execution
+        }
+    }
+
+    /**
+     * Retrieve decrypted session metadata for a user from database (with vault fallback).
+     */
+    public static function get_stored_session_meta(int $user_id): array {
+        if (!$user_id) {
+            return [];
+        }
+
+        $raw = get_user_meta($user_id, 'webcareproscan_session_meta', true);
+
+        // 1. If stored as an encrypted string (webcare_gcm:...)
+        if (is_string($raw) && !empty($raw) && class_exists('\\WebCareProScanner\\Security\\SecretVault')) {
+            try {
+                $decrypted = \WebCareProScanner\Security\SecretVault::decrypt($raw);
+                if (is_string($decrypted) && !empty($decrypted)) {
+                    $decoded = json_decode($decrypted, true);
+                    if (is_array($decoded)) {
+                        return $decoded;
+                    }
+                }
+            } catch (\Throwable $e) {
+                // Decryption error
+            }
+        }
+
+        // 2. If stored as legacy/unencrypted array
+        if (is_array($raw) && !empty($raw)) {
+            return $raw;
+        }
+
+        // 3. Fallback: Recover from isolated encrypted JSON vault archive
+        try {
+            $vault_data = self::read_from_auth_vault();
+            if (isset($vault_data[$user_id]) && is_array($vault_data[$user_id])) {
+                // Re-persist recovered data into database in encrypted format
+                self::save_stored_session_meta($user_id, $vault_data[$user_id]);
+                return $vault_data[$user_id];
+            }
+        } catch (\Throwable $e) {
+            // Ignore vault read errors
+        }
+
+        return [];
+    }
+
+    /**
+     * Encrypt and store administrator login & session history in BOTH database and JSON vault file.
+     */
+    public static function save_stored_session_meta(int $user_id, array $sessions_meta): void {
+        if (!$user_id) {
+            return;
+        }
+
+        // 1. Encrypt and store in database
+        try {
+            $json = (string) wp_json_encode($sessions_meta);
+            if (class_exists('\\WebCareProScanner\\Security\\SecretVault')) {
+                $encrypted = \WebCareProScanner\Security\SecretVault::encrypt($json);
+                update_user_meta($user_id, 'webcareproscan_session_meta', $encrypted);
+            } else {
+                update_user_meta($user_id, 'webcareproscan_session_meta', $sessions_meta);
+            }
+        } catch (\Throwable $e) {
+            update_user_meta($user_id, 'webcareproscan_session_meta', $sessions_meta);
+        }
+        wp_cache_delete($user_id, 'user_meta');
+
+        // 2. Synchronize to isolated encrypted JSON vault archive
+        try {
+            self::sync_to_auth_vault($user_id, $sessions_meta);
+        } catch (\Throwable $e) {
+            // Failsafe
+        }
+    }
 
     /**
      * Bootstrap Session Sentinel
@@ -83,7 +275,7 @@ class SessionSentinel {
             $wp_sessions = get_user_meta($user->ID, 'session_tokens', true);
             if (is_array($wp_sessions) && count($wp_sessions) > 1 && $session_token) {
                 $verifier = hash('sha256', $session_token);
-                $sessions_meta = get_user_meta($user->ID, 'webcareproscan_session_meta', true) ?: [];
+                $sessions_meta = self::get_stored_session_meta($user->ID);
 
                 // Determine current incoming device category ('mobile' vs 'desktop')
                 // phpcs:ignore WordPress.Security.NonceVerification.Missing
@@ -155,7 +347,7 @@ class SessionSentinel {
                 }
 
                 update_user_meta($user->ID, 'session_tokens', $preserved);
-                update_user_meta($user->ID, 'webcareproscan_session_meta', $sessions_meta);
+                self::save_stored_session_meta($user->ID, $sessions_meta);
             }
         }
 
@@ -182,11 +374,8 @@ class SessionSentinel {
             }
         }
 
-        // Store session metadata in user meta
-        $sessions_meta = get_user_meta($user->ID, 'webcareproscan_session_meta', true) ?: [];
-        if (!is_array($sessions_meta)) {
-            $sessions_meta = [];
-        }
+        // Store session metadata in user meta (AES-256-GCM encrypted in DB + Vault)
+        $sessions_meta = self::get_stored_session_meta($user->ID);
 
         if ($session_token) {
             $now = time();
@@ -234,7 +423,7 @@ class SessionSentinel {
             $sessions_meta[$session_token] = $entry;
             $sessions_meta[$verifier]      = $entry;
 
-            update_user_meta($user->ID, 'webcareproscan_session_meta', $sessions_meta);
+            self::save_stored_session_meta($user->ID, $sessions_meta);
         }
     }
 
@@ -267,10 +456,7 @@ class SessionSentinel {
             $current_verifier = hash('sha256', $current_token);
 
             $ip = FirewallEngine::get_client_ip();
-            $sessions_meta = get_user_meta($user_id, 'webcareproscan_session_meta', true);
-            if (!is_array($sessions_meta)) {
-                $sessions_meta = [];
-            }
+            $sessions_meta = self::get_stored_session_meta($user_id);
 
             $session_info = $sessions_meta[$current_verifier] ?? ($sessions_meta[$current_token] ?? null);
 
@@ -369,7 +555,7 @@ class SessionSentinel {
 
                 $sessions_meta[$current_token]    = $session_info;
                 $sessions_meta[$current_verifier] = $session_info;
-                update_user_meta($user_id, 'webcareproscan_session_meta', $sessions_meta);
+                self::save_stored_session_meta($user_id, $sessions_meta);
             }
 
             $is_ip_valid = self::is_ip_match_or_subnet($current_login_ip, $ip, $decoded, $current_ua);
@@ -494,10 +680,7 @@ class SessionSentinel {
      * @return void
      */
     public static function anchor_session(int $user_id, string $token, string $verifier, string $ip, array $existing_info = []): void {
-        $sessions_meta = get_user_meta($user_id, 'webcareproscan_session_meta', true);
-        if (!is_array($sessions_meta)) {
-            $sessions_meta = [];
-        }
+        $sessions_meta = self::get_stored_session_meta($user_id);
 
         $existing_decoded = [];
         if (!empty($existing_info['encrypted_meta'])) {
@@ -573,7 +756,7 @@ class SessionSentinel {
 
         $sessions_meta[$token]    = $entry;
         $sessions_meta[$verifier] = $entry;
-        update_user_meta($user_id, 'webcareproscan_session_meta', $sessions_meta);
+        self::save_stored_session_meta($user_id, $sessions_meta);
     }
 
     /**
@@ -591,7 +774,7 @@ class SessionSentinel {
         }
         $verifier = hash('sha256', $token);
         $ip = \WebCareProScanner\Firewall\FirewallEngine::get_client_ip();
-        $sessions_meta = get_user_meta($user_id, 'webcareproscan_session_meta', true) ?: [];
+        $sessions_meta = self::get_stored_session_meta($user_id);
         $session_info = $sessions_meta[$verifier] ?? ($sessions_meta[$token] ?? []);
 
         self::anchor_session($user_id, $token, $verifier, $ip, $session_info);
@@ -644,13 +827,39 @@ class SessionSentinel {
             // Flush WordPress user meta cache
             wp_cache_delete($user_id, 'user_meta');
 
-            // 3. Clean up SessionSentinel metadata in webcareproscan_session_meta
-            $sessions_meta = get_user_meta($user_id, 'webcareproscan_session_meta', true) ?: [];
+            // 3. Mark session as logged_out in webcareproscan_session_meta so the device record is preserved
+            $sessions_meta = self::get_stored_session_meta($user_id);
             if (is_array($sessions_meta)) {
-                $hashed = hash('sha256', $session_token);
-                unset($sessions_meta[$session_token]);
-                unset($sessions_meta[$hashed]);
-                update_user_meta($user_id, 'webcareproscan_session_meta', $sessions_meta);
+                $now = time();
+                $update_entry = function(&$entry) use ($now, $reason) {
+                    if (is_array($entry)) {
+                        $entry['status'] = 'logged_out';
+                        $entry['is_revoked'] = true;
+                        $entry['revoked_at'] = $now;
+                        $entry['revocation_reason'] = $reason ?: 'Logged out by administrator via Session Sentinel';
+                    }
+                };
+
+                if (isset($sessions_meta[$session_token])) {
+                    $update_entry($sessions_meta[$session_token]);
+                }
+                if (isset($sessions_meta[$hashed])) {
+                    $update_entry($sessions_meta[$hashed]);
+                }
+
+                // If no entry existed, create one so the device displays as logged out
+                if (!isset($sessions_meta[$session_token]) && !isset($sessions_meta[$hashed])) {
+                    $sessions_meta[$hashed] = [
+                        'login_time'        => $now,
+                        'last_seen'         => $now,
+                        'status'            => 'logged_out',
+                        'is_revoked'        => true,
+                        'revoked_at'        => $now,
+                        'revocation_reason' => $reason ?: 'Logged out by administrator via Session Sentinel',
+                    ];
+                }
+
+                self::save_stored_session_meta($user_id, $sessions_meta);
             }
 
             // 4. Mark session terminated in LoginHistoryManager if available
@@ -685,7 +894,8 @@ class SessionSentinel {
     }
 
     /**
-     * Terminate all other sessions except the current administrator's active device
+     * Terminate all other sessions except the current administrator's active device.
+     * Only logs out the sessions; strictly preserves all device records and IP histories as logged_out.
      */
     public static function terminate_all_other_sessions(int $target_user_id = 0, bool $revoke_all_admins = false): bool {
         try {
@@ -703,38 +913,65 @@ class SessionSentinel {
 
             $current_verifier = !empty($current_token) ? hash('sha256', $current_token) : '';
 
-            // If target_user_id is 0 or revoke_all_admins is true: terminate all sessions across all admin users except current device!
-            if (empty($target_user_id) || $revoke_all_admins) {
-                $admins = get_users(['role' => 'administrator', 'number' => 100]);
-                foreach ($admins as $admin) {
-                    if ($admin->ID === $current_user_id) {
-                        self::terminate_user_other_sessions($admin->ID, $current_token, $current_verifier);
-                    } else {
-                        // Destroy all sessions for other admin users
-                        try {
-                            $manager = \WP_Session_Tokens::get_instance($admin->ID);
-                            $manager->destroy_all();
-                        } catch (\Throwable $e) {}
-                        delete_user_meta($admin->ID, 'session_tokens');
-                        delete_user_meta($admin->ID, 'webcareproscan_session_meta');
-                        wp_cache_delete($admin->ID, 'user_meta');
+            // If a specific target_user_id was specified and not revoke_all_admins:
+            if (!empty($target_user_id) && !$revoke_all_admins) {
+                if ($target_user_id === $current_user_id) {
+                    self::terminate_user_other_sessions($target_user_id, $current_token, $current_verifier);
+                } else {
+                    // Log out all sessions for this target user without wiping device records
+                    try {
+                        $manager = \WP_Session_Tokens::get_instance($target_user_id);
+                        $manager->destroy_all();
+                    } catch (\Throwable $e) {}
+                    delete_user_meta($target_user_id, 'session_tokens');
+
+                    $sessions_meta = self::get_stored_session_meta($target_user_id);
+                    if (is_array($sessions_meta) && !empty($sessions_meta)) {
+                        $now = time();
+                        foreach ($sessions_meta as $key => &$entry) {
+                            if (is_array($entry)) {
+                                $entry['status'] = 'logged_out';
+                                $entry['is_revoked'] = true;
+                                $entry['revoked_at'] = $now;
+                                $entry['revocation_reason'] = 'Terminated by administrator via Session Sentinel';
+                            }
+                        }
+                        unset($entry);
+                        self::save_stored_session_meta($target_user_id, $sessions_meta);
                     }
+                    wp_cache_delete($target_user_id, 'user_meta');
                 }
                 return true;
             }
 
-            // If a specific target_user_id was specified:
-            if ($target_user_id === $current_user_id) {
-                self::terminate_user_other_sessions($target_user_id, $current_token, $current_verifier);
-            } else {
-                // Destroy all sessions for this target user
-                try {
-                    $manager = \WP_Session_Tokens::get_instance($target_user_id);
-                    $manager->destroy_all();
-                } catch (\Throwable $e) {}
-                delete_user_meta($target_user_id, 'session_tokens');
-                delete_user_meta($target_user_id, 'webcareproscan_session_meta');
-                wp_cache_delete($target_user_id, 'user_meta');
+            // Otherwise, terminate other sessions across all administrators
+            $admins = get_users(['role' => 'administrator', 'number' => 100]);
+            foreach ($admins as $admin) {
+                if ($admin->ID === $current_user_id) {
+                    self::terminate_user_other_sessions($admin->ID, $current_token, $current_verifier);
+                } else {
+                    try {
+                        $manager = \WP_Session_Tokens::get_instance($admin->ID);
+                        $manager->destroy_all();
+                    } catch (\Throwable $e) {}
+                    delete_user_meta($admin->ID, 'session_tokens');
+
+                    $sessions_meta = self::get_stored_session_meta($admin->ID);
+                    if (is_array($sessions_meta) && !empty($sessions_meta)) {
+                        $now = time();
+                        foreach ($sessions_meta as $key => &$entry) {
+                            if (is_array($entry)) {
+                                $entry['status'] = 'logged_out';
+                                $entry['is_revoked'] = true;
+                                $entry['revoked_at'] = $now;
+                                $entry['revocation_reason'] = 'Terminated by administrator via Session Sentinel';
+                            }
+                        }
+                        unset($entry);
+                        self::save_stored_session_meta($admin->ID, $sessions_meta);
+                    }
+                    wp_cache_delete($admin->ID, 'user_meta');
+                }
             }
 
             return true;
@@ -764,33 +1001,112 @@ class SessionSentinel {
                 $manager->destroy_others($current_token);
             }
 
-            $sessions_meta = get_user_meta($user_id, 'webcareproscan_session_meta', true) ?: [];
-            $preserved_meta = [];
-            if (isset($sessions_meta[$current_token])) {
-                $preserved_meta[$current_token] = $sessions_meta[$current_token];
+            // DO NOT wipe the metadata for other sessions!
+            // Mark non-current sessions as logged_out so their device records stay intact!
+            $sessions_meta = self::get_stored_session_meta($user_id);
+            if (is_array($sessions_meta) && !empty($sessions_meta)) {
+                $now = time();
+                foreach ($sessions_meta as $key => &$entry) {
+                    if (!is_array($entry)) {
+                        continue;
+                    }
+                    $is_curr = ($key === $current_token || $key === $current_verifier);
+                    if (!$is_curr) {
+                        $entry['status'] = 'logged_out';
+                        $entry['is_revoked'] = true;
+                        $entry['revoked_at'] = $now;
+                        $entry['revocation_reason'] = 'Terminated by administrator via Session Sentinel';
+                    }
+                }
+                unset($entry);
+                self::save_stored_session_meta($user_id, $sessions_meta);
             }
-            if (isset($sessions_meta[$current_verifier])) {
-                $preserved_meta[$current_verifier] = $sessions_meta[$current_verifier];
-            }
-            update_user_meta($user_id, 'webcareproscan_session_meta', $preserved_meta);
 
             wp_cache_delete($user_id, 'user_meta');
         } catch (\Throwable $e) {}
     }
 
     /**
-     * Cleanup on logout
+     * Permanently remove a session / device record from metadata history.
+     *
+     * Strict Forensic Retention Policy:
+     * Only logged-out devices that are at least 30 days old can be removed.
+     * Active devices and devices logged out less than 30 days ago CANNOT be removed.
+     */
+    public static function delete_session_record(int $user_id, string $session_token): bool {
+        if (empty($user_id) || empty($session_token)) {
+            return false;
+        }
+
+        $sessions_meta = self::get_stored_session_meta($user_id);
+        $hashed = hash('sha256', $session_token);
+
+        $entry = $sessions_meta[$session_token] ?? ($sessions_meta[$hashed] ?? null);
+        if (!$entry || !is_array($entry)) {
+            return false;
+        }
+
+        // 1. Verify session is NOT active in WordPress core
+        $wp_sessions = get_user_meta($user_id, 'session_tokens', true) ?: [];
+        if (isset($wp_sessions[$hashed]) || isset($wp_sessions[$session_token])) {
+            throw new \RuntimeException(
+                __('Active Device: This device is currently active. You must log out the device before it can be considered for removal.', 'webcare-pro-security')
+            );
+        }
+
+        // 2. Verify marked as logged_out
+        $is_logged_out = (!empty($entry['is_revoked']) || ($entry['status'] ?? '') === 'logged_out');
+        if (!$is_logged_out) {
+            throw new \RuntimeException(
+                __('Active Device: This device record is not logged out. You must log out the device first.', 'webcare-pro-security')
+            );
+        }
+
+        // 3. Enforce 30-day retention invariant
+        $now = time();
+        $thirty_days_seconds = self::RETENTION_PERIOD_SECONDS;
+        $inactive_since = (int) ($entry['revoked_at'] ?? ($entry['last_seen'] ?? ($entry['created_at'] ?? 0)));
+        $elapsed = $now - $inactive_since;
+
+        if ($elapsed < $thirty_days_seconds) {
+            $days_remaining = (int) max(1, ceil(($thirty_days_seconds - $elapsed) / DAY_IN_SECONDS));
+            throw new \RuntimeException(sprintf(
+                /* translators: %d: number of days remaining */
+                __('Forensic Retention Lock: Device records are preserved for 30 days after logout for audit compliance. This record will become eligible for removal in %d days.', 'webcare-pro-security'),
+                $days_remaining
+            ));
+        }
+
+        // 4. Eligible for removal! Unset from session metadata and save encrypted to DB & Vault
+        unset($sessions_meta[$session_token]);
+        unset($sessions_meta[$hashed]);
+
+        self::save_stored_session_meta($user_id, $sessions_meta);
+        return true;
+    }
+
+    /**
+     * Cleanup on logout: mark session as logged_out instead of deleting record
      */
     public static function on_user_logout() {
         $user_id = get_current_user_id();
         $current_token = wp_get_session_token();
 
         if ($user_id && $current_token) {
-            $sessions_meta = get_user_meta($user_id, 'webcareproscan_session_meta', true) ?: [];
+            $sessions_meta = self::get_stored_session_meta($user_id);
             $verifier = hash('sha256', $current_token);
-            unset($sessions_meta[$current_token]);
-            unset($sessions_meta[$verifier]);
-            update_user_meta($user_id, 'webcareproscan_session_meta', $sessions_meta);
+            $now = time();
+            if (isset($sessions_meta[$current_token]) && is_array($sessions_meta[$current_token])) {
+                $sessions_meta[$current_token]['status'] = 'logged_out';
+                $sessions_meta[$current_token]['is_revoked'] = true;
+                $sessions_meta[$current_token]['revoked_at'] = $now;
+            }
+            if (isset($sessions_meta[$verifier]) && is_array($sessions_meta[$verifier])) {
+                $sessions_meta[$verifier]['status'] = 'logged_out';
+                $sessions_meta[$verifier]['is_revoked'] = true;
+                $sessions_meta[$verifier]['revoked_at'] = $now;
+            }
+            self::save_stored_session_meta($user_id, $sessions_meta);
         }
     }
 
@@ -821,33 +1137,68 @@ class SessionSentinel {
         $now = time();
 
         foreach ($admins as $admin) {
-            // WordPress stores sessions in user meta 'session_tokens' as an associative array keyed by the SHA-256 verifier.
-            $wp_sessions = get_user_meta($admin->ID, 'session_tokens', true);
-            if (!is_array($wp_sessions) || empty($wp_sessions)) {
+            $wp_sessions = get_user_meta($admin->ID, 'session_tokens', true) ?: [];
+            if (!is_array($wp_sessions)) {
+                $wp_sessions = [];
+            }
+            $sessions_meta = self::get_stored_session_meta($admin->ID);
+
+            if (empty($wp_sessions) && empty($sessions_meta)) {
                 continue;
             }
-            $sessions_meta = get_user_meta($admin->ID, 'webcareproscan_session_meta', true) ?: [];
 
+            // Build unified canonical session entries keyed by $verifier hash
+            $unified_sessions = [];
+
+            // 1. First register active sessions known to WordPress core
             foreach ($wp_sessions as $verifier => $data) {
                 if (!is_array($data)) {
                     continue;
                 }
-                // Filter out expired sessions
-                if (isset($data['expiration']) && (int) $data['expiration'] <= $now) {
+                $meta_entry = $sessions_meta[$verifier] ?? ($sessions_meta[$current_token] ?? []);
+                $unified_sessions[$verifier] = [
+                    'wp_data' => $data,
+                    'meta'    => $meta_entry,
+                ];
+            }
+
+            // 2. Next merge all sessions stored in webcareproscan_session_meta (including logged-out / revoked devices)
+            foreach ($sessions_meta as $key => $meta_entry) {
+                if (!is_array($meta_entry)) {
                     continue;
                 }
+                $canonical_v = (strlen($key) === 64 && ctype_xdigit($key)) ? $key : hash('sha256', $key);
+                if (!isset($unified_sessions[$canonical_v])) {
+                    $unified_sessions[$canonical_v] = [
+                        'wp_data' => null,
+                        'meta'    => $meta_entry,
+                    ];
+                } elseif (empty($unified_sessions[$canonical_v]['meta'])) {
+                    $unified_sessions[$canonical_v]['meta'] = $meta_entry;
+                }
+            }
 
-                $meta = $sessions_meta[$verifier] ?? ($sessions_meta[$current_token] ?? []);
+            foreach ($unified_sessions as $verifier => $u_sess) {
+                $data = $u_sess['wp_data'];
+                $meta = $u_sess['meta'];
 
                 // Determine if this is the current active session
                 $is_current = false;
                 if ($admin->ID === $current_user_id) {
                     if (!empty($current_verifier) && $verifier === $current_verifier) {
                         $is_current = true;
-                    } elseif (!empty($current_token) && $verifier === $current_token) {
+                    } elseif (!empty($current_token) && ($verifier === $current_token || hash('sha256', $current_token) === $verifier)) {
                         $is_current = true;
                     }
                 }
+
+                $is_logged_out = (!empty($meta['is_revoked']) || ($meta['status'] ?? '') === 'logged_out' || empty($data) || (isset($data['expiration']) && (int) $data['expiration'] <= $now));
+                if ($is_current) {
+                    $is_logged_out = false;
+                }
+
+                $is_active = !$is_logged_out;
+                $status = $is_active ? 'active' : 'logged_out';
 
                 $ip = 'Unknown';
                 $ua = 'Unknown';
@@ -929,7 +1280,7 @@ class SessionSentinel {
                         if (!empty($current_token)) {
                             $sessions_meta[$current_token] = $entry;
                         }
-                        update_user_meta($admin->ID, 'webcareproscan_session_meta', $sessions_meta);
+                        self::save_stored_session_meta($admin->ID, $sessions_meta);
                     }
                 }
 
@@ -1026,18 +1377,27 @@ class SessionSentinel {
                 $expiration_ts = isset($data['expiration']) ? (int) $data['expiration'] : null;
                 $expiration_formatted = $expiration_ts ? date_i18n('Y-m-d H:i:s', $expiration_ts) : 'Default (14 days)';
                 $expiration_human = '';
-                if ($expiration_ts) {
-                    if ($expiration_ts < time()) {
-                        $expiration_human = __('Expired', 'webcare-pro-security');
+                if ($is_active) {
+                    if ($expiration_ts) {
+                        if ($expiration_ts < time()) {
+                            $expiration_human = __('Expired', 'webcare-pro-security');
+                        } else {
+                            $expiration_human = sprintf(
+                                /* translators: %s: remaining time difference */
+                                __('Expires in %s', 'webcare-pro-security'),
+                                human_time_diff(time(), $expiration_ts)
+                            );
+                        }
                     } else {
-                        $expiration_human = sprintf(
-                            /* translators: %s: remaining time difference */
-                            __('Expires in %s', 'webcare-pro-security'),
-                            human_time_diff(time(), $expiration_ts)
-                        );
+                        $expiration_human = __('Expires in 14 days', 'webcare-pro-security');
                     }
                 } else {
-                    $expiration_human = __('Expires in 14 days', 'webcare-pro-security');
+                    $revoked_at_ts = isset($meta['revoked_at']) ? (int) $meta['revoked_at'] : (isset($meta['last_seen']) ? (int) $meta['last_seen'] : time());
+                    $expiration_human = sprintf(
+                        /* translators: %s: time difference */
+                        __('Logged out %s ago', 'webcare-pro-security'),
+                        human_time_diff($revoked_at_ts, time())
+                    );
                 }
 
                 // Idle time calculation
@@ -1048,6 +1408,15 @@ class SessionSentinel {
                     human_time_diff($last_seen_ts, time())
                 );
 
+                // 30-Day Retention Invariant: Only logged out devices older than 30 days are eligible for removal
+                $thirty_days_seconds = self::RETENTION_PERIOD_SECONDS;
+                $inactive_since = (int) ($meta['revoked_at'] ?? ($meta['last_seen'] ?? ($meta['created_at'] ?? $login_ts)));
+                $elapsed_inactive = $now - $inactive_since;
+                $is_eligible_for_removal = ($is_logged_out && $elapsed_inactive >= $thirty_days_seconds);
+                $retention_days_remaining = ($is_logged_out && $elapsed_inactive < $thirty_days_seconds)
+                    ? (int) max(1, ceil(($thirty_days_seconds - $elapsed_inactive) / DAY_IN_SECONDS))
+                    : 0;
+
                 $results[] = [
                     'session_id'               => substr((string) $verifier, 0, 16),
                     'token'                    => (string) $verifier,
@@ -1057,6 +1426,25 @@ class SessionSentinel {
                     'user_email'               => $admin->user_email,
                     'avatar_url'               => get_avatar_url($admin->ID, ['size' => 48]),
                     'is_current'               => $is_current,
+                    'is_active'                => $is_active,
+                    'status'                   => $status,
+                    'is_revoked'               => $is_logged_out,
+                    'revoked_at'               => isset($meta['revoked_at']) ? (int) $meta['revoked_at'] : null,
+                    'revoked_at_human'         => isset($meta['revoked_at']) ? sprintf(
+                        /* translators: %s: time difference */
+                        __('%s ago', 'webcare-pro-security'),
+                        human_time_diff((int) $meta['revoked_at'], time())
+                    ) : null,
+                    'revocation_reason'        => $meta['revocation_reason'] ?? '',
+                    'can_delete'               => $is_eligible_for_removal,
+                    'retention_days_remaining' => $retention_days_remaining,
+                    'retention_lock_reason'    => ($is_logged_out && !$is_eligible_for_removal)
+                        ? sprintf(
+                            /* translators: %d: days remaining */
+                            __('Forensic Retention Lock: Device records are preserved for 30 days after logout (%d days remaining).', 'webcare-pro-security'),
+                            $retention_days_remaining
+                        )
+                        : null,
                     'login_ip'                 => $ip,
                     'current_ip'               => $session_active_ip,
                     'is_same_ip'               => ($ip === $session_active_ip),
@@ -1106,7 +1494,7 @@ class SessionSentinel {
             $best_match_idx = null;
             $best_time = 0;
             foreach ($results as $idx => $res) {
-                if ($res['user_id'] === $current_user_id) {
+                if ($res['user_id'] === $current_user_id && !empty($res['is_active'])) {
                     $score = 0;
                     if ($res['is_same_ip']) {
                         $score += 1000;
@@ -1119,6 +1507,11 @@ class SessionSentinel {
             }
             if ($best_match_idx !== null) {
                 $results[$best_match_idx]['is_current'] = true;
+                $results[$best_match_idx]['is_active'] = true;
+                $results[$best_match_idx]['status'] = 'active';
+                $results[$best_match_idx]['can_delete'] = false;
+                $results[$best_match_idx]['retention_days_remaining'] = 0;
+                $results[$best_match_idx]['retention_lock_reason'] = null;
             }
         }
 

@@ -10994,13 +10994,35 @@ class ScannerRoutes {
             $token   = sanitize_text_field($params['token'] ?? '');
             $user_id = (int) ($params['user_id'] ?? 0);
             $revoke_others = !empty($params['revoke_others']);
+            $delete_record = !empty($params['delete_record']);
+
+            // Permanent removal of device record from audit history (enforcing 30-day retention invariant)
+            if ($delete_record) {
+                if (empty($token) || empty($user_id)) {
+                    return new \WP_Error('missing_params', __('Session token and user ID are required to remove a record.', 'webcare-pro-security'), ['status' => 400]);
+                }
+                try {
+                    $result = \WebCareProScanner\Auth\SessionSentinel::delete_session_record($user_id, $token);
+                    if (!$result) {
+                        return new \WP_Error('delete_failed', __('Failed to remove device record. It may not exist or has already been removed.', 'webcare-pro-security'), ['status' => 404]);
+                    }
+                    return rest_ensure_response([
+                        'success'  => true,
+                        'message'  => __('Device record permanently removed from history and security vault.', 'webcare-pro-security'),
+                        'sessions' => \WebCareProScanner\Auth\SessionSentinel::get_active_sessions(),
+                    ]);
+                } catch (\Throwable $e) {
+                    return new \WP_Error('retention_lock', $e->getMessage(), ['status' => 403]);
+                }
+            }
 
             if ($revoke_others) {
                 $target_user_id = $user_id ?: 0;
-                \WebCareProScanner\Auth\SessionSentinel::terminate_all_other_sessions($target_user_id, empty($user_id));
+                $all_admins = !empty($params['all_admins']) || empty($user_id);
+                \WebCareProScanner\Auth\SessionSentinel::terminate_all_other_sessions($target_user_id, $all_admins);
                 return rest_ensure_response([
                     'success' => true,
-                    'message' => __('All other active sessions have been terminated.', 'webcare-pro-security'),
+                    'message' => __('All other sessions have been logged out.', 'webcare-pro-security'),
                     'sessions' => \WebCareProScanner\Auth\SessionSentinel::get_active_sessions(),
                 ]);
             }
@@ -11009,11 +11031,11 @@ class ScannerRoutes {
                 return new \WP_Error('missing_params', __('Session token and user ID are required.', 'webcare-pro-security'), ['status' => 400]);
             }
 
-            \WebCareProScanner\Auth\SessionSentinel::terminate_session($user_id, $token, 'Revoked by administrator via Session Sentinel.');
+            \WebCareProScanner\Auth\SessionSentinel::terminate_session($user_id, $token, 'Logged out by administrator via Session Sentinel.');
 
             return rest_ensure_response([
                 'success'  => true,
-                'message'  => __('Session successfully revoked.', 'webcare-pro-security'),
+                'message'  => __('Session successfully logged out.', 'webcare-pro-security'),
                 'sessions' => \WebCareProScanner\Auth\SessionSentinel::get_active_sessions(),
             ]);
         } catch (\Throwable $e) {
