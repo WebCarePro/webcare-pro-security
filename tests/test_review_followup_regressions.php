@@ -207,7 +207,8 @@ try {
         return $response['cache_scan_complete'] === false
             && $response['cache_scan_errors'] === 1
             && $response['cache_scan_depth_limited'] === 2
-            && count($response['warnings']) === 2;
+            && count($response['warnings']) === 2
+            && str_contains(implode(' ', $response['warnings']), 'excluded one or more subdirectories');
     });
 
     $ip_base = random_int(10, 180);

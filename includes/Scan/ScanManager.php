@@ -186,7 +186,7 @@ class ScanManager {
             $warnings[] = __('Cache executable inspection could not access one or more cache directories; findings may be incomplete.', 'webcare-pro-security');
         }
         if ($cache_scan_depth_limited > 0) {
-            $warnings[] = __('Cache executable inspection reached its recursion-depth limit; deeper cache entries may remain unscanned.', 'webcare-pro-security');
+            $warnings[] = __('Cache executable inspection excluded one or more subdirectories at the recursion-depth limit; those subtrees were not inspected.', 'webcare-pro-security');
         }
 
         return [
