@@ -125,10 +125,11 @@ class CommerceSessionGuard {
      * @return bool
      */
     public static function has_active_shopper_session(): bool {
-        // CAF 2.0: Instant O(1) short-circuit if site runs zero commerce or membership plugins
+        // CAF 2.0: Instant O(1) short-circuit if site runs zero commerce, membership, or community forum plugins
         if (class_exists('\\WebCareProScanner\\Firewall\\CAF\\AdaptiveFirewallAdvisor')) {
             if (!\WebCareProScanner\Firewall\CAF\AdaptiveFirewallAdvisor::has_ecosystem('commerce') &&
-                !\WebCareProScanner\Firewall\CAF\AdaptiveFirewallAdvisor::has_ecosystem('lms_membership')) {
+                !\WebCareProScanner\Firewall\CAF\AdaptiveFirewallAdvisor::has_ecosystem('lms_membership') &&
+                !\WebCareProScanner\Firewall\CAF\AdaptiveFirewallAdvisor::has_ecosystem('community_forum')) {
                 return false;
             }
         }
@@ -280,10 +281,11 @@ class CommerceSessionGuard {
      * @return bool
      */
     public static function is_commerce_or_membership_request(string $uri): bool {
-        // CAF 2.0: Instant O(1) short-circuit if site runs zero commerce or membership plugins
+        // CAF 2.0: Instant O(1) short-circuit if site runs zero commerce, membership, or community forum plugins
         if (class_exists('\\WebCareProScanner\\Firewall\\CAF\\AdaptiveFirewallAdvisor')) {
             if (!\WebCareProScanner\Firewall\CAF\AdaptiveFirewallAdvisor::has_ecosystem('commerce') &&
-                !\WebCareProScanner\Firewall\CAF\AdaptiveFirewallAdvisor::has_ecosystem('lms_membership')) {
+                !\WebCareProScanner\Firewall\CAF\AdaptiveFirewallAdvisor::has_ecosystem('lms_membership') &&
+                !\WebCareProScanner\Firewall\CAF\AdaptiveFirewallAdvisor::has_ecosystem('community_forum')) {
                 return false;
             }
         }

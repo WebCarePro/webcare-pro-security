@@ -21,6 +21,8 @@ final class ProfileManager {
 	public const PROFILE_ECOMMERCE_HARDENED = 'ecommerce_hardened';
 	public const PROFILE_CORPORATE_BROCHURE = 'corporate_brochure';
 	public const PROFILE_MEMBERSHIP_LMS     = 'membership_lms';
+	public const PROFILE_COMMUNITY_FORUM    = 'community_forum';
+	public const PROFILE_HYBRID_PORTAL      = 'hybrid_commerce_community';
 	public const PROFILE_CPANEL_SHARED      = 'cpanel_shared_saver';
 	public const PROFILE_HIGH_SECURITY      = 'high_security_paranoid';
 	public const PROFILE_BALANCED           = 'balanced';
@@ -75,6 +77,39 @@ final class ProfileManager {
 					'auth_credential_stuffing' => true,
 					'usermeta_privilege_guard' => true,
 					'session_concurrency_lock' => true,
+					'strict_sqli_rce'          => true,
+				],
+			],
+			self::PROFILE_COMMUNITY_FORUM => [
+				'id'          => self::PROFILE_COMMUNITY_FORUM,
+				'name'        => 'Community & Discussion Forum (bbPress / wpForo / BuddyBoss)',
+				'description' => 'Mitigates automated topic/reply spambot bursts, shields member directories from scraping, and permits legitimate BBCode, markdown & code submissions.',
+				'icon'        => 'message-square',
+				'color'       => '#06b6d4',
+				'sensitivity' => 'high',
+				'rules'       => [
+					'lock_dormant_surface'     => true,
+					'forum_reply_velocity'     => true,
+					'member_directory_shield'  => true,
+					'bbcode_rich_text_pass'    => true,
+					'strict_sqli_rce'          => true,
+				],
+			],
+			self::PROFILE_HYBRID_PORTAL => [
+				'id'          => self::PROFILE_HYBRID_PORTAL,
+				'name'        => 'Hybrid Community & Commerce Portal (Woo + LMS + Forums)',
+				'description' => 'Multi-stack defense: synchronizes shopper session immunity, cart velocity defense, student concurrency checks, and forum anti-spam safeguards harmoniously without cross-stack friction.',
+				'icon'        => 'workflow',
+				'color'       => '#ec4899',
+				'sensitivity' => 'high',
+				'rules'       => [
+					'lock_dormant_surface'     => true,
+					'checkout_velocity_guard'  => true,
+					'cart_flooding_defense'    => true,
+					'forum_reply_velocity'     => true,
+					'member_directory_shield'  => true,
+					'usermeta_privilege_guard' => true,
+					'bbcode_rich_text_pass'    => true,
 					'strict_sqli_rce'          => true,
 				],
 			],

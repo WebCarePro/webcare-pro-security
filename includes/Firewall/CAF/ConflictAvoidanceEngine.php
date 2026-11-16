@@ -26,11 +26,12 @@ final class ConflictAvoidanceEngine {
 	 */
 	public function get_exemptions_for_stack( StackSnapshot $snapshot ): array {
 		$exemptions = [
-			'woocommerce_ajax_actions' => [],
-			'editor_exempt_actions'    => [],
-			'form_submit_routes'       => [],
-			'rest_exempt_namespaces'   => [],
-			'scoped_rules'             => [],
+			'woocommerce_ajax_actions'     => [],
+			'community_forum_ajax_actions' => [],
+			'editor_exempt_actions'        => [],
+			'form_submit_routes'           => [],
+			'rest_exempt_namespaces'       => [],
+			'scoped_rules'                 => [],
 		];
 
 		$active_slugs = array_keys( $snapshot->active_plugins );
@@ -121,6 +122,39 @@ final class ConflictAvoidanceEngine {
 				'route'       => 'action=post_smtp_test,action=post_smtp_send_test_email,action=wp_mail_smtp_test,action=fluent_smtp_test_email',
 				'capability'  => 'manage_options',
 				'description' => 'Exempt authenticated transactional email tests, diagnostic transcripts, and OAuth authorization callbacks from WAF rate limits.',
+			];
+		}
+
+		// 7. Community & Discussion Forums (bbPress, BuddyPress, BuddyBoss, wpForo, Asgaros Forum, Simple:Press)
+		$has_forum = in_array( 'community_forum', $snapshot->detected_ecosystems, true )
+			|| ! empty( array_intersect( $active_slugs, [ 'bbpress', 'buddypress', 'buddyboss-platform', 'wpforo', 'asgaros-forum', 'forumwp', 'simple-press' ] ) );
+
+		if ( $has_forum ) {
+			$exemptions['community_forum_ajax_actions'] = [
+				'bbp_new_topic',
+				'bbp_new_reply',
+				'bbp_quote_reply',
+				'bbp_toggle_topic_favorite',
+				'bbp_toggle_topic_subscription',
+				'wpforo_submit',
+				'wpforo_verify_turnstile',
+				'wpforo_react',
+				'wpforo_vote',
+				'asgarosforum_add_post',
+				'asgarosforum_edit_post',
+				'messages_send_message',
+				'post_update',
+			];
+
+			$exemptions['rest_exempt_namespaces'][] = 'wpforo/v1';
+			$exemptions['rest_exempt_namespaces'][] = 'buddyboss/v1';
+			$exemptions['rest_exempt_namespaces'][] = 'buddypress/v1';
+
+			$exemptions['scoped_rules'][] = [
+				'context'     => 'community_forum',
+				'route'       => 'action=bbp_new_reply,action=bbp_new_topic,action=wpforo_submit,action=asgarosforum_add_post',
+				'capability'  => 'read',
+				'description' => 'Exempt authenticated member forum discussions, quotes, and BBCode payloads from generic XSS/SQLi false-positive filters.',
 			];
 		}
 

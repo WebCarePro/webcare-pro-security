@@ -1337,6 +1337,9 @@ class MicroWafCompiler {
         if (!empty($conflict_exemptions['woocommerce_ajax_actions']) && is_array($conflict_exemptions['woocommerce_ajax_actions'])) {
             $default_guest_ajax = array_merge($default_guest_ajax, $conflict_exemptions['woocommerce_ajax_actions']);
         }
+        if (!empty($conflict_exemptions['community_forum_ajax_actions']) && is_array($conflict_exemptions['community_forum_ajax_actions'])) {
+            $default_guest_ajax = array_merge($default_guest_ajax, $conflict_exemptions['community_forum_ajax_actions']);
+        }
         $allowed_nopriv_actions = array_values(array_unique(array_merge($allowed_nopriv_actions, $default_guest_ajax)));
 
         $artifact_data = [

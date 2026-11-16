@@ -15,7 +15,9 @@ import {
   Lock,
   Cpu,
   RefreshCw,
-  Power
+  Power,
+  MessageSquare,
+  Workflow
 } from 'lucide-react';
 
 interface CafAdvisorPanelProps {
@@ -157,6 +159,18 @@ export const CafAdvisorPanel: React.FC<CafAdvisorPanelProps> = ({ apiRequest, on
       name: 'Membership & LMS',
       icon: <Layers size={18} color="#8b5cf6" />,
       desc: 'MemberPress, LearnDash & BuddyBoss. Anti-credential stuffing, concurrent session armor, and high video/progress throughput.',
+    },
+    {
+      id: 'community_forum',
+      name: 'Community & Discussion Forum',
+      icon: <MessageSquare size={18} color="#06b6d4" />,
+      desc: 'bbPress, wpForo & Asgaros. Mitigates topic/reply spambot bursts, shields member directories from scraping, and permits authentic BBCode submissions.',
+    },
+    {
+      id: 'hybrid_commerce_community',
+      name: 'Hybrid Community & Commerce Portal',
+      icon: <Workflow size={18} color="#ec4899" />,
+      desc: 'WooCommerce + LMS + Forums. Harmonizes shopper session immunity, cart velocity defense, student concurrency checks, and forum anti-spam safeguards.',
     },
     {
       id: 'cpanel_shared_saver',

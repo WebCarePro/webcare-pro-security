@@ -30,6 +30,8 @@ final class AdaptiveFirewallAdvisor {
 	public const PROFILE_ECOMMERCE_HARDENED = 'ecommerce_hardened';
 	public const PROFILE_CORPORATE_BROCHURE = 'corporate_brochure';
 	public const PROFILE_MEMBERSHIP_LMS     = 'membership_lms';
+	public const PROFILE_COMMUNITY_FORUM    = 'community_forum';
+	public const PROFILE_HYBRID_PORTAL      = 'hybrid_commerce_community';
 	public const PROFILE_CPANEL_SHARED      = 'cpanel_shared_saver';
 	public const PROFILE_HIGH_SECURITY      = 'high_security_paranoid';
 	public const PROFILE_BALANCED           = 'balanced';
@@ -63,6 +65,9 @@ final class AdaptiveFirewallAdvisor {
 				}
 				if ( preg_match( '/(?:learndash|sfwd-lms|memberpress|lifterlms|simple-membership|ultimate-member)/i', $active_str ) ) {
 					$eco[] = 'lms_membership';
+				}
+				if ( preg_match( '/(?:bbpress|buddypress|buddyboss-platform|wpforo|asgaros-forum|forumwp|simple-press)/i', $active_str ) ) {
+					$eco[] = 'community_forum';
 				}
 				if ( preg_match( '/(?:elementor|divi-builder|bricks|beaver-builder|bb-plugin|js_composer)/i', $active_str ) ) {
 					$eco[] = 'page_builder';
@@ -226,6 +231,8 @@ final class AdaptiveFirewallAdvisor {
 					$detected_ecosystems[] = 'forms';
 				} elseif ( in_array( $slug, [ 'sfwd-lms', 'learndash', 'memberpress', 'lifterlms', 'buddyboss-platform', 'simple-membership', 'ultimate-member', 'paid-memberships-pro', 'restrict-content-pro' ], true ) ) {
 					$detected_ecosystems[] = 'lms_membership';
+				} elseif ( in_array( $slug, [ 'bbpress', 'buddypress', 'buddyboss-platform', 'wpforo', 'asgaros-forum', 'forumwp', 'simple-press' ], true ) || str_contains( $file, 'bbpress' ) || str_contains( $file, 'wpforo' ) ) {
+					$detected_ecosystems[] = 'community_forum';
 				} elseif ( 'fluent-crm' === $slug ) {
 					$detected_ecosystems[] = 'fluent-crm';
 				} elseif ( in_array( $slug, [ 'post-smtp', 'wp-mail-smtp', 'wp-mail-smtp-pro', 'fluent-smtp', 'easy-wp-smtp', 'smtp-mailer', 'suremails', 'wp-offload-ses', 'mailgun', 'sendgrid-email-delivery-simplified', 'sparkpost', 'mailin', 'brevo-mail', 'postmark-approved-wordpress-plugin', 'zoho-mail' ], true ) || str_contains( $file, 'postman-smtp' ) || str_contains( $slug, 'smtp' ) ) {
@@ -325,15 +332,30 @@ final class AdaptiveFirewallAdvisor {
 	 * @return string
 	 */
 	public function recommend_profile( StackSnapshot $snapshot ): string {
-		$ecosystems = $snapshot->detected_ecosystems;
+		$ecosystems   = $snapshot->detected_ecosystems;
 		$active_slugs = array_keys( $snapshot->active_plugins );
 
-		if ( in_array( 'woocommerce', $ecosystems, true ) || in_array( 'woocommerce', $active_slugs, true ) ) {
+		$has_commerce   = in_array( 'woocommerce', $ecosystems, true ) || in_array( 'commerce', $ecosystems, true ) || in_array( 'woocommerce', $active_slugs, true );
+		$has_membership = in_array( 'lms_membership', $ecosystems, true ) || in_array( 'memberpress', $active_slugs, true ) || in_array( 'sfwd-lms', $active_slugs, true );
+		$has_forum      = in_array( 'community_forum', $ecosystems, true ) || in_array( 'bbpress', $active_slugs, true ) || in_array( 'wpforo', $active_slugs, true );
+
+		// 1. Multi-Stack Composable Hybrid Portal (Woo + Forum, Membership + Forum, Membership + Woo, or all three)
+		$major_count = ( $has_commerce ? 1 : 0 ) + ( $has_membership ? 1 : 0 ) + ( $has_forum ? 1 : 0 );
+		if ( $major_count >= 2 ) {
+			return self::PROFILE_HYBRID_PORTAL;
+		}
+
+		// 2. Single-Archetype Dedicated Profiles
+		if ( $has_commerce ) {
 			return self::PROFILE_ECOMMERCE_HARDENED;
 		}
 
-		if ( in_array( 'lms_membership', $ecosystems, true ) || in_array( 'memberpress', $active_slugs, true ) || in_array( 'sfwd-lms', $active_slugs, true ) ) {
+		if ( $has_membership ) {
 			return self::PROFILE_MEMBERSHIP_LMS;
+		}
+
+		if ( $has_forum ) {
+			return self::PROFILE_COMMUNITY_FORUM;
 		}
 
 		// Detect low memory / shared cPanel hosting
@@ -350,7 +372,7 @@ final class AdaptiveFirewallAdvisor {
 			return self::PROFILE_CPANEL_SHARED;
 		}
 
-		if ( in_array( 'elementor', $ecosystems, true ) || in_array( 'divi', $ecosystems, true ) ) {
+		if ( in_array( 'elementor', $ecosystems, true ) || in_array( 'divi', $ecosystems, true ) || in_array( 'page_builder', $ecosystems, true ) ) {
 			return self::PROFILE_CORPORATE_BROCHURE;
 		}
 
@@ -447,6 +469,8 @@ final class AdaptiveFirewallAdvisor {
 			self::PROFILE_ECOMMERCE_HARDENED,
 			self::PROFILE_CORPORATE_BROCHURE,
 			self::PROFILE_MEMBERSHIP_LMS,
+			self::PROFILE_COMMUNITY_FORUM,
+			self::PROFILE_HYBRID_PORTAL,
 			self::PROFILE_CPANEL_SHARED,
 			self::PROFILE_HIGH_SECURITY,
 			self::PROFILE_BALANCED,
@@ -462,29 +486,31 @@ final class AdaptiveFirewallAdvisor {
 		// --- Profile-Specific Auto-Enable Logic ---
 		$auto_enabled = [];
 
-		if ( self::PROFILE_ECOMMERCE_HARDENED === $profile_id ) {
+		if ( in_array( $profile_id, [ self::PROFILE_ECOMMERCE_HARDENED, self::PROFILE_HYBRID_PORTAL, self::PROFILE_COMMUNITY_FORUM ], true ) ) {
 			$settings = get_option( 'webcareproscan_settings', [] );
 			$changed  = false;
 
 			// Auto-enable 1: Smart Shields & Verified Integrations (False-Positive Prevention)
 			if ( empty( $settings['waf_ecommerce_safe_mode'] ) ) {
 				$settings['waf_ecommerce_safe_mode'] = true;
-				$auto_enabled[]                      = 'Smart Shields & Verified Integrations (E-Commerce, Membership & Payment Webhook Shield)';
+				$auto_enabled[]                      = 'Smart Shields & Verified Integrations (E-Commerce, Membership & Community Forum Safe-Pass)';
 				$changed                             = true;
 			}
 
 			// Auto-enable 2: Targeted Endpoint & User-Agent Bypass Rules
 			// Inject default WooCommerce + payment gateway bypass rules if the list is currently empty.
-			$existing_rules_raw = $settings['waf_targeted_allowlist_rules'] ?? '[]';
-			$existing_rules     = is_array( $existing_rules_raw )
-				? $existing_rules_raw
-				: (array) json_decode( (string) $existing_rules_raw, true );
+			if ( in_array( $profile_id, [ self::PROFILE_ECOMMERCE_HARDENED, self::PROFILE_HYBRID_PORTAL ], true ) ) {
+				$existing_rules_raw = $settings['waf_targeted_allowlist_rules'] ?? '[]';
+				$existing_rules     = is_array( $existing_rules_raw )
+					? $existing_rules_raw
+					: (array) json_decode( (string) $existing_rules_raw, true );
 
-			if ( empty( $existing_rules ) ) {
-				$default_bypass_rules = self::get_ecommerce_default_bypass_rules();
-				$settings['waf_targeted_allowlist_rules'] = wp_json_encode( $default_bypass_rules );
-				$auto_enabled[] = 'Targeted Endpoint & User-Agent Bypass Rules (pre-loaded WooCommerce REST, Stripe & PayPal webhook bypass rules)';
-				$changed        = true;
+				if ( empty( $existing_rules ) ) {
+					$default_bypass_rules = self::get_ecommerce_default_bypass_rules();
+					$settings['waf_targeted_allowlist_rules'] = wp_json_encode( $default_bypass_rules );
+					$auto_enabled[] = 'Targeted Endpoint & User-Agent Bypass Rules (pre-loaded WooCommerce REST, Stripe & PayPal webhook bypass rules)';
+					$changed        = true;
+				}
 			}
 
 			if ( $changed ) {

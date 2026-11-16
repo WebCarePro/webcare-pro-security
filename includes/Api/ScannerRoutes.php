@@ -2670,7 +2670,23 @@ class ScannerRoutes {
 
                 if (class_exists('\\WebCareProScanner\\Firewall\\CAF\\AdaptiveFirewallAdvisor')) {
                     $advisor = new \WebCareProScanner\Firewall\CAF\AdaptiveFirewallAdvisor();
-                    $advisor->apply_profile(\WebCareProScanner\Firewall\CAF\AdaptiveFirewallAdvisor::PROFILE_ECOMMERCE_HARDENED);
+                    $advisor->apply_profile(\WebCareProScanner\Firewall\CAF\AdaptiveFirewallAdvisor::PROFILE_MEMBERSHIP_LMS);
+                }
+            } elseif ($archetype === 'community' || $archetype === 'forum') {
+                $firewall_payload['waf_ecommerce_safe_mode'] = true;
+
+                if (class_exists('\\WebCareProScanner\\Firewall\\CAF\\AdaptiveFirewallAdvisor')) {
+                    $advisor = new \WebCareProScanner\Firewall\CAF\AdaptiveFirewallAdvisor();
+                    $advisor->apply_profile(\WebCareProScanner\Firewall\CAF\AdaptiveFirewallAdvisor::PROFILE_COMMUNITY_FORUM);
+                }
+            } elseif ($archetype === 'hybrid' || $archetype === 'portal') {
+                $firewall_payload['waf_ecommerce_safe_mode']         = true;
+                $firewall_payload['waf_woo_carding_protection']      = true;
+                $firewall_payload['waf_woo_cart_flood_protection']   = true;
+
+                if (class_exists('\\WebCareProScanner\\Firewall\\CAF\\AdaptiveFirewallAdvisor')) {
+                    $advisor = new \WebCareProScanner\Firewall\CAF\AdaptiveFirewallAdvisor();
+                    $advisor->apply_profile(\WebCareProScanner\Firewall\CAF\AdaptiveFirewallAdvisor::PROFILE_HYBRID_PORTAL);
                 }
             } elseif ($archetype === 'business' || $archetype === 'blog') {
                 if (class_exists('\\WebCareProScanner\\Firewall\\CAF\\AdaptiveFirewallAdvisor')) {
