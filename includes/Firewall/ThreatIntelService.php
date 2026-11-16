@@ -26,7 +26,14 @@ class ThreatIntelService {
             });
 
             add_action('init', static function () {
-                \WebCareProScanner\System\Cron\CronControlCenter::ensure_scheduled(self::CRON_HOOK, HOUR_IN_SECONDS, 'twicedaily');
+                $settings = class_exists('\\WebCareProScanner\\System\\SettingsManager')
+                    ? \WebCareProScanner\System\SettingsManager::get_settings()
+                    : [];
+                if (!empty($settings['threat_intel_enabled'])) {
+                    \WebCareProScanner\System\Cron\CronControlCenter::ensure_scheduled(self::CRON_HOOK, HOUR_IN_SECONDS, 'twicedaily');
+                } elseif (wp_next_scheduled(self::CRON_HOOK)) {
+                    wp_clear_scheduled_hook(self::CRON_HOOK);
+                }
             }, 20);
             return;
         }
@@ -35,8 +42,15 @@ class ThreatIntelService {
 
         // Defer cron scheduling to init to prevent premature textdomain evaluation
         add_action('init', function () {
-            if (!wp_next_scheduled(self::CRON_HOOK)) {
-                wp_schedule_event(time() + HOUR_IN_SECONDS, 'twicedaily', self::CRON_HOOK);
+            $settings = class_exists('\\WebCareProScanner\\System\\SettingsManager')
+                ? \WebCareProScanner\System\SettingsManager::get_settings()
+                : [];
+            if (!empty($settings['threat_intel_enabled'])) {
+                if (!wp_next_scheduled(self::CRON_HOOK)) {
+                    wp_schedule_event(time() + HOUR_IN_SECONDS, 'twicedaily', self::CRON_HOOK);
+                }
+            } elseif (wp_next_scheduled(self::CRON_HOOK)) {
+                wp_clear_scheduled_hook(self::CRON_HOOK);
             }
         });
     }
@@ -162,11 +176,25 @@ class ThreatIntelService {
     /**
      * Synchronize live threat intelligence from cloud feeds
      *
+     * @param bool $is_manual Whether the sync was explicitly triggered by user interaction.
      * @return array Sync results
      */
-    public static function sync_threat_intelligence(): array {
+    public static function sync_threat_intelligence(bool $is_manual = false): array {
         $blacklisted_ips = self::get_seed_blacklisted_ips();
         $cve_catalog = self::get_seed_cves();
+
+        $settings = class_exists('\\WebCareProScanner\\System\\SettingsManager')
+            ? \WebCareProScanner\System\SettingsManager::get_settings()
+            : [];
+        if (!$is_manual && empty($settings['threat_intel_enabled'])) {
+            return [
+                'success'        => false,
+                'message'        => __('Threat intelligence feed synchronization is disabled. Please opt in via Settings.', 'webcare-pro-security'),
+                'total_ips'      => count($blacklisted_ips),
+                'total_cves'     => count($cve_catalog),
+                'downloaded_ips' => 0,
+            ];
+        }
 
         // 1. Fetch Community IP Feeds (Blocklist / Emerging Threats / FireHOL mirrors)
         $raw_host = 'raw.' . 'githubusercontent' . '.com';
@@ -249,7 +277,7 @@ class ThreatIntelService {
      * @return array
      */
     public static function sync_threat_data(): array {
-        return self::sync_threat_intelligence();
+        return self::sync_threat_intelligence(true);
     }
 
     /**

@@ -134,6 +134,24 @@ class CronControlCenter {
             }
         }
 
+        if ($hook === 'webcareproscan_domain_reputation_daily_check') {
+            if (empty($settings['cron_domain_reputation_enabled'])) {
+                return [
+                    'met'  => false,
+                    'note' => __('Domain reputation checks are disabled in Settings (opt-in required).', 'webcare-pro-security'),
+                ];
+            }
+        }
+
+        if ($hook === 'webcareproscan_threat_intel_cron_sync') {
+            if (empty($settings['threat_intel_enabled'])) {
+                return [
+                    'met'  => false,
+                    'note' => __('Threat Intelligence feed sync is disabled in Settings (opt-in required).', 'webcare-pro-security'),
+                ];
+            }
+        }
+
         if ($hook === 'webcareproscan_waf_log_retention_prune') {
             $days = WafFileLogger::get_retention_days();
             if ($days <= 0) {
@@ -660,7 +678,8 @@ class CronControlCenter {
                         ];
 
                     case 'webcareproscan_threat_intel_cron_sync':
-                        $res = ThreatIntelService::sync_threat_intelligence();
+                        $is_manual = ($trigger_source === 'manual_admin');
+                        $res = ThreatIntelService::sync_threat_intelligence($is_manual);
                         return [
                             'status'  => !empty($res['success']) ? 'success' : 'failed',
                             /* translators: 1: total IPs, 2: CVE count, 3: newly fetched IPs */

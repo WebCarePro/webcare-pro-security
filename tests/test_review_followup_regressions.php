@@ -388,6 +388,34 @@ try {
         return str_contains($source, '!$mod_has_login_cookie && in_array($mod_req_method');
     });
 
+    run_review_followup_test('Remote MCP execute prohibits mutating actions with 403 error', static function (): bool {
+        $req = new WP_REST_Request('POST', '/webcare-pro-security/v1/mcp/execute');
+        $req->set_header('content-type', 'application/json');
+        $req->set_body(wp_json_encode([
+            'tool' => 'webcareproscan_quarantine_file',
+            'arguments' => ['file_path' => 'wp-content/test.php'],
+        ]));
+        $res = \WebCareProScanner\Api\ScannerRoutes::execute_mcp_tool($req);
+        if (!is_wp_error($res) || $res->get_error_code() !== 'mcp_mutating_action_prohibited') {
+            return false;
+        }
+
+        $direct_res = \WebCareProScanner\Api\MCPAgentService::execute_tool('webcareproscan_quarantine_file', ['file_path' => 'wp-content/test.php'], false);
+        return !empty($direct_res['isError']) && str_contains($direct_res['content'][0]['text'] ?? '', 'cannot be executed remotely');
+    });
+
+    run_review_followup_test('Domain reputation background check requires opt-in consent', static function (): bool {
+        \WebCareProScanner\System\SettingsManager::set('cron_domain_reputation_enabled', false);
+        $res = \WebCareProScanner\Firewall\DomainReputationMonitor::run_reputation_audit(false);
+        return isset($res['message']) && str_contains($res['message'], 'disabled. Please opt in');
+    });
+
+    run_review_followup_test('Threat intelligence background feed sync requires opt-in consent', static function (): bool {
+        \WebCareProScanner\System\SettingsManager::set('threat_intel_enabled', false);
+        $res = \WebCareProScanner\Firewall\ThreatIntelService::sync_threat_intelligence(false);
+        return empty($res['success']) && str_contains($res['message'], 'disabled. Please opt in');
+    });
+
     run_review_followup_test('Orphaned-post reassignment rejects a missing target ID', static function () use ($manager, $orphaned_author_id): bool {
         $result = $manager->reassign_orphaned_posts($orphaned_author_id, null);
         return empty($result['success']) && str_contains($result['error'] ?? '', 'explicit administrator');

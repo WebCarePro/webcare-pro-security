@@ -11696,6 +11696,17 @@ class ScannerRoutes {
             return new \WP_Error('missing_tool', __('Tool name is required.', 'webcare-pro-security'), ['status' => 400]);
         }
 
+        // WordPress.org Security Directive: Remote MCP execution endpoints must remain strictly read-only.
+        // Mutating actions cannot be executed remotely via MCP and are restricted to the local WP Admin console.
+        $catalog_map = \WebCareProScanner\Api\MCPAgentService::get_registered_tool_map();
+        if (isset($catalog_map[$tool]) && !empty($catalog_map[$tool]['isMutating'])) {
+            return new \WP_Error(
+                'mcp_mutating_action_prohibited',
+                __('Mutating administrative actions cannot be executed remotely via MCP. Please execute this action directly from the local WordPress Admin dashboard.', 'webcare-pro-security'),
+                ['status' => 403]
+            );
+        }
+
         $result = \WebCareProScanner\Api\MCPAgentService::execute_tool($tool, $args);
         return rest_ensure_response($result);
     }
@@ -11718,6 +11729,20 @@ class ScannerRoutes {
 
     public static function handle_mcp_json_rpc(\WP_REST_Request $request) {
         $params = $request->get_json_params() ?: [];
+        if (($params['method'] ?? '') === 'tools/call') {
+            $tool = sanitize_text_field($params['params']['name'] ?? '');
+            $catalog_map = \WebCareProScanner\Api\MCPAgentService::get_registered_tool_map();
+            if (isset($catalog_map[$tool]) && !empty($catalog_map[$tool]['isMutating'])) {
+                return rest_ensure_response([
+                    'jsonrpc' => '2.0',
+                    'id'      => $params['id'] ?? null,
+                    'error'   => [
+                        'code'    => -32001,
+                        'message' => __('Mutating administrative actions cannot be executed remotely via MCP. Please execute this action directly from the local WordPress Admin dashboard.', 'webcare-pro-security'),
+                    ],
+                ]);
+            }
+        }
         $rpc    = \WebCareProScanner\Api\MCPAgentService::handle_json_rpc($params);
         return rest_ensure_response($rpc);
     }

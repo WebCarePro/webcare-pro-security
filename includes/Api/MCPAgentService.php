@@ -987,6 +987,19 @@ class MCPAgentService {
         }
 
         $catalog_map = self::get_registered_tool_map();
+
+        // 0B. WordPress.org Security Directive: Mutating actions can only be executed via interactive WP Admin approval ($bypass_gate = true)
+        if (!$bypass_gate && isset($catalog_map[$tool]) && !empty($catalog_map[$tool]['isMutating'])) {
+            return [
+                'isError' => true,
+                'content' => [
+                    [
+                        'type' => 'text',
+                        'text' => __('Mutating administrative actions cannot be executed remotely via MCP. Please execute this action directly from the local WordPress Admin dashboard.', 'webcare-pro-security'),
+                    ],
+                ],
+            ];
+        }
         if (!isset($catalog_map[$tool])) {
             self::log_audit_event([
                 'id'          => uniqid('mcp_', true),

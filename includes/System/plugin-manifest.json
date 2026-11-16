@@ -1,6 +1,6 @@
 {
   "version": "2.16.0",
-  "generated_at": "2026-11-16T16:42:17.875Z",
+  "generated_at": "2026-11-16T17:03:12.651Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -176,8 +176,8 @@
       "size": 9420
     },
     "includes/Api/MCPAgentService.php": {
-      "sha256": "51e2f683ccb82cfe2bbaf1e7f4a66d1689e8c7b54bfa405cfbd77c44900c2d2f",
-      "size": 109086
+      "sha256": "b8ceffe84aa4805a65596032e85e7cf7023b0b6ad37111a02e568f44f8a0fe1a",
+      "size": 109764
     },
     "includes/Api/MCPAntiLockoutValidator.php": {
       "sha256": "9953443b5bf43931dfe5f02b2acd2984192f8d243283289ebdd6925722015cfd",
@@ -196,8 +196,8 @@
       "size": 11237
     },
     "includes/Api/ScannerRoutes.php": {
-      "sha256": "3b04aebd59394152e209adff3404a88e78568af42f4e663151749bed8fc481c0",
-      "size": 727298
+      "sha256": "42975b974eced492f5ae6557db7250056845d54c0f63340a696465a7c42cb829",
+      "size": 728856
     },
     "includes/Auth/ApplicationPasswordSentinel.php": {
       "sha256": "942165dd09813d8b9b94ecd8b6434a099a30bfeb429f5a7913e39c9b1088fb3e",
@@ -460,8 +460,8 @@
       "size": 40650
     },
     "includes/Firewall/DomainReputationMonitor.php": {
-      "sha256": "9742d070fa3b96b7899222448b624f3768b26396c449518808abfee24d3459a9",
-      "size": 14728
+      "sha256": "89f12173f141491467097211f8ef1b2d01725b8e41d5af4b7907a54c5a203df9",
+      "size": 16339
     },
     "includes/Firewall/FirewallEngine.php": {
       "sha256": "4fe627e3c7b53a0681f77ce9b34ed4e6294182ac37af373110c9ecfbed894572",
@@ -560,8 +560,8 @@
       "size": 20859
     },
     "includes/Firewall/ThreatIntelService.php": {
-      "sha256": "e7d021938d6606fc45543b0b323e4d39563426af6fde0205bc3b38db78bc4764",
-      "size": 21265
+      "sha256": "8cf5c42ee67dca9ba5d49800325128e514bd19ca377aed4dc5c6173384076bda",
+      "size": 22819
     },
     "includes/Firewall/VirtualPatchManager.php": {
       "sha256": "bbe470cf7e4f23cccc9a719d26c0d96b7cd5db86e1314db187a4446c9975e490",
@@ -856,8 +856,8 @@
       "size": 33259
     },
     "includes/System/Cron/CronControlCenter.php": {
-      "sha256": "341b5878af0c3410611a6e9cb8ac84a983ccfbbc0f44c742f90822e6ac3aa51a",
-      "size": 48648
+      "sha256": "342428a643db0c1d9b7e7e6b7a90878db10f5af91489aa6772f95fb1fef2605f",
+      "size": 49476
     },
     "includes/System/Cron/CronExecutionLogger.php": {
       "sha256": "a6829cf16db27c2488ed7b9644f7f6ea374a7163473a3713d2da3990821d9e30",
@@ -880,8 +880,8 @@
       "size": 24882
     },
     "includes/System/SettingsManager.php": {
-      "sha256": "e8166a3c58536050fa297bd021305d665973834d869acd565540fe80ac9a7320",
-      "size": 113135
+      "sha256": "569d42d65ddc1a44ef8a114d9664b36bd9f08b80cfc6fca6ea344c0172311b95",
+      "size": 113243
     },
     "includes/System/SystemReadinessChecker.php": {
       "sha256": "50515a4af5622d2e86858abbd9f26344f1a02e3f796684ea8e04c139a02403e6",

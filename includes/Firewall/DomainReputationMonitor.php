@@ -43,16 +43,32 @@ class DomainReputationMonitor {
             });
 
             add_action('init', static function () {
-                \WebCareProScanner\System\Cron\CronControlCenter::ensure_scheduled(self::CRON_HOOK, DAY_IN_SECONDS, 'daily');
+                $settings = class_exists('\\WebCareProScanner\\System\\SettingsManager')
+                    ? \WebCareProScanner\System\SettingsManager::get_settings()
+                    : [];
+                if (!empty($settings['cron_domain_reputation_enabled'])) {
+                    \WebCareProScanner\System\Cron\CronControlCenter::ensure_scheduled(self::CRON_HOOK, DAY_IN_SECONDS, 'daily');
+                } elseif (wp_next_scheduled(self::CRON_HOOK)) {
+                    wp_clear_scheduled_hook(self::CRON_HOOK);
+                }
             }, 20);
             return;
         }
 
         add_action(self::CRON_HOOK, [__CLASS__, 'run_reputation_audit']);
 
-        if (!wp_next_scheduled(self::CRON_HOOK)) {
-            wp_schedule_event(time() + DAY_IN_SECONDS, 'daily', self::CRON_HOOK);
-        }
+        add_action('init', static function () {
+            $settings = class_exists('\\WebCareProScanner\\System\\SettingsManager')
+                ? \WebCareProScanner\System\SettingsManager::get_settings()
+                : [];
+            if (!empty($settings['cron_domain_reputation_enabled'])) {
+                if (!wp_next_scheduled(self::CRON_HOOK)) {
+                    wp_schedule_event(time() + DAY_IN_SECONDS, 'daily', self::CRON_HOOK);
+                }
+            } elseif (wp_next_scheduled(self::CRON_HOOK)) {
+                wp_clear_scheduled_hook(self::CRON_HOOK);
+            }
+        }, 20);
     }
 
     /**
@@ -63,6 +79,19 @@ class DomainReputationMonitor {
      */
     public static function run_reputation_audit(bool $force_refresh = false): array {
         if (!$force_refresh) {
+            $settings = class_exists('\\WebCareProScanner\\System\\SettingsManager')
+                ? \WebCareProScanner\System\SettingsManager::get_settings()
+                : [];
+            if (empty($settings['cron_domain_reputation_enabled'])) {
+                return [
+                    'score'             => 100,
+                    'scanned_timestamp' => time(),
+                    'domain'            => (string) (wp_parse_url(home_url('/'), PHP_URL_HOST) ?? 'localhost'),
+                    'issues'            => [],
+                    'message'           => __('Domain reputation automated audit is disabled. Please opt in via Settings.', 'webcare-pro-security'),
+                ];
+            }
+
             $cached = get_option(self::OPTION_REPORT, null);
             if (is_array($cached) && !empty($cached['scanned_timestamp']) && (time() - $cached['scanned_timestamp']) < (12 * HOUR_IN_SECONDS)) {
                 return $cached;

@@ -199,9 +199,9 @@ class SettingsManager {
             'waf_upload_deep_mime_sanitizer'    => true,      // Rule #47: Deep MIME & Zip-Slip Polyglot Upload Armor
             'waf_log_retention_days'            => 60,   // WAF incident JSON log retention on filesystem in days (default 60 days)
 
-            // 9. Cloud Threat Intelligence & Community Blacklists
-            'threat_intel_enabled'               => true,
-            'threat_intel_block_blacklisted_ips' => true,
+            // 9. Cloud Threat Intelligence & Community Blacklists (Opt-in required for automated feed sync)
+            'threat_intel_enabled'               => false,
+            'threat_intel_block_blacklisted_ips' => false,
 
             // 10. Multi-Factor Authentication (2FA), Login Hardening & Session Sentinel
             'auth_2fa_enabled'                   => true,
@@ -272,7 +272,7 @@ class SettingsManager {
 
             // 18. Centralized Cron & Task Automation Control
             'cron_waf_log_prune_enabled'         => true,
-            'cron_domain_reputation_enabled'     => true,
+            'cron_domain_reputation_enabled'     => false, // Opt-in required for automated DNSBL & SSL reputation audits
             'cron_redirect_canary_enabled'       => true,
             'cron_reinfection_watchdog_enabled'  => true,
             'cron_modular_autopilot_enabled'     => true,
