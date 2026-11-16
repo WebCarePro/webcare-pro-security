@@ -1618,8 +1618,8 @@ class SettingsManager {
         }
 
         $normalized = str_replace('\\', '/', $file_path);
-        $normalized_slash = rtrim($normalized, '/') . '/';
-        $lines = explode("\n", $raw);
+        $filename   = basename($normalized);
+        $lines      = explode("\n", $raw);
 
         foreach ($lines as $line) {
             $pattern = trim($line);
@@ -1627,17 +1627,33 @@ class SettingsManager {
                 continue;
             }
             $pattern = str_replace('\\', '/', $pattern);
-            $trimmed = trim($pattern, '/*');
 
-            // Substring, directory, or wildcard match
-            if (
-                fnmatch("*{$pattern}*", $normalized) ||
-                fnmatch($pattern, $normalized) ||
-                fnmatch("*{$pattern}*", $normalized_slash) ||
-                ($trimmed !== '' && stripos($normalized, $trimmed) !== false) ||
-                ($trimmed !== '' && stripos($normalized_slash, $trimmed . '/') !== false)
-            ) {
+            // 1. Filename / extension wildcard pattern (e.g. *.log, *.zip, *.tar.gz, *.bak)
+            if (!str_contains($pattern, '/')) {
+                if (fnmatch($pattern, $filename, FNM_CASEFOLD)) {
+                    return true;
+                }
+                continue;
+            }
+
+            // 2. Directory or path pattern (e.g. vendor/*, wp-content/cache/*, node_modules/*, .git/*)
+            $clean_pattern = trim($pattern, '/*');
+            if ($clean_pattern === '') {
+                continue;
+            }
+
+            // Directory boundary matching against absolute or relative path
+            // Matches (start-of-path or '/') + clean_pattern + ('/' or end-of-path)
+            if (preg_match('#(?:^|/)' . preg_quote($clean_pattern, '#') . '(?:/|$)#i', $normalized)) {
                 return true;
+            }
+
+            // Also check if pattern has internal wildcards (e.g. wp-content/uploads/*/backup)
+            if (str_contains($clean_pattern, '*')) {
+                $regex_pattern = '#(?:^|/)' . str_replace('\*', '[^/]*', preg_quote($clean_pattern, '#')) . '(?:/|$)#i';
+                if (preg_match($regex_pattern, $normalized)) {
+                    return true;
+                }
             }
         }
 

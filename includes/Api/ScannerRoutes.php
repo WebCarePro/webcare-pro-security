@@ -14208,7 +14208,8 @@ class ScannerRoutes {
         $matrix   = $advisor->get_recommendations_matrix($snapshot);
 
         // Preload status
-        $killswitch_file = defined('WP_CONTENT_DIR') ? (WP_CONTENT_DIR . '/uploads/webcare-pro-security/.killswitch') : '';
+        $upload_dir = function_exists('wp_upload_dir') ? wp_upload_dir() : [];
+        $killswitch_file = !empty($upload_dir['basedir']) ? (rtrim($upload_dir['basedir'], '/\\') . '/webcare-pro-security/.killswitch') : '';
         $is_killed = (defined('WEBCARE_CAF_DISABLE_PRELOAD') && WEBCARE_CAF_DISABLE_PRELOAD) || ($killswitch_file && file_exists($killswitch_file));
 
         return rest_ensure_response([
@@ -14279,8 +14280,12 @@ class ScannerRoutes {
         $params = $request->get_json_params() ?: [];
         $enable_killswitch = !empty($params['killswitch']);
 
-        $vault_dir = defined('WP_CONTENT_DIR') ? (WP_CONTENT_DIR . '/uploads/webcare-pro-security') : '';
-        if (!$vault_dir || !is_dir($vault_dir)) {
+        $upload_dir = function_exists('wp_upload_dir') ? wp_upload_dir() : [];
+        if (empty($upload_dir['basedir'])) {
+            return new \WP_REST_Response(['success' => false, 'message' => __('Uploads directory unavailable.', 'webcare-pro-security')], 500);
+        }
+        $vault_dir = rtrim($upload_dir['basedir'], '/\\') . '/webcare-pro-security';
+        if (!is_dir($vault_dir)) {
             wp_mkdir_p($vault_dir);
         }
 

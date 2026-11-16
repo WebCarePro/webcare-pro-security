@@ -41,7 +41,11 @@ class BehavioralVaultManager {
      */
     public static function get_vault_dir(): string {
         $upload_dir = wp_upload_dir();
-        $base = !empty($upload_dir['basedir']) ? $upload_dir['basedir'] : WP_CONTENT_DIR . '/uploads';
+        if (!empty($upload_dir['error']) || empty($upload_dir['basedir'])) {
+            $err = !empty($upload_dir['error']) ? $upload_dir['error'] : 'Uploads directory unavailable.';
+            throw new \RuntimeException(esc_html("Behavioral Intelligence Vault requires a functional WordPress uploads directory: {$err}"));
+        }
+        $base = $upload_dir['basedir'];
         $vault_dir = wp_normalize_path(rtrim($base, '/\\') . '/' . self::VAULT_FOLDER);
 
         if (!is_dir($vault_dir)) {

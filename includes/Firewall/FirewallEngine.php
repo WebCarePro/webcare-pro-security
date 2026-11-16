@@ -757,8 +757,12 @@ class FirewallEngine {
         }
 
         // CAF Killswitch check
-        if (defined('WP_CONTENT_DIR') && (file_exists(WP_CONTENT_DIR . '/uploads/webcare-pro-security/.killswitch') || file_exists(WP_CONTENT_DIR . '/webcare-vault/.killswitch'))) {
-            return;
+        $upload_dir = function_exists('wp_upload_dir') ? wp_upload_dir() : [];
+        if (!empty($upload_dir['basedir'])) {
+            $uploads_base = rtrim($upload_dir['basedir'], '/\\');
+            if (file_exists($uploads_base . '/webcare-pro-security/.killswitch') || file_exists($uploads_base . '/webcare-vault/.killswitch')) {
+                return;
+            }
         }
 
         // Skip CLI execution

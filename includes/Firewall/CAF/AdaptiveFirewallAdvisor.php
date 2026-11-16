@@ -135,7 +135,8 @@ final class AdaptiveFirewallAdvisor {
 		$snapshot = $this->get_stack_snapshot();
 		$matrix   = $this->get_recommendations_matrix( $snapshot );
 
-		$killswitch_file = defined( 'WP_CONTENT_DIR' ) ? ( WP_CONTENT_DIR . '/uploads/webcare-pro-security/.killswitch' ) : '';
+		$upload_dir = function_exists( 'wp_upload_dir' ) ? wp_upload_dir() : [];
+		$killswitch_file = ! empty( $upload_dir['basedir'] ) ? ( rtrim( $upload_dir['basedir'], '/\\' ) . '/webcare-pro-security/.killswitch' ) : '';
 		$is_killed = ( defined( 'WEBCARE_CAF_DISABLE_PRELOAD' ) && WEBCARE_CAF_DISABLE_PRELOAD ) || ( $killswitch_file && file_exists( $killswitch_file ) );
 
 		return [

@@ -101,8 +101,8 @@ class FimDriftDetector {
 
         // 5. Uploads Code Scope: scripts & executables in uploads
         $upload_dir = wp_upload_dir();
-        $uploads_base = !empty($upload_dir['basedir']) ? $upload_dir['basedir'] : WP_CONTENT_DIR . '/uploads';
-        $uploads_code_files = is_dir($uploads_base) ? self::scan_uploads_code_files($uploads_base, $normalized_abs) : [];
+        $uploads_base = (empty($upload_dir['error']) && !empty($upload_dir['basedir'])) ? $upload_dir['basedir'] : '';
+        $uploads_code_files = (!empty($uploads_base) && is_dir($uploads_base)) ? self::scan_uploads_code_files($uploads_base, $normalized_abs) : [];
         FimVaultManager::write_shard('uploads', $uploads_code_files);
         $results['scopes']['uploads'] = count($uploads_code_files);
         $results['total_files'] += count($uploads_code_files);
@@ -556,8 +556,8 @@ class FimDriftDetector {
 
             case 'uploads':
                 $upload_dir = wp_upload_dir();
-                $uploads_base = !empty($upload_dir['basedir']) ? $upload_dir['basedir'] : WP_CONTENT_DIR . '/uploads';
-                return is_dir($uploads_base) ? self::scan_uploads_code_files($uploads_base, $normalized_abs) : [];
+                $uploads_base = (empty($upload_dir['error']) && !empty($upload_dir['basedir'])) ? $upload_dir['basedir'] : '';
+                return (!empty($uploads_base) && is_dir($uploads_base)) ? self::scan_uploads_code_files($uploads_base, $normalized_abs) : [];
 
             default:
                 return [];

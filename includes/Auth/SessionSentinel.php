@@ -30,7 +30,11 @@ class SessionSentinel {
      */
     public static function get_vault_dir(): string {
         $upload_dir = wp_upload_dir();
-        $base = !empty($upload_dir['basedir']) ? $upload_dir['basedir'] : WP_CONTENT_DIR . '/uploads';
+        if (!empty($upload_dir['error']) || empty($upload_dir['basedir'])) {
+            $err = !empty($upload_dir['error']) ? $upload_dir['error'] : 'Uploads directory unavailable.';
+            throw new \RuntimeException(esc_html("Auth Vault requires a functional WordPress uploads directory: {$err}"));
+        }
+        $base = $upload_dir['basedir'];
         $vault_dir = wp_normalize_path(rtrim($base, '/\\') . '/' . self::VAULT_FOLDER);
 
         if (!is_dir($vault_dir)) {
@@ -105,33 +109,49 @@ class SessionSentinel {
 
             $vault_dir = self::get_vault_dir();
             $vault_file = rtrim($vault_dir, '/\\') . '/' . self::VAULT_FILE;
+            $lock_file  = $vault_file . '.lock';
 
-            $vault_data = self::read_from_auth_vault();
-            if (empty($sessions_meta)) {
-                unset($vault_data[$user_id]);
-            } else {
-                $vault_data[$user_id] = $sessions_meta;
+            $lock_fp = @fopen($lock_file, 'c+');
+            if (!$lock_fp) {
+                return;
             }
 
-            $json = (string) wp_json_encode($vault_data);
-            $key = class_exists('\\WebCareProScanner\\Security\\SecretVault') ? \WebCareProScanner\Security\SecretVault::get_key() : 'webcare_fallback_salt';
-            $encrypted = class_exists('\\WebCareProScanner\\Security\\SecretVault') ? \WebCareProScanner\Security\SecretVault::encrypt($json) : base64_encode($json);
-            $hmac = hash_hmac('sha256', $encrypted, $key);
+            if (!@flock($lock_fp, LOCK_EX)) {
+                @fclose($lock_fp);
+                return;
+            }
 
-            $container = [
-                'vault_format'      => 'V2_AUTH_SENTINEL_AEAD',
-                'scope'             => 'admin_session_sentinel_audit',
-                'updated_at'        => time(),
-                'updated_at_iso'    => gmdate('Y-m-d\TH:i:s\Z'),
-                'hmac_sha256'       => $hmac,
-                'encrypted_payload' => $encrypted,
-            ];
+            try {
+                $vault_data = self::read_from_auth_vault();
+                if (empty($sessions_meta)) {
+                    unset($vault_data[$user_id]);
+                } else {
+                    $vault_data[$user_id] = $sessions_meta;
+                }
 
-            $encoded_container = (string) wp_json_encode($container, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+                $json = (string) wp_json_encode($vault_data);
+                $key = class_exists('\\WebCareProScanner\\Security\\SecretVault') ? \WebCareProScanner\Security\SecretVault::get_key() : 'webcare_fallback_salt';
+                $encrypted = class_exists('\\WebCareProScanner\\Security\\SecretVault') ? \WebCareProScanner\Security\SecretVault::encrypt($json) : base64_encode($json);
+                $hmac = hash_hmac('sha256', $encrypted, $key);
 
-            $tmp_file = $vault_file . '.' . uniqid('wcp_vault_', true) . '.tmp';
-            if (@file_put_contents($tmp_file, $encoded_container, LOCK_EX) !== false) {
-                @rename($tmp_file, $vault_file);
+                $container = [
+                    'vault_format'      => 'V2_AUTH_SENTINEL_AEAD',
+                    'scope'             => 'admin_session_sentinel_audit',
+                    'updated_at'        => time(),
+                    'updated_at_iso'    => gmdate('Y-m-d\TH:i:s\Z'),
+                    'hmac_sha256'       => $hmac,
+                    'encrypted_payload' => $encrypted,
+                ];
+
+                $encoded_container = (string) wp_json_encode($container, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+
+                $tmp_file = $vault_file . '.' . uniqid('wcp_vault_', true) . '.tmp';
+                if (@file_put_contents($tmp_file, $encoded_container, LOCK_EX) !== false) {
+                    @rename($tmp_file, $vault_file);
+                }
+            } finally {
+                @flock($lock_fp, LOCK_UN);
+                @fclose($lock_fp);
             }
         } catch (\Throwable $e) {
             // Failsafe without breaking execution

@@ -1,6 +1,6 @@
 {
   "version": "2.17.0",
-  "generated_at": "2026-11-16T22:02:19.016Z",
+  "generated_at": "2026-11-16T22:26:02.332Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -196,8 +196,8 @@
       "size": 11237
     },
     "includes/Api/ScannerRoutes.php": {
-      "sha256": "c17fda8c04483e7ffbf4c968bf3150d54638673cec5fe0a95724d9e1bf505a50",
-      "size": 732391
+      "sha256": "fac24b1aae361a727b5c1f45b39f26eabc3c3b4090e41d4cfd53ef27a8c3fa0a",
+      "size": 732731
     },
     "includes/Auth/ApplicationPasswordSentinel.php": {
       "sha256": "942165dd09813d8b9b94ecd8b6434a099a30bfeb429f5a7913e39c9b1088fb3e",
@@ -216,8 +216,8 @@
       "size": 52084
     },
     "includes/Auth/SessionSentinel.php": {
-      "sha256": "15e2156e1c3fdb65362ec785acd35ea19d44ea6c99c156fbaac833eaf7c07559",
-      "size": 76013
+      "sha256": "f9c3ccd879adfd53db63f244455792ff9e736954243c1ead9a64a74eb0afa871",
+      "size": 76779
     },
     "includes/Auth/TwoFactorAuth.php": {
       "sha256": "4479af8bb4423da389d352c079624cf4e21a546f31047b64140c2fe52133495c",
@@ -384,20 +384,20 @@
       "size": 4776
     },
     "includes/Findings/WhitelistManager.php": {
-      "sha256": "8fc53b7e888bbdcda217f7a0ce761fc7d8925f64126c90544333ec467337fb5a",
-      "size": 25066
+      "sha256": "17907eb1156eb6bd333b5403c8d4beb05ddae78ed995016e6990e7f628bfd76a",
+      "size": 25393
     },
     "includes/Firewall/AdaptiveRateLimiter.php": {
-      "sha256": "115f410f7c6c798498c858f3cf9c5ab97aaaa2ca60bbc13d7ef5a852097cbfa1",
-      "size": 26762
+      "sha256": "6dc5b831082908defd5bc8ab192e20c125c4174e4d748c2380488dfba0cd44d8",
+      "size": 26893
     },
     "includes/Firewall/BotReconDefense.php": {
       "sha256": "669edf76d58624c5d359847792c617a3ee07cde636d69ccafc08aa6a36a501f6",
       "size": 39523
     },
     "includes/Firewall/CAF/AdaptiveFirewallAdvisor.php": {
-      "sha256": "138d502335d918de5314a8302b1e2128091dee7293ae986a48891aa9de97c75b",
-      "size": 26696
+      "sha256": "094ae7d58e1408ed16ee9e05697d5ba7ddaf7f89ebfaaf9d2bf75cee127cfa39",
+      "size": 26793
     },
     "includes/Firewall/CAF/CloudflareIpListSynchronizer.php": {
       "sha256": "5451dec200779ea889bb47720fe64967f32bdd6a0e26f24a0a9b55bbd6aad933",
@@ -464,8 +464,8 @@
       "size": 16339
     },
     "includes/Firewall/FirewallEngine.php": {
-      "sha256": "20140819212d06ac199f743b0d2f056b65fbda9008462d90a0b825ceacf18a40",
-      "size": 404187
+      "sha256": "416897a41cd613b696c3c1fb4c27b8c1d3a8ca29300a21cee544819aea772bf4",
+      "size": 404359
     },
     "includes/Firewall/FormSpamProtectionEngine.php": {
       "sha256": "d450cf8289cddf53554c6a084cd4776f6a6333f7c7afdad8d65c39e9fc79bfb6",
@@ -496,8 +496,8 @@
       "size": 95841
     },
     "includes/Firewall/Modular/BehavioralVaultManager.php": {
-      "sha256": "c70eec9f734ed625a478e464a130205f74cb533ed824db3d3f44efd7153db99b",
-      "size": 14891
+      "sha256": "a085c30ab44032dc5979d30e85acd3bff42b919dd08c3e51b0fced877fcf4f5a",
+      "size": 15164
     },
     "includes/Firewall/Modular/ComponentIntegrityVerifier.php": {
       "sha256": "88f6d0e8b2e3cbd41a917210eac814bcdd503722e33661e7b2c8f3953ca3c631",
@@ -616,8 +616,8 @@
       "size": 63834
     },
     "includes/Integrity/FimDriftDetector.php": {
-      "sha256": "03f4cd824060890402490af6571e2a965ab50106ef9b750c035612ad1af20107",
-      "size": 28875
+      "sha256": "6a3110d67ed0de95296c7ce0fb3288a340f3fe3c33f5c073a00c7cb929845b61",
+      "size": 28945
     },
     "includes/Integrity/FimVaultManager.php": {
       "sha256": "867d040ce0ce5a46d54b63cbe976074ed7e687433528f0e146257a295dab130f",
@@ -880,8 +880,8 @@
       "size": 24882
     },
     "includes/System/SettingsManager.php": {
-      "sha256": "4d5afd356f7de37065e754b30b72ffef3164cb0d7b3415979a2ad502be016b1e",
-      "size": 114151
+      "sha256": "e44a626830b10fa1860cc5f60c7609cb9b2fd6ba98d71cc1c64cb631881764f1",
+      "size": 114869
     },
     "includes/System/SystemReadinessChecker.php": {
       "sha256": "50515a4af5622d2e86858abbd9f26344f1a02e3f796684ea8e04c139a02403e6",

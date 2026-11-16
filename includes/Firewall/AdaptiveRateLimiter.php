@@ -447,9 +447,9 @@ class AdaptiveRateLimiter {
      */
     private static function get_rate_limit_storage_dir(): string {
         $upload_dir = wp_upload_dir();
-        $base_dir = $upload_dir['basedir'] ?? '';
-        if (empty($base_dir) && defined('WP_CONTENT_DIR')) {
-            $base_dir = WP_CONTENT_DIR . '/uploads';
+        $base_dir = (empty($upload_dir['error']) && !empty($upload_dir['basedir'])) ? $upload_dir['basedir'] : '';
+        if (empty($base_dir)) {
+            return '';
         }
         return rtrim($base_dir, '/\\') . '/' . self::FILE_STORAGE_SUBDIR;
     }
@@ -461,6 +461,9 @@ class AdaptiveRateLimiter {
      */
     private static function ensure_storage_dir(): bool {
         $dir = self::get_rate_limit_storage_dir();
+        if (empty($dir)) {
+            return false;
+        }
         if (!is_dir($dir)) {
             // phpcs:ignore WordPress.WP.AlternativeFileSystem.mkdir_mkdir
             wp_mkdir_p($dir);
@@ -491,6 +494,9 @@ class AdaptiveRateLimiter {
      */
     private static function file_get_rate_limit(string $cache_key): ?array {
         $dir = self::get_rate_limit_storage_dir();
+        if (empty($dir)) {
+            return null;
+        }
         $shard = substr(md5($cache_key), 0, 2);
         $file = $dir . "/rl_{$shard}.php";
         if (!file_exists($file)) {

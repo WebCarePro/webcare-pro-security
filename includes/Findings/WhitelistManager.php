@@ -32,7 +32,10 @@ class WhitelistManager {
      * @return string
      */
     public static function get_uploads_hash_registry_path(): string {
-        $upload_dir = function_exists('wp_upload_dir') ? wp_upload_dir() : ['basedir' => WP_CONTENT_DIR . '/uploads'];
+        $upload_dir = function_exists('wp_upload_dir') ? wp_upload_dir() : [];
+        if (!empty($upload_dir['error']) || empty($upload_dir['basedir'])) {
+            return '';
+        }
         $base = rtrim($upload_dir['basedir'], '/\\') . '/webcare-pro-security/verified-file-hash';
         return $base . '/uploads-whitelisted-hashes.json';
     }
@@ -43,7 +46,10 @@ class WhitelistManager {
      * @return string Directory path
      */
     public static function ensure_hash_registry_dir(): string {
-        $upload_dir = function_exists('wp_upload_dir') ? wp_upload_dir() : ['basedir' => WP_CONTENT_DIR . '/uploads'];
+        $upload_dir = function_exists('wp_upload_dir') ? wp_upload_dir() : [];
+        if (!empty($upload_dir['error']) || empty($upload_dir['basedir'])) {
+            return '';
+        }
         $dir = rtrim($upload_dir['basedir'], '/\\') . '/webcare-pro-security/verified-file-hash';
 
         if (!file_exists($dir)) {
@@ -53,21 +59,14 @@ class WhitelistManager {
         // Protective .htaccess: web access completely forbidden
         $htaccess = $dir . '/.htaccess';
         if (!file_exists($htaccess)) {
-            $rules = "Order Deny,Allow
-Deny from all
-<IfModule mod_authz_core.c>
-Require all denied
-</IfModule>
-";
+            $rules = "Order Deny,Allow\nDeny from all\n<IfModule mod_authz_core.c>\nRequire all denied\n</IfModule>\n";
             @file_put_contents($htaccess, $rules);
         }
 
         // Silent index.php
         $index = $dir . '/index.php';
         if (!file_exists($index)) {
-            @file_put_contents($index, "<?php
-// Silence is golden.
-");
+            @file_put_contents($index, "<?php\n// Silence is golden.\n");
         }
 
         return $dir;
@@ -84,7 +83,7 @@ Require all denied
         }
 
         $json_file = self::get_uploads_hash_registry_path();
-        if (!file_exists($json_file) || !is_readable($json_file)) {
+        if (empty($json_file) || !file_exists($json_file) || !is_readable($json_file)) {
             self::$uploads_hashes_memory = [];
             return self::$uploads_hashes_memory;
         }
@@ -126,6 +125,9 @@ Require all denied
 
         self::ensure_hash_registry_dir();
         $json_file = self::get_uploads_hash_registry_path();
+        if (empty($json_file)) {
+            return ['success' => false, 'message' => __('Uploads directory unavailable.', 'webcare-pro-security')];
+        }
 
         $registry = self::get_uploads_whitelisted_hashes();
 
