@@ -2,6 +2,7 @@
 namespace WebCareProScanner\Firewall;
 
 use WebCareProScanner\System\AuditLogger;
+use WebCareProScanner\System\ServerInfo;
 
 if (!defined('ABSPATH')) {
     exit;
@@ -364,97 +365,121 @@ class OutboundEgressFirewall {
         $threat = null;
         $reason = '';
 
+        // Extract site hosts, server local IPs, and canonical aliases early
+        $site_home_url   = home_url();
+        $site_host       = strtolower((string) (wp_parse_url($site_home_url, PHP_URL_HOST) ?? ''));
+        $admin_site_host = strtolower((string) (wp_parse_url(site_url(), PHP_URL_HOST) ?: $site_host));
+        $canonical_hosts = array_unique(array_filter([$site_host, $admin_site_host]));
+        $server_ips      = class_exists('\\WebCareProScanner\\System\\ServerInfo') ? ServerInfo::get_all_server_ips() : [];
+        $site_is_local   = !empty(array_intersect($canonical_hosts, ['localhost', '127.0.0.1', '::1', '0.0.0.0']))
+            || (!empty($_SERVER['SERVER_NAME']) && in_array(strtolower($_SERVER['SERVER_NAME']), ['localhost', '127.0.0.1', '::1'], true));
+
+        $is_same_host    = in_array($host, $canonical_hosts, true)
+            || in_array($host, $server_ips, true)
+            || ($site_is_local && in_array($host, ['localhost', '127.0.0.1', '::1', '0.0.0.0'], true));
+
+        $site_port = (int) (wp_parse_url($site_home_url, PHP_URL_PORT) ?: (wp_parse_url(site_url(), PHP_URL_PORT) ?: (is_ssl() ? 443 : 80)));
+        $port = isset($parsed_url['port']) ? (int) $parsed_url['port'] : null;
+        $request_path = strtolower($parsed_url['path'] ?? '');
+
+        // Standard allowed outbound web ports (including common local development ports)
+        $allowed_web_ports = [80, 443, 8080, 8443, 8484, 8282, 8000, 8888, 3000];
+
+        // Transactional mail ports (SMTP, SMTPS, Submission, Alternate)
+        $standard_mail_ports = [465, 587, 2525];
+        $is_host_approved = self::is_host_approved($host, $settings, '', $is_mailer);
+
+        // Port 25 Hardening: Port 25 is ONLY permitted if caller is a verified mailer AND destination is an approved mail relay
+        if ($is_mailer && $is_host_approved) {
+            $standard_mail_ports[] = 25;
+        }
+
+        if ($is_mailer || $is_host_approved) {
+            $allowed_web_ports = array_merge($allowed_web_ports, $standard_mail_ports);
+        }
+
+        if ($site_port > 0 && !in_array($site_port, $allowed_web_ports, true)) {
+            $allowed_web_ports[] = $site_port;
+        }
+        $admin_site_port = (int) (wp_parse_url(site_url(), PHP_URL_PORT) ?: 0);
+        if ($admin_site_port > 0 && !in_array($admin_site_port, $allowed_web_ports, true)) {
+            $allowed_web_ports[] = $admin_site_port;
+        }
+        if (!empty($_SERVER['SERVER_PORT'])) {
+            $server_port = (int) $_SERVER['SERVER_PORT'];
+            if ($server_port > 0 && !in_array($server_port, $allowed_web_ports, true)) {
+                $allowed_web_ports[] = $server_port;
+            }
+        }
+        // SECURITY INVARIANT (WCP-03): Never read $_SERVER['HTTP_HOST'] to populate $allowed_web_ports.
+
+        // High-risk internal ports that should never be probed even on same host (e.g., Redis, Memcached, MySQL, Postgres, MongoDB, Elastic, Docker, Consul)
+        $restricted_internal_ports = [
+            21, 22, 23, 2375, 2376, 3306, 5432, 6379,
+            8500, 9000, 9200, 11211, 15672, 27017, 27018,
+        ];
+        // Restrict port 25 unless caller is a verified mailer contacting an approved mail relay
+        if (!($is_mailer && $is_host_approved)) {
+            $restricted_internal_ports[] = 25;
+        }
+
+        $normalized_req_path = '/' . ltrim($request_path, '/');
+        $query_str           = (string) ($parsed_url['query'] ?? '');
+        $is_core_or_webcare  = ($caller['type'] === 'core' || ($caller['slug'] ?? '') === 'webcare-pro-security');
+
+        // Identify legitimate WordPress self-requests:
+        // 1. Core scheduled tasks & AJAX/POST workers: /wp-cron.php, /wp-admin/admin-ajax.php, /wp-admin/admin-post.php
+        // 2. Admin dashboard & Site Health: /wp-admin/ or /wp-admin/site-health.php
+        // 3. REST API: /wp-json, /wp-json/*, or index.php?rest_route=...
+        // 4. Homepage / root URL & front controller: '/', '', '/index.php' (used by Site Health HTTPS test, page-cache test, and Redirect Canary)
+        // 5. Query-string routes: rest_route=... or page_id=... (plain permalinks, e.g. WooCommerce checkout probe)
+        // 6. Direct self-probes dispatched by WordPress Core or WebCare Pro Security's own modules (e.g. CheckoutSkimmerSentinel, RedirectCanaryEngine, PulseHealthCheck, ServerSecurityEngine)
+        $is_wp_cron_or_loopback = (
+            $normalized_req_path === '/wp-cron.php' ||
+            str_starts_with($normalized_req_path, '/wp-admin/admin-ajax.php') ||
+            str_starts_with($normalized_req_path, '/wp-admin/admin-post.php') ||
+            str_starts_with($normalized_req_path, '/wp-admin/') ||
+            $normalized_req_path === '/wp-json' ||
+            str_starts_with($normalized_req_path, '/wp-json/') ||
+            $normalized_req_path === '/' ||
+            $normalized_req_path === '' ||
+            $normalized_req_path === '/index.php' ||
+            str_contains($query_str, 'rest_route=') ||
+            str_contains($query_str, 'page_id=') ||
+            $is_core_or_webcare
+        );
+
+        $is_allowed_loopback_port = ($port === null || in_array($port, $allowed_web_ports, true))
+            && ($port === null || !in_array($port, $restricted_internal_ports, true));
+
+        // Same-host loopbacks (e.g. wp-cron.php, site-health loopback checks, REST background calls, watchdog canaries)
+        // require BOTH an authorized WordPress loopback path/caller AND a verified site web port
+        if ($is_same_host && $is_wp_cron_or_loopback && $is_allowed_loopback_port) {
+            // Legitimate internal self-request to site itself; do not treat as external SSRF or raw-IP egress
+            return false;
+        }
+
         // 2. SSRF, Binary IP Normalization, Loopback & Cloud Metadata Check (HARD DENY PRECEDENCE)
         // Resolves hostnames and checks decimal/hex/IPv6 encodings, link-local, loopback, private subnets, and cloud metadata.
         // Pin validated safe IP to prevent TOCTOU DNS rebinding in curl.
         if (!empty($settings['block_ssrf_metadata'])) {
-            $site_home_url = home_url();
-            $site_host = strtolower(wp_parse_url($site_home_url, PHP_URL_HOST) ?? '');
-            $site_port = (int) (wp_parse_url($site_home_url, PHP_URL_PORT) ?: (wp_parse_url(site_url(), PHP_URL_PORT) ?: (is_ssl() ? 443 : 80)));
-            $port = isset($parsed_url['port']) ? (int) $parsed_url['port'] : null;
-            $request_path = strtolower($parsed_url['path'] ?? '');
-
-            // Standard allowed outbound web ports
-            $allowed_web_ports = [80, 443, 8080, 8443];
-
-            // Transactional mail ports (SMTP, SMTPS, Submission, Alternate)
-            $standard_mail_ports = [465, 587, 2525];
-            $is_host_approved = self::is_host_approved($host, $settings, '', $is_mailer);
-
-            // Port 25 Hardening: Port 25 is ONLY permitted if caller is a verified mailer AND destination is an approved mail relay
-            if ($is_mailer && $is_host_approved) {
-                $standard_mail_ports[] = 25;
-            }
-
-            if ($is_mailer || $is_host_approved) {
-                $allowed_web_ports = array_merge($allowed_web_ports, $standard_mail_ports);
-            }
-
-            if ($site_port > 0 && !in_array($site_port, $allowed_web_ports, true)) {
-                $allowed_web_ports[] = $site_port;
-            }
-            $admin_site_port = (int) (wp_parse_url(site_url(), PHP_URL_PORT) ?: 0);
-            if ($admin_site_port > 0 && !in_array($admin_site_port, $allowed_web_ports, true)) {
-                $allowed_web_ports[] = $admin_site_port;
-            }
-            if (!empty($_SERVER['SERVER_PORT'])) {
-                $server_port = (int) $_SERVER['SERVER_PORT'];
-                if ($server_port > 0 && !in_array($server_port, $allowed_web_ports, true)) {
-                    $allowed_web_ports[] = $server_port;
-                }
-            }
-            // SECURITY INVARIANT (WCP-03): Never read $_SERVER['HTTP_HOST'] to populate $allowed_web_ports.
-
-            // High-risk internal ports that should never be probed even on same host (e.g., Redis, Memcached, MySQL, Postgres, MongoDB, Elastic, Docker, Consul)
-            $restricted_internal_ports = [
-                21, 22, 23, 2375, 2376, 3306, 5432, 6379,
-                8500, 9000, 9200, 11211, 15672, 27017, 27018,
-            ];
-            // Restrict port 25 unless caller is a verified mailer contacting an approved mail relay
-            if (!($is_mailer && $is_host_approved)) {
-                $restricted_internal_ports[] = 25;
-            }
-
-            $admin_site_host = strtolower((string) (wp_parse_url(site_url(), PHP_URL_HOST) ?: $site_host));
-            $canonical_hosts = array_unique(array_filter([$site_host, $admin_site_host]));
-            $site_is_local   = !empty(array_intersect($canonical_hosts, ['localhost', '127.0.0.1', '::1']));
-            $is_same_host    = in_array($host, $canonical_hosts, true)
-                || ($site_is_local && in_array($host, ['localhost', '127.0.0.1', '::1'], true));
-            $normalized_req_path = '/' . ltrim($request_path, '/');
-            $is_wp_cron_or_loopback = (
-                $normalized_req_path === '/wp-cron.php' ||
-                str_starts_with($normalized_req_path, '/wp-admin/admin-ajax.php') ||
-                str_starts_with($normalized_req_path, '/wp-admin/admin-post.php') ||
-                $normalized_req_path === '/wp-json' ||
-                str_starts_with($normalized_req_path, '/wp-json/')
-            );
-
-            $is_allowed_loopback_port = ($port === null || in_array($port, $allowed_web_ports, true))
-                && ($port === null || !in_array($port, $restricted_internal_ports, true));
-
-            // Same-host loopbacks (e.g. wp-cron.php, site-health loopback checks, REST background calls)
-            // require BOTH an authorized WordPress loopback path AND a verified site port
-            if ($is_same_host && $is_wp_cron_or_loopback && $is_allowed_loopback_port) {
-                // Legitimate internal self-request to site itself; do not treat as external SSRF
+            // 1. Restricted Port Defense: Port 25, DB, and cache service ports blocked unconditionally
+            if ($port !== null && in_array($port, $restricted_internal_ports, true)) {
+                $threat = 'internal_port_probe';
+                $reason = sprintf('Outbound request targeting restricted internal/mail port (%1$d) on %2$s.', $port, $host);
             } else {
-                // 1. Restricted Port Defense: Port 25, DB, and cache service ports blocked unconditionally
-                if ($port !== null && in_array($port, $restricted_internal_ports, true)) {
-                    $threat = 'internal_port_probe';
-                    $reason = sprintf('Outbound request targeting restricted internal/mail port (%1$d) on %2$s.', $port, $host);
-                } else {
-                    // 2. Hard SSRF Evaluation: Must run BEFORE any allowlist or mailer fast-path!
-                    // An allowlisted host resolving to 127.0.0.1, 169.254.169.254, or RFC1918 will be caught and denied here.
-                    $ssrf_eval = self::evaluate_ssrf_destination($host);
-                    if (!empty($ssrf_eval['threat'])) {
-                        $threat = $ssrf_eval['threat'];
-                        $reason = $ssrf_eval['reason'];
-                    } elseif (!empty($ssrf_eval['safe_ip'])) {
-                        // Record safe pinned IP for CURLOPT_RESOLVE in constrain_curl_transport()
-                        self::$resolved_safe_pins[$host] = [
-                            'ip'        => $ssrf_eval['safe_ip'],
-                            'timestamp' => time(),
-                        ];
-                    }
+                // 2. Hard SSRF Evaluation: Must run BEFORE any allowlist or mailer fast-path!
+                // An allowlisted host resolving to 127.0.0.1, 169.254.169.254, or RFC1918 will be caught and denied here.
+                $ssrf_eval = self::evaluate_ssrf_destination($host);
+                if (!empty($ssrf_eval['threat'])) {
+                    $threat = $ssrf_eval['threat'];
+                    $reason = $ssrf_eval['reason'];
+                } elseif (!empty($ssrf_eval['safe_ip'])) {
+                    // Record safe pinned IP for CURLOPT_RESOLVE in constrain_curl_transport()
+                    self::$resolved_safe_pins[$host] = [
+                        'ip'        => $ssrf_eval['safe_ip'],
+                        'timestamp' => time(),
+                    ];
                 }
             }
         }
@@ -469,11 +494,13 @@ class OutboundEgressFirewall {
             }
         }
 
-        // 3. Raw-IP Outbound Monitor (Catch unverified C2 callback beacons)
+        // 4. Raw-IP Outbound Monitor (Catch unverified C2 callback beacons)
         if (!$threat && filter_var($host, FILTER_VALIDATE_IP)) {
-            $site_home_url = home_url();
-            $site_host = strtolower(wp_parse_url($site_home_url, PHP_URL_HOST) ?? '');
-            if ($host !== $site_host && !self::is_host_approved($host, $settings)) {
+            $is_local_or_same_ip = in_array($host, $canonical_hosts, true)
+                || in_array($host, $server_ips, true)
+                || in_array($host, ['127.0.0.1', '::1', '0.0.0.0'], true);
+
+            if (!$is_local_or_same_ip && !self::is_host_approved($host, $settings)) {
                 $threat = 'raw_ip_egress';
                 $reason = sprintf('Outbound network request targeting raw IP address (%s).', $host);
             }

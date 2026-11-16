@@ -3524,6 +3524,9 @@ class FirewallEngine {
      * Clear firewall logs
      */
     public static function clear_logs(): bool {
+        if (class_exists('\\WebCareProScanner\\Firewall\\OutboundEgressFirewall')) {
+            update_option(\WebCareProScanner\Firewall\OutboundEgressFirewall::OPTION_EVENTS, [], false);
+        }
         return WafFileLogger::clear_all_logs();
     }
 
