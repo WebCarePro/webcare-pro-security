@@ -54,86 +54,93 @@ class SiteBehavioralAnalyzer {
      * @return array Scan initialization summary
      */
     public static function start_scan(array $options = []): array {
-        // Build Component & File Inventory with live official origin, vendor & checksum verification
-        $components = self::discover_all_components(true);
-        $file_queue = self::build_file_queue($components);
+        set_transient(self::TRANSIENT_LOCK, 1, 15);
+        self::unschedule_cron_continuation();
 
-        $session_id = 'scan_' . time() . '_' . wp_generate_password(6, false, false);
+        try {
+            // Build Component & File Inventory with live official origin, vendor & checksum verification
+            $components = self::discover_all_components(true);
+            $file_queue = self::build_file_queue($components);
 
-        $initial_cve_count      = 0;
-        $initial_outdated_count = 0;
-        foreach ($components as $comp_item) {
-            if (!empty($comp_item['cve_count'])) {
-                $initial_cve_count += (int) $comp_item['cve_count'];
+            $session_id = 'scan_' . time() . '_' . wp_generate_password(6, false, false);
+
+            $initial_cve_count      = 0;
+            $initial_outdated_count = 0;
+            foreach ($components as $comp_item) {
+                if (!empty($comp_item['cve_count'])) {
+                    $initial_cve_count += (int) $comp_item['cve_count'];
+                }
+                if (!empty($comp_item['update_available'])) {
+                    $initial_outdated_count++;
+                }
             }
-            if (!empty($comp_item['update_available'])) {
-                $initial_outdated_count++;
-            }
+
+            $initial_state = [
+                'session_id'         => $session_id,
+                'status'             => 'running',
+                'started_at'         => time(),
+                'started_at_micro'   => microtime(true),
+                'updated_at'         => time(),
+                'updated_at_micro'   => microtime(true),
+                'active_elapsed_ms'  => 0.0,
+                'ema_files_per_sec'  => 0.0,
+                'current_phase'      => 1, // 1: Census, 2: Hooks/AST, 3: REST, 4: Taint/Sinks, 5: Direct-Access, 6: Synthesis
+                'total_components'   => count($components),
+                'visited_components' => [],
+                'total_files'        => count($file_queue),
+                'processed_files'    => 0,
+                'current_index'      => 0,
+                'current_component'  => '',
+                'current_file'       => '',
+                'last_batch_files'   => 0,
+                'last_batch_ms'      => 0,
+                'last_batch_rate'    => 0.0,
+                'counters'           => [
+                    'files_tokenized'        => 0,
+                    'ajax_hooks_found'       => 0,
+                    'unprotected_ajax_hooks' => 0,
+                    'rest_routes_found'      => 0,
+                    'permissive_rest_routes' => 0,
+                    'missing_abspath_files'  => 0,
+                    'tampered_files_found'   => 0,
+                    'taint_sinks_found'      => 0,
+                    'cve_vulnerabilities'    => $initial_cve_count,
+                    'outdated_components'    => $initial_outdated_count,
+                    'abandoned_components'   => 0,
+                    'rules_synthesized'      => 0,
+                ],
+                'inventory'          => $components,
+                'endpoint_map'       => [],
+                'findings'           => [],
+                'file_queue'         => $file_queue,
+                'options'            => $options,
+            ];
+
+            update_option(self::OPTION_STATE, $initial_state, false);
+            self::schedule_cron_continuation(15);
+
+            // Pre-save component census to Vault
+            BehavioralVaultManager::write_shard(BehavioralVaultManager::SHARD_INVENTORY, $components);
+
+            // Update vault meta
+            $meta = BehavioralVaultManager::read_meta();
+            $meta['last_scan'] = time();
+            $meta['scan_session'] = $session_id;
+            $meta['total_components'] = count($components);
+            $meta['total_files'] = count($file_queue);
+            BehavioralVaultManager::write_meta($meta);
+
+            $progress = self::format_progress_response($initial_state);
+            $progress['message'] = sprintf(
+                /* translators: %1$d: components count, %2$d: files count */
+                __('Behavioral scan session initialized: %1$d components and %2$d PHP files queued.', 'webcare-pro-security'),
+                count($components),
+                count($file_queue)
+            );
+            return $progress;
+        } finally {
+            delete_transient(self::TRANSIENT_LOCK);
         }
-
-        $initial_state = [
-            'session_id'         => $session_id,
-            'status'             => 'running',
-            'started_at'         => time(),
-            'started_at_micro'   => microtime(true),
-            'updated_at'         => time(),
-            'updated_at_micro'   => microtime(true),
-            'active_elapsed_ms'  => 0.0,
-            'ema_files_per_sec'  => 0.0,
-            'current_phase'      => 1, // 1: Census, 2: Hooks/AST, 3: REST, 4: Taint/Sinks, 5: Direct-Access, 6: Synthesis
-            'total_components'   => count($components),
-            'visited_components' => [],
-            'total_files'        => count($file_queue),
-            'processed_files'    => 0,
-            'current_index'      => 0,
-            'current_component'  => '',
-            'current_file'       => '',
-            'last_batch_files'   => 0,
-            'last_batch_ms'      => 0,
-            'last_batch_rate'    => 0.0,
-            'counters'           => [
-                'files_tokenized'        => 0,
-                'ajax_hooks_found'       => 0,
-                'unprotected_ajax_hooks' => 0,
-                'rest_routes_found'      => 0,
-                'permissive_rest_routes' => 0,
-                'missing_abspath_files'  => 0,
-                'tampered_files_found'   => 0,
-                'taint_sinks_found'      => 0,
-                'cve_vulnerabilities'    => $initial_cve_count,
-                'outdated_components'    => $initial_outdated_count,
-                'abandoned_components'   => 0,
-                'rules_synthesized'      => 0,
-            ],
-            'inventory'          => $components,
-            'endpoint_map'       => [],
-            'findings'           => [],
-            'file_queue'         => $file_queue,
-            'options'            => $options,
-        ];
-
-        update_option(self::OPTION_STATE, $initial_state, false);
-        self::schedule_cron_continuation(15);
-
-        // Pre-save component census to Vault
-        BehavioralVaultManager::write_shard(BehavioralVaultManager::SHARD_INVENTORY, $components);
-
-        // Update vault meta
-        $meta = BehavioralVaultManager::read_meta();
-        $meta['last_scan'] = time();
-        $meta['scan_session'] = $session_id;
-        $meta['total_components'] = count($components);
-        $meta['total_files'] = count($file_queue);
-        BehavioralVaultManager::write_meta($meta);
-
-        $progress = self::format_progress_response($initial_state);
-        $progress['message'] = sprintf(
-            /* translators: %1$d: components count, %2$d: files count */
-            __('Behavioral scan session initialized: %1$d components and %2$d PHP files queued.', 'webcare-pro-security'),
-            count($components),
-            count($file_queue)
-        );
-        return $progress;
     }
 
     /**
@@ -151,6 +158,10 @@ class SiteBehavioralAnalyzer {
         try {
             $state = get_option(self::OPTION_STATE, null);
             if (!$state || !is_array($state) || empty($state['status'])) {
+                $summary = BehavioralVaultManager::get_vault_summary();
+                if (!empty($summary['last_scan'])) {
+                    return self::get_scan_progress();
+                }
                 return [
                     'success' => false,
                     'status'  => 'idle',
