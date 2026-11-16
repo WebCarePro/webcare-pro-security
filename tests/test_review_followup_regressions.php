@@ -571,5 +571,39 @@ try {
     }
 }
 
+run_review_followup_test('FimVaultManager stores and retrieves uncompressed baseline content', static function () use ($plugin_root): bool {
+    require_once $plugin_root . '/includes/Integrity/FimVaultManager.php';
+    $dummy_path = sys_get_temp_dir() . '/webcare_fim_test_' . wp_generate_password(8, false) . '.php';
+    $sample_data = "<?php // FIM Baseline Test Data " . time();
+    file_put_contents($dummy_path, $sample_data);
+    try {
+        $stored = \WebCareProScanner\Integrity\FimVaultManager::store_baseline($dummy_path);
+        if (!$stored) {
+            return false;
+        }
+        $retrieved = \WebCareProScanner\Integrity\FimVaultManager::get_baseline_content($dummy_path);
+        return $retrieved === $sample_data;
+    } finally {
+        @unlink($dummy_path);
+        $vault_key = md5(wp_normalize_path($dummy_path));
+        $vault_path = \WebCareProScanner\Integrity\FimVaultManager::get_vault_dir() . '/baselines/' . $vault_key . '.gz';
+        @unlink($vault_path);
+    }
+});
+
+run_review_followup_test('Remediation and FIM modules contain zero raw.githubusercontent.com mirrors', static function () use ($plugin_root): bool {
+    $files = [
+        $plugin_root . '/includes/Remediation/RemediationManager.php',
+        $plugin_root . '/includes/Integrity/FileIntegrityMonitor.php',
+    ];
+    foreach ($files as $file) {
+        $code = file_get_contents($file);
+        if (strpos($code, 'githubusercontent') !== false) {
+            return false;
+        }
+    }
+    return true;
+});
+
 echo sprintf("RESULTS: %d passed, %d failed, %d skipped\n", $passed, $failed, $skipped);
 exit($failed === 0 ? 0 : 1);

@@ -44,7 +44,11 @@ class FimVaultManager {
      */
     public static function get_vault_dir(): string {
         $upload_dir = wp_upload_dir();
-        $base = !empty($upload_dir['basedir']) ? $upload_dir['basedir'] : WP_CONTENT_DIR . '/uploads';
+        if (!empty($upload_dir['error']) || empty($upload_dir['basedir'])) {
+            $err = !empty($upload_dir['error']) ? $upload_dir['error'] : 'Uploads directory unavailable.';
+            throw new \RuntimeException(esc_html("FIM Vault requires a functional WordPress uploads directory: {$err}"));
+        }
+        $base = $upload_dir['basedir'];
         $vault_dir = wp_normalize_path(rtrim($base, '/\\') . '/' . self::VAULT_FOLDER);
 
         if (!is_dir($vault_dir)) {
@@ -408,5 +412,37 @@ class FimVaultManager {
         }
 
         return false;
+    }
+
+    /**
+     * Retrieve the raw uncompressed content of a baseline snapshot from the vault.
+     *
+     * @param string $absolute_path
+     * @return string|null Raw content or null if baseline not found or corrupted
+     */
+    public static function get_baseline_content(string $absolute_path): ?string {
+        try {
+            $dir = self::get_vault_dir() . '/baselines';
+        } catch (\Throwable $e) {
+            return null;
+        }
+        $vault_key = md5(wp_normalize_path($absolute_path));
+        $vault_path = rtrim($dir, '/\\') . '/' . $vault_key . '.gz';
+
+        if (!file_exists($vault_path)) {
+            return null;
+        }
+
+        $compressed = @file_get_contents($vault_path);
+        if (false === $compressed) {
+            return null;
+        }
+
+        $content = @gzuncompress($compressed);
+        if (false === $content) {
+            return null;
+        }
+
+        return $content;
     }
 }

@@ -177,6 +177,45 @@ class RemediationManager {
     }
 
     /**
+     * Safely extract a single file from an official WordPress.org release zip package.
+     * Uses WordPress core's download_url() to retrieve verified packages from downloads.wordpress.org.
+     *
+     * @param string $zip_url Must be an https://downloads.wordpress.org/... URL
+     * @param string $internal_zip_path Relative path of the file inside the zip archive
+     * @return string|null File content or null on failure
+     */
+    private function extract_file_from_official_zip(string $zip_url, string $internal_zip_path): ?string {
+        $host = wp_parse_url($zip_url, PHP_URL_HOST);
+        if ($host !== 'downloads.wordpress.org') {
+            return null;
+        }
+
+        if (!function_exists('download_url')) {
+            require_once ABSPATH . 'wp-admin/includes/file.php';
+        }
+
+        $temp_zip = download_url($zip_url, 30);
+        if (is_wp_error($temp_zip) || !file_exists($temp_zip)) {
+            return null;
+        }
+
+        $content = null;
+        if (class_exists('\ZipArchive')) {
+            $zip = new \ZipArchive();
+            if ($zip->open($temp_zip, \ZipArchive::RDONLY) === true) {
+                $extracted = $zip->getFromName($internal_zip_path);
+                if (false !== $extracted && is_string($extracted)) {
+                    $content = $extracted;
+                }
+                $zip->close();
+            }
+        }
+
+        @unlink($temp_zip);
+        return $content;
+    }
+
+    /**
      * Restore an infected or modified plugin file with its official, bit-for-bit clean copy from WordPress.org.
      *
      * @param string $file_path Absolute path to the plugin file
@@ -241,26 +280,42 @@ class RemediationManager {
             ];
         }
 
-        // Fetch official clean source from WordPress.org SVN
-        $official_url = "https://plugins.svn.wordpress.org/{$plugin_slug}/tags/{$version}/{$internal_file}";
-        $response = wp_remote_get($official_url, ['timeout' => 15, 'sslverify' => true]);
+        $official_content = null;
 
-        if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
-            // Try trunk
-            $trunk_url = "https://plugins.svn.wordpress.org/{$plugin_slug}/trunk/{$internal_file}";
-            $response = wp_remote_get($trunk_url, ['timeout' => 15, 'sslverify' => true]);
+        // 1. Try local verified cryptographic FIM vault baseline first
+        $baseline_content = \WebCareProScanner\Integrity\FimVaultManager::get_baseline_content($real_path);
+        if ($baseline_content !== null && !empty($baseline_content)) {
+            $official_content = $baseline_content;
         }
 
-        if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
+        // 2. Fetch official release package from downloads.wordpress.org
+        if ($official_content === null) {
+            $zip_url = "https://downloads.wordpress.org/plugin/{$plugin_slug}.{$version}.zip";
+            $zip_entry = "{$plugin_slug}/{$internal_file}";
+            $official_content = $this->extract_file_from_official_zip($zip_url, $zip_entry);
+        }
+
+        // 3. Fallback to official WordPress.org SVN
+        if ($official_content === null) {
+            $official_url = "https://plugins.svn.wordpress.org/{$plugin_slug}/tags/{$version}/{$internal_file}";
+            $response = wp_remote_get($official_url, ['timeout' => 15, 'sslverify' => true]);
+            if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
+                $trunk_url = "https://plugins.svn.wordpress.org/{$plugin_slug}/trunk/{$internal_file}";
+                $response = wp_remote_get($trunk_url, ['timeout' => 15, 'sslverify' => true]);
+            }
+            if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200) {
+                $body = wp_remote_retrieve_body($response);
+                if (!empty($body)) {
+                    $official_content = $body;
+                }
+            }
+        }
+
+        if (empty($official_content)) {
             return [
                 'success' => false,
-                'message' => "Plugin '{$plugin_slug}' could not be fetched from official WordPress.org repositories. It may be a premium or private custom plugin. Use Webshell Stripping or Quarantine instead.",
+                'message' => "Plugin '{$plugin_slug}' could not be fetched from official WordPress.org release packages. It may be a premium or private custom plugin. Use Webshell Stripping or Quarantine instead.",
             ];
-        }
-
-        $official_content = wp_remote_retrieve_body($response);
-        if (empty($official_content)) {
-            return ['success' => false, 'message' => 'Retrieved official source was unexpectedly empty. Action aborted for safety.'];
         }
 
         // Create safety backup
@@ -340,39 +395,57 @@ class RemediationManager {
             $version = 'trunk';
         }
 
-        // Check official theme repository mirrors in priority order
+        // Check official theme repository sources in priority order
         global $wp_version;
         $clean_wp = preg_replace('/-.*$/', '', $wp_version);
 
-        $gh_host = 'raw.' . 'githubusercontent' . '.com';
-        $urls = [
-            "https://themes.svn.wordpress.org/{$theme_slug}/{$version}/{$internal_file}",
-            "https://core.svn.wordpress.org/tags/{$clean_wp}/wp-content/themes/{$theme_slug}/{$internal_file}",
-            "https://{$gh_host}/WordPress/WordPress/{$clean_wp}/wp-content/themes/{$theme_slug}/{$internal_file}",
-            "https://{$gh_host}/WordPress/WordPress/master/wp-content/themes/{$theme_slug}/{$internal_file}",
-            "https://themes.svn.wordpress.org/{$theme_slug}/trunk/{$internal_file}",
-            "https://core.svn.wordpress.org/trunk/wp-content/themes/{$theme_slug}/{$internal_file}",
-        ];
+        $official_content = null;
 
-        $response = null;
-        foreach ($urls as $url) {
-            $resp = wp_remote_get($url, ['timeout' => 15, 'sslverify' => true]);
-            if (!is_wp_error($resp) && wp_remote_retrieve_response_code($resp) === 200) {
-                $response = $resp;
-                break;
+        // 1. Try local verified cryptographic FIM vault baseline first
+        $baseline_content = \WebCareProScanner\Integrity\FimVaultManager::get_baseline_content($real_path);
+        if ($baseline_content !== null && !empty($baseline_content)) {
+            $official_content = $baseline_content;
+        }
+
+        // 2. Fetch official theme release package from downloads.wordpress.org
+        if ($official_content === null && !empty($version) && $version !== 'trunk') {
+            $zip_url = "https://downloads.wordpress.org/theme/{$theme_slug}.{$version}.zip";
+            $zip_entry = "{$theme_slug}/{$internal_file}";
+            $official_content = $this->extract_file_from_official_zip($zip_url, $zip_entry);
+        }
+
+        // 3. If bundled default theme, check WordPress core release package
+        if ($official_content === null) {
+            $core_zip = "https://downloads.wordpress.org/release/wordpress-{$clean_wp}-no-content.zip";
+            $zip_entry = "wordpress/wp-content/themes/{$theme_slug}/{$internal_file}";
+            $official_content = $this->extract_file_from_official_zip($core_zip, $zip_entry);
+        }
+
+        // 4. Fallback to official WordPress.org themes SVN
+        if ($official_content === null && !empty($version)) {
+            $urls = [
+                "https://themes.svn.wordpress.org/{$theme_slug}/{$version}/{$internal_file}",
+                "https://core.svn.wordpress.org/tags/{$clean_wp}/wp-content/themes/{$theme_slug}/{$internal_file}",
+                "https://themes.svn.wordpress.org/{$theme_slug}/trunk/{$internal_file}",
+                "https://core.svn.wordpress.org/trunk/wp-content/themes/{$theme_slug}/{$internal_file}",
+            ];
+            foreach ($urls as $url) {
+                $resp = wp_remote_get($url, ['timeout' => 15, 'sslverify' => true]);
+                if (!is_wp_error($resp) && wp_remote_retrieve_response_code($resp) === 200) {
+                    $body = wp_remote_retrieve_body($resp);
+                    if (!empty($body)) {
+                        $official_content = $body;
+                        break;
+                    }
+                }
             }
         }
 
-        if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
+        if (empty($official_content)) {
             return [
                 'success' => false,
-                'message' => "Theme '{$theme_slug}' could not be fetched from official WordPress.org mirrors. Custom or child themes cannot be auto-restored.",
+                'message' => "Theme '{$theme_slug}' could not be fetched from official WordPress.org repositories. Custom or child themes cannot be auto-restored.",
             ];
-        }
-
-        $official_content = wp_remote_retrieve_body($response);
-        if (empty($official_content)) {
-            return ['success' => false, 'message' => 'Official source was empty. Action aborted.'];
         }
 
         $backup_result = $this->create_file_backup($real_path, 'official_theme_restore');
@@ -457,18 +530,39 @@ class RemediationManager {
         global $wp_version;
         $clean_version = preg_replace('/-.*$/', '', $wp_version);
 
-        // Fetch official clean source from WordPress.org SVN
-        $official_url = "https://core.svn.wordpress.org/tags/{$clean_version}/{$rel_file}";
-        $response = wp_remote_get($official_url, ['timeout' => 15, 'sslverify' => true]);
+        $official_content = null;
 
-        if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
-            // Fallback to official WordPress GitHub release tag
-            $gh_host = 'raw.' . 'githubusercontent' . '.com';
-            $github_url = "https://{$gh_host}/WordPress/WordPress/{$clean_version}/{$rel_file}";
-            $response = wp_remote_get($github_url, ['timeout' => 15, 'sslverify' => true]);
+        // 1. Try local verified cryptographic FIM vault baseline first
+        $baseline_content = \WebCareProScanner\Integrity\FimVaultManager::get_baseline_content($real_path);
+        if ($baseline_content !== null && !empty($baseline_content)) {
+            $official_content = $baseline_content;
         }
 
-        if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
+        // 2. Fetch official WordPress release package from downloads.wordpress.org
+        if ($official_content === null) {
+            $zip_url = "https://downloads.wordpress.org/release/wordpress-{$clean_version}-no-content.zip";
+            $zip_entry = "wordpress/{$rel_file}";
+            $official_content = $this->extract_file_from_official_zip($zip_url, $zip_entry);
+            if ($official_content === null) {
+                // Fallback to full WordPress package
+                $full_zip = "https://downloads.wordpress.org/release/wordpress-{$clean_version}.zip";
+                $official_content = $this->extract_file_from_official_zip($full_zip, $zip_entry);
+            }
+        }
+
+        // 3. Fallback to official WordPress.org core SVN
+        if ($official_content === null) {
+            $official_url = "https://core.svn.wordpress.org/tags/{$clean_version}/{$rel_file}";
+            $response = wp_remote_get($official_url, ['timeout' => 15, 'sslverify' => true]);
+            if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200) {
+                $body = wp_remote_retrieve_body($response);
+                if (!empty($body)) {
+                    $official_content = $body;
+                }
+            }
+        }
+
+        if (empty($official_content)) {
             return [
                 'success' => false,
                 'message' => sprintf(
@@ -478,11 +572,6 @@ class RemediationManager {
                     $clean_version
                 ),
             ];
-        }
-
-        $official_content = wp_remote_retrieve_body($response);
-        if (empty($official_content)) {
-            return ['success' => false, 'message' => __('Retrieved official core source was unexpectedly empty. Action aborted for safety.', 'webcare-pro-security')];
         }
 
         // Create safety backup before touching the file

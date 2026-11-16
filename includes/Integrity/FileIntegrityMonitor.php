@@ -774,6 +774,14 @@ class FileIntegrityMonitor {
         $is_official_compared = false;
         $diff_message = '';
 
+        // Check if a pristine baseline snapshot exists in the local FIM vault
+        $vault_baseline = \WebCareProScanner\Integrity\FimVaultManager::get_baseline_content($real_path);
+        if ($vault_baseline !== null) {
+            $official_content = $vault_baseline;
+            $is_official_compared = true;
+            $diff_message = __('Comparing against verified local FIM vault baseline snapshot.', 'webcare-pro-security');
+        }
+
         global $wp_version;
         $clean_wp_version = preg_replace('/-.*$/', '', $wp_version);
 
@@ -790,28 +798,32 @@ class FileIntegrityMonitor {
                 $local_content = preg_replace($pattern, $replacement, $local_content);
             }
 
-            // Compare against official WordPress wp-config-sample.php baseline
-            $github_raw_host = 'raw.' . 'githubusercontent' . '.com';
-            $official_source_url = "https://{$github_raw_host}/WordPress/WordPress/{$clean_wp_version}/wp-config-sample.php";
-            $official_content = $this->fetch_remote_source($official_source_url);
-            if ($official_content !== null) {
-                $is_official_compared = true;
-                $diff_message = "Comparing local wp-config.php against official WordPress {$clean_wp_version} wp-config-sample.php baseline (sensitive credentials masked for security).";
-            } else {
-                $diff_message = 'Official wp-config-sample.php baseline could not be fetched. Displaying sanitized local inspection view.';
+            if ($official_content === null) {
+                // Compare against official WordPress wp-config-sample.php baseline from core SVN
+                $official_source_url = "https://core.svn.wordpress.org/tags/{$clean_wp_version}/wp-config-sample.php";
+                $official_content = $this->fetch_remote_source($official_source_url);
+                if ($official_content !== null) {
+                    $is_official_compared = true;
+                    $diff_message = "Comparing local wp-config.php against official WordPress {$clean_wp_version} wp-config-sample.php baseline (sensitive credentials masked for security).";
+                } else {
+                    $diff_message = 'Official wp-config-sample.php baseline could not be fetched. Displaying sanitized local inspection view.';
+                }
             }
         } elseif (in_array(strtolower($file_name), ['.htaccess', 'php.ini', '.user.ini', 'web.config', 'robots.txt'], true)) {
             $category = 'config';
-            $diff_message = "Server configuration file ({$file_name}): No remote repository baseline exists. Displaying local inspection view.";
+            if ($official_content === null) {
+                $diff_message = "Server configuration file ({$file_name}): No remote repository baseline exists. Displaying local inspection view.";
+            }
         } elseif (strpos($rel_path, 'wp-admin/') === 0 || strpos($rel_path, 'wp-includes/') === 0 || (!strpos($rel_path, '/') && preg_match('/^wp-.*\.php$|^index\.php$/', $rel_path))) {
             // 1. Check if WordPress core file
             $category = 'core';
-            // Fetch clean WordPress core version from official GitHub/SVN
-            $github_raw_host = 'raw.' . 'githubusercontent' . '.com';
-            $official_source_url = "https://{$github_raw_host}/WordPress/WordPress/{$clean_wp_version}/{$rel_path}";
-            $official_content = $this->fetch_remote_source($official_source_url);
-            if ($official_content !== null) {
-                $is_official_compared = true;
+            if ($official_content === null) {
+                // Fetch clean WordPress core version from official WordPress.org SVN
+                $official_source_url = "https://core.svn.wordpress.org/tags/{$clean_wp_version}/{$rel_path}";
+                $official_content = $this->fetch_remote_source($official_source_url);
+                if ($official_content !== null) {
+                    $is_official_compared = true;
+                }
             }
         } elseif (strpos($rel_path, 'wp-content/plugins/') === 0) {
             $category = 'plugin';
@@ -832,8 +844,10 @@ class FileIntegrityMonitor {
             $custom_components = $this->get_custom_and_premium_components();
             if (isset($custom_components['plugins'][$plugin_slug])) {
                 $comp = $custom_components['plugins'][$plugin_slug];
-                $diff_message = "Custom/Premium Plugin ({$comp['name']}): Excluded from official repository baselines. Displaying local inspection view.";
-            } elseif ($plugin_slug && $internal_file) {
+                if ($official_content === null) {
+                    $diff_message = "Custom/Premium Plugin ({$comp['name']}): Excluded from official repository baselines. Displaying local inspection view.";
+                }
+            } elseif ($plugin_slug && $internal_file && $official_content === null) {
                 // Find plugin version
                 $version = $this->get_plugin_version_by_slug($plugin_slug);
                 if ($version) {
@@ -859,8 +873,10 @@ class FileIntegrityMonitor {
             $custom_components = $this->get_custom_and_premium_components();
             if (isset($custom_components['themes'][$theme_slug])) {
                 $comp = $custom_components['themes'][$theme_slug];
-                $diff_message = "Custom/Premium Theme ({$comp['name']}): Excluded from official repository baselines. Displaying local inspection view.";
-            } elseif ($theme_slug && $internal_file) {
+                if ($official_content === null) {
+                    $diff_message = "Custom/Premium Theme ({$comp['name']}): Excluded from official repository baselines. Displaying local inspection view.";
+                }
+            } elseif ($theme_slug && $internal_file && $official_content === null) {
                 // Official WordPress Theme: fetch pristine source from official repositories
                 $theme_obj = function_exists('wp_get_theme') ? wp_get_theme($theme_slug) : null;
                 $version = ($theme_obj && $theme_obj->exists()) ? $theme_obj->get('Version') : '';
@@ -880,14 +896,7 @@ class FileIntegrityMonitor {
                     $official_content = $this->fetch_remote_source($official_source_url);
                 }
 
-                // 3. Fallback to GitHub raw WordPress mirror
-                if ($official_content === null) {
-                    $github_raw_host = 'raw.' . 'githubusercontent' . '.com';
-                    $official_source_url = "https://{$github_raw_host}/WordPress/WordPress/{$clean_wp}/wp-content/themes/{$theme_slug}/{$internal_file}";
-                    $official_content = $this->fetch_remote_source($official_source_url);
-                }
-
-                // 4. Try trunk on themes.svn.wordpress.org
+                // 3. Try trunk on themes.svn.wordpress.org
                 if ($official_content === null) {
                     $official_source_url = "https://themes.svn.wordpress.org/{$theme_slug}/trunk/{$internal_file}";
                     $official_content = $this->fetch_remote_source($official_source_url);
@@ -943,6 +952,11 @@ class FileIntegrityMonitor {
      * Fetch remote clean source with caching transient
      */
     private function fetch_remote_source($url) {
+        $host = wp_parse_url($url, PHP_URL_HOST);
+        if (!$host || !preg_match('/(^|\.)wordpress\.org$/i', $host)) {
+            return null;
+        }
+
         $cache_key = 'webcareproscan_fim_diff_' . md5($url);
         $cached = get_transient($cache_key);
         if ($cached !== false && is_string($cached)) {
