@@ -273,12 +273,15 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
             return false;
         }
 
-        $request_uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '';
+        // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Raw URI routing path requires multi-pass decoding without percent octet distortion
+        $raw_request_uri = isset($_SERVER['REQUEST_URI']) ? (string) wp_unslash($_SERVER['REQUEST_URI']) : '';
+        $request_uri = str_replace(["\0", "\r", "\n"], '', $raw_request_uri);
         $request_path = (string) (wp_parse_url($request_uri, PHP_URL_PATH) ?? '');
         $path_candidates = [$request_path];
         foreach (['PATH_INFO', 'PHP_SELF'] as $server_path_key) {
             if (isset($_SERVER[$server_path_key])) {
-                $server_val = sanitize_text_field(wp_unslash($_SERVER[$server_path_key]));
+                // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Server routing paths require multi-pass decoding without percent octet distortion
+                $server_val = str_replace(["\0", "\r", "\n"], '', (string) wp_unslash($_SERVER[$server_path_key]));
                 if ($server_val !== '') {
                     $path_candidates[] = $server_val;
                 }

@@ -27,11 +27,7 @@ class ThemeIntegrity {
     public function verify($scan_id) {
         $findings = [];
         
-        if (!function_exists('wp_get_themes')) {
-            require_once ABSPATH . WPINC . '/theme.php';
-        }
-
-        $themes = wp_get_themes();
+        $themes = function_exists('wp_get_themes') ? wp_get_themes() : [];
 
         foreach ($themes as $theme_slug => $theme_data) {
             $version = $theme_data->get('Version');

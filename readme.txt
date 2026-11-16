@@ -83,11 +83,11 @@ This plugin can optionally connect to the following external third-party service
 * Terms of Service: https://wordpress.org/about/privacy/
 * Privacy Policy: https://wordpress.org/about/privacy/
 
-2. WordPress.org Subversion Repository & Release Mirrors
+2. WordPress.org Subversion Repository Mirrors
 * Service: WordPress Foundation (https://plugins.svn.wordpress.org and https://themes.svn.wordpress.org).
-* Purpose: Fetches clean, authentic source code copies of official plugins and themes for visual diffing (FIM) and 1-Click Auto-Cure.
+* Purpose: Fetches clean, authentic source code copies of official plugins and themes for side-by-side visual diffing (FIM).
 * Data Sent: Plugin/theme slug, file path, and version number.
-* When: Only when an administrator opens the Visual Diff Viewer or executes 1-Click Auto-Cure.
+* When: Only on-demand when an administrator opens the Visual Diff Viewer.
 * Terms of Service: https://wordpress.org/about/privacy/
 * Privacy Policy: https://wordpress.org/about/privacy/
 

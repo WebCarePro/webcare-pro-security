@@ -6861,10 +6861,6 @@ class ScannerRoutes {
      * @return array
      */
     public static function get_theme_forensics_meta(string $filePath, array $evidence_data = []): array {
-        if (!function_exists('wp_get_theme')) {
-            require_once ABSPATH . WPINC . '/theme.php';
-        }
-
         $norm_path = wp_normalize_path($filePath);
         if (!empty($evidence_data['theme_slug'])) {
             $theme_slug = $evidence_data['theme_slug'];

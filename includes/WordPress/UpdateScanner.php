@@ -171,10 +171,7 @@ class UpdateScanner {
         wp_update_themes();
         $update_themes = get_site_transient('update_themes');
 
-        if (!function_exists('wp_get_themes')) {
-            require_once ABSPATH . WPINC . '/theme.php';
-        }
-        $all_themes = wp_get_themes();
+        $all_themes = function_exists('wp_get_themes') ? wp_get_themes() : [];
 
         foreach ($all_themes as $theme_slug => $theme_obj) {
             $theme_name = $theme_obj->get('Name') ?: $theme_slug;
@@ -256,9 +253,6 @@ class UpdateScanner {
         }
         if (!function_exists('get_plugins')) {
             require_once ABSPATH . 'wp-admin/includes/plugin.php';
-        }
-        if (!function_exists('wp_get_themes')) {
-            require_once ABSPATH . WPINC . '/theme.php';
         }
 
         wp_version_check();

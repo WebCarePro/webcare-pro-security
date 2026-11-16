@@ -430,9 +430,6 @@ class ChecksumProvider {
     public static function get_installed_theme_version(string $slug): ?string {
         if (self::$installed_theme_versions === null) {
             self::$installed_theme_versions = [];
-            if (!function_exists('wp_get_themes')) {
-                require_once ABSPATH . WPINC . '/theme.php';
-            }
             if (function_exists('wp_get_themes')) {
                 $themes = wp_get_themes();
                 foreach ($themes as $theme_slug => $theme_obj) {

@@ -295,22 +295,6 @@ class RemediationManager {
             $official_content = $this->extract_file_from_official_zip($zip_url, $zip_entry);
         }
 
-        // 3. Fallback to official WordPress.org SVN
-        if ($official_content === null) {
-            $official_url = "https://plugins.svn.wordpress.org/{$plugin_slug}/tags/{$version}/{$internal_file}";
-            $response = wp_remote_get($official_url, ['timeout' => 15, 'sslverify' => true]);
-            if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
-                $trunk_url = "https://plugins.svn.wordpress.org/{$plugin_slug}/trunk/{$internal_file}";
-                $response = wp_remote_get($trunk_url, ['timeout' => 15, 'sslverify' => true]);
-            }
-            if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200) {
-                $body = wp_remote_retrieve_body($response);
-                if (!empty($body)) {
-                    $official_content = $body;
-                }
-            }
-        }
-
         if (empty($official_content)) {
             return [
                 'success' => false,
@@ -421,26 +405,6 @@ class RemediationManager {
             $official_content = $this->extract_file_from_official_zip($core_zip, $zip_entry);
         }
 
-        // 4. Fallback to official WordPress.org themes SVN
-        if ($official_content === null && !empty($version)) {
-            $urls = [
-                "https://themes.svn.wordpress.org/{$theme_slug}/{$version}/{$internal_file}",
-                "https://core.svn.wordpress.org/tags/{$clean_wp}/wp-content/themes/{$theme_slug}/{$internal_file}",
-                "https://themes.svn.wordpress.org/{$theme_slug}/trunk/{$internal_file}",
-                "https://core.svn.wordpress.org/trunk/wp-content/themes/{$theme_slug}/{$internal_file}",
-            ];
-            foreach ($urls as $url) {
-                $resp = wp_remote_get($url, ['timeout' => 15, 'sslverify' => true]);
-                if (!is_wp_error($resp) && wp_remote_retrieve_response_code($resp) === 200) {
-                    $body = wp_remote_retrieve_body($resp);
-                    if (!empty($body)) {
-                        $official_content = $body;
-                        break;
-                    }
-                }
-            }
-        }
-
         if (empty($official_content)) {
             return [
                 'success' => false,
@@ -547,18 +511,6 @@ class RemediationManager {
                 // Fallback to full WordPress package
                 $full_zip = "https://downloads.wordpress.org/release/wordpress-{$clean_version}.zip";
                 $official_content = $this->extract_file_from_official_zip($full_zip, $zip_entry);
-            }
-        }
-
-        // 3. Fallback to official WordPress.org core SVN
-        if ($official_content === null) {
-            $official_url = "https://core.svn.wordpress.org/tags/{$clean_version}/{$rel_file}";
-            $response = wp_remote_get($official_url, ['timeout' => 15, 'sslverify' => true]);
-            if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200) {
-                $body = wp_remote_retrieve_body($response);
-                if (!empty($body)) {
-                    $official_content = $body;
-                }
             }
         }
 
