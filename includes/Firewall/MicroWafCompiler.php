@@ -589,9 +589,9 @@ class MicroWafCompiler {
         $out .= "            \$stack = []; foreach (explode('/', \$path) as \$segment) { if (\$segment === '' || \$segment === '.') { continue; } if (\$segment === '..') { array_pop(\$stack); } else { \$stack[] = \$segment; } }\n";
         $out .= "            return '/' . implode('/', \$stack);\n";
         $out .= "        };\n";
-        $out .= "        // Query-route normalization mirrors FirewallEngine::resolve_normalized_rest_route(); unlike request-path normalization above, it preserves route case and dot segments.\n";
+        $out .= "        // The preload runs before WordPress magic-quotes processing, so normalize raw query input without stripslashes; runtime wp_unslash() removes WordPress-added slashes first.\n";
         $out .= "        \$normalize_preload_rest_route = static function (\$value): string {\n";
-        $out .= "            \$route = str_replace([\"\\0\", \"\\r\", \"\\n\"], '', stripslashes((string) \$value));\n";
+        $out .= "            \$route = str_replace([\"\\0\", \"\\r\", \"\\n\"], '', (string) \$value);\n";
         $out .= "            for (\$i = 0; \$i < 3; \$i++) { \$decoded = rawurldecode(\$route); if (\$decoded === \$route) { break; } \$route = \$decoded; }\n";
         $out .= "            \$route = str_replace([\"\\0\", \"\\r\", \"\\n\"], '', \$route);\n";
         $out .= "            \$route = (string) preg_replace('#/+#', '/', \$route);\n";

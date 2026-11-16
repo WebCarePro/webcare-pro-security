@@ -726,7 +726,7 @@ run_review_followup_test('RemediationManager rejects unauthorized hosts and path
     return $res_host === null && $res_trav === null && $res_null === null;
 });
 
-run_review_followup_test('Preload and runtime REST query normalization agree for encoded and edge-case routes', static function () use ($plugin_root): bool {
+run_review_followup_test('Preload and runtime REST normalization agree across WordPress input lifecycles', static function () use ($plugin_root): bool {
     require_once $plugin_root . '/includes/Firewall/MicroWafCompiler.php';
     require_once $plugin_root . '/includes/Firewall/FirewallEngine.php';
 
@@ -756,15 +756,16 @@ run_review_followup_test('Preload and runtime REST query normalization agree for
             ['/wp%00/v2%0d%0a/posts', '/wp/v2/posts'],
             ['/WP/V2/Posts', '/WP/V2/Posts'],
             ['/wp/v2/../users', '/wp/v2/../users'],
-            ['/wp/v2/' . chr(92) . chr(0) . 'posts', '/wp/v2/posts'],
-            ['/wp/v2/' . chr(92) . chr(13) . 'posts', '/wp/v2/posts'],
-            ['/wp/v2/' . chr(92) . chr(10) . 'posts', '/wp/v2/posts'],
-            ['/wp/v2/' . chr(92) . '%00posts', '/wp/v2/posts'],
-            ['/wp/v2/' . chr(92) . "'posts", "/wp/v2/'posts"],
+            ['/wp/v2/' . chr(92) . chr(0) . 'posts', '/wp/v2/' . chr(92) . 'posts'],
+            ['/wp/v2/' . chr(92) . chr(13) . 'posts', '/wp/v2/' . chr(92) . 'posts'],
+            ['/wp/v2/' . chr(92) . chr(10) . 'posts', '/wp/v2/' . chr(92) . 'posts'],
+            ['/wp/v2/' . chr(92) . '%00posts', '/wp/v2/' . chr(92) . 'posts'],
+            ['/wp/v2/' . chr(92) . "'posts", '/wp/v2/' . chr(92) . "'posts"],
         ];
 
         foreach ($cases as [$input, $expected]) {
-            $_GET = ['rest_route' => $input];
+            // PHP exposes the raw value to auto_prepend_file; WordPress magic-quotes superglobals before runtime.
+            $_GET = ['rest_route' => addslashes($input)];
             $preload_route = $normalize_preload_rest_route($input);
             $runtime_route = \WebCareProScanner\Firewall\FirewallEngine::resolve_normalized_rest_route('/');
             if ($preload_route !== $expected || $runtime_route !== $expected) {
