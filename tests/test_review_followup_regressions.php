@@ -380,6 +380,14 @@ try {
             && str_contains($source, 'collect_preload_post');
     });
 
+    run_review_followup_test('Preload Micro-WAF defers request body inspection for authenticated sessions', static function (): bool {
+        $compiler = new ReflectionClass(\WebCareProScanner\Firewall\MicroWafCompiler::class);
+        $generator = $compiler->getMethod('generate_standalone_code');
+        $generator->setAccessible(true);
+        $source = $generator->invoke(null, [], [], sys_get_temp_dir() . '/webcare-preload-test.log', 'test-token');
+        return str_contains($source, '!$mod_has_login_cookie && in_array($mod_req_method');
+    });
+
     run_review_followup_test('Orphaned-post reassignment rejects a missing target ID', static function () use ($manager, $orphaned_author_id): bool {
         $result = $manager->reassign_orphaned_posts($orphaned_author_id, null);
         return empty($result['success']) && str_contains($result['error'] ?? '', 'explicit administrator');

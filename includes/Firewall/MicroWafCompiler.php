@@ -590,7 +590,8 @@ class MicroWafCompiler {
         $out .= "        foreach ([\$uri, (string) (\$_SERVER['PATH_INFO'] ?? ''), (string) (\$_SERVER['PHP_SELF'] ?? '')] as \$path_candidate) { \$normalized_candidate = \$normalize_preload_path(\$path_candidate); if (\$normalized_candidate !== '/' && !in_array(\$normalized_candidate, \$request_path_candidates, true)) { \$request_path_candidates[] = \$normalized_candidate; } }\n";
         $out .= "        \$preload_body_text = '';\n";
         $out .= "        \$preload_body_budget = 32768;\n";
-        $out .= "        if (in_array(\$mod_req_method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {\n";
+        $out .= "        // Authenticated sessions defer POST/JSON body inspection to post-boot WordPress runtime WAF where editor capabilities are known\n";
+        $out .= "        if (!\$mod_has_login_cookie && in_array(\$mod_req_method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {\n";
         $out .= "            \$post_fields_seen = 0;\n";
         $out .= "            \$collect_preload_post = static function (\$value, int \$depth = 0) use (&\$collect_preload_post, &\$preload_body_text, &\$preload_body_budget, &\$post_fields_seen): void {\n";
         $out .= "                if (\$preload_body_budget <= 0 || \$post_fields_seen >= 256 || \$depth > 8) { return; }\n";
