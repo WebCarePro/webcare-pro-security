@@ -167,6 +167,29 @@ class Migration {
         dbDelta($sql6);
         dbDelta($sql7);
 
-        update_option('webcareproscan_db_version', '1.13.0');
+        // Verify that all 7 required plugin tables were successfully created by dbDelta before recording version
+        $required_tables = [
+            $scans_table,
+            $issues_table,
+            $files_log_table,
+            $quarantine_table,
+            $firewall_logs_table,
+            $login_history_table,
+            $cron_logs_table,
+        ];
+
+        $all_created = true;
+        foreach ($required_tables as $table) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            $found = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table));
+            if ($found !== $table) {
+                $all_created = false;
+                break;
+            }
+        }
+
+        if ($all_created) {
+            update_option('webcareproscan_db_version', '1.13.0');
+        }
     }
 }

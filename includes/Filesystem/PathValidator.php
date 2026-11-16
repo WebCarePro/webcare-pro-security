@@ -363,6 +363,31 @@ class PathValidator {
     }
 
     /**
+     * Get all recognized WordPress root and content directories (supporting custom/relocated layouts).
+     *
+     * @return array
+     */
+    public static function get_wordpress_roots(): array {
+        $roots = [ABSPATH];
+        if (defined('WP_CONTENT_DIR')) {
+            $roots[] = WP_CONTENT_DIR;
+        }
+        if (defined('WP_PLUGIN_DIR')) {
+            $roots[] = WP_PLUGIN_DIR;
+        }
+        if (function_exists('get_theme_root')) {
+            $roots[] = get_theme_root();
+        }
+        if (function_exists('wp_upload_dir')) {
+            $uploads = wp_upload_dir();
+            if (!empty($uploads['basedir'])) {
+                $roots[] = $uploads['basedir'];
+            }
+        }
+        return array_unique(array_filter($roots));
+    }
+
+    /**
      * Check if a given path resides inside any of the provided approved root directories.
      *
      * Useful for installations where WP_CONTENT_DIR resides outside of ABSPATH.

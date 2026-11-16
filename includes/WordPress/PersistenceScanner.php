@@ -1100,6 +1100,13 @@ class PersistenceScanner {
             case 'autoload_option':
                 global $wpdb;
                 $opt_name = sanitize_text_field($id);
+
+                // Prevent accidental neutralization of critical core configuration options
+                $protected_options = ['siteurl', 'home', 'active_plugins', 'admin_email', 'blogname', 'blogdescription', 'users_can_register', 'default_role', 'template', 'stylesheet'];
+                if (in_array(strtolower($opt_name), $protected_options, true)) {
+                    return ['success' => false, 'message' => __('Action Blocked: Critical system configuration options cannot be deleted.', 'webcare-pro-security')];
+                }
+
                 // Backup option value to backups option
                 $val = get_option($opt_name);
                 $backups = get_option('webcareproscan_remediation_backups', []);
@@ -1116,7 +1123,13 @@ class PersistenceScanner {
                 update_option('webcareproscan_remediation_backups', $backups, false);
 
                 delete_option($opt_name);
-                delete_site_option($opt_name);
+                if (is_multisite()) {
+                    if (current_user_can('manage_network_options')) {
+                        delete_site_option($opt_name);
+                    }
+                } else {
+                    delete_site_option($opt_name);
+                }
 
                 return [
                     'success'   => true,

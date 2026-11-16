@@ -6413,7 +6413,9 @@ class ScannerRoutes {
                 }
 
                 $realPath = realpath($fullPath);
-                $isInsideRoot = $realPath && \WebCareProScanner\Filesystem\PathValidator::is_inside_root($realPath, ABSPATH);
+                $wpRoots = \WebCareProScanner\Filesystem\PathValidator::get_wordpress_roots();
+                $isParentWpConfig = (realpath(dirname(ABSPATH) . '/wp-config.php') && $realPath === realpath(dirname(ABSPATH) . '/wp-config.php'));
+                $isInsideRoot = $realPath && (\WebCareProScanner\Filesystem\PathValidator::is_inside_any_root($realPath, $wpRoots) || $isParentWpConfig);
 
                 $item['file_exists'] = $isInsideRoot && file_exists($realPath);
                 if (!isset($item['is_dir'])) {
@@ -8138,8 +8140,11 @@ class ScannerRoutes {
             return new \WP_Error('file_not_found', __('File does not exist or has been removed from server.', 'webcare-pro-security'), ['status' => 404]);
         }
 
+        $wp_roots = \WebCareProScanner\Filesystem\PathValidator::get_wordpress_roots();
+        $is_parent_wp_config = (realpath(dirname(ABSPATH) . '/wp-config.php') && realpath($target_full) === realpath(dirname(ABSPATH) . '/wp-config.php'));
+
         // Canonical directory boundary check: Enforce trailing slash on root to eliminate sibling directory escapes
-        if (!\WebCareProScanner\Filesystem\PathValidator::is_inside_root($target_full, ABSPATH)) {
+        if (!\WebCareProScanner\Filesystem\PathValidator::is_inside_any_root($target_full, $wp_roots) && !$is_parent_wp_config) {
             return new \WP_Error('forbidden_path', __('Access to this file path is restricted outside WordPress root.', 'webcare-pro-security'), ['status' => 403]);
         }
 
@@ -8149,7 +8154,7 @@ class ScannerRoutes {
         }
 
         // Resolve symlinks before enforcing the WordPress root boundary.
-        if (!\WebCareProScanner\Filesystem\PathValidator::is_inside_root($real_path, ABSPATH)) {
+        if (!\WebCareProScanner\Filesystem\PathValidator::is_inside_any_root($real_path, $wp_roots) && !$is_parent_wp_config) {
             return new \WP_Error('forbidden_path', __('Access to this file path is restricted outside WordPress root.', 'webcare-pro-security'), ['status' => 403]);
         }
 
@@ -9888,6 +9893,10 @@ class ScannerRoutes {
     }
 
     public static function remediate_delete_file(\WP_REST_Request $request) {
+        if (is_multisite() && !current_user_can('manage_network')) {
+            return new \WP_Error('rest_forbidden', __('Multisite network administrator privileges required to delete system files.', 'webcare-pro-security'), ['status' => 403]);
+        }
+
         $params = $request->get_json_params() ?: [];
         $file_path = !empty($params['file_path']) ? sanitize_text_field(wp_unslash($params['file_path'])) : '';
         $issue_id = !empty($params['issue_id']) ? (int) $params['issue_id'] : null;
@@ -11955,6 +11964,10 @@ class ScannerRoutes {
     }
 
     public static function rollback_supply_chain_gatekeeper(\WP_REST_Request $request) {
+        if (is_multisite() && !current_user_can('manage_network')) {
+            return new \WP_Error('rest_forbidden', __('Multisite network administrator privileges required to rollback updates.', 'webcare-pro-security'), ['status' => 403]);
+        }
+
         $params = $request->get_json_params() ?: [];
         $snapshot_id = sanitize_text_field($params['snapshot_id'] ?? '');
 

@@ -638,8 +638,9 @@ class RemediationManager {
             return ['success' => false, 'message' => __('Target file does not exist on server.', 'webcare-pro-security')];
         }
 
-        $is_wp_config_parent = (realpath($real_path) === realpath(dirname(ABSPATH) . '/wp-config.php'));
-        if (!\WebCareProScanner\Filesystem\PathValidator::is_inside_root($real_path, ABSPATH) && !$is_wp_config_parent) {
+        $wp_roots = \WebCareProScanner\Filesystem\PathValidator::get_wordpress_roots();
+        $is_wp_config_parent = (realpath(dirname(ABSPATH) . '/wp-config.php') && realpath($real_path) === realpath(dirname(ABSPATH) . '/wp-config.php'));
+        if (!\WebCareProScanner\Filesystem\PathValidator::is_inside_any_root($real_path, $wp_roots) && !$is_wp_config_parent) {
             return ['success' => false, 'message' => __('Action Blocked: File is outside WordPress root directory.', 'webcare-pro-security')];
         }
 
@@ -726,7 +727,12 @@ class RemediationManager {
             return ['success' => false, 'message' => __('Target file does not exist, is a directory, or is a symbolic link.', 'webcare-pro-security')];
         }
 
-        if (!\WebCareProScanner\Filesystem\PathValidator::is_inside_root($real_path, ABSPATH)) {
+        if (is_multisite() && !current_user_can('manage_network')) {
+            return ['success' => false, 'message' => __('Multisite network administrator privileges required to delete system files.', 'webcare-pro-security')];
+        }
+
+        $wp_roots = \WebCareProScanner\Filesystem\PathValidator::get_wordpress_roots();
+        if (!\WebCareProScanner\Filesystem\PathValidator::is_inside_any_root($real_path, $wp_roots)) {
             return ['success' => false, 'message' => __('Action Blocked: File is outside WordPress root directory.', 'webcare-pro-security')];
         }
 
@@ -887,8 +893,9 @@ class RemediationManager {
             ];
         }
 
-        $is_wp_config_parent = (realpath($real_path) === realpath(dirname(ABSPATH) . '/wp-config.php'));
-        if (!\WebCareProScanner\Filesystem\PathValidator::is_inside_root($real_path, ABSPATH) && !$is_wp_config_parent) {
+        $wp_roots = \WebCareProScanner\Filesystem\PathValidator::get_wordpress_roots();
+        $is_wp_config_parent = (realpath(dirname(ABSPATH) . '/wp-config.php') && realpath($real_path) === realpath(dirname(ABSPATH) . '/wp-config.php'));
+        if (!\WebCareProScanner\Filesystem\PathValidator::is_inside_any_root($real_path, $wp_roots) && !$is_wp_config_parent) {
             return [
                 'success' => false,
                 'message' => __('Action Blocked: File is outside WordPress root directory.', 'webcare-pro-security'),

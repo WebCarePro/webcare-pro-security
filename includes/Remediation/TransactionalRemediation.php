@@ -23,6 +23,10 @@ class TransactionalRemediation {
      */
     public static function get_transactions_dir(): string {
         $upload_dir = wp_upload_dir();
+        if (!empty($upload_dir['error']) || empty($upload_dir['basedir'])) {
+            $err = !empty($upload_dir['error']) ? $upload_dir['error'] : 'Uploads directory unavailable.';
+            throw new \RuntimeException(esc_html("Transactional remediation requires a functional WordPress uploads directory: {$err}"));
+        }
         $base = wp_normalize_path($upload_dir['basedir'] . '/webcare-pro-security/.remediation/transactions');
 
         if (!is_dir($base)) {
@@ -183,7 +187,7 @@ class TransactionalRemediation {
             return false;
         }
 
-        $backup_key  = 'f_' . count($manifest['items']) . '_' . basename($full_path) . '.bak.php';
+        $backup_key  = 'f_' . count($manifest['items']) . '_' . md5($full_path) . '.wcpvault';
         $backup_path = $tx_dir . '/files/' . $backup_key;
 
         // Perform chunked streaming AEAD encryption into transaction vault
@@ -697,13 +701,24 @@ class TransactionalRemediation {
      * @return bool
      */
     public static function surgically_repair_file(string $absolute_path): bool {
-        if (!file_exists($absolute_path)) {
+        if (!file_exists($absolute_path) || !is_file($absolute_path)) {
             return false;
         }
 
-        // 1. Snapshot current corrupted state for emergency rollback
-        $corrupted_backup = sys_get_temp_dir() . '/webcare_rollback_' . md5($absolute_path) . '.tmp';
-        @copy($absolute_path, $corrupted_backup);
+        // 1. Snapshot current corrupted state for emergency rollback as non-executable .wcpvault blob
+        $raw_content = @file_get_contents($absolute_path);
+        if (false === $raw_content) {
+            return false;
+        }
+
+        $corrupted_backup = sys_get_temp_dir() . '/webcare_rollback_' . md5($absolute_path) . '.wcpvault';
+        $salt = wp_salt('nonce');
+        $hmac = hash_hmac('sha256', $raw_content, $salt);
+        $blob = base64_encode((string) gzdeflate($raw_content)) . '|' . $hmac;
+        if (false === @file_put_contents($corrupted_backup, $blob, LOCK_EX)) {
+            return false;
+        }
+        @chmod($corrupted_backup, 0600);
 
         // 2. Attempt surgical restoration from vault baseline
         $restored = false;
@@ -721,7 +736,14 @@ class TransactionalRemediation {
             $healthy = \WebCareProScanner\System\CrashGuard::verify_site_health_probe();
             if (!$healthy) {
                 // Rollback to corrupted state if restoration triggers a fatal error
-                @copy($corrupted_backup, $absolute_path);
+                $blob_content = @file_get_contents($corrupted_backup);
+                if (false !== $blob_content && strpos($blob_content, '|') !== false) {
+                    [$encoded, $stored_hmac] = explode('|', $blob_content, 2);
+                    $decoded = @gzinflate(base64_decode($encoded));
+                    if (false !== $decoded && hash_equals(hash_hmac('sha256', $decoded, $salt), $stored_hmac)) {
+                        \WebCareProScanner\Filesystem\PathValidator::safe_atomic_write($absolute_path, $decoded, ABSPATH);
+                    }
+                }
                 wp_delete_file($corrupted_backup);
                 return false;
             }

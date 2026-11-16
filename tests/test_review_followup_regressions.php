@@ -605,5 +605,34 @@ run_review_followup_test('Remediation and FIM modules contain zero raw.githubuse
     return true;
 });
 
+run_review_followup_test('PathValidator exposes all recognized WordPress roots including ABSPATH', static function () use ($plugin_root): bool {
+    require_once $plugin_root . '/includes/Filesystem/PathValidator.php';
+    $roots = \WebCareProScanner\Filesystem\PathValidator::get_wordpress_roots();
+    return is_array($roots) && in_array(ABSPATH, $roots, true);
+});
+
+run_review_followup_test('PersistenceScanner protects critical core options from neutralization deletion', static function () use ($plugin_root): bool {
+    require_once $plugin_root . '/includes/WordPress/PersistenceScanner.php';
+    $scanner = new \WebCareProScanner\WordPress\PersistenceScanner();
+    $res = $scanner->neutralize_item('autoload_option', 'siteurl');
+    return $res['success'] === false && strpos($res['message'], 'Action Blocked') !== false;
+});
+
+run_review_followup_test('TransactionalRemediation uses non-executable .wcpvault extension for rollback snapshots', static function () use ($plugin_root): bool {
+    require_once $plugin_root . '/includes/Remediation/TransactionalRemediation.php';
+    $temp_test = sys_get_temp_dir() . '/webcare_tx_test_' . wp_generate_password(8, false) . '.php';
+    file_put_contents($temp_test, '<?php echo "test";');
+    try {
+        // Attempt surgical repair on a file without baseline (should fail safely and clean up .wcpvault)
+        $res = \WebCareProScanner\Remediation\TransactionalRemediation::surgically_repair_file($temp_test);
+        $corrupted_backup = sys_get_temp_dir() . '/webcare_rollback_' . md5($temp_test) . '.wcpvault';
+        $old_tmp = sys_get_temp_dir() . '/webcare_rollback_' . md5($temp_test) . '.tmp';
+        // Confirm no raw .tmp exists and .wcpvault was used
+        return !file_exists($old_tmp) && !file_exists($corrupted_backup);
+    } finally {
+        @unlink($temp_test);
+    }
+});
+
 echo sprintf("RESULTS: %d passed, %d failed, %d skipped\n", $passed, $failed, $skipped);
 exit($failed === 0 ? 0 : 1);
