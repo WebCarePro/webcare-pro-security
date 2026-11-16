@@ -247,6 +247,7 @@ class DirectoryWalker {
         $found = [];
         $entries_examined = 0;
         $truncated = false;
+        $traversal_errors = 0;
         $deadline = microtime(true) + self::CACHE_SCAN_BUDGET_SECONDS;
         $exec_exts = ['php', 'phtml', 'phar', 'php5', 'php7', 'php8', 'inc', 'cgi', 'pl', 'py', 'sh', 'bash'];
 
@@ -271,13 +272,15 @@ class DirectoryWalker {
             if (!is_dir($cache_dir)) {
                 continue;
             }
-            $this->traverse_cache_dir_bounded($cache_dir, $exec_exts, $found, $entries_examined, $deadline, $truncated, 1, $max_depth);
+            $this->traverse_cache_dir_bounded($cache_dir, $exec_exts, $found, $entries_examined, $deadline, $truncated, $traversal_errors, 1, $max_depth);
         }
 
         $scan_meta = [
             'entries_examined' => $entries_examined,
             'files_found'      => count($found),
             'truncated'        => $truncated,
+            'traversal_errors' => $traversal_errors,
+            'complete'         => !$truncated && $traversal_errors === 0,
         ];
 
         return $found;
@@ -292,11 +295,12 @@ class DirectoryWalker {
      * @param int &$entries_examined
      * @param float $deadline
      * @param bool &$truncated
+     * @param int &$traversal_errors
      * @param int $current_depth
      * @param int $max_depth
      * @return void
      */
-    private function traverse_cache_dir_bounded(string $dir, array $exec_exts, array &$found, int &$entries_examined, float $deadline, bool &$truncated, int $current_depth, int $max_depth): void {
+    private function traverse_cache_dir_bounded(string $dir, array $exec_exts, array &$found, int &$entries_examined, float $deadline, bool &$truncated, int &$traversal_errors, int $current_depth, int $max_depth): void {
         if ($current_depth > $max_depth || $truncated) {
             return;
         }
@@ -323,7 +327,7 @@ class DirectoryWalker {
                 $pathname = str_replace('\\', '/', $item->getPathname());
 
                 if ($item->isDir()) {
-                    $this->traverse_cache_dir_bounded($pathname, $exec_exts, $found, $entries_examined, $deadline, $truncated, $current_depth + 1, $max_depth);
+                    $this->traverse_cache_dir_bounded($pathname, $exec_exts, $found, $entries_examined, $deadline, $truncated, $traversal_errors, $current_depth + 1, $max_depth);
                     if ($truncated) {
                         return;
                     }
@@ -335,7 +339,8 @@ class DirectoryWalker {
                 }
             }
         } catch (\Throwable $e) {
-            // Gracefully ignore filesystem access errors
+            // Report inaccessible cache trees so callers can mark inspection incomplete.
+            $traversal_errors++;
         }
     }
 

@@ -1,6 +1,6 @@
 {
   "version": "2.16.0",
-  "generated_at": "2026-11-16T09:36:07.001Z",
+  "generated_at": "2026-11-16T10:10:19.478Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -196,8 +196,8 @@
       "size": 11237
     },
     "includes/Api/ScannerRoutes.php": {
-      "sha256": "b10c2bef2873f8785ef45175606ed9c659aa696bce8d09abba30ff806c3a356e",
-      "size": 726698
+      "sha256": "2580791ee1804eedbdddff6dc4527c0ce07d6b3db756039359f4ca1df99d482c",
+      "size": 726951
     },
     "includes/Auth/ApplicationPasswordSentinel.php": {
       "sha256": "942165dd09813d8b9b94ecd8b6434a099a30bfeb429f5a7913e39c9b1088fb3e",
@@ -332,8 +332,8 @@
       "size": 15795
     },
     "includes/Filesystem/DirectoryWalker.php": {
-      "sha256": "1d4d1ce9dd12378348efde4cab5a56239b27c747cbf7da859766460c75cb1e37",
-      "size": 13218
+      "sha256": "a606d66363f850869d3f291a5075d58674b388a9f93a229ab99372560d30a28b",
+      "size": 13540
     },
     "includes/Filesystem/FileHasher.php": {
       "sha256": "2f7298c696517e59dfa314d7f6350bdd1000292e760c6b5ea8c7ff2e824d8afe",
@@ -428,8 +428,8 @@
       "size": 3084
     },
     "includes/Firewall/CAF/ThreatScoreTracker.php": {
-      "sha256": "486d84f4cb19aabf14bc3183a9d5d20293f4f55791cdb4c5cec2657c04e1879f",
-      "size": 12847
+      "sha256": "a153092261826021ee7ecd01eadcf0271f6ca0c8248362aab72023e5e62dbe64",
+      "size": 13336
     },
     "includes/Firewall/Core/ClientIpResolver.php": {
       "sha256": "95d371ee733306878a5f86fa1919b878fe3672c352da119d09d6f21a82d39649",
@@ -736,8 +736,8 @@
       "size": 2442
     },
     "includes/Scan/ScanManager.php": {
-      "sha256": "c1d475c06efd2805b83fcdfd6d08e330da8cb1d2404ab536f935c5b7a1ca2bb3",
-      "size": 8364
+      "sha256": "dc5b8ea5a850a7b398d3bc64db73b6fcc38214069583866120e893dd167847ea",
+      "size": 9183
     },
     "includes/Scan/ScanQueueManager.php": {
       "sha256": "882f005129646206b3b107d99ccf7a4689de1dc45b3b525a8c2c4077fc7f4994",
@@ -920,8 +920,8 @@
       "size": 47619
     },
     "includes/WordPress/UserRemediationManager.php": {
-      "sha256": "5aa84699d30b0319ddd9464dd27143d20d0cfdab96ec01bffef954db8c39aee9",
-      "size": 34624
+      "sha256": "95d6f2c932431985d989d7e05534f4395561caa2a841f0225973e3cfc6ccd6d7",
+      "size": 35016
     },
     "includes/WordPress/UserScanner.php": {
       "sha256": "2889d8792872c9314ef1cc209697035039997ade1dc1bdbfea291e103d987b38",

@@ -769,10 +769,10 @@ class UserRemediationManager {
     }
 
     /**
-     * Reassign all posts/pages belonging to an orphaned author ID to a valid administrator or target user.
+     * Reassign all posts/pages belonging to an orphaned author ID to an explicitly selected administrator.
      *
      * @param int $orphaned_author_id Non-existent author ID.
-     * @param int|null $target_user_id Target user ID (defaults to current user or first active admin).
+     * @param int|null $target_user_id Explicit administrator user ID.
      * @return array
      */
     public function reassign_orphaned_posts(int $orphaned_author_id, ?int $target_user_id = null): array {
@@ -782,20 +782,30 @@ class UserRemediationManager {
             return ['success' => false, 'error' => __('Invalid orphaned author ID.', 'webcare-pro-security')];
         }
 
-        if (empty($target_user_id)) {
-            $target_user_id = get_current_user_id();
-        }
-        if (empty($target_user_id)) {
-            $admins = get_users(['role' => 'administrator', 'number' => 1]);
-            if (!empty($admins)) {
-                $target_user_id = (int) $admins[0]->ID;
-            }
+        if ($target_user_id === null || $target_user_id <= 0) {
+            return [
+                'success'    => false,
+                'error_code' => 'invalid_target_user_id',
+                'error'      => __('An explicit administrator target user ID is required.', 'webcare-pro-security'),
+            ];
         }
 
         $target_user = get_userdata($target_user_id);
         if (!$target_user) {
             /* translators: %d: user ID */
-            return ['success' => false, 'error' => sprintf(__('Target user ID #%d not found.', 'webcare-pro-security'), $target_user_id)];
+            return [
+                'success'    => false,
+                'error_code' => 'target_user_not_found',
+                'error'      => sprintf(__('Target user ID #%d not found.', 'webcare-pro-security'), $target_user_id),
+            ];
+        }
+
+        if (!user_can($target_user, 'manage_options')) {
+            return [
+                'success'    => false,
+                'error_code' => 'target_user_not_admin',
+                'error'      => __('The target user must have the manage_options capability.', 'webcare-pro-security'),
+            ];
         }
 
         $posts_table = $wpdb->posts;

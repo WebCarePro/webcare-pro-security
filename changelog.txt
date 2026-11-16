@@ -6,6 +6,10 @@
   * Enforced unique, complete application-password UUID matching and preserved all immutable fields, including app_id.
   * Required an explicitly selected valid administrator for orphaned-post reassignment and removed the user-ID 1 fallback.
   * Added cache traversal entry, finding, and time budgets with a response warning when inspection is truncated.
+  * Enforced explicit positive administrator IDs and the manage_options capability server-side for orphaned-post reassignment; removed all implicit target fallbacks.
+  * Marked cache scans incomplete and returned warnings when cache directories cannot be inspected, preserving error state across scan batches.
+  * Bounded custom threat-score weights to finite values from 0 to 25; invalid non-finite overrides now use the event's fixed weight.
+  * Added regression coverage for reassignment authorization, cache traversal errors, and threat-score weight boundaries.
 - Scanner Engine False-Positive Eliminations, High-Precision Taint Analysis, Universal Cache Exclusions & Authoritative Trust Boundaries:
   * Administrator Demotion Interception & DB Rollback (RaspPrivilegeGuard.php):
     - In `RaspPrivilegeGuard::rasp_guard_user_role_assignment()`, inspected `$old_roles` to evaluate historical privileges. When an unauthenticated caller or non-admin attempts to downgrade an administrator account to `subscriber` or another unprivileged role, RASP intercepts the execution, restores the user's previous privileged role in the database (`$target_user->set_role($prev_privileged_role)`), logs incident `WAF-RASP-ROLE-DEMOTION`, and terminates the request with HTTP 403.

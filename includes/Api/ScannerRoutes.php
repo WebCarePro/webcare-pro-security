@@ -10322,7 +10322,11 @@ class ScannerRoutes {
         }
 
         if (empty($result['success'])) {
-            return new \WP_Error('remediation_failed', $result['error'] ?? __('User remediation failed.', 'webcare-pro-security'), ['status' => 500]);
+            $error_code = $result['error_code'] ?? 'remediation_failed';
+            $error_status = in_array($error_code, ['invalid_target_user_id', 'target_user_not_found', 'target_user_not_admin'], true)
+                ? 400
+                : 500;
+            return new \WP_Error($error_code, $result['error'] ?? __('User remediation failed.', 'webcare-pro-security'), ['status' => $error_status]);
         }
 
         // Mark associated scan issue as repaired if issue_id is provided

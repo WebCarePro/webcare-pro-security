@@ -57,13 +57,14 @@ class ThreatScoreTracker {
     public const WEIGHT_AUTH_VIOLATE     = 10.0;
     public const WEIGHT_PROBE_404        = 4.0;
     public const WEIGHT_HEADER_ANOMALY   = 15.0;
+    public const MAX_CUSTOM_WEIGHT       = 25.0;
 
     /**
      * Record a security event for an IP and compute decayed threat score.
      *
      * @param string $ip Offending Client IP
      * @param string $event_type Event category; legacy 'critical_exploit' claims are treated as behavioral anomalies
-     * @param float|null $custom_weight Optional explicit weight
+     * @param float|null $custom_weight Optional explicit weight, normalized to the inclusive range 0.0-25.0
      * @param array|null $exploit_context Deprecated compatibility parameter; caller metadata never authorizes a ban
      * @return array Array containing ['score' => float, 'action' => 'allow'|'challenge'|'throttle', 'escalated' => bool]
      */
@@ -80,11 +81,20 @@ class ThreatScoreTracker {
             return ['score' => 0.0, 'action' => 'allow', 'escalated' => false];
         }
 
+        // Invalid overrides use the event's fixed weight; finite overrides cannot reduce scores or force a throttle.
+        if ($custom_weight !== null) {
+            if (!is_finite($custom_weight)) {
+                $custom_weight = null;
+            } else {
+                $custom_weight = max(0.0, min(self::MAX_CUSTOM_WEIGHT, $custom_weight));
+            }
+        }
+
         // Do not treat caller-supplied rule metadata as proof that a detector ran.
         // Confirmed exploit bans are authorized only by FirewallEngine's private detector dispatch path.
         if ($event_type === 'critical_exploit') {
             $event_type = 'behavioral_anomaly';
-            $custom_weight = min(25.0, $custom_weight ?? self::WEIGHT_HONEYPOT);
+            $custom_weight = min(self::MAX_CUSTOM_WEIGHT, $custom_weight ?? self::WEIGHT_HONEYPOT);
         }
 
         // Determine score increment

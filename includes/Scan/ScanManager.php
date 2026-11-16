@@ -55,9 +55,9 @@ class ScanManager {
             $cached_files = $cursor['cache_files'] ?? null;
             if ($cached_files === null) {
                 $cached_files = $this->directory_walker->scan_cache_dirs_for_executables(ABSPATH, 5, $cache_scan_meta);
-                if (!empty($cache_scan_meta['truncated'])) {
-                    $state->set_meta_key('cache_scan_truncated', true);
-                }
+                $state->set_meta_key('cache_scan_truncated', !empty($cache_scan_meta['truncated']));
+                $state->set_meta_key('cache_scan_errors', max(0, (int) ($cache_scan_meta['traversal_errors'] ?? 0)));
+                $state->set_meta_key('cache_scan_complete', !empty($cache_scan_meta['complete']));
             }
             $cached_files = is_array($cached_files) ? array_slice($cached_files, 0, 500) : [];
             $offset = (int) ($cursor['cache_offset'] ?? 0);
@@ -169,7 +169,21 @@ class ScanManager {
     }
 
     private function build_response(ScanState $state, array $findings, int $files_scanned, bool $is_complete): array {
-        $cache_scan_truncated = !empty($state->get_meta()['cache_scan_truncated']);
+        $scan_meta = $state->get_meta();
+        $cache_scan_truncated = !empty($scan_meta['cache_scan_truncated']);
+        $cache_scan_errors = max(0, (int) ($scan_meta['cache_scan_errors'] ?? 0));
+        $cache_scan_complete = array_key_exists('cache_scan_complete', $scan_meta)
+            ? (bool) $scan_meta['cache_scan_complete']
+            : null;
+        $warnings = [];
+
+        if ($cache_scan_truncated) {
+            $warnings[] = __('Cache executable inspection reached its resource budget; some cache entries may remain unscanned.', 'webcare-pro-security');
+        }
+        if ($cache_scan_errors > 0) {
+            $warnings[] = __('Cache executable inspection could not access one or more cache directories; findings may be incomplete.', 'webcare-pro-security');
+        }
+
         return [
             'scan_id'                => $state->get_scan_id(),
             'engine'                 => 'filesystem',
@@ -180,9 +194,9 @@ class ScanManager {
             'is_complete'            => $is_complete,
             'memory_peak_mb'         => round($state->get_memory_peak() / 1024 / 1024, 2),
             'cache_scan_truncated'   => $cache_scan_truncated,
-            'warnings'               => $cache_scan_truncated
-                ? [__('Cache executable inspection reached its resource budget; some cache entries may remain unscanned.', 'webcare-pro-security')]
-                : [],
+            'cache_scan_errors'      => $cache_scan_errors,
+            'cache_scan_complete'    => $cache_scan_complete,
+            'warnings'               => $warnings,
             'findings'               => array_map(function ($f) {
                 return method_exists($f, 'to_array') ? $f->to_array() : (array) $f;
             }, $findings),
