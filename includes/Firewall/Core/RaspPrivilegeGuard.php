@@ -341,6 +341,90 @@ class RaspPrivilegeGuard {
     }
 
     /**
+     * Defense-in-depth for direct WP_User::add_role() and remove_role() calls.
+     * The set_role() API has a richer post-change hook and is handled by its existing snapshot guard.
+     *
+     * @param int    $user_id User ID
+     * @param string $role    Role being added or removed
+     * @param string $action  Either 'add' or 'remove'
+     * @return void
+     */
+    public static function rasp_guard_user_role_api_mutation(int $user_id, string $role, string $action): void {
+        if (!in_array($action, ['add', 'remove'], true) || !empty(self::$role_rollback_in_progress[$user_id])) {
+            return;
+        }
+
+        // WP_User::set_role() triggers these action hooks as an implementation detail; its
+        // set_user_role hook below validates the complete old-role snapshot and performs rollback.
+        // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_debug_backtrace -- Distinguish direct role API calls from the separately guarded set_role operation.
+        $frames = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 12);
+        foreach ($frames as $frame) {
+            if (($frame['class'] ?? '') === 'WP_User' && ($frame['function'] ?? '') === 'set_role') {
+                return;
+            }
+        }
+
+        $settings = SettingsManager::get_settings();
+        if (empty($settings['waf_enabled']) || empty($settings['waf_runtime_rasp_privilege_guard'])) {
+            return;
+        }
+        if (!self::is_privileged_role($role) || FirewallEngine::is_trusted_plugin_check_or_cli_runtime()) {
+            return;
+        }
+        if (FirewallEngine::is_authenticated_administrator()) {
+            return;
+        }
+        if (function_exists('is_user_logged_in') && is_user_logged_in() && function_exists('current_user_can') && current_user_can('manage_options')) {
+            return;
+        }
+
+        $user = function_exists('get_userdata') ? get_userdata($user_id) : null;
+        if (!($user instanceof \WP_User)) {
+            return;
+        }
+
+        self::$role_rollback_in_progress[$user_id] = true;
+        try {
+            if ($action === 'add') {
+                $user->remove_role($role);
+            } else {
+                $user->add_role($role);
+            }
+        } finally {
+            unset(self::$role_rollback_in_progress[$user_id]);
+        }
+
+        $client_ip = ClientIpResolver::get_client_ip();
+        $incident_id = 'WEBCARE-' . strtoupper(substr(md5($client_ip . $role . $user_id . $action . microtime(true)), 0, 8));
+        FirewallEngine::log_incident([
+            'id'          => 'WAF-RASP-ROLE-API-' . strtoupper($action),
+            'name'        => 'Runtime Privilege Role API Guard (Rule #44)',
+            'category'    => 'Runtime RASP Hook Defense',
+            'description' => sprintf(
+                /* translators: 1: action, 2: role, 3: user ID, 4: client IP */
+                __('Unauthorized session from %4$s attempted to %1$s privileged role "%2$s" for user #%3$d.', 'webcare-pro-security'),
+                $action,
+                $role,
+                $user_id,
+                $client_ip
+            ),
+            'match_type'  => 'Privileged Role API Mutation',
+            'match_value' => $role,
+            'payload'     => "Action: {$action} User ID: {$user_id} Role: {$role}",
+        ], 'blocked', $incident_id);
+
+        if (!ClientIpResolver::is_server_origin_or_loopback($client_ip)) {
+            self::record_rasp_behavioral_signal($client_ip);
+        }
+
+        wp_die(
+            esc_html__('Security Violation: Unauthorized role modification intercepted by WebCare Runtime RASP.', 'webcare-pro-security'),
+            esc_html__('Forbidden', 'webcare-pro-security'),
+            ['response' => 403]
+        );
+    }
+
+    /**
      * Rule #44: In-Memory RASP Hook Firewall - Abort guest or unprivileged role escalation.
      *
      * @param int    $user_id   User ID
@@ -786,6 +870,74 @@ class RaspPrivilegeGuard {
         ], 'blocked', $incident_id);
 
         if (!FirewallEngine::is_authenticated_administrator() && !ClientIpResolver::is_server_origin_or_loopback($client_ip)) {
+            self::record_rasp_behavioral_signal($client_ip);
+        }
+
+        return false;
+    }
+
+    /**
+     * Block unauthorized deletion of role capability, user-level, and application-password metadata.
+     *
+     * @param null|bool $check       Whether to allow deletion
+     * @param int       $object_id   User ID
+     * @param string    $meta_key    Metadata key
+     * @param mixed     $meta_value Value to match
+     * @param bool      $delete_all Whether all matching metadata is being deleted
+     * @return null|bool null to proceed with core deletion, false to abort
+     */
+    public static function rasp_guard_user_metadata_deletion($check, int $object_id, string $meta_key, $meta_value, bool $delete_all = false) {
+        $settings = SettingsManager::get_settings();
+        if (empty($settings['waf_enabled']) || empty($settings['waf_runtime_rasp_privilege_guard'])) {
+            return $check;
+        }
+
+        $original_prefix = FirewallEngine::get_original_table_prefix();
+        global $wpdb;
+        $active_prefix = isset($wpdb->base_prefix) ? $wpdb->base_prefix : (isset($wpdb->prefix) ? $wpdb->prefix : 'wp_');
+        $capability_keys = [$original_prefix . 'capabilities'];
+        $user_level_keys = [$original_prefix . 'user_level'];
+        if ($active_prefix !== $original_prefix) {
+            $capability_keys[] = $active_prefix . 'capabilities';
+            $user_level_keys[] = $active_prefix . 'user_level';
+        }
+
+        $guarded_keys = array_merge(['_application_passwords'], $capability_keys, $user_level_keys);
+        if (!in_array($meta_key, $guarded_keys, true)) {
+            return $check;
+        }
+        if (
+            !empty(self::$role_rollback_in_progress[$object_id])
+            && (in_array($meta_key, $capability_keys, true) || in_array($meta_key, $user_level_keys, true))
+        ) {
+            return $check;
+        }
+        if (FirewallEngine::is_trusted_plugin_check_or_cli_runtime() || FirewallEngine::is_authenticated_administrator()) {
+            return $check;
+        }
+        if (function_exists('is_user_logged_in') && is_user_logged_in() && function_exists('current_user_can') && current_user_can('manage_options')) {
+            return $check;
+        }
+
+        $client_ip = ClientIpResolver::get_client_ip();
+        $incident_id = 'WEBCARE-' . strtoupper(substr(md5($client_ip . $meta_key . $object_id . 'delete' . microtime(true)), 0, 8));
+        FirewallEngine::log_incident([
+            'id'          => 'WAF-RASP-META-DELETION',
+            'name'        => 'Runtime Critical Usermeta Deletion Guard (Rule #44)',
+            'category'    => 'Runtime RASP Hook Defense',
+            'description' => sprintf(
+                /* translators: 1: meta key, 2: user ID, 3: client IP */
+                __('Unauthorized request from %3$s attempted to delete protected usermeta "%1$s" for user #%2$d.', 'webcare-pro-security'),
+                $meta_key,
+                $object_id,
+                $client_ip
+            ),
+            'match_type'  => 'Unauthorized Usermeta Deletion',
+            'match_value' => $meta_key,
+            'payload'     => sprintf('User ID: %d Meta: %s Delete all: %s', $object_id, $meta_key, $delete_all ? 'yes' : 'no'),
+        ], 'blocked', $incident_id);
+
+        if (!ClientIpResolver::is_server_origin_or_loopback($client_ip)) {
             self::record_rasp_behavioral_signal($client_ip);
         }
 

@@ -18,8 +18,6 @@ class DirectoryWalker {
         '.hg',
         'node_modules',
         'vendor',
-        'cache',
-        'caches',
         'wfcache',
         'w3tc-cache',
         'et-cache',

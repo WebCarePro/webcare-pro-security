@@ -8148,6 +8148,11 @@ class ScannerRoutes {
             return new \WP_Error('not_a_file', __('The requested path is a directory or special file, not a viewable file.', 'webcare-pro-security'), ['status' => 400]);
         }
 
+        // Resolve symlinks before enforcing the WordPress root boundary.
+        if (!\WebCareProScanner\Filesystem\PathValidator::is_inside_root($real_path, ABSPATH)) {
+            return new \WP_Error('forbidden_path', __('Access to this file path is restricted outside WordPress root.', 'webcare-pro-security'), ['status' => 403]);
+        }
+
         if (!is_readable($real_path)) {
             return new \WP_Error('unreadable_file', __('File is not readable due to server permissions.', 'webcare-pro-security'), ['status' => 403]);
         }

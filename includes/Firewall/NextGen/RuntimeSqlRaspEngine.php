@@ -274,13 +274,54 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
         }
 
         // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Read-only surface routing check inside RASP guard
-        $uri = strtolower((string) wp_unslash($_SERVER['REQUEST_URI'] ?? ''));
-        $is_target_surface = (
-            strpos($uri, 'admin-ajax.php') !== false
-            || strpos($uri, 'admin-post.php') !== false
-            || strpos($uri, 'rest_route=') !== false
-            || (strpos($uri, '/wp-json/') !== false && strpos($uri, '/wp-json/webcare-pro-security/') === false)
-        );
+        $request_uri = (string) wp_unslash($_SERVER['REQUEST_URI'] ?? '');
+        $request_path = (string) (wp_parse_url($request_uri, PHP_URL_PATH) ?? '');
+        $path_candidates = [$request_path];
+        foreach (['PATH_INFO', 'PHP_SELF'] as $server_path_key) {
+            // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Server routing metadata is only used to identify the request surface.
+            if (!empty($_SERVER[$server_path_key]) && is_string($_SERVER[$server_path_key])) {
+                $path_candidates[] = (string) wp_unslash($_SERVER[$server_path_key]);
+            }
+        }
+
+        $normalized_paths = array_map(static function (string $path): string {
+            $path = strtolower((string) (wp_parse_url($path, PHP_URL_PATH) ?? $path));
+            for ($decode_pass = 0; $decode_pass < 3; $decode_pass++) {
+                $decoded_path = rawurldecode($path);
+                if ($decoded_path === $path) {
+                    break;
+                }
+                $path = $decoded_path;
+            }
+            return (string) preg_replace('#/+#', '/', $path);
+        }, $path_candidates);
+        $has_ajax_surface = false;
+        $has_rest_surface = false;
+        $has_xmlrpc_surface = false;
+        foreach ($normalized_paths as $path) {
+            $has_ajax_surface = $has_ajax_surface || strpos($path, 'admin-ajax.php') !== false || strpos($path, 'admin-post.php') !== false;
+            $has_rest_surface = $has_rest_surface || strpos($path, '/wp-json/') !== false;
+            $has_xmlrpc_surface = $has_xmlrpc_surface || (bool) preg_match('#(?:^|/)xmlrpc\.php(?:/|$)#', $path);
+        }
+
+        $path_rest_route = '';
+        foreach ($normalized_paths as $path) {
+            if (preg_match('#/wp-json(/[^?]+)#i', $path, $route_match)) {
+                $path_rest_route = '/' . trim($route_match[1], '/');
+                break;
+            }
+        }
+        $rest_route = $path_rest_route !== ''
+            ? $path_rest_route
+            : (class_exists(FirewallEngine::class) ? FirewallEngine::resolve_normalized_rest_route($request_uri) : '');
+        $is_webcare_rest_route = str_starts_with(strtolower($rest_route), '/webcare-pro-security/');
+        // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only routing check for WooCommerce AJAX surface.
+        $has_wc_ajax_surface = isset($_GET['wc-ajax']) && is_string($_GET['wc-ajax']) && $_GET['wc-ajax'] !== '';
+        $is_target_surface = $has_ajax_surface
+            || $has_xmlrpc_surface
+            || $has_wc_ajax_surface
+            || ($has_rest_surface && !$is_webcare_rest_route)
+            || ($rest_route !== '' && !$is_webcare_rest_route);
         if (!$is_target_surface) {
             return false;
         }

@@ -313,8 +313,9 @@ class HoneyTokenEngine {
             isset($_SERVER['HTTP_X_PURPOSE']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_X_PURPOSE'])) : '',
             isset($_SERVER['HTTP_X_MOZ']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_X_MOZ'])) : '',
         ];
+        $request_method = isset($_SERVER['REQUEST_METHOD']) ? strtoupper(sanitize_key(wp_unslash($_SERVER['REQUEST_METHOD']))) : 'GET';
         foreach ($purpose_headers as $h) {
-            if (!empty($h) && (stripos((string) $h, 'prefetch') !== false || stripos((string) $h, 'preview') !== false)) {
+            if ($trap_type === 'phantom_endpoint' && $request_method === 'GET' && !empty($h) && (stripos((string) $h, 'prefetch') !== false || stripos((string) $h, 'preview') !== false)) {
                 return; // Silently ignore speculative browser prefetch probes
             }
         }

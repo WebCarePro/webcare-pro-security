@@ -140,9 +140,12 @@ class FirewallEngine {
         // Rule #44: Runtime Privilege Escalation Guard (In-Memory RASP Hook Firewall)
         add_filter('pre_update_option', [__CLASS__, 'rasp_guard_critical_options'], 1, 3);
         add_action('set_user_role', [__CLASS__, 'rasp_guard_user_role_assignment'], 1, 3);
+        add_action('add_user_role', [__CLASS__, 'rasp_guard_user_role_added'], 1, 2);
+        add_action('remove_user_role', [__CLASS__, 'rasp_guard_user_role_removed'], 1, 2);
         add_action('user_register', [__CLASS__, 'rasp_guard_user_registration'], 1, 1);
         add_filter('update_user_metadata', [__CLASS__, 'rasp_guard_user_metadata_injection'], 1, 5);
         add_filter('add_user_metadata', [__CLASS__, 'rasp_guard_user_metadata_injection'], 1, 5);
+        add_filter('delete_user_metadata', [__CLASS__, 'rasp_guard_user_metadata_deletion'], 1, 5);
         add_action('wp_create_application_password', [__CLASS__, 'telemetry_on_application_password_created'], 10, 4);
     }
 
@@ -654,7 +657,7 @@ class FirewallEngine {
             }
 
             try {
-                if (wp_verify_nonce($nonce, 'wp_rest') || wp_verify_nonce($nonce, 'elementor_ajax') || wp_verify_nonce($nonce, -1) || ($action_hint !== '' && wp_verify_nonce($nonce, 'wp_ajax_' . $action_hint))) {
+                if (wp_verify_nonce($nonce, 'wp_rest') || wp_verify_nonce($nonce, 'elementor_ajax') || ($action_hint !== '' && wp_verify_nonce($nonce, 'wp_ajax_' . $action_hint))) {
                     $nonce_valid = true;
                 }
             } finally {
@@ -6091,7 +6094,9 @@ class FirewallEngine {
                 // Return 403 block on the specific link without accumulating toward a 24h IP ban for genuine crawlers
             } else {
                 $event_type = 'probe_404';
-                if (str_contains($rule_id_str, 'HONEY') || str_contains($rule_id_str, 'SENSITIVE') || str_contains($rule_id_str, 'ENV') || str_contains($rule_id_str, 'GIT')) {
+                if ($rule_id_str === 'WAF-RESTRICTED-UPLOAD-EXTENSION') {
+                    $event_type = 'behavioral_anomaly';
+                } elseif (str_contains($rule_id_str, 'HONEY') || str_contains($rule_id_str, 'SENSITIVE') || str_contains($rule_id_str, 'ENV') || str_contains($rule_id_str, 'GIT')) {
                     $event_type = 'honeypot';
                 } elseif (str_contains($rule_id_str, 'DORMANT') || str_contains($rule_id_str, 'CAF')) {
                     $event_type = 'dormant_surface';
@@ -7475,6 +7480,28 @@ class FirewallEngine {
     }
 
     /**
+     * Defend privileged role additions made through WP_User::add_role().
+     *
+     * @param int    $user_id User ID
+     * @param string $role    Added role
+     * @return void
+     */
+    public static function rasp_guard_user_role_added(int $user_id, string $role): void {
+        RaspPrivilegeGuard::rasp_guard_user_role_api_mutation($user_id, $role, 'add');
+    }
+
+    /**
+     * Defend privileged role removals made through WP_User::remove_role().
+     *
+     * @param int    $user_id User ID
+     * @param string $role    Removed role
+     * @return void
+     */
+    public static function rasp_guard_user_role_removed(int $user_id, string $role): void {
+        RaspPrivilegeGuard::rasp_guard_user_role_api_mutation($user_id, $role, 'remove');
+    }
+
+    /**
      * Rule #44: In-Memory RASP Hook Firewall - Abort guest registration creating administrator or editor users.
      *
      * @param int $user_id
@@ -7504,6 +7531,20 @@ class FirewallEngine {
      */
     public static function rasp_guard_user_metadata_injection($check, int $object_id, string $meta_key, $meta_value, $prev_value = '') {
         return RaspPrivilegeGuard::rasp_guard_user_metadata_injection($check, $object_id, $meta_key, $meta_value, $prev_value);
+    }
+
+    /**
+     * Block unauthorized deletion of critical role and application-password metadata.
+     *
+     * @param null|bool $check       Whether to allow deletion
+     * @param int       $object_id   User ID
+     * @param string    $meta_key    Metadata key
+     * @param mixed     $meta_value Value to match
+     * @param bool      $delete_all Whether all matching metadata is being deleted
+     * @return null|bool
+     */
+    public static function rasp_guard_user_metadata_deletion($check, int $object_id, string $meta_key, $meta_value, bool $delete_all = false) {
+        return RaspPrivilegeGuard::rasp_guard_user_metadata_deletion($check, $object_id, $meta_key, $meta_value, $delete_all);
     }
 
     /**
