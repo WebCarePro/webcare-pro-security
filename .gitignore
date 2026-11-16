@@ -15,11 +15,12 @@ Thumbs.db
 # Local Docker & Test Environment
 compose.yaml
 uploads.ini
-tests/
+tests/*
 AGENTS.md
 
 # Test scripts and temporary developer tools
 test_*.php
+!tests/test_review_followup_regressions.php
 test_*.js
 *.test.js
 *.spec.js

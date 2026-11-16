@@ -612,7 +612,7 @@ class MicroWafCompiler {
         $out .= "        \$raw_clean_path = \$request_path_candidates[0] ?? \$normalize_preload_path(\$uri);\n";
         $out .= "        foreach (\$request_path_candidates as \$candidate_path) { if (preg_match('#(?:/wp-json/|admin-ajax\\.php|admin-post\\.php|xmlrpc\\.php|/wp-admin/)#', \$candidate_path)) { \$raw_clean_path = \$candidate_path; break; } }\n";
         $out .= "        \$mod_clean_uri = \$raw_clean_path;\n";
-        $out .= "        \$mod_rest_q = isset(\$_GET['rest_route']) && is_string(\$_GET['rest_route']) ? strtolower(trim((string) \$_GET['rest_route'])) : '';\n";
+        $out .= "        \$mod_rest_q = isset(\$_GET['rest_route']) && is_string(\$_GET['rest_route']) ? \$normalize_preload_path(\$_GET['rest_route']) : '';\n";
         $out .= "        \$url_whitelisted = false;\n";
         $out .= "        if (!empty(\$whitelisted_urls)) {\n";
         $out .= "            \$wl_req_path = strtolower((string) \$mod_clean_uri);\n";

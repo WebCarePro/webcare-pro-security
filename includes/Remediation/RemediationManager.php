@@ -196,17 +196,32 @@ class RemediationManager {
             return null;
         }
 
-        if (!function_exists('download_url')) {
+        if (!function_exists('wp_tempnam')) {
             require_once ABSPATH . 'wp-admin/includes/file.php';
         }
 
-        $temp_zip = download_url($zip_url, 30);
-        if (is_wp_error($temp_zip) || !file_exists($temp_zip)) {
+        $max_archive_bytes = 100 * 1024 * 1024; // 100 MB ceiling
+        $temp_zip = wp_tempnam('wcp_official_');
+        if (!$temp_zip) {
+            return null;
+        }
+
+        // Stream download with active wire-level size limit enforcement
+        $response = wp_safe_remote_get($zip_url, [
+            'timeout'             => 30,
+            'stream'              => true,
+            'filename'            => $temp_zip,
+            'limit_response_size' => $max_archive_bytes,
+        ]);
+
+        if (is_wp_error($response) || (int) wp_remote_retrieve_response_code($response) !== 200 || !file_exists($temp_zip)) {
+            if (file_exists($temp_zip)) {
+                wp_delete_file($temp_zip);
+            }
             return null;
         }
 
         // Enforce maximum package archive download limit (100 MB)
-        $max_archive_bytes = 100 * 1024 * 1024;
         $archive_size = (int) @filesize($temp_zip);
         if ($archive_size <= 0 || $archive_size > $max_archive_bytes) {
             wp_delete_file($temp_zip);
@@ -224,17 +239,13 @@ class RemediationManager {
                 $stat = $zip->statName($clean_entry_path);
                 // Enforce maximum extracted entry limit (10 MB) to protect memory boundaries
                 $max_entry_bytes = 10 * 1024 * 1024;
-                if ($stat && isset($stat['size']) && $stat['size'] >= 0 && $stat['size'] <= $max_entry_bytes) {
+                if ($stat && isset($stat['size'], $stat['crc']) && $stat['size'] >= 0 && $stat['size'] <= $max_entry_bytes) {
                     $extracted = $zip->getFromName($clean_entry_path);
                     if (false !== $extracted && is_string($extracted)) {
-                        // Verify CRC-32 integrity against archive entry metadata
-                        if (isset($stat['crc'])) {
-                            $calc_crc = sprintf('%u', crc32($extracted));
-                            $stat_crc = sprintf('%u', $stat['crc']);
-                            if ($calc_crc === $stat_crc) {
-                                $content = $extracted;
-                            }
-                        } else {
+                        // Fail closed: verify CRC-32 against archive entry metadata to guarantee zero archive corruption
+                        $calc_crc = sprintf('%u', crc32($extracted));
+                        $stat_crc = sprintf('%u', $stat['crc']);
+                        if ($calc_crc === $stat_crc) {
                             $content = $extracted;
                         }
                     }
