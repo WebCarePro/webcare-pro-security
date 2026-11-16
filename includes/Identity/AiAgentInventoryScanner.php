@@ -75,10 +75,15 @@ class AiAgentInventoryScanner {
             ];
         }
 
-        // 2. Audit exposed MCP / AI REST endpoints
-        if (function_exists('rest_get_server')) {
+        // 2. Audit exposed MCP / AI REST endpoints (safely inspect existing server without triggering premature rest_api_init)
+        $server = null;
+        if (!empty($GLOBALS['wp_rest_server']) && is_object($GLOBALS['wp_rest_server']) && method_exists($GLOBALS['wp_rest_server'], 'get_routes')) {
+            $server = $GLOBALS['wp_rest_server'];
+        } elseif (did_action('rest_api_init') && function_exists('rest_get_server')) {
             $server = rest_get_server();
-            if ($server && method_exists($server, 'get_routes')) {
+        }
+
+        if ($server && method_exists($server, 'get_routes')) {
                 $rest_routes = $server->get_routes();
                 $exposed_mcp = [];
 
@@ -109,7 +114,6 @@ class AiAgentInventoryScanner {
                     ];
                 }
             }
-        }
 
         return [
             'scanned_at' => time(),

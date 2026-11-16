@@ -127,6 +127,74 @@ final class AdaptiveFirewallAdvisor {
 	}
 
 	/**
+	 * Map detected ecosystem slugs to their standard public and internal REST namespaces.
+	 *
+	 * @param array<string> $ecosystems
+	 * @return array<string>
+	 */
+	public static function get_ecosystem_rest_namespaces( array $ecosystems ): array {
+		$namespaces = [];
+		foreach ( $ecosystems as $eco ) {
+			switch ( $eco ) {
+				case 'woocommerce':
+				case 'commerce':
+					$namespaces[] = 'wc/v1';
+					$namespaces[] = 'wc/v2';
+					$namespaces[] = 'wc/v3';
+					$namespaces[] = 'wc/store';
+					$namespaces[] = 'wc-admin';
+					$namespaces[] = 'wc-telemetry';
+					break;
+				case 'elementor':
+				case 'page_builder':
+					$namespaces[] = 'elementor/v1';
+					break;
+				case 'divi':
+					$namespaces[] = 'et/v1';
+					break;
+				case 'bricks':
+					$namespaces[] = 'bricks/v1';
+					break;
+				case 'edd':
+					$namespaces[] = 'edd/v1';
+					break;
+				case 'surecart':
+					$namespaces[] = 'surecart/v1';
+					break;
+				case 'fluentcart':
+					$namespaces[] = 'fluent-cart/v1';
+					break;
+				case 'forms':
+					$namespaces[] = 'wpforms/v1';
+					$namespaces[] = 'contact-form-7/v1';
+					$namespaces[] = 'fluentform/v1';
+					$namespaces[] = 'ninja-forms/v1';
+					$namespaces[] = 'formidable/v1';
+					break;
+				case 'lms_membership':
+					$namespaces[] = 'ldlms/v1';
+					$namespaces[] = 'ldlms/v2';
+					$namespaces[] = 'sfwd-lms/v1';
+					$namespaces[] = 'memberpress/v1';
+					$namespaces[] = 'lifterlms/v1';
+					$namespaces[] = 'buddyboss/v1';
+					$namespaces[] = 'buddypress/v1';
+					break;
+				case 'community_forum':
+					$namespaces[] = 'wpforo/v1';
+					$namespaces[] = 'buddyboss/v1';
+					$namespaces[] = 'buddypress/v1';
+					$namespaces[] = 'bbp-api/v1';
+					break;
+				case 'fluent-crm':
+					$namespaces[] = 'fluent-crm/v1';
+					break;
+			}
+		}
+		return array_values( array_unique( $namespaces ) );
+	}
+
+	/**
 	 * Get full overview data for UI views and API consumers.
 	 *
 	 * @return array<string, mixed>
@@ -283,17 +351,34 @@ final class AdaptiveFirewallAdvisor {
 			$detected_ecosystems[] = 'page_builder';
 		}
 
-		// REST Namespaces
+		// REST Namespaces: Safely extract registered namespaces without prematurely booting
+		// WP_REST_Server and triggering rest_api_init during early execution contexts or plugin
+		// lifecycle hooks (which can crash page builders like Elementor before their init routines have completed).
 		$rest_namespaces = [];
-		if ( function_exists( 'rest_get_server' ) ) {
+		if ( ! empty( $GLOBALS['wp_rest_server'] ) && is_object( $GLOBALS['wp_rest_server'] ) && method_exists( $GLOBALS['wp_rest_server'], 'get_namespaces' ) ) {
+			$rest_namespaces = array_values( array_unique( (array) $GLOBALS['wp_rest_server']->get_namespaces() ) );
+		} elseif ( did_action( 'rest_api_init' ) && function_exists( 'rest_get_server' ) ) {
 			$rest_server = rest_get_server();
-			if ( $rest_server ) {
-				$rest_namespaces = array_values( array_unique( $rest_server->get_namespaces() ) );
+			if ( $rest_server && method_exists( $rest_server, 'get_namespaces' ) ) {
+				$rest_namespaces = array_values( array_unique( (array) $rest_server->get_namespaces() ) );
 			}
 		}
+
+		// Fall back to previous snapshot namespaces if REST server was not initialized in this execution context
 		if ( empty( $rest_namespaces ) ) {
-			$rest_namespaces = [ 'wp/v2', 'oembed/1.0' ];
+			$cached = get_option( self::OPTION_STACK_SNAPSHOT );
+			if ( is_array( $cached ) && ! empty( $cached['rest_namespaces'] ) && is_array( $cached['rest_namespaces'] ) ) {
+				$rest_namespaces = (array) $cached['rest_namespaces'];
+			}
 		}
+
+		// Merge ecosystem namespaces so CAF rules recognize active stack endpoints immediately even on early activation
+		$known_ecosystem_ns = self::get_ecosystem_rest_namespaces( $detected_ecosystems );
+		$rest_namespaces    = array_values( array_unique( array_merge(
+			$rest_namespaces,
+			$known_ecosystem_ns,
+			[ 'wp/v2', 'oembed/1.0', 'webcare-pro-security/v1' ]
+		) ) );
 
 		$detected_ecosystems = array_values( array_unique( $detected_ecosystems ) );
 
@@ -620,12 +705,17 @@ final class AdaptiveFirewallAdvisor {
 	 */
 	public static function register_lifecycle_hooks(): void {
 		$handler = static function () {
-			$advisor = new self();
-			$advisor->capture_stack_snapshot();
-			if ( class_exists( MicroWafCompiler::class ) ) {
-				MicroWafCompiler::compile_script();
+			try {
+				$advisor = new self();
+				$advisor->capture_stack_snapshot();
+				if ( class_exists( MicroWafCompiler::class ) ) {
+					MicroWafCompiler::compile_script();
+				}
+				self::schedule_edge_auto_sync();
+			} catch ( \Throwable $e ) {
+				// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+				error_log( 'WebCare Pro CAF lifecycle re-profiling notice: ' . $e->getMessage() );
 			}
-			self::schedule_edge_auto_sync();
 		};
 
 		add_action( 'activated_plugin', $handler, 999 );

@@ -189,8 +189,14 @@ class RestApiInventory {
      * @return array
      */
     public static function get_inventory(bool $deep_forensics = false): array {
-        $server = rest_get_server();
-        $routes = $server->get_routes();
+        if (!empty($GLOBALS['wp_rest_server']) && is_object($GLOBALS['wp_rest_server']) && method_exists($GLOBALS['wp_rest_server'], 'get_routes')) {
+            $server = $GLOBALS['wp_rest_server'];
+        } elseif (function_exists('rest_get_server')) {
+            $server = rest_get_server();
+        } else {
+            return [];
+        }
+        $routes = $server && method_exists($server, 'get_routes') ? $server->get_routes() : [];
 
         $settings      = self::get_settings();
         $component_idx = self::build_component_path_index();
