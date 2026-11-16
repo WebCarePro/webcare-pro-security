@@ -17,10 +17,14 @@ class CronControlCenterModule implements SecurityModuleInterface {
         return 'cron-control-center';
     }
 
+    public function get_enable_key(): string {
+        return '';
+    }
+
     public function get_manifest(): array {
         return [
-            'title'       => __('Centralized Cron & Task Control Center', 'webcare-pro-security'),
-            'description' => __('Unified governance, recurrence control, manual run triggers, and execution audit logs across all scheduled security jobs.', 'webcare-pro-security'),
+            'title'       => did_action('init') ? __('Centralized Cron & Task Control Center', 'webcare-pro-security') : 'Centralized Cron & Task Control Center',
+            'description' => did_action('init') ? __('Unified governance, recurrence control, manual run triggers, and execution audit logs across all scheduled security jobs.', 'webcare-pro-security') : 'Unified governance, recurrence control, manual run triggers, and execution audit logs across all scheduled security jobs.',
             'category'    => 'operations',
             'version'     => defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '2.12.0',
             'author'      => 'Mir Alamin (WebCare Pro)',
@@ -35,6 +39,10 @@ class CronControlCenterModule implements SecurityModuleInterface {
 
     public function boot(): void {
         // Core filters registered cleanly during Plugin::init().
+    }
+
+    public function get_settings_defaults(): array {
+        return [];
     }
 
     public function get_settings_schema(): array {

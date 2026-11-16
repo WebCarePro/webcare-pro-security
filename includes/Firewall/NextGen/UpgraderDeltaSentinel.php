@@ -25,10 +25,14 @@ class UpgraderDeltaSentinel implements SecurityModuleInterface {
         return 'upgrader-delta-sentinel';
     }
 
+    public function get_enable_key(): string {
+        return 'waf_nextgen_upgrader_delta_enabled';
+    }
+
     public function get_manifest(): array {
         return [
-            'title'       => __('Post-Install & Update Delta AST Sentinel', 'webcare-pro-security'),
-            'description' => __('Immediately audits newly installed or updated plugins and themes in <350ms to detect backdoors and new guest endpoints without waiting for full nightly scans.', 'webcare-pro-security'),
+            'title'       => did_action('init') ? __('Post-Install & Update Delta AST Sentinel', 'webcare-pro-security') : 'Post-Install & Update Delta AST Sentinel',
+            'description' => did_action('init') ? __('Immediately audits newly installed or updated plugins and themes in <350ms to detect backdoors and new guest endpoints without waiting for full nightly scans.', 'webcare-pro-security') : 'Immediately audits newly installed or updated plugins and themes in <350ms to detect backdoors and new guest endpoints without waiting for full nightly scans.',
             'category'    => 'nextgen',
             'version'     => defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '2.12.0',
             'author'      => 'Mir Alamin (WebCare Pro)',
@@ -47,17 +51,24 @@ class UpgraderDeltaSentinel implements SecurityModuleInterface {
         add_action('activated_plugin', [__CLASS__, 'on_plugin_activated'], 20, 1);
     }
 
+    public function get_settings_defaults(): array {
+        return [
+            'waf_nextgen_upgrader_delta_enabled' => true,
+            'waf_nextgen_upgrader_auto_enforce'  => false,
+        ];
+    }
+
     public function get_settings_schema(): array {
         return [
             'waf_nextgen_upgrader_delta_enabled' => [
                 'default' => true,
                 'type'    => 'bool',
-                'label'   => __('Post-Install & Update Delta AST Sentinel', 'webcare-pro-security'),
+                'label'   => did_action('init') ? __('Post-Install & Update Delta AST Sentinel', 'webcare-pro-security') : 'Post-Install & Update Delta AST Sentinel',
             ],
             'waf_nextgen_upgrader_auto_enforce' => [
                 'default' => false,
                 'type'    => 'bool',
-                'label'   => __('Auto-Enforce Newly Discovered Delta Endpoints', 'webcare-pro-security'),
+                'label'   => did_action('init') ? __('Auto-Enforce Newly Discovered Delta Endpoints', 'webcare-pro-security') : 'Auto-Enforce Newly Discovered Delta Endpoints',
             ],
         ];
     }

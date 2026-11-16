@@ -23,10 +23,14 @@ class ModularWafModule implements SecurityModuleInterface, WafEvaluatorInterface
         return 'modular-waf';
     }
 
+    public function get_enable_key(): string {
+        return '';
+    }
+
     public function get_manifest(): array {
         return [
-            'title'       => __('Modular Behavioral WAF & Custom Firewall Rules', 'webcare-pro-security'),
-            'description' => __('Autonomous AST-synthesized firewall rules paired with custom condition & Wirefilter rules.', 'webcare-pro-security'),
+            'title'       => did_action('init') ? __('Modular Behavioral WAF & Custom Firewall Rules', 'webcare-pro-security') : 'Modular Behavioral WAF & Custom Firewall Rules',
+            'description' => did_action('init') ? __('Autonomous AST-synthesized firewall rules paired with custom condition & Wirefilter rules.', 'webcare-pro-security') : 'Autonomous AST-synthesized firewall rules paired with custom condition & Wirefilter rules.',
             'category'    => 'waf',
             'version'     => defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '2.12.0',
             'author'      => 'Mir Alamin (WebCare Pro)',
@@ -41,6 +45,10 @@ class ModularWafModule implements SecurityModuleInterface, WafEvaluatorInterface
 
     public function boot(): void {
         // Booted directly in early plugins_loaded WAF dispatch path for zero overhead.
+    }
+
+    public function get_settings_defaults(): array {
+        return [];
     }
 
     public function get_settings_schema(): array {

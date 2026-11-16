@@ -112,8 +112,10 @@ class ModuleRegistry {
      * @return bool
      */
     public static function is_module_enabled(SecurityModuleInterface $module, ?array $settings = null): bool {
-        $manifest   = $module->get_manifest();
-        $enable_key = (string) ($manifest['enable_key'] ?? '');
+        $enable_key = method_exists($module, 'get_enable_key')
+            ? (string) $module->get_enable_key()
+            : (string) ($module->get_manifest()['enable_key'] ?? '');
+
         if ($enable_key === '') {
             return true;
         }
@@ -158,12 +160,26 @@ class ModuleRegistry {
 
     /**
      * Collect default settings from all discovered modules without touching options storage.
+     * Prioritizes get_settings_defaults() without translated labels to eliminate premature
+     * _load_textdomain_just_in_time notices during early bootstrap.
      *
      * @return array<string, mixed>
      */
     public static function get_settings_defaults(): array {
         $defaults = [];
         foreach (self::get_modules() as $module) {
+            if (method_exists($module, 'get_settings_defaults')) {
+                $mod_defaults = $module->get_settings_defaults();
+                if (is_array($mod_defaults)) {
+                    foreach ($mod_defaults as $key => $val) {
+                        $clean_key = sanitize_key((string) $key);
+                        if ($clean_key !== '') {
+                            $defaults[$clean_key] = $val;
+                        }
+                    }
+                    continue;
+                }
+            }
             $schema = $module->get_settings_schema();
             if (!is_array($schema)) {
                 continue;

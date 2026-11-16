@@ -41,10 +41,14 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
         return 'runtime-sql-rasp';
     }
 
+    public function get_enable_key(): string {
+        return 'waf_nextgen_sql_rasp_enabled';
+    }
+
     public function get_manifest(): array {
         return [
-            'title'       => __('Runtime SQL Query AST RASP Guard', 'webcare-pro-security'),
-            'description' => __('Inspects live database queries during unauthenticated plugin/AJAX/REST requests to neutralize zero-day blind and second-order SQL injections before execution.', 'webcare-pro-security'),
+            'title'       => did_action('init') ? __('Runtime SQL Query AST RASP Guard', 'webcare-pro-security') : 'Runtime SQL Query AST RASP Guard',
+            'description' => did_action('init') ? __('Inspects live database queries during unauthenticated plugin/AJAX/REST requests to neutralize zero-day blind and second-order SQL injections before execution.', 'webcare-pro-security') : 'Inspects live database queries during unauthenticated plugin/AJAX/REST requests to neutralize zero-day blind and second-order SQL injections before execution.',
             'category'    => 'nextgen',
             'version'     => defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '2.12.0',
             'author'      => 'Mir Alamin (WebCare Pro)',
@@ -207,17 +211,24 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
         ];
     }
 
+    public function get_settings_defaults(): array {
+        return [
+            'waf_nextgen_sql_rasp_enabled'  => true,
+            'waf_nextgen_sql_rasp_auto_ban' => false,
+        ];
+    }
+
     public function get_settings_schema(): array {
         return [
             'waf_nextgen_sql_rasp_enabled' => [
                 'default' => true,
                 'type'    => 'bool',
-                'label'   => __('Runtime SQL Query AST RASP Guard', 'webcare-pro-security'),
+                'label'   => did_action('init') ? __('Runtime SQL Query AST RASP Guard', 'webcare-pro-security') : 'Runtime SQL Query AST RASP Guard',
             ],
             'waf_nextgen_sql_rasp_auto_ban' => [
                 'default' => false,
                 'type'    => 'bool',
-                'label'   => __('Auto-Ban SQL RASP Offenders on Cloudflare Edge', 'webcare-pro-security'),
+                'label'   => did_action('init') ? __('Auto-Ban SQL RASP Offenders on Cloudflare Edge', 'webcare-pro-security') : 'Auto-Ban SQL RASP Offenders on Cloudflare Edge',
             ],
         ];
     }

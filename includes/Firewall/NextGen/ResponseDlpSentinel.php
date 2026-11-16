@@ -23,10 +23,14 @@ class ResponseDlpSentinel implements SecurityModuleInterface {
         return 'response-dlp-sentinel';
     }
 
+    public function get_enable_key(): string {
+        return 'waf_nextgen_response_dlp_enabled';
+    }
+
     public function get_manifest(): array {
         return [
-            'title'       => __('Outbound Response DLP & Secret Redactor', 'webcare-pro-security'),
-            'description' => __('Scans unauthenticated HTTP and REST responses to block leaked wp-config credentials, AWS keys, PEM private keys, and /etc/passwd before egress.', 'webcare-pro-security'),
+            'title'       => did_action('init') ? __('Outbound Response DLP & Secret Redactor', 'webcare-pro-security') : 'Outbound Response DLP & Secret Redactor',
+            'description' => did_action('init') ? __('Scans unauthenticated HTTP and REST responses to block leaked wp-config credentials, AWS keys, PEM private keys, and /etc/passwd before egress.', 'webcare-pro-security') : 'Scans unauthenticated HTTP and REST responses to block leaked wp-config credentials, AWS keys, PEM private keys, and /etc/passwd before egress.',
             'category'    => 'nextgen',
             'version'     => defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '2.12.0',
             'author'      => 'Mir Alamin (WebCare Pro)',
@@ -45,17 +49,24 @@ class ResponseDlpSentinel implements SecurityModuleInterface {
         add_action('template_redirect', [__CLASS__, 'start_guest_output_buffer'], -999);
     }
 
+    public function get_settings_defaults(): array {
+        return [
+            'waf_nextgen_response_dlp_enabled' => true,
+            'waf_nextgen_dlp_auto_ban'         => false,
+        ];
+    }
+
     public function get_settings_schema(): array {
         return [
             'waf_nextgen_response_dlp_enabled' => [
                 'default' => true,
                 'type'    => 'bool',
-                'label'   => __('Outbound Response DLP & Secret Redactor', 'webcare-pro-security'),
+                'label'   => did_action('init') ? __('Outbound Response DLP & Secret Redactor', 'webcare-pro-security') : 'Outbound Response DLP & Secret Redactor',
             ],
             'waf_nextgen_dlp_auto_ban' => [
                 'default' => false,
                 'type'    => 'bool',
-                'label'   => __('Auto-Ban Offenders Triggering Response DLP', 'webcare-pro-security'),
+                'label'   => did_action('init') ? __('Auto-Ban Offenders Triggering Response DLP', 'webcare-pro-security') : 'Auto-Ban Offenders Triggering Response DLP',
             ],
         ];
     }

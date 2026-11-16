@@ -16,6 +16,11 @@ interface SecurityModuleInterface {
     public function get_id(): string;
 
     /**
+     * Settings key that controls whether this module is enabled (empty string if always enabled).
+     */
+    public function get_enable_key(): string;
+
+    /**
      * Module metadata for the Module Ecosystem dashboard, Setup Studio, and Mega-Menu.
      *
      * @return array<string, mixed>
@@ -31,6 +36,14 @@ interface SecurityModuleInterface {
      * Register WordPress hooks and runtime listeners when the module is active.
      */
     public function boot(): void;
+
+    /**
+     * Return raw default settings key-value pairs without translated UI labels.
+     * Prevents _load_textdomain_just_in_time premature execution during early boot.
+     *
+     * @return array<string, mixed>
+     */
+    public function get_settings_defaults(): array;
 
     /**
      * Return default settings and sanitization definitions merged into SettingsManager.

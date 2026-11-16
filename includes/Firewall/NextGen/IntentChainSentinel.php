@@ -33,10 +33,14 @@ class IntentChainSentinel implements SecurityModuleInterface, WafEvaluatorInterf
         return 'intent-chain-sentinel';
     }
 
+    public function get_enable_key(): string {
+        return 'waf_nextgen_intent_chain_enabled';
+    }
+
     public function get_manifest(): array {
         return [
-            'title'       => __('AI Agent Kill-Chain Sentinel', 'webcare-pro-security'),
-            'description' => __('Tracks 15-minute multi-stage intent bitmasks per IP to neutralize autonomous LLM exploit runners that evade per-minute rate limits.', 'webcare-pro-security'),
+            'title'       => did_action('init') ? __('AI Agent Kill-Chain Sentinel', 'webcare-pro-security') : 'AI Agent Kill-Chain Sentinel',
+            'description' => did_action('init') ? __('Tracks 15-minute multi-stage intent bitmasks per IP to neutralize autonomous LLM exploit runners that evade per-minute rate limits.', 'webcare-pro-security') : 'Tracks 15-minute multi-stage intent bitmasks per IP to neutralize autonomous LLM exploit runners that evade per-minute rate limits.',
             'category'    => 'nextgen',
             'version'     => defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '2.12.0',
             'author'      => 'Mir Alamin (WebCare Pro)',
@@ -54,25 +58,33 @@ class IntentChainSentinel implements SecurityModuleInterface, WafEvaluatorInterf
         add_action('template_redirect', [__CLASS__, 'observe_404_stage'], 20);
     }
 
+    public function get_settings_defaults(): array {
+        return [
+            'waf_nextgen_intent_chain_enabled'   => false,
+            'waf_nextgen_intent_chain_action'    => 'challenge_pow',
+            'waf_nextgen_intent_chain_threshold' => 3,
+        ];
+    }
+
     public function get_settings_schema(): array {
         return [
             'waf_nextgen_intent_chain_enabled' => [
                 'default' => false,
                 'type'    => 'bool',
-                'label'   => __('AI Agent Multi-Step Kill-Chain Sentinel', 'webcare-pro-security'),
+                'label'   => did_action('init') ? __('AI Agent Multi-Step Kill-Chain Sentinel', 'webcare-pro-security') : 'AI Agent Multi-Step Kill-Chain Sentinel',
             ],
             'waf_nextgen_intent_chain_action' => [
                 'default' => 'challenge_pow',
                 'type'    => 'enum',
                 'options' => ['challenge_pow', 'block_and_ban', 'monitor'],
-                'label'   => __('AI Agent Kill-Chain Enforcement Action', 'webcare-pro-security'),
+                'label'   => did_action('init') ? __('AI Agent Kill-Chain Enforcement Action', 'webcare-pro-security') : 'AI Agent Kill-Chain Enforcement Action',
             ],
             'waf_nextgen_intent_chain_threshold' => [
                 'default' => 3,
                 'type'    => 'int',
                 'min'     => 2,
                 'max'     => 5,
-                'label'   => __('Kill-Chain Stage Threshold', 'webcare-pro-security'),
+                'label'   => did_action('init') ? __('Kill-Chain Stage Threshold', 'webcare-pro-security') : 'Kill-Chain Stage Threshold',
             ],
         ];
     }

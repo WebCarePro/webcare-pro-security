@@ -25,10 +25,14 @@ class CheckoutSkimmerSentinel implements SecurityModuleInterface {
         return 'checkout-skimmer-sentinel';
     }
 
+    public function get_enable_key(): string {
+        return 'waf_nextgen_checkout_skimmer_enabled';
+    }
+
     public function get_manifest(): array {
         return [
-            'title'       => __('Checkout DOM & Payment Skimmer Guard', 'webcare-pro-security'),
-            'description' => __('Maintains a checkout script integrity baseline, detects Magecart-style inline card skimmers, and enforces checkout CSP headers.', 'webcare-pro-security'),
+            'title'       => did_action('init') ? __('Checkout DOM & Payment Skimmer Guard', 'webcare-pro-security') : 'Checkout DOM & Payment Skimmer Guard',
+            'description' => did_action('init') ? __('Maintains a checkout script integrity baseline, detects Magecart-style inline card skimmers, and enforces checkout CSP headers.', 'webcare-pro-security') : 'Maintains a checkout script integrity baseline, detects Magecart-style inline card skimmers, and enforces checkout CSP headers.',
             'category'    => 'nextgen',
             'version'     => defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '2.12.0',
             'author'      => 'Mir Alamin (WebCare Pro)',
@@ -53,18 +57,25 @@ class CheckoutSkimmerSentinel implements SecurityModuleInterface {
         add_action('webcareproscan_checkout_baseline_audit', [__CLASS__, 'run_scheduled_baseline_probe']);
     }
 
+    public function get_settings_defaults(): array {
+        return [
+            'waf_nextgen_checkout_skimmer_enabled' => true,
+            'waf_nextgen_checkout_csp_mode'        => 'report_only',
+        ];
+    }
+
     public function get_settings_schema(): array {
         return [
             'waf_nextgen_checkout_skimmer_enabled' => [
                 'default' => true,
                 'type'    => 'bool',
-                'label'   => __('WooCommerce Checkout DOM & Skimmer Guard', 'webcare-pro-security'),
+                'label'   => did_action('init') ? __('WooCommerce Checkout DOM & Skimmer Guard', 'webcare-pro-security') : 'WooCommerce Checkout DOM & Skimmer Guard',
             ],
             'waf_nextgen_checkout_csp_mode' => [
                 'default' => 'report_only',
                 'type'    => 'enum',
                 'options' => ['off', 'report_only', 'enforce'],
-                'label'   => __('Checkout Content-Security-Policy Mode', 'webcare-pro-security'),
+                'label'   => did_action('init') ? __('Checkout Content-Security-Policy Mode', 'webcare-pro-security') : 'Checkout Content-Security-Policy Mode',
             ],
         ];
     }

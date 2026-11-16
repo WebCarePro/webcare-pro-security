@@ -14,7 +14,8 @@ class AdminMenu {
         add_action('admin_notices', [__CLASS__, 'render_user_recovery_notice']);
         add_action('admin_init', [__CLASS__, 'handle_user_recovery_action']);
         add_action('admin_init', [__CLASS__, 'handle_wizard_activation_redirect']);
-        add_action('admin_header', [__CLASS__, 'ensure_admin_screen_title'], 0);
+        add_action('admin_init', [__CLASS__, 'ensure_admin_screen_title']);
+        add_action('current_screen', [__CLASS__, 'ensure_admin_screen_title']);
         add_action('admin_footer', [__CLASS__, 'render_plugins_uninstall_modal']);
         add_action('wp_ajax_webcareproscan_set_uninstall_purge', [__CLASS__, 'ajax_set_uninstall_purge']);
         add_action('wp_ajax_webcareproscan_dismiss_quarantined_notice', [__CLASS__, 'ajax_dismiss_quarantined_notice']);
@@ -340,6 +341,7 @@ class AdminMenu {
             $page = isset($_GET['page']) ? sanitize_key(wp_unslash($_GET['page'])) : '';
             $title_map = [
                 'webcare-pro-security'       => __('WebCare Pro Security & Firewall', 'webcare-pro-security'),
+                'webcare-pro-wizard'         => __('WebCare Pro Setup Studio', 'webcare-pro-security'),
                 'webcare-pro-scan'           => __('Security Scan & Findings', 'webcare-pro-security'),
                 'webcare-pro-firewall'       => __('Web Application Firewall (WAF Lite)', 'webcare-pro-security'),
                 'webcare-pro-caf'            => __('Context-Adaptive Firewall (CAF) & StackGuard', 'webcare-pro-security'),
@@ -359,6 +361,7 @@ class AdminMenu {
                 'webcare-pro-notifications'  => __('Notifications & Security Alerts', 'webcare-pro-security'),
                 'webcare-pro-activity-logs'  => __('Plugin Activity & Audit Logs', 'webcare-pro-security'),
                 'webcare-pro-cron-manager'   => __('Cron & Scheduled Tasks Control Center', 'webcare-pro-security'),
+                'webcare-pro-modular-waf'    => __('Modular WAF Engine', 'webcare-pro-security'),
             ];
 
             if (isset($title_map[$page])) {

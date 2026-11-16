@@ -24,10 +24,14 @@ class ModernApiShield implements SecurityModuleInterface, WafEvaluatorInterface 
         return 'modern-api-shield';
     }
 
+    public function get_enable_key(): string {
+        return 'waf_nextgen_modern_api_enabled';
+    }
+
     public function get_manifest(): array {
         return [
-            'title'       => __('GraphQL, Headless & Interactivity API Shield', 'webcare-pro-security'),
-            'description' => __('Blocks unauthenticated GraphQL schema introspection, deep nested query DoS, alias amplification, and batched mutation floods.', 'webcare-pro-security'),
+            'title'       => did_action('init') ? __('GraphQL, Headless & Interactivity API Shield', 'webcare-pro-security') : 'GraphQL, Headless & Interactivity API Shield',
+            'description' => did_action('init') ? __('Blocks unauthenticated GraphQL schema introspection, deep nested query DoS, alias amplification, and batched mutation floods.', 'webcare-pro-security') : 'Blocks unauthenticated GraphQL schema introspection, deep nested query DoS, alias amplification, and batched mutation floods.',
             'category'    => 'nextgen',
             'version'     => defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '2.12.0',
             'author'      => 'Mir Alamin (WebCare Pro)',
@@ -45,31 +49,40 @@ class ModernApiShield implements SecurityModuleInterface, WafEvaluatorInterface 
         // Evaluated cleanly in early plugins_loaded WAF runtime via WafEvaluatorInterface.
     }
 
+    public function get_settings_defaults(): array {
+        return [
+            'waf_nextgen_modern_api_enabled'          => true,
+            'waf_nextgen_graphql_block_introspection' => true,
+            'waf_nextgen_graphql_max_depth'           => 7,
+            'waf_nextgen_graphql_max_batch'           => 10,
+        ];
+    }
+
     public function get_settings_schema(): array {
         return [
             'waf_nextgen_modern_api_enabled' => [
                 'default' => true,
                 'type'    => 'bool',
-                'label'   => __('GraphQL & Modern API Shield', 'webcare-pro-security'),
+                'label'   => did_action('init') ? __('GraphQL & Modern API Shield', 'webcare-pro-security') : 'GraphQL & Modern API Shield',
             ],
             'waf_nextgen_graphql_block_introspection' => [
                 'default' => true,
                 'type'    => 'bool',
-                'label'   => __('Block Unauthenticated GraphQL Introspection', 'webcare-pro-security'),
+                'label'   => did_action('init') ? __('Block Unauthenticated GraphQL Introspection', 'webcare-pro-security') : 'Block Unauthenticated GraphQL Introspection',
             ],
             'waf_nextgen_graphql_max_depth' => [
                 'default' => 7,
                 'type'    => 'int',
                 'min'     => 2,
                 'max'     => 20,
-                'label'   => __('GraphQL Maximum AST Nesting Depth', 'webcare-pro-security'),
+                'label'   => did_action('init') ? __('GraphQL Maximum AST Nesting Depth', 'webcare-pro-security') : 'GraphQL Maximum AST Nesting Depth',
             ],
             'waf_nextgen_graphql_max_batch' => [
                 'default' => 10,
                 'type'    => 'int',
                 'min'     => 1,
                 'max'     => 50,
-                'label'   => __('GraphQL Maximum Batched Operations', 'webcare-pro-security'),
+                'label'   => did_action('init') ? __('GraphQL Maximum Batched Operations', 'webcare-pro-security') : 'GraphQL Maximum Batched Operations',
             ],
         ];
     }
