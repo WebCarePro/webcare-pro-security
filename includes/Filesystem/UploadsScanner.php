@@ -61,8 +61,8 @@ class UploadsScanner {
             $normalized_uploads = str_replace('\\', '/', rtrim($uploads_path, '/\\') . '/');
             $files_inspected = 0;
             $uploads_mode = class_exists('\\WebCareProScanner\\System\\SettingsManager')
-                ? \WebCareProScanner\System\SettingsManager::get('scan_uploads_mode', 'smart_executable')
-                : 'smart_executable';
+                ? \WebCareProScanner\System\SettingsManager::get('scan_uploads_mode', 'deep_raster')
+                : 'deep_raster';
             $max_files_limit = ($uploads_mode === 'deep_raster') ? 25000 : 5000;
             $monitor = new \WebCareProScanner\Resource\ResourceMonitor(70, 20, 'balanced');
 

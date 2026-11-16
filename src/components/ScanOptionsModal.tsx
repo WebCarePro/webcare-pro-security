@@ -110,8 +110,8 @@ const DEFAULT_SCAN_SETTINGS: ScanSettingsState = {
   scan_adaptive_throttling: true,
   scan_batch_delay_ms: 0,
   memory_limit_override: '512M',
-  max_file_size_kb: 1024,
-  scan_uploads_mode: 'smart_executable',
+  max_file_size_kb: 2024,
+  scan_uploads_mode: 'deep_raster',
 
   schedule_enabled: true,
   schedule_frequency: 'daily',
@@ -256,8 +256,8 @@ export const ScanOptionsModal: React.FC<ScanOptionsModalProps> = ({
         scan_adaptive_throttling: true,
         scan_batch_delay_ms: 0,
         memory_limit_override: '512M',
-        max_file_size_kb: 1024,
-        scan_uploads_mode: 'smart_executable',
+        max_file_size_kb: 2024,
+        scan_uploads_mode: 'deep_raster',
         scan_symlink_policy: 'ignore',
         scan_skip_vcs: true,
         scan_skip_vendor: true,
@@ -678,18 +678,18 @@ export const ScanOptionsModal: React.FC<ScanOptionsModalProps> = ({
                     <div className="webcare-scan-options-field">
                       <label className="webcare-scan-options-label">
                         <span>Media Uploads Library Scan Depth</span>
-                        <span className="webcare-scan-options-hint">Smart mode skips millions of benign images</span>
+                        <span className="webcare-scan-options-hint">Deep raster mode inspects image headers &amp; EXIF</span>
                       </label>
                       <select
                         className="webcare-scan-options-select"
-                        value={settings.scan_uploads_mode || 'smart_executable'}
+                        value={settings.scan_uploads_mode || 'deep_raster'}
                         onChange={(e) => {
                           setSettings({ ...settings, scan_uploads_mode: e.target.value });
                           setActivePreset('custom');
                         }}
                       >
-                        <option value="smart_executable">Smart Executable &amp; Stager Inspection (Recommended - 10x faster, inspects scripts &amp; disguised icons)</option>
                         <option value="deep_raster">Deep Raster &amp; EXIF Polyglot Audit (Thorough, inspects raw image headers &amp; trailing bytes)</option>
+                        <option value="smart_executable">Smart Executable &amp; Stager Inspection (Fast mode, skips benign raster images)</option>
                       </select>
                     </div>
 
@@ -703,7 +703,7 @@ export const ScanOptionsModal: React.FC<ScanOptionsModalProps> = ({
                         className="webcare-scan-options-input"
                         value={settings.max_file_size_kb}
                         onChange={(e) => {
-                          setSettings({ ...settings, max_file_size_kb: parseInt(e.target.value) || 1024 });
+                          setSettings({ ...settings, max_file_size_kb: parseInt(e.target.value) || 2024 });
                           setActivePreset('custom');
                         }}
                       />

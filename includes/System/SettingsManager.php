@@ -56,7 +56,7 @@ class SettingsManager {
             'scan_adaptive_throttling'       => true, // Dynamically throttle batch size and pace micro-sleeps for visitors
             'scan_batch_delay_ms'            => 0, // 0, 50, 100, 200, 500ms delay between REST batches
             'scan_execution_strategy'        => 'ajax_client', // 'ajax_client' | 'wp_cli_cron' | 'background_worker'
-            'scan_uploads_mode'              => 'smart_executable', // 'smart_executable' | 'deep_raster'
+            'scan_uploads_mode'              => 'deep_raster', // 'smart_executable' | 'deep_raster'
             'scan_symlink_policy'            => 'ignore', // 'ignore' | 'follow_intree' | 'follow_all'
             'scan_skip_vcs'                  => true, // Skip .git, .svn, .hg
             'scan_skip_vendor'               => true, // Skip node_modules, third-party vendor dirs
@@ -66,7 +66,7 @@ class SettingsManager {
             'scan_profiling_enabled'         => false, // Benchmarking & millisecond per-engine profiling
             'scan_dry_run_mode'              => false, // Dry-run mode without saving risk scores
             'memory_limit_override'          => '512M',
-            'max_file_size_kb'               => 1024, // Skip files larger than 1MB from heuristic scanning
+            'max_file_size_kb'               => 2024, // Skip files larger than ~2MB from heuristic scanning
             'auto_quarantine_critical'       => false, // Safeguard off by default
 
             // 5. Exclusions & Ignore Rules
@@ -724,7 +724,7 @@ class SettingsManager {
         $valid_strategies                  = ['ajax_client', 'wp_cli_cron', 'background_worker'];
         $clean['scan_execution_strategy']  = in_array($merged['scan_execution_strategy'] ?? '', $valid_strategies, true) ? $merged['scan_execution_strategy'] : 'ajax_client';
         $valid_uploads_mode                = ['smart_executable', 'deep_raster'];
-        $clean['scan_uploads_mode']        = in_array($merged['scan_uploads_mode'] ?? '', $valid_uploads_mode, true) ? $merged['scan_uploads_mode'] : 'smart_executable';
+        $clean['scan_uploads_mode']        = in_array($merged['scan_uploads_mode'] ?? '', $valid_uploads_mode, true) ? $merged['scan_uploads_mode'] : 'deep_raster';
         $valid_symlinks                    = ['ignore', 'follow_intree', 'follow_all'];
         $clean['scan_symlink_policy']      = in_array($merged['scan_symlink_policy'] ?? '', $valid_symlinks, true) ? $merged['scan_symlink_policy'] : 'ignore';
         $clean['scan_skip_vcs']            = isset($merged['scan_skip_vcs']) ? !empty($merged['scan_skip_vcs']) : true;
@@ -736,7 +736,7 @@ class SettingsManager {
         $clean['scan_profiling_enabled']   = !empty($merged['scan_profiling_enabled']);
         $clean['scan_dry_run_mode']        = !empty($merged['scan_dry_run_mode']);
         $clean['memory_limit_override']    = sanitize_text_field($merged['memory_limit_override'] ?? '512M');
-        $clean['max_file_size_kb']         = max(100, intval($merged['max_file_size_kb'] ?? 1024));
+        $clean['max_file_size_kb']         = max(100, intval($merged['max_file_size_kb'] ?? 2024));
         $clean['auto_quarantine_critical'] = !empty($merged['auto_quarantine_critical']);
 
         // 5. Exclusions & Ignore Rules
