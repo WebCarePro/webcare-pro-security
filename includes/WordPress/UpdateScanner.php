@@ -171,7 +171,24 @@ class UpdateScanner {
         wp_update_themes();
         $update_themes = get_site_transient('update_themes');
 
-        $all_themes = function_exists('wp_get_themes') ? wp_get_themes() : [];
+        if (!function_exists('wp_get_themes')) {
+            $findings[] = new Finding([
+                'engine'       => 'update-scanner',
+                'type'         => 'theme_update_check_incomplete',
+                'severity'     => 'info',
+                'confidence'   => 100,
+                'file_path'    => function_exists('get_theme_root') ? get_theme_root() : 'wp-content/themes',
+                'description'  => 'Theme update and vulnerability inspection was incomplete: wp_get_themes() core function is unavailable in the current runtime context.',
+                'evidence'     => wp_json_encode([
+                    'incomplete' => true,
+                    'reason'     => 'wp_get_themes_unavailable',
+                ]),
+                'code_snippet' => 'Status: Incomplete (wp_get_themes unavailable)',
+            ]);
+            $all_themes = [];
+        } else {
+            $all_themes = wp_get_themes();
+        }
 
         foreach ($all_themes as $theme_slug => $theme_obj) {
             $theme_name = $theme_obj->get('Name') ?: $theme_slug;
@@ -413,8 +430,9 @@ class UpdateScanner {
         }
 
         // 3. Themes Audit
-        $all_themes = wp_get_themes();
-        $current_theme_slug = get_stylesheet();
+        $has_theme_api = function_exists('wp_get_themes');
+        $all_themes = $has_theme_api ? wp_get_themes() : [];
+        $current_theme_slug = function_exists('get_stylesheet') ? get_stylesheet() : '';
         $themes_data = [];
 
         foreach ($all_themes as $theme_slug => $theme_obj) {
@@ -551,6 +569,7 @@ class UpdateScanner {
                 'secure_count'             => $total_items - count(array_filter($all_items, function($item) {
                     return $item['is_outdated'] || $item['has_cve'];
                 })),
+                'themes_inspection_incomplete' => !$has_theme_api,
                 'timestamp'                => current_time('mysql'),
             ],
             'core'    => $core_data,

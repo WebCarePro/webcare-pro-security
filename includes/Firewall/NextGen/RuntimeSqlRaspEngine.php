@@ -297,6 +297,7 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                 }
                 $path = $decoded_path;
             }
+            $path = str_replace(["\0", "\r", "\n"], '', $path);
             return (string) preg_replace('#/+#', '/', $path);
         }, $path_candidates);
         $has_ajax_surface = false;

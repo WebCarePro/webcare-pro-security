@@ -580,9 +580,11 @@ class MicroWafCompiler {
         $out .= "        \$mod_req_method = isset(\$_SERVER['REQUEST_METHOD']) ? strtoupper((string) \$_SERVER['REQUEST_METHOD']) : 'GET';\n";
         $out .= "        \$request_path_candidates = [];\n";
         $out .= "        \$normalize_preload_path = static function (\$value): string {\n";
-        $out .= "            \$path = @parse_url((string) \$value, PHP_URL_PATH);\n";
-        $out .= "            if (!is_string(\$path) || \$path === '') { \$path = (string) \$value; }\n";
+        $out .= "            \$clean_val = str_replace([\"\\0\", \"\\r\", \"\\n\"], '', (string) \$value);\n";
+        $out .= "            \$path = @parse_url(\$clean_val, PHP_URL_PATH);\n";
+        $out .= "            if (!is_string(\$path) || \$path === '') { \$path = \$clean_val; }\n";
         $out .= "            for (\$i = 0; \$i < 3; \$i++) { \$decoded = rawurldecode(\$path); if (\$decoded === \$path) { break; } \$path = \$decoded; }\n";
+        $out .= "            \$path = str_replace([\"\\0\", \"\\r\", \"\\n\"], '', \$path);\n";
         $out .= "            \$path = strtolower((string) preg_replace('#/+#', '/', \$path));\n";
         $out .= "            \$stack = []; foreach (explode('/', \$path) as \$segment) { if (\$segment === '' || \$segment === '.') { continue; } if (\$segment === '..') { array_pop(\$stack); } else { \$stack[] = \$segment; } }\n";
         $out .= "            return '/' . implode('/', \$stack);\n";

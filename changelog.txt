@@ -1,4 +1,11 @@
-﻿v:2.16.0 - 2026-11-16
+﻿v:2.17.0 - 2026-11-17
+- Routing Normalization Parity, Package Extraction Integrity & Incomplete Inspection Reporting:
+  * Cross-Engine URI Canonicalization Parity (ExploitSignatureEngine.php, RuntimeSqlRaspEngine.php, FirewallEngine.php, MicroWafCompiler.php): Synchronized URL path decoding, control character neutralization, and route resolution across RASP, WAF, and preload micro-firewall engines. Stripped null bytes, carriage returns, and line feeds consistently before and after multi-pass rawurldecode(), preserving valid percent-encoding (%2d, %2f, %2e) across routing evaluations. Unified path candidate inspection across REQUEST_URI, PATH_INFO, and PHP_SELF.
+  * Package-Based Remediation Hardening & CRC-32 Cryptographic Verification (RemediationManager.php): Hardened extract_file_from_official_zip() with strict HTTPS and downloads.wordpress.org hostname verification, a 100 MB archive download size ceiling, ZipArchive::CHECKCONS archive consistency verification, entry traversal checks, a 10 MB per-entry uncompressed size limit to prevent memory exhaustion / ZIP bombs, and verified extracted byte CRC-32 checksums against internal ZIP entry metadata before returning content.
+  * Incomplete Theme Inspection Reporting (ThemeIntegrity.php, UpdateScanner.php): Exposed structured incomplete inspection findings (theme_inspection_incomplete and theme_update_check_incomplete) when WordPress core's wp_get_themes() function is absent in non-standard runtime contexts, replacing silent omissions with explicit audit notifications.
+  * Extended Regression Test Suite (test_review_followup_regressions.php): Added comprehensive test cases covering single, double, and triple-encoded slashes, traversals, uppercase REST routes, encoded control characters (%00, %0d, %0a, %2500), equivalent paths across REQUEST_URI, PATH_INFO, and PHP_SELF, ZIP extraction constraints, and incomplete theme reporting.
+
+v:2.16.0 - 2026-11-16
 - Runtime Enforcement & State Integrity:
   * Fixed administrator rollback to detach the registered FirewallEngine hook, allow only the target user capability and user-level restoration writes, restore every prior role, and reattach the hook in a finally block.
   * Routed RASP option, role, registration, and usermeta violations through behavioral scoring instead of direct 24-hour IP bans.

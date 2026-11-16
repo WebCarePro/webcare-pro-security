@@ -185,8 +185,14 @@ class RemediationManager {
      * @return string|null File content or null on failure
      */
     private function extract_file_from_official_zip(string $zip_url, string $internal_zip_path): ?string {
-        $host = wp_parse_url($zip_url, PHP_URL_HOST);
-        if ($host !== 'downloads.wordpress.org') {
+        $parsed = wp_parse_url($zip_url);
+        if (($parsed['scheme'] ?? '') !== 'https' || ($parsed['host'] ?? '') !== 'downloads.wordpress.org') {
+            return null;
+        }
+
+        // Validate target zip entry path structure to prevent null bytes or traversal
+        $clean_entry_path = str_replace(["\0", "\r", "\n"], '', $internal_zip_path);
+        if ($clean_entry_path === '' || strpos($clean_entry_path, '..') !== false) {
             return null;
         }
 
@@ -199,13 +205,39 @@ class RemediationManager {
             return null;
         }
 
+        // Enforce maximum package archive download limit (100 MB)
+        $max_archive_bytes = 100 * 1024 * 1024;
+        $archive_size = (int) @filesize($temp_zip);
+        if ($archive_size <= 0 || $archive_size > $max_archive_bytes) {
+            wp_delete_file($temp_zip);
+            return null;
+        }
+
         $content = null;
         if (class_exists('\ZipArchive')) {
             $zip = new \ZipArchive();
-            if ($zip->open($temp_zip, \ZipArchive::RDONLY) === true) {
-                $extracted = $zip->getFromName($internal_zip_path);
-                if (false !== $extracted && is_string($extracted)) {
-                    $content = $extracted;
+            $flags = \ZipArchive::RDONLY;
+            if (defined('\ZipArchive::CHECKCONS')) {
+                $flags |= \ZipArchive::CHECKCONS;
+            }
+            if ($zip->open($temp_zip, $flags) === true) {
+                $stat = $zip->statName($clean_entry_path);
+                // Enforce maximum extracted entry limit (10 MB) to protect memory boundaries
+                $max_entry_bytes = 10 * 1024 * 1024;
+                if ($stat && isset($stat['size']) && $stat['size'] >= 0 && $stat['size'] <= $max_entry_bytes) {
+                    $extracted = $zip->getFromName($clean_entry_path);
+                    if (false !== $extracted && is_string($extracted)) {
+                        // Verify CRC-32 integrity against archive entry metadata
+                        if (isset($stat['crc'])) {
+                            $calc_crc = sprintf('%u', crc32($extracted));
+                            $stat_crc = sprintf('%u', $stat['crc']);
+                            if ($calc_crc === $stat_crc) {
+                                $content = $extracted;
+                            }
+                        } else {
+                            $content = $extracted;
+                        }
+                    }
                 }
                 $zip->close();
             }

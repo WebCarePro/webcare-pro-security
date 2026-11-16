@@ -475,14 +475,33 @@ class FirewallEngine {
      * @return string Normalized route path or empty string.
      */
     public static function resolve_normalized_rest_route(string $request_uri): string {
-        $parsed_path = (string) (wp_parse_url($request_uri, PHP_URL_PATH) ?? '');
-        if (preg_match('#/wp-json(/[^?]+)#i', $parsed_path, $rm)) {
-            return '/' . trim($rm[1], '/');
+        $clean_uri = str_replace(["\0", "\r", "\n"], '', $request_uri);
+        $parsed_path = (string) (wp_parse_url($clean_uri, PHP_URL_PATH) ?? $clean_uri);
+        for ($i = 0; $i < 3; $i++) {
+            $decoded = rawurldecode($parsed_path);
+            if ($decoded === $parsed_path) {
+                break;
+            }
+            $parsed_path = $decoded;
+        }
+        $parsed_path = str_replace(["\0", "\r", "\n"], '', $parsed_path);
+        if (preg_match('#/(?:wp-json|index\.php(?:/wp-json)?)(/[^?]+)#i', $parsed_path, $rm)) {
+            return '/' . trim((string) preg_replace('#/+#', '/', $rm[1]), '/');
         }
         // phpcs:ignore WordPress.Security.NonceVerification.Recommended
         if (isset($_GET['rest_route']) && is_string($_GET['rest_route'])) {
-            // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-            return '/' . trim(sanitize_text_field(wp_unslash($_GET['rest_route'])), '/');
+            // phpcs:ignore WordPress.Security.NonceVerification.Recommended,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Normalized REST route query inspection requires raw multi-pass decoding without percent octet distortion
+            $raw_get_route = (string) wp_unslash($_GET['rest_route']);
+            $clean_get_route = str_replace(["\0", "\r", "\n"], '', $raw_get_route);
+            for ($i = 0; $i < 3; $i++) {
+                $decoded = rawurldecode($clean_get_route);
+                if ($decoded === $clean_get_route) {
+                    break;
+                }
+                $clean_get_route = $decoded;
+            }
+            $clean_get_route = str_replace(["\0", "\r", "\n"], '', $clean_get_route);
+            return '/' . trim((string) preg_replace('#/+#', '/', $clean_get_route), '/');
         }
         return '';
     }
@@ -2119,7 +2138,7 @@ class FirewallEngine {
      * @return string
      */
     public static function canonicalize_uri_path(string $uri): string {
-        $decoded = $uri;
+        $decoded = str_replace(["\0", "\r", "\n"], '', $uri);
         for ($i = 0; $i < 5; $i++) {
             $prev = $decoded;
             $decoded = rawurldecode($decoded);
@@ -2127,6 +2146,7 @@ class FirewallEngine {
                 break;
             }
         }
+        $decoded = str_replace(["\0", "\r", "\n"], '', $decoded);
         $path = (string) (wp_parse_url($decoded, PHP_URL_PATH) ?: $decoded);
         $path = str_replace('\\', '/', $path);
         $path = (string) preg_replace('#/{2,}#', '/', $path);

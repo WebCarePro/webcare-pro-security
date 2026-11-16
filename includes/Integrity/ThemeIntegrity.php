@@ -27,7 +27,23 @@ class ThemeIntegrity {
     public function verify($scan_id) {
         $findings = [];
         
-        $themes = function_exists('wp_get_themes') ? wp_get_themes() : [];
+        if (!function_exists('wp_get_themes')) {
+            $findings[] = new Finding([
+                'engine'      => 'integrity-theme',
+                'type'        => 'theme_inspection_incomplete',
+                'severity'    => 'info',
+                'confidence'  => 100,
+                'file_path'   => function_exists('get_theme_root') ? wp_normalize_path(get_theme_root()) : 'wp-content/themes',
+                'evidence'    => wp_json_encode([
+                    'incomplete' => true,
+                    'reason'     => 'wp_get_themes_unavailable',
+                ]),
+                'description' => 'Theme integrity inspection was incomplete: wp_get_themes() core function is unavailable in the current runtime context.',
+            ]);
+            return $findings;
+        }
+
+        $themes = wp_get_themes();
 
         foreach ($themes as $theme_slug => $theme_data) {
             $version = $theme_data->get('Version');
