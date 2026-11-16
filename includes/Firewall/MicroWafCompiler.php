@@ -589,6 +589,14 @@ class MicroWafCompiler {
         $out .= "            \$stack = []; foreach (explode('/', \$path) as \$segment) { if (\$segment === '' || \$segment === '.') { continue; } if (\$segment === '..') { array_pop(\$stack); } else { \$stack[] = \$segment; } }\n";
         $out .= "            return '/' . implode('/', \$stack);\n";
         $out .= "        };\n";
+        $out .= "        // Query-route normalization mirrors FirewallEngine::resolve_normalized_rest_route(); unlike request-path normalization above, it preserves route case and dot segments.\n";
+        $out .= "        \$normalize_preload_rest_route = static function (\$value): string {\n";
+        $out .= "            \$route = stripslashes(str_replace([\"\\0\", \"\\r\", \"\\n\"], '', (string) \$value));\n";
+        $out .= "            for (\$i = 0; \$i < 3; \$i++) { \$decoded = rawurldecode(\$route); if (\$decoded === \$route) { break; } \$route = \$decoded; }\n";
+        $out .= "            \$route = str_replace([\"\\0\", \"\\r\", \"\\n\"], '', \$route);\n";
+        $out .= "            \$route = (string) preg_replace('#/+#', '/', \$route);\n";
+        $out .= "            return '/' . trim(\$route, '/');\n";
+        $out .= "        };\n";
         $out .= "        foreach ([\$uri, (string) (\$_SERVER['PATH_INFO'] ?? ''), (string) (\$_SERVER['PHP_SELF'] ?? '')] as \$path_candidate) { \$normalized_candidate = \$normalize_preload_path(\$path_candidate); if (\$normalized_candidate !== '/' && !in_array(\$normalized_candidate, \$request_path_candidates, true)) { \$request_path_candidates[] = \$normalized_candidate; } }\n";
         $out .= "        \$preload_body_text = '';\n";
         $out .= "        \$preload_body_budget = 32768;\n";
@@ -612,7 +620,8 @@ class MicroWafCompiler {
         $out .= "        \$raw_clean_path = \$request_path_candidates[0] ?? \$normalize_preload_path(\$uri);\n";
         $out .= "        foreach (\$request_path_candidates as \$candidate_path) { if (preg_match('#(?:/wp-json/|admin-ajax\\.php|admin-post\\.php|xmlrpc\\.php|/wp-admin/)#', \$candidate_path)) { \$raw_clean_path = \$candidate_path; break; } }\n";
         $out .= "        \$mod_clean_uri = \$raw_clean_path;\n";
-        $out .= "        \$mod_rest_q = isset(\$_GET['rest_route']) && is_string(\$_GET['rest_route']) ? \$normalize_preload_path(\$_GET['rest_route']) : '';\n";
+        $out .= "        \$mod_rest_q = isset(\$_GET['rest_route']) && is_string(\$_GET['rest_route']) ? \$normalize_preload_rest_route(\$_GET['rest_route']) : '';\n";
+        $out .= "        \$mod_rest_q_match = strtolower(\$mod_rest_q);\n";
         $out .= "        \$url_whitelisted = false;\n";
         $out .= "        if (!empty(\$whitelisted_urls)) {\n";
         $out .= "            \$wl_req_path = strtolower((string) \$mod_clean_uri);\n";
@@ -652,7 +661,7 @@ class MicroWafCompiler {
         $out .= "            \$trusted_visual = is_array(\$mod_trusted['rule_ids'] ?? null) ? \$mod_trusted['rule_ids'] : [];\n";
         $out .= "            \$vis_q_pos = strpos(\$uri, '?');\n";
         $out .= "            \$vis_query = \$vis_q_pos === false ? '' : substr(\$uri, \$vis_q_pos + 1);\n";
-        $out .= "            \$vis_rest  = \$mod_rest_q !== '' ? '/' . ltrim(\$mod_rest_q, '/') : (((\$rp = strpos(\$mod_clean_uri, '/wp-json')) !== false) ? '/' . ltrim(substr(\$mod_clean_uri, \$rp + 8), '/') : '');\n";
+        $out .= "            \$vis_rest  = \$mod_rest_q_match !== '' ? '/' . ltrim(\$mod_rest_q_match, '/') : (((\$rp = strpos(\$mod_clean_uri, '/wp-json')) !== false) ? '/' . ltrim(substr(\$mod_clean_uri, \$rp + 8), '/') : '');\n";
         $out .= "            \$vis_ajax  = isset(\$_REQUEST['action']) && is_string(\$_REQUEST['action']) ? strtolower(trim((string) \$_REQUEST['action'])) : '';\n";
         $out .= "            \$vis_ua    = (string) (\$_SERVER['HTTP_USER_AGENT'] ?? '');\n";
         $out .= "            \$vis_ref   = (string) (\$_SERVER['HTTP_REFERER'] ?? '');\n";
@@ -940,8 +949,8 @@ class MicroWafCompiler {
         $out .= "                    \$c_param = strtolower(trim((string) (\$c_rule['target_param'] ?? '')));\n";
         $out .= "                    \$c_val = strtolower(trim((string) (\$c_rule['target_value'] ?? '')));\n";
         $out .= "                    if (\$c_uri === '' && \$c_param === '') { continue; }\n";
-        $out .= "                    \$c_rest_norm = (\$mod_rest_q !== '') ? '/wp-json/' . ltrim(\$mod_rest_q, '/') : '';\n";
-        $out .= "                    \$c_uri_match = (\$c_uri === '') || (strpos(\$mod_clean_uri, \$c_uri) !== false) || (\$mod_rest_q !== '' && (strpos(\$mod_rest_q, \$c_uri) !== false || strpos(\$c_rest_norm, \$c_uri) !== false));\n";
+        $out .= "                    \$c_rest_norm = (\$mod_rest_q_match !== '') ? '/wp-json/' . ltrim(\$mod_rest_q_match, '/') : '';\n";
+        $out .= "                    \$c_uri_match = (\$c_uri === '') || (strpos(\$mod_clean_uri, \$c_uri) !== false) || (\$mod_rest_q_match !== '' && (strpos(\$mod_rest_q_match, \$c_uri) !== false || strpos(\$c_rest_norm, \$c_uri) !== false));\n";
         $out .= "                    \$c_methods = is_array(\$c_rule['methods'] ?? null) ? array_map('strtoupper', \$c_rule['methods']) : [];\n";
         $out .= "                    \$c_method_match = empty(\$c_methods) || in_array(\$mod_req_method, \$c_methods, true);\n";
         $out .= "                    \$c_param_match = true;\n";
@@ -989,7 +998,7 @@ class MicroWafCompiler {
         $out .= "                }\n";
         $out .= "            }\n";
         $out .= "            if (!\$mod_has_login_cookie && !empty(\$mod_rules['rest_routes_enforced'])) {\n";
-        $out .= "                \$rest_q = \$mod_rest_q;\n";
+        $out .= "                \$rest_q = \$mod_rest_q_match;\n";
         $out .= "                \$trusted_routes = is_array(\$mod_trusted['rest_routes'] ?? null) ? \$mod_trusted['rest_routes'] : [];\n";
         $out .= "                foreach (\$mod_rules['rest_routes_enforced'] as \$r_route => \$r_spec) {\n";
         $out .= "                    \$r_rid = (string) (\$r_spec['rule_id'] ?? 'MOD-REST-GUARD');\n";

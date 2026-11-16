@@ -178,7 +178,7 @@ class RemediationManager {
 
     /**
      * Safely extract a single file from an official WordPress.org release zip package.
-     * Uses WordPress core's download_url() to retrieve verified packages from downloads.wordpress.org.
+     * Streams WordPress.org packages through the WordPress HTTP API with strict size and entry checks.
      *
      * @param string $zip_url Must be an https://downloads.wordpress.org/... URL
      * @param string $internal_zip_path Relative path of the file inside the zip archive
@@ -201,6 +201,8 @@ class RemediationManager {
         }
 
         $max_archive_bytes = 100 * 1024 * 1024; // 100 MB ceiling
+        // Read one sentinel byte beyond the accepted maximum so a truncated oversized response is distinguishable.
+        $transport_limit_bytes = $max_archive_bytes + 1;
         $temp_zip = wp_tempnam('wcp_official_');
         if (!$temp_zip) {
             return null;
@@ -211,7 +213,7 @@ class RemediationManager {
             'timeout'             => 30,
             'stream'              => true,
             'filename'            => $temp_zip,
-            'limit_response_size' => $max_archive_bytes,
+            'limit_response_size' => $transport_limit_bytes,
         ]);
 
         if (is_wp_error($response) || (int) wp_remote_retrieve_response_code($response) !== 200 || !file_exists($temp_zip)) {
@@ -242,7 +244,7 @@ class RemediationManager {
                 if ($stat && isset($stat['size'], $stat['crc']) && $stat['size'] >= 0 && $stat['size'] <= $max_entry_bytes) {
                     $extracted = $zip->getFromName($clean_entry_path);
                     if (false !== $extracted && is_string($extracted)) {
-                        // Fail closed: verify CRC-32 against archive entry metadata to guarantee zero archive corruption
+                        // Fail closed: compare extracted bytes with the ZIP entry's CRC-32 metadata to detect corruption.
                         $calc_crc = sprintf('%u', crc32($extracted));
                         $stat_crc = sprintf('%u', $stat['crc']);
                         if ($calc_crc === $stat_crc) {
