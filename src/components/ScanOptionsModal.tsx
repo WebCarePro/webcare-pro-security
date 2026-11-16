@@ -58,6 +58,7 @@ interface ScanSettingsState {
 
   // Exclusions & Traversal
   excluded_paths: string;
+  scan_ignore_cache_folder: boolean;
   scan_excluded_tables: string;
   scan_db_batch_size: number;
   scan_symlink_policy: string;
@@ -70,7 +71,7 @@ interface ScanSettingsState {
   scan_profiling_enabled: boolean;
 }
 
-const DEFAULT_EXCLUDED_PATHS = [
+export const CACHE_FOLDER_EXCLUSIONS: string[] = [
   'wp-content/cache/*',
   'wp-content/litespeed/*',
   'wp-content/w3tc-cache/*',
@@ -93,6 +94,9 @@ const DEFAULT_EXCLUDED_PATHS = [
   'wp-content/uploads/updraft/*',
   'node_modules/*',
   'vendor/*',
+];
+
+const DEFAULT_EXCLUDED_PATHS = [
   '.git/*',
   '.svn/*',
   '.hg/*',
@@ -120,12 +124,13 @@ const DEFAULT_SCAN_SETTINGS: ScanSettingsState = {
   scan_execution_strategy: 'ajax_client',
 
   excluded_paths: DEFAULT_EXCLUDED_PATHS,
+  scan_ignore_cache_folder: false,
   scan_excluded_tables: 'wp_actionscheduler_logs\nwp_redirection_logs\n*_wfhits',
   scan_db_batch_size: 500,
   scan_symlink_policy: 'ignore',
   scan_skip_vcs: true,
   scan_skip_vendor: true,
-  scan_skip_cache: true,
+  scan_skip_cache: false,
 
   scan_dry_run_mode: false,
   scan_profiling_enabled: false,
@@ -176,12 +181,13 @@ export const ScanOptionsModal: React.FC<ScanOptionsModalProps> = ({
             scan_execution_strategy: s.scan_execution_strategy || DEFAULT_SCAN_SETTINGS.scan_execution_strategy,
 
             excluded_paths: s.excluded_paths !== undefined ? s.excluded_paths : DEFAULT_SCAN_SETTINGS.excluded_paths,
+            scan_ignore_cache_folder: s.scan_ignore_cache_folder !== undefined ? Boolean(s.scan_ignore_cache_folder) : false,
             scan_excluded_tables: s.scan_excluded_tables !== undefined ? s.scan_excluded_tables : DEFAULT_SCAN_SETTINGS.scan_excluded_tables,
             scan_db_batch_size: parseInt(s.scan_db_batch_size) || DEFAULT_SCAN_SETTINGS.scan_db_batch_size,
             scan_symlink_policy: s.scan_symlink_policy || DEFAULT_SCAN_SETTINGS.scan_symlink_policy,
             scan_skip_vcs: s.scan_skip_vcs !== false,
             scan_skip_vendor: s.scan_skip_vendor !== false,
-            scan_skip_cache: s.scan_skip_cache !== false,
+            scan_skip_cache: s.scan_skip_cache !== undefined ? Boolean(s.scan_skip_cache) : false,
 
             scan_dry_run_mode: Boolean(s.scan_dry_run_mode),
             scan_profiling_enabled: Boolean(s.scan_profiling_enabled),
@@ -297,6 +303,35 @@ export const ScanOptionsModal: React.FC<ScanOptionsModalProps> = ({
         scan_db_batch_size: 1000,
       }));
     }
+  };
+
+  const handleToggleIgnoreCache = (enabled: boolean) => {
+    const rawPaths = settings.excluded_paths || '';
+    const currentLines = rawPaths
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean);
+
+    let nextLines: string[];
+
+    if (enabled) {
+      // Add all 22 cache/vendor exclusions that aren't already in the list
+      const set = new Set(currentLines);
+      const toAdd = CACHE_FOLDER_EXCLUSIONS.filter((item) => !set.has(item));
+      nextLines = [...currentLines, ...toAdd];
+    } else {
+      // Remove all 22 cache/vendor exclusions from the list
+      const cacheSet = new Set(CACHE_FOLDER_EXCLUSIONS);
+      nextLines = currentLines.filter((line) => !cacheSet.has(line));
+    }
+
+    setSettings({
+      ...settings,
+      scan_ignore_cache_folder: enabled,
+      scan_skip_cache: enabled,
+      excluded_paths: nextLines.join('\n'),
+    });
+    setActivePreset('custom');
   };
 
   const handleResetDefaults = () => {
@@ -841,6 +876,29 @@ export const ScanOptionsModal: React.FC<ScanOptionsModalProps> = ({
                     </small>
                   </div>
 
+                  {/* Toggle: Ignore Cache Folder */}
+                  <div className="webcare-scan-options-toggle-card">
+                    <div className="webcare-scan-options-toggle-info">
+                      <div className="webcare-scan-options-toggle-title">
+                        <span>Ignore Cache Folder</span>
+                        {settings.scan_ignore_cache_folder && (
+                          <span className="webcare-badge-pill webcare-badge-clean">Active (22 Rules Added)</span>
+                        )}
+                      </div>
+                      <p className="webcare-scan-options-toggle-desc">
+                        Automatically add known cache plugin folders (WP Rocket, LiteSpeed, W3TC, Breeze, SG Optimizer), package managers (node_modules, vendor), and backup archives to the exclusion list above.
+                      </p>
+                    </div>
+                    <label className="webcare-toggle-switch">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(settings.scan_ignore_cache_folder)}
+                        onChange={(e) => handleToggleIgnoreCache(e.target.checked)}
+                      />
+                      <span className="webcare-toggle-slider" />
+                    </label>
+                  </div>
+
                   {/* Database Table Exclusions */}
                   <div className="webcare-scan-options-field">
                     <label className="webcare-scan-options-label">
@@ -915,36 +973,6 @@ export const ScanOptionsModal: React.FC<ScanOptionsModalProps> = ({
                       <div className="webcare-scan-options-checkbox-text">
                         <strong>Fast-Skip VCS Repositories (<code>.git</code>, <code>.svn</code>, <code>.hg</code>)</strong>
                         <span>Bypasses deep inspection into internal git object trees to conserve scan time.</span>
-                      </div>
-                    </label>
-
-                    <label className="webcare-scan-options-checkbox-row">
-                      <input
-                        type="checkbox"
-                        checked={settings.scan_skip_vendor !== false}
-                        onChange={(e) => {
-                          setSettings({ ...settings, scan_skip_vendor: e.target.checked });
-                          setActivePreset('custom');
-                        }}
-                      />
-                      <div className="webcare-scan-options-checkbox-text">
-                        <strong>Skip Node.js &amp; Package Manager Dirs (<code>node_modules</code>, <code>bower_components</code>)</strong>
-                        <span>Automatically skips massive nested node_modules hierarchies from scanning.</span>
-                      </div>
-                    </label>
-
-                    <label className="webcare-scan-options-checkbox-row">
-                      <input
-                        type="checkbox"
-                        checked={settings.scan_skip_cache !== false}
-                        onChange={(e) => {
-                          setSettings({ ...settings, scan_skip_cache: e.target.checked });
-                          setActivePreset('custom');
-                        }}
-                      />
-                      <div className="webcare-scan-options-checkbox-text">
-                        <strong>Skip Static Page Builder &amp; Minification Caches</strong>
-                        <span>Bypasses regular ephemeral cache folders (e.g. <code>wp-content/cache/*</code>, <code>elementor/css/*</code>).</span>
                       </div>
                     </label>
                   </div>

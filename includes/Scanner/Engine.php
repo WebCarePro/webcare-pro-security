@@ -109,7 +109,7 @@ class Engine {
             $has_settings_manager = class_exists('\\WebCareProScanner\\System\\SettingsManager');
             $skip_vcs = $has_settings_manager ? (bool) \WebCareProScanner\System\SettingsManager::get('scan_skip_vcs', true) : true;
             $skip_vendor = $has_settings_manager ? (bool) \WebCareProScanner\System\SettingsManager::get('scan_skip_vendor', true) : true;
-            $skip_cache = $has_settings_manager ? (bool) \WebCareProScanner\System\SettingsManager::get('scan_skip_cache', true) : true;
+            $skip_cache = $has_settings_manager ? (bool) \WebCareProScanner\System\SettingsManager::get('scan_skip_cache', false) : false;
 
             // Skip heavy non-code and runtime directories
             $filter_iterator = new \RecursiveCallbackFilterIterator($dir_iterator, function ($current) use ($has_settings_manager, $skip_vcs, $skip_vendor, $skip_cache) {

@@ -60,7 +60,8 @@ class SettingsManager {
             'scan_symlink_policy'            => 'ignore', // 'ignore' | 'follow_intree' | 'follow_all'
             'scan_skip_vcs'                  => true, // Skip .git, .svn, .hg
             'scan_skip_vendor'               => true, // Skip node_modules, third-party vendor dirs
-            'scan_skip_cache'                => true, // Skip wp-content/cache, elementor/css, etc.
+            'scan_skip_cache'                => false, // Skip wp-content/cache, elementor/css, etc.
+            'scan_ignore_cache_folder'       => false, // Default off - toggleable in scan options
             'scan_db_batch_size'             => 500, // 100, 250, 500, 1000 rows
             'scan_excluded_tables'           => '', // Custom DB tables to skip
             'scan_profiling_enabled'         => false, // Benchmarking & millisecond per-engine profiling
@@ -70,7 +71,7 @@ class SettingsManager {
             'auto_quarantine_critical'       => false, // Safeguard off by default
 
             // 5. Exclusions & Ignore Rules
-            'excluded_paths'           => "wp-content/cache/*\nwp-content/litespeed/*\nwp-content/w3tc-cache/*\nwp-content/wfcache/*\nwp-content/et-cache/*\nwp-content/wpo-cache/*\nwp-content/breeze/*\nwp-content/wp-rocket/*\nwp-content/autoptimize/*\nwp-content/sg-cachepress/*\nwp-content/siteground-cache/*\nwp-content/hummingbird-assets/*\nwp-content/fast-velocity-minify/*\nwp-content/borlabs-cookie/*\nwp-content/wp-fastest-cache/*\nwp-content/supercache/*\nwp-content/comet-cache/*\nwp-content/upgrade/*\nwp-content/uploads/webcare-pro-security/*\nwp-content/uploads/updraft/*\nnode_modules/*\nvendor/*\n.git/*\n.svn/*\n.hg/*\n.vault/*\n.backups/*\n.logs/*\n*.log\n*.tar.gz\n*.zip",
+            'excluded_paths'           => ".git/*\n.svn/*\n.hg/*\n.vault/*\n.backups/*\n.logs/*\n*.log\n*.tar.gz\n*.zip",
             'custom_extensions'        => 'php, phtml, phps, inc, tpl',
 
             // 6. Developer & Admin Security Tweaks & HTTP Headers
@@ -729,7 +730,8 @@ class SettingsManager {
         $clean['scan_symlink_policy']      = in_array($merged['scan_symlink_policy'] ?? '', $valid_symlinks, true) ? $merged['scan_symlink_policy'] : 'ignore';
         $clean['scan_skip_vcs']            = isset($merged['scan_skip_vcs']) ? !empty($merged['scan_skip_vcs']) : true;
         $clean['scan_skip_vendor']         = isset($merged['scan_skip_vendor']) ? !empty($merged['scan_skip_vendor']) : true;
-        $clean['scan_skip_cache']          = isset($merged['scan_skip_cache']) ? !empty($merged['scan_skip_cache']) : true;
+        $clean['scan_skip_cache']          = !empty($merged['scan_skip_cache']);
+        $clean['scan_ignore_cache_folder'] = !empty($merged['scan_ignore_cache_folder']);
         $db_batch = intval($merged['scan_db_batch_size'] ?? 500);
         $clean['scan_db_batch_size']       = ($db_batch >= 50 && $db_batch <= 2000) ? $db_batch : 500;
         $clean['scan_excluded_tables']     = sanitize_textarea_field($merged['scan_excluded_tables'] ?? '');
