@@ -718,6 +718,7 @@ class TransactionalRemediation {
         if (false === @file_put_contents($corrupted_backup, $blob, LOCK_EX)) {
             return false;
         }
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod -- Restrict permissions on temporary backup blob
         @chmod($corrupted_backup, 0600);
 
         // 2. Attempt surgical restoration from vault baseline

@@ -287,7 +287,7 @@ class FormSpamProtectionEngine {
         if (!empty($settings['form_honeypot_enabled'])) {
             $hp_name = self::get_honeypot_field_name();
             if (isset($request_data[$hp_name]) && trim((string) $request_data[$hp_name]) !== '') {
-                $payload_sample = substr(trim((string) $request_data[$hp_name]), 0, 100);
+                $payload_sample = sanitize_text_field(substr(trim((string) $request_data[$hp_name]), 0, 100));
 
                 if ($is_whitelisted) {
                     // Record bypass in Form Spam stats

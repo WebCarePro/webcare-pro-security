@@ -228,8 +228,8 @@ class WafFileLogger {
 
         $payload = substr((string) ($rule['payload'] ?? $rule['match_value'] ?? ''), 0, 255);
 
-        // Sanitize sensitive credentials from payload
-        $payload = preg_replace('/(pwd|password|pass|secret|token)=([^&]+)/i', '$1=********', $payload);
+        // Sanitize sensitive credentials and tokens from payload
+        $payload = (string) preg_replace('/(pwd|password|pass|user_pass|new_pass|secret|token|access_token|refresh_token|auth|authorization|nonce|_wpnonce|cookie|api_key|apikey|app_password)(["\'\s:=]+)([^&"\'\s,;]+)/i', '$1$2********', $payload);
 
         $incident_record = [
             'id'               => 'webcare_' . substr(md5(uniqid((string) wp_rand(), true)), 0, 12),

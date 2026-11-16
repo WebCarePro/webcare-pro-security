@@ -211,7 +211,7 @@ class RemediationManager {
             }
         }
 
-        @unlink($temp_zip);
+        wp_delete_file($temp_zip);
         return $content;
     }
 

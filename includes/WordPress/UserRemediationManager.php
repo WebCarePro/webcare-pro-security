@@ -792,10 +792,10 @@ class UserRemediationManager {
 
         $target_user = get_userdata($target_user_id);
         if (!$target_user) {
-            /* translators: %d: user ID */
             return [
                 'success'    => false,
                 'error_code' => 'target_user_not_found',
+                /* translators: %d: user ID */
                 'error'      => sprintf(__('Target user ID #%d not found.', 'webcare-pro-security'), $target_user_id),
             ];
         }

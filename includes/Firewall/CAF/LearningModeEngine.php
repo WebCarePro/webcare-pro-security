@@ -28,6 +28,44 @@ class LearningModeEngine {
     public const MAX_OBSERVATIONS    = 250;
 
     /**
+     * Recursively redact sensitive keys and sanitize values from observation payloads.
+     *
+     * @param array $payload
+     * @return array
+     */
+    public static function redact_sensitive_payload(array $payload): array {
+        $sensitive_keys = [
+            'pwd', 'pass', 'password', 'user_pass', 'new_pass', 'secret',
+            'token', 'access_token', 'refresh_token', 'auth', 'authorization',
+            'cookie', 'cookie_sample', 'nonce', '_wpnonce', 'api_key', 'apikey',
+            'session_token', 'app_password', 'private_key',
+        ];
+
+        $sanitized = [];
+        foreach ($payload as $k => $v) {
+            $key_str = strtolower((string) $k);
+            $is_sensitive = false;
+            foreach ($sensitive_keys as $pattern) {
+                if ($key_str === $pattern || strpos($key_str, $pattern) !== false) {
+                    $is_sensitive = true;
+                    break;
+                }
+            }
+
+            if ($is_sensitive) {
+                $sanitized[$k] = '******** [REDACTED]';
+            } elseif (is_array($v)) {
+                $sanitized[$k] = self::redact_sensitive_payload($v);
+            } elseif (is_scalar($v)) {
+                $sanitized[$k] = sanitize_text_field(substr((string) $v, 0, 500));
+            } else {
+                $sanitized[$k] = '[OBJECT/RESOURCE]';
+            }
+        }
+        return $sanitized;
+    }
+
+    /**
      * Record a passive learning mode observation when a rule would have blocked a request.
      *
      * @param array $rule Rule metadata
@@ -51,6 +89,8 @@ class LearningModeEngine {
         // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Passive observation of request auth context
         $has_nonce = !empty($_SERVER['HTTP_X_WP_NONCE']) || !empty($_REQUEST['_wpnonce']);
 
+        $redacted_payload = self::redact_sensitive_payload($request_payload);
+
         $entry = [
             'id'             => $obs_id,
             'rule_id'        => $rule['id'] ?? 'WAF-GENERIC',
@@ -60,7 +100,7 @@ class LearningModeEngine {
             'method'         => $method,
             'uri'            => substr($request_uri, 0, 300),
             'clean_route'    => substr($clean_uri, 0, 150),
-            'payload_sample' => substr(wp_json_encode($request_payload), 0, 500),
+            'payload_sample' => substr((string) wp_json_encode($redacted_payload), 0, 500),
             'is_logged_in'   => $is_user_logged,
             'has_nonce'      => $has_nonce,
             'auth_context'   => $is_user_logged ? ($has_nonce ? 'authenticated_nonce' : 'authenticated_session') : 'anonymous_guest',

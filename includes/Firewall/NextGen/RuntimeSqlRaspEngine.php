@@ -273,14 +273,15 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
             return false;
         }
 
-        // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Read-only surface routing check inside RASP guard
-        $request_uri = (string) wp_unslash($_SERVER['REQUEST_URI'] ?? '');
+        $request_uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '';
         $request_path = (string) (wp_parse_url($request_uri, PHP_URL_PATH) ?? '');
         $path_candidates = [$request_path];
         foreach (['PATH_INFO', 'PHP_SELF'] as $server_path_key) {
-            // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Server routing metadata is only used to identify the request surface.
-            if (!empty($_SERVER[$server_path_key]) && is_string($_SERVER[$server_path_key])) {
-                $path_candidates[] = (string) wp_unslash($_SERVER[$server_path_key]);
+            if (isset($_SERVER[$server_path_key])) {
+                $server_val = sanitize_text_field(wp_unslash($_SERVER[$server_path_key]));
+                if ($server_val !== '') {
+                    $path_candidates[] = $server_val;
+                }
             }
         }
 

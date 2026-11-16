@@ -634,5 +634,23 @@ run_review_followup_test('TransactionalRemediation uses non-executable .wcpvault
     }
 });
 
+run_review_followup_test('LearningModeEngine redacts passwords, tokens, and secrets from observation payload', static function () use ($plugin_root): bool {
+    require_once $plugin_root . '/includes/Firewall/CAF/LearningModeEngine.php';
+    $raw_input = [
+        'user'     => 'admin',
+        'password' => 'SuperSecret123!',
+        'api_key'  => 'sk-proj-xyz987',
+        'nested'   => [
+            'access_token' => 'Bearer token_abc',
+            'normal_param' => 'hello',
+        ],
+    ];
+    $redacted = \WebCareProScanner\Firewall\CAF\LearningModeEngine::redact_sensitive_payload($raw_input);
+    return strpos($redacted['password'], 'REDACTED') !== false
+        && strpos($redacted['api_key'], 'REDACTED') !== false
+        && strpos($redacted['nested']['access_token'], 'REDACTED') !== false
+        && $redacted['nested']['normal_param'] === 'hello';
+});
+
 echo sprintf("RESULTS: %d passed, %d failed, %d skipped\n", $passed, $failed, $skipped);
 exit($failed === 0 ? 0 : 1);
