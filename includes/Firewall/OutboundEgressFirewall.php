@@ -1158,8 +1158,10 @@ class OutboundEgressFirewall {
 
         if (class_exists('\\WebCareProScanner\\Firewall\\WafFileLogger')) {
             WafFileLogger::log_incident([
+                'id'          => 'WAF-EGRESS-' . strtoupper($threat),
+                'rule_id'     => 'WAF-EGRESS-' . strtoupper($threat),
+                'name'        => 'Outbound Egress Threat Block',
                 'category'    => 'egress_firewall_intercept',
-                'rule_id'     => 'webcare_egress_' . $threat,
                 'description' => sprintf('Outbound request by %s (%s) intercepted: %s', $caller['name'], $caller['file'], $reason),
                 'payload'     => $url,
             ], ($action === 'blocked') ? 'blocked' : 'detected');

@@ -284,6 +284,26 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
             return false;
         }
 
+        // Loopback interfaces and host server outbound IP addresses are trusted internal surfaces, never guest visitors
+        $client_ip = class_exists(FirewallEngine::class) ? FirewallEngine::get_client_ip() : (isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '');
+        if ($client_ip !== '') {
+            if (in_array($client_ip, ['127.0.0.1', '::1'], true)) {
+                return false;
+            }
+            if (class_exists(FirewallEngine::class)) {
+                if (FirewallEngine::is_server_origin_or_loopback($client_ip) || FirewallEngine::is_ip_whitelisted($client_ip)) {
+                    return false;
+                }
+            }
+        }
+
+        // Legitimate background security scanners (Wordfence, Solid Security, Sucuri, iThemes)
+        // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+        $action = isset($_REQUEST['action']) && is_string($_REQUEST['action']) ? sanitize_key($_REQUEST['action']) : '';
+        if ($action !== '' && (strpos($action, 'wordfence_') === 0 || strpos($action, 'wf_') === 0 || $action === 'wordfence_doscan')) {
+            return false;
+        }
+
         // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Raw URI routing path requires multi-pass decoding without percent octet distortion
         $raw_request_uri = isset($_SERVER['REQUEST_URI']) ? (string) wp_unslash($_SERVER['REQUEST_URI']) : '';
         $request_uri = str_replace(["\0", "\r", "\n"], '', $raw_request_uri);
@@ -388,6 +408,9 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
 
         // 2. INFORMATION_SCHEMA metadata probing or time/file SQLi primitives in unquoted SQL skeleton
         if (preg_match('/\bINFORMATION_SCHEMA\.(?:TABLES|COLUMNS|SCHEMATA|USER_PRIVILEGES)\b/i', $skeleton)) {
+            if (self::is_legitimate_security_or_core_caller()) {
+                return null;
+            }
             return 'INFORMATION_SCHEMA_PROBE';
         }
         if (preg_match('/\b(?:SLEEP|BENCHMARK)\s*\(/i', $skeleton)) {
@@ -415,6 +438,32 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
         }
 
         return null;
+    }
+
+    /**
+     * Check if current SQL query originates from a verified security scanner (Wordfence, Solid Security, Sucuri, etc.) or Core admin.
+     *
+     * @return bool
+     */
+    public static function is_legitimate_security_or_core_caller(): bool {
+        // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_debug_backtrace -- Provenance validation for RASP
+        $frames = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 25);
+        foreach ($frames as $frame) {
+            $file = isset($frame['file']) ? wp_normalize_path((string) $frame['file']) : '';
+            if ($file === '') {
+                continue;
+            }
+            if (
+                strpos($file, '/plugins/wordfence/') !== false
+                || strpos($file, '/plugins/better-wp-security/') !== false
+                || strpos($file, '/plugins/sucuri-scanner/') !== false
+                || strpos($file, '/plugins/all-in-one-wp-security-and-firewall/') !== false
+                || strpos($file, '/wp-admin/') !== false
+            ) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

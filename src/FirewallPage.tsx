@@ -188,6 +188,9 @@ interface FirewallStatus {
   commerce_telemetry?: {
     is_active: boolean;
     detected_names?: string[];
+    has_detected_plugins?: boolean;
+    has_woocommerce?: boolean;
+    is_manually_enabled?: boolean;
   };
   forms_telemetry?: {
     is_active: boolean;
@@ -3184,10 +3187,14 @@ export const FirewallPage = ({
                             <strong style={{ fontSize: '13px', color: 'var(--webcare-text-primary, #0f172a)' }}>
                               E-Commerce, Membership &amp; Payment Webhook Shield
                             </strong>
-                            {status?.commerce_telemetry?.is_active ? (
+                            {status?.commerce_telemetry?.has_detected_plugins ? (
                               <span className="webcare-smart-shield-pill-detected-emerald">
-                                Detected: {status?.commerce_telemetry?.detected_names?.slice(0, 3).join(', ') || 'Active Store/Membership'}
+                                Detected: {status?.commerce_telemetry?.detected_names?.slice(0, 3).join(', ')}
                                 {(status?.commerce_telemetry?.detected_names?.length || 0) > 3 ? ` +${(status?.commerce_telemetry?.detected_names?.length || 0) - 3} more` : ''}
+                              </span>
+                            ) : wafSettings.waf_ecommerce_safe_mode ? (
+                              <span className="webcare-smart-shield-pill-empty" style={{ color: '#0284c7', background: 'rgba(2, 132, 199, 0.08)', borderColor: 'rgba(2, 132, 199, 0.25)' }}>
+                                Shield Active (Manual Override)
                               </span>
                             ) : (
                               <span className="webcare-smart-shield-pill-empty">
@@ -3214,7 +3221,7 @@ export const FirewallPage = ({
                     </div>
 
                     {/* Recommendation Notice: Store detected but shield is currently OFF */}
-                    {status?.commerce_telemetry?.is_active && !wafSettings.waf_ecommerce_safe_mode && (
+                    {Boolean(status?.commerce_telemetry?.has_detected_plugins && !wafSettings.waf_ecommerce_safe_mode) && (
                       <div className="webcare-smart-shield-rec-banner-emerald">
                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                           <Sparkles size={13} style={{ color: '#059669', flexShrink: 0 }} />
@@ -3236,8 +3243,8 @@ export const FirewallPage = ({
                       </div>
                     )}
 
-                    {/* Nested WooCommerce Security Modules Hub (Revealed when WooCommerce / Store is active or E-Commerce Safe Mode is enabled) */}
-                    {Boolean(status?.commerce_telemetry?.is_active || wafSettings.waf_ecommerce_safe_mode) && (
+                    {/* Nested WooCommerce Security Modules Hub (Revealed when WooCommerce is physically installed & active) */}
+                    {Boolean(status?.commerce_telemetry?.has_woocommerce) && (
                       <div style={{
                         marginTop: '6px',
                         padding: '12px 14px',

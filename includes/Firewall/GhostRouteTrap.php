@@ -216,8 +216,10 @@ class GhostRouteTrap {
         // 2. Forensic Incident Logging
         if (class_exists('\\WebCareProScanner\\Firewall\\WafFileLogger')) {
             WafFileLogger::log_incident([
-                'category'    => 'ghost_route_trap',
-                'rule_id'     => 'webcare_canary_ai_trap',
+                'id'          => 'WAF-GHOST-CANARY-TRAP',
+                'rule_id'     => 'WAF-GHOST-CANARY-TRAP',
+                'name'        => 'Ghost Route Canary Honeypot Trap',
+                'category'    => 'AI Defense & Canary Traps',
                 'description' => sprintf('Autonomous reconnaissance or AI scraper probed canary honeypot: %s (%s)', $trigger_type, $target_surface),
                 'payload'     => $target_surface,
             ], !empty($settings['block_client_ip']) ? 'blocked' : 'detected');

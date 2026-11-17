@@ -2242,13 +2242,7 @@ class FirewallEngine {
             return true;
         }
 
-        // 2. Explicit E-Commerce Safe Mode Setting
-        $settings = get_option('webcareproscan_settings', []);
-        if (!empty($settings['waf_ecommerce_safe_mode'])) {
-            return true;
-        }
-
-        // 3. E-Commerce Suites
+        // 2. Physical E-Commerce Suites (Decoupled from manual setting override)
         $has_ecommerce = class_exists('WooCommerce')
             || class_exists('Easy_Digital_Downloads')
             || class_exists('\\SureCart\\SureCart') || defined('SURECART_PLUGIN_FILE') // SureCart
@@ -3002,9 +2996,8 @@ class FirewallEngine {
                 : null,
             'server_telemetry'   => self::get_server_telemetry(),
             'available_roles'    => self::get_available_roles(),
-            'commerce_telemetry' => [
-                'is_active' => self::is_commerce_active(),
-                'detected_names' => array_values(array_filter([
+            'commerce_telemetry' => (function () use ($settings) {
+                $detected_commerce = array_values(array_filter([
                     // Archetype Profile
                     in_array(get_option('webcareproscan_site_archetype'), ['ecommerce', 'membership'], true) ? 'Configured ' . ucfirst((string) get_option('webcareproscan_site_archetype')) . ' Archetype' : null,
                     // E-Commerce
@@ -3047,8 +3040,16 @@ class FirewallEngine {
                     class_exists('wpmembers') ? 'WP-Members' : null,
                     (class_exists('BuddyBoss_Platform') || defined('BP_PLATFORM_VERSION')) ? 'BuddyBoss Platform' : null,
                     (class_exists('Youzify') || defined('YOUZIFY_VERSION')) ? 'Youzify' : null,
-                ])),
-            ],
+                ]));
+                $has_detected = count($detected_commerce) > 0;
+                return [
+                    'is_active'            => self::is_commerce_active(),
+                    'has_detected_plugins' => $has_detected,
+                    'detected_names'       => $detected_commerce,
+                    'has_woocommerce'      => class_exists('WooCommerce'),
+                    'is_manually_enabled'  => !empty($settings['waf_ecommerce_safe_mode']) && !$has_detected,
+                ];
+            })(),
             'forms_telemetry'    => [
                 'is_active' => (
                     defined('WPCF7_VERSION') || class_exists('WPCF7') ||
