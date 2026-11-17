@@ -293,6 +293,10 @@ class SessionSentinel {
 
         $ip = FirewallEngine::get_client_ip();
         $ua = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : 'Unknown';
+        // phpcs:ignore WordPress.Security.NonceVerification.Missing
+        $screen_raw = isset($_POST['webcareproscan_screen_res']) ? sanitize_text_field(wp_unslash($_POST['webcareproscan_screen_res'])) : '';
+        // phpcs:ignore WordPress.Security.NonceVerification.Missing
+        $tz_raw = isset($_POST['webcareproscan_client_tz']) ? sanitize_text_field(wp_unslash($_POST['webcareproscan_client_tz'])) : '';
 
         // Dual-Device Concurrency Control: Allow at most 2 devices (strictly 1 Desktop + 1 Mobile)
         if (!empty($settings['session_block_concurrent']) && $user->has_cap('administrator')) {
@@ -302,8 +306,6 @@ class SessionSentinel {
                 $sessions_meta = self::get_stored_session_meta($user->ID);
 
                 // Determine current incoming device category ('mobile' vs 'desktop')
-                // phpcs:ignore WordPress.Security.NonceVerification.Missing
-                $screen_raw = isset($_POST['webcareproscan_screen_res']) ? sanitize_text_field(wp_unslash($_POST['webcareproscan_screen_res'])) : '';
                 $current_parsed = \WebCareProScanner\Auth\LoginHistoryManager::parse_device_details($ua, $screen_raw);
                 $current_cat = in_array($current_parsed['device_type'], ['Mobile', 'Tablet'], true) ? 'mobile' : 'desktop';
 
@@ -404,43 +406,154 @@ class SessionSentinel {
         if ($session_token) {
             $now = time();
             $verifier = hash('sha256', $session_token);
-            $initial_history = [
-                [
+
+            // 1. Resolve Device UUID and Hardware Fingerprint
+            $device_uuid = class_exists('\\WebCareProScanner\\Auth\\LoginHistoryManager')
+                ? \WebCareProScanner\Auth\LoginHistoryManager::get_or_create_device_uuid()
+                : (isset($_COOKIE['webcareproscan_device_uuid']) ? sanitize_text_field(wp_unslash($_COOKIE['webcareproscan_device_uuid'])) : wp_generate_password(32, false, false));
+
+            $device_fp = class_exists('\\WebCareProScanner\\Auth\\LoginHistoryManager')
+                ? \WebCareProScanner\Auth\LoginHistoryManager::get_device_fingerprint($ua, $screen_raw, $tz_raw)
+                : hash('sha256', $ua);
+
+            // 2. Search for existing registered device record for this user to avoid duplicate device cards
+            $matched_entry = null;
+            $keys_to_clean = [];
+
+            foreach ($sessions_meta as $s_key => $s_entry) {
+                if (!is_array($s_entry)) {
+                    continue;
+                }
+
+                $s_uuid = $s_entry['device_uuid'] ?? '';
+                $s_fp   = $s_entry['device_fingerprint'] ?? '';
+                $s_ua   = $s_entry['user_agent'] ?? '';
+                $s_ip   = $s_entry['login_ip'] ?? '';
+
+                if (!empty($s_entry['encrypted_meta']) && class_exists('\\WebCareProScanner\\Security\\SecretVault')) {
+                    $dec = \WebCareProScanner\Security\SecretVault::decrypt((string) $s_entry['encrypted_meta']);
+                    $dec_data = is_string($dec) ? (json_decode($dec, true) ?: []) : [];
+                    $s_uuid = $s_uuid ?: ($dec_data['device_uuid'] ?? '');
+                    $s_fp   = $s_fp ?: ($dec_data['device_fingerprint'] ?? '');
+                    $s_ua   = $s_ua ?: ($dec_data['user_agent'] ?? '');
+                    $s_ip   = $s_ip ?: ($dec_data['login_ip'] ?? '');
+                }
+
+                $is_match = false;
+                // Match criteria 1: Persistent device UUID matches
+                if (!empty($s_uuid) && !empty($device_uuid) && $s_uuid === $device_uuid) {
+                    $is_match = true;
+                }
+                // Match criteria 2: Hardware fingerprint matches
+                elseif (!empty($s_fp) && !empty($device_fp) && $s_fp === $device_fp) {
+                    $is_match = true;
+                }
+                // Match criteria 3: Matching browser, platform, and IP (for legacy sessions created before UUID tracking)
+                elseif (!empty($s_ua) && substr(sanitize_text_field($ua), 0, 255) === $s_ua && !empty($s_ip) && $s_ip === $ip) {
+                    $is_match = true;
+                }
+
+                if ($is_match) {
+                    $keys_to_clean[] = $s_key;
+                    if (!$matched_entry) {
+                        $matched_entry = $s_entry;
+                    }
+                }
+            }
+
+            // Remove previous session keys for this same device to prevent duplicate ghost rows
+            foreach ($keys_to_clean as $old_key) {
+                if ($old_key !== $session_token && $old_key !== $verifier) {
+                    unset($sessions_meta[$old_key]);
+                }
+            }
+
+            // 3. Build continuous IP history & audit telemetry
+            $existing_history = [];
+            $existing_events = [];
+            $device_first_seen = $now;
+            $total_logins = 1;
+
+            if ($matched_entry) {
+                $device_first_seen = (int) ($matched_entry['device_first_seen'] ?? ($matched_entry['login_time'] ?? $now));
+                $total_logins      = (int) ($matched_entry['total_logins'] ?? 1) + 1;
+
+                if (!empty($matched_entry['ip_history']) && is_array($matched_entry['ip_history'])) {
+                    $existing_history = $matched_entry['ip_history'];
+                }
+                if (!empty($matched_entry['ip_events']) && is_array($matched_entry['ip_events'])) {
+                    $existing_events = $matched_entry['ip_events'];
+                }
+            }
+
+            // Append or update current IP in history
+            $found_ip = false;
+            foreach ($existing_history as &$hist_item) {
+                if (($hist_item['ip'] ?? '') === $ip) {
+                    $hist_item['last_seen'] = $now;
+                    $hist_item['count'] = (int) ($hist_item['count'] ?? 1) + 1;
+                    $hist_item['is_current'] = true;
+                    $found_ip = true;
+                } else {
+                    $hist_item['is_current'] = false;
+                }
+            }
+            unset($hist_item);
+
+            if (!$found_ip) {
+                $existing_history[] = [
                     'ip'         => $ip,
                     'first_seen' => $now,
                     'last_seen'  => $now,
                     'count'      => 1,
                     'is_login'   => true,
-                ],
+                    'is_current' => true,
+                ];
+            }
+
+            // Append login event to events array (keep up to 50 most recent events)
+            $existing_events[] = [
+                'ip'   => $ip,
+                'time' => $now,
+                'type' => 'login',
+                'ua'   => substr(sanitize_text_field($ua), 0, 255),
             ];
-            $initial_events = [
-                [
-                    'ip'   => $ip,
-                    'time' => $now,
-                    'type' => 'login',
-                    'ua'   => substr(sanitize_text_field($ua), 0, 255),
-                ],
-            ];
+            if (count($existing_events) > 50) {
+                $existing_events = array_slice($existing_events, -50);
+            }
+
             $entry = [
-                'login_time'     => $now,
-                'last_seen'      => $now,
-                'login_ip'       => $ip,
-                'current_ip'     => $ip,
-                'ip_history'     => $initial_history,
-                'ip_events'      => $initial_events,
-                'auth_type'      => $auth_type,
-                'auth_label'     => $auth_label,
-                'auth_details'   => $auth_details,
-                'encrypted_meta' => \WebCareProScanner\Security\SecretVault::encrypt((string) wp_json_encode([
-                    'login_ip'     => $ip,
-                    'current_ip'   => $ip,
-                    'ip_history'   => $initial_history,
-                    'ip_events'    => $initial_events,
-                    'user_agent'   => substr(sanitize_text_field($ua), 0, 255),
-                    'auth_type'    => $auth_type,
-                    'auth_label'   => $auth_label,
-                    'auth_details' => $auth_details,
-                ])),
+                'device_uuid'        => $device_uuid,
+                'device_fingerprint' => $device_fp,
+                'device_first_seen'  => $device_first_seen,
+                'total_logins'       => $total_logins,
+                'login_time'         => $now,
+                'last_seen'          => $now,
+                'login_ip'           => $ip,
+                'current_ip'         => $ip,
+                'status'             => 'active',
+                'is_revoked'         => false,
+                'revoked_at'         => null,
+                'revocation_reason'  => null,
+                'ip_history'         => $existing_history,
+                'ip_events'          => $existing_events,
+                'auth_type'          => $auth_type,
+                'auth_label'         => $auth_label,
+                'auth_details'       => $auth_details,
+                'encrypted_meta'     => class_exists('\\WebCareProScanner\\Security\\SecretVault') ? \WebCareProScanner\Security\SecretVault::encrypt((string) wp_json_encode([
+                    'device_uuid'        => $device_uuid,
+                    'device_fingerprint' => $device_fp,
+                    'device_first_seen'  => $device_first_seen,
+                    'total_logins'       => $total_logins,
+                    'login_ip'           => $ip,
+                    'current_ip'         => $ip,
+                    'ip_history'         => $existing_history,
+                    'ip_events'          => $existing_events,
+                    'user_agent'         => substr(sanitize_text_field($ua), 0, 255),
+                    'auth_type'          => $auth_type,
+                    'auth_label'         => $auth_label,
+                    'auth_details'       => $auth_details,
+                ])) : '',
             ];
 
             // Store metadata under both raw token and verifier so lookups by either succeed
@@ -1137,6 +1250,33 @@ class SessionSentinel {
     }
 
     /**
+     * Merge multiple IP history arrays into a unified, deduplicated list
+     */
+    public static function merge_ip_histories(array $hist1, array $hist2): array {
+        $by_ip = [];
+        foreach (array_merge($hist1, $hist2) as $item) {
+            $ip = sanitize_text_field($item['ip'] ?? '');
+            if (empty($ip)) {
+                continue;
+            }
+            if (!isset($by_ip[$ip])) {
+                $by_ip[$ip] = $item;
+            } else {
+                $by_ip[$ip]['first_seen'] = min((int)($by_ip[$ip]['first_seen'] ?? time()), (int)($item['first_seen'] ?? time()));
+                $by_ip[$ip]['last_seen']  = max((int)($by_ip[$ip]['last_seen'] ?? time()), (int)($item['last_seen'] ?? time()));
+                $by_ip[$ip]['count']      = ((int)($by_ip[$ip]['count'] ?? 1)) + ((int)($item['count'] ?? 1));
+                if (!empty($item['is_login'])) {
+                    $by_ip[$ip]['is_login'] = true;
+                }
+                if (!empty($item['is_current'])) {
+                    $by_ip[$ip]['is_current'] = true;
+                }
+            }
+        }
+        return array_values($by_ip);
+    }
+
+    /**
      * Retrieve all active sessions across administrator accounts
      */
     public static function get_active_sessions(): array {
@@ -1204,19 +1344,152 @@ class SessionSentinel {
                 }
             }
 
+            // 3. Consolidate sessions by persistent Device Identity (eliminate duplicate ghost device rows)
+            $consolidated_devices = [];
+            $meta_healed = false;
+
+            // Pre-index known device UUIDs by hardware/browser signature to associate legacy sessions
+            $fp_to_uuid = [];
+            foreach ($unified_sessions as $verifier => $u_sess) {
+                $meta = $u_sess['meta'] ?: [];
+                $wp_d = $u_sess['wp_data'];
+                $dec = [];
+                if (!empty($meta['encrypted_meta']) && class_exists('\\WebCareProScanner\\Security\\SecretVault')) {
+                    $dec_raw = \WebCareProScanner\Security\SecretVault::decrypt((string) $meta['encrypted_meta']);
+                    $dec = is_string($dec_raw) ? (json_decode($dec_raw, true) ?: []) : [];
+                }
+                $u = $meta['device_uuid'] ?? ($dec['device_uuid'] ?? '');
+                if (!empty($u)) {
+                    $ua = $dec['user_agent'] ?? ($meta['user_agent'] ?? ($wp_d['ua'] ?? ''));
+                    $ip = $dec['login_ip'] ?? ($meta['login_ip'] ?? ($wp_d['ip'] ?? ''));
+                    $b_info = self::parse_user_agent($ua);
+                    $fp = hash('sha256', ($b_info['browser'] ?? '') . '|' . ($b_info['platform'] ?? '') . '|' . ($b_info['device_type'] ?? '') . '|' . $ip);
+                    $fp_to_uuid[$fp] = $u;
+                }
+            }
+
             foreach ($unified_sessions as $verifier => $u_sess) {
                 $data = $u_sess['wp_data'];
-                $meta = $u_sess['meta'];
+                $meta = $u_sess['meta'] ?: [];
 
-                // Determine if this is the current active session
-                $is_current = false;
+                // Decrypt metadata if available
+                $decoded = [];
+                if (!empty($meta['encrypted_meta']) && class_exists('\\WebCareProScanner\\Security\\SecretVault')) {
+                    $decrypted_meta = \WebCareProScanner\Security\SecretVault::decrypt((string) $meta['encrypted_meta']);
+                    $decoded = is_string($decrypted_meta) ? (json_decode($decrypted_meta, true) ?: []) : [];
+                }
+
+                $d_uuid = $meta['device_uuid'] ?? ($decoded['device_uuid'] ?? '');
+                $d_ua   = $decoded['user_agent'] ?? ($meta['user_agent'] ?? ($data['ua'] ?? 'Unknown'));
+                $d_ip   = $decoded['login_ip'] ?? ($meta['login_ip'] ?? ($data['ip'] ?? 'Unknown'));
+
+                $b_info = self::parse_user_agent($d_ua);
+                $fp = hash('sha256', ($b_info['browser'] ?? '') . '|' . ($b_info['platform'] ?? '') . '|' . ($b_info['device_type'] ?? '') . '|' . $d_ip);
+
+                if (empty($d_uuid) && isset($fp_to_uuid[$fp])) {
+                    $d_uuid = $fp_to_uuid[$fp];
+                }
+
+                // Determine device grouping key
+                if (!empty($d_uuid)) {
+                    $device_group_key = 'uuid_' . $d_uuid;
+                } else {
+                    $device_group_key = 'fp_' . $fp;
+                }
+
+                // Check if this specific verifier is current active session
+                $is_current_verifier = false;
                 if ($admin->ID === $current_user_id) {
                     if (!empty($current_verifier) && $verifier === $current_verifier) {
-                        $is_current = true;
+                        $is_current_verifier = true;
                     } elseif (!empty($current_token) && ($verifier === $current_token || hash('sha256', $current_token) === $verifier)) {
-                        $is_current = true;
+                        $is_current_verifier = true;
                     }
                 }
+
+                if (!isset($consolidated_devices[$device_group_key])) {
+                    $consolidated_devices[$device_group_key] = [
+                        'canonical_verifier' => $verifier,
+                        'wp_data'            => $data,
+                        'meta'               => $meta,
+                        'decoded'            => $decoded,
+                        'd_uuid'             => $d_uuid,
+                        'is_current'         => $is_current_verifier,
+                        'all_verifiers'      => [$verifier],
+                    ];
+                } else {
+                    // Duplicate session for this same physical device found!
+                    $meta_healed = true;
+                    $existing = &$consolidated_devices[$device_group_key];
+                    $existing['all_verifiers'][] = $verifier;
+
+                    if (!empty($d_uuid) && empty($existing['d_uuid'])) {
+                        $existing['d_uuid'] = $d_uuid;
+                    }
+
+                    // If this verifier is current or active in WP core, promote it as canonical
+                    if ($is_current_verifier || (!empty($data) && empty($existing['wp_data']))) {
+                        $existing['canonical_verifier'] = $verifier;
+                        $existing['wp_data']            = $data;
+                        if ($is_current_verifier) {
+                            $existing['is_current'] = true;
+                        }
+                    }
+
+                    // Merge IP histories
+                    $e_hist = $existing['meta']['ip_history'] ?? ($existing['decoded']['ip_history'] ?? []);
+                    $n_hist = $meta['ip_history'] ?? ($decoded['ip_history'] ?? []);
+                    $merged_hist = self::merge_ip_histories($e_hist, $n_hist);
+                    $existing['meta']['ip_history'] = $merged_hist;
+
+                    // Merge IP events
+                    $e_events = $existing['meta']['ip_events'] ?? ($existing['decoded']['ip_events'] ?? []);
+                    $n_events = $meta['ip_events'] ?? ($decoded['ip_events'] ?? []);
+                    if (is_array($n_events) && !empty($n_events)) {
+                        $existing['meta']['ip_events'] = array_slice(array_merge($e_events, $n_events), -50);
+                    }
+
+                    // Carry forward timestamps
+                    $existing['meta']['login_time'] = max((int)($existing['meta']['login_time'] ?? 0), (int)($meta['login_time'] ?? 0));
+                    $existing['meta']['last_seen']  = max((int)($existing['meta']['last_seen'] ?? 0), (int)($meta['last_seen'] ?? 0));
+
+                    // If one session is active, the consolidated device is active
+                    if ($existing['is_current'] || !empty($existing['wp_data'])) {
+                        $existing['meta']['status'] = 'active';
+                        $existing['meta']['is_revoked'] = false;
+                    }
+
+                    unset($existing);
+                }
+            }
+
+            // Heal $sessions_meta in user meta and vault by unsetting stale duplicate verifiers
+            if ($meta_healed && !empty($sessions_meta)) {
+                $canonical_keys = [];
+                foreach ($consolidated_devices as $c_dev) {
+                    $canonical_keys[$c_dev['canonical_verifier']] = true;
+                }
+                $modified_meta = false;
+                foreach ($consolidated_devices as $c_dev) {
+                    foreach ($c_dev['all_verifiers'] as $v) {
+                        if (!isset($canonical_keys[$v]) && isset($sessions_meta[$v])) {
+                            unset($sessions_meta[$v]);
+                            $modified_meta = true;
+                        }
+                    }
+                }
+                if ($modified_meta) {
+                    self::save_stored_session_meta($admin->ID, $sessions_meta);
+                }
+            }
+
+            foreach ($consolidated_devices as $device_group_key => $c_dev) {
+                $verifier   = $c_dev['canonical_verifier'];
+                $data       = $c_dev['wp_data'];
+                $meta       = $c_dev['meta'];
+                $decoded    = $c_dev['decoded'];
+                $d_uuid     = $c_dev['d_uuid'];
+                $is_current = $c_dev['is_current'];
 
                 $is_logged_out = (!empty($meta['is_revoked']) || ($meta['status'] ?? '') === 'logged_out' || empty($data) || (isset($data['expiration']) && (int) $data['expiration'] <= $now));
                 if ($is_current) {
@@ -1234,8 +1507,10 @@ class SessionSentinel {
                 $support_link_meta = null;
 
                 if (!empty($meta['encrypted_meta'])) {
-                    $decrypted_meta = \WebCareProScanner\Security\SecretVault::decrypt((string) $meta['encrypted_meta']);
-                    $decoded = is_string($decrypted_meta) ? (json_decode($decrypted_meta, true) ?: []) : [];
+                    if (empty($decoded) && class_exists('\\WebCareProScanner\\Security\\SecretVault')) {
+                        $decrypted_meta = \WebCareProScanner\Security\SecretVault::decrypt((string) $meta['encrypted_meta']);
+                        $decoded = is_string($decrypted_meta) ? (json_decode($decrypted_meta, true) ?: []) : [];
+                    }
                     $ip = $decoded['login_ip'] ?? ($data['ip'] ?? 'Unknown');
                     $ua = $decoded['user_agent'] ?? ($data['ua'] ?? 'Unknown');
                     if (empty($auth_type) && !empty($decoded['auth_type'])) {
@@ -1495,6 +1770,8 @@ class SessionSentinel {
                     'browser'                  => $browser_info['browser'],
                     'platform'                 => $browser_info['platform'],
                     'device_type'              => $browser_info['device_type'],
+                    'device_uuid'              => $d_uuid,
+                    'total_logins'             => (int) ($meta['total_logins'] ?? ($decoded['total_logins'] ?? 1)),
                     'user_agent'               => $ua,
                     'auth_type'                => $auth_type,
                     'auth_label'               => $auth_label,

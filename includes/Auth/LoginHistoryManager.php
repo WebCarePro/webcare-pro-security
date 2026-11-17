@@ -19,6 +19,7 @@ if (!defined('ABSPATH')) {
 class LoginHistoryManager {
 
     const TABLE_NAME = 'webcareproscan_login_history';
+    const COOKIE_DEVICE_UUID = 'webcareproscan_device_uuid';
 
     private static $last_auth_token = '';
 
@@ -26,6 +27,10 @@ class LoginHistoryManager {
      * Bootstrap Login History tracking hooks
      */
     public static function init() {
+        // Ensure persistent device identification cookie is present
+        add_action('init', [__CLASS__, 'ensure_device_cookie'], 1);
+        add_action('login_init', [__CLASS__, 'ensure_device_cookie'], 1);
+
         // Capture generated session token during auth cookie issuance
         add_action('set_auth_cookie', [__CLASS__, 'on_set_auth_cookie'], 10, 6);
 
@@ -41,6 +46,90 @@ class LoginHistoryManager {
     }
 
     /**
+     * Ensure persistent device identification cookie is initialized early
+     */
+    public static function ensure_device_cookie() {
+        self::get_or_create_device_uuid();
+    }
+
+    /**
+     * Retrieve or generate the persistent device identifier UUID
+     *
+     * @return string 32-character hexadecimal device UUID
+     */
+    public static function get_or_create_device_uuid(): string {
+        $cookie_name = self::COOKIE_DEVICE_UUID;
+        $device_uuid = '';
+
+        // 1. From persistent cookie
+        if (!empty($_COOKIE[$cookie_name])) {
+            $raw_cookie = sanitize_text_field(wp_unslash($_COOKIE[$cookie_name]));
+            if (preg_match('/^[a-zA-Z0-9_-]{16,64}$/', $raw_cookie)) {
+                $device_uuid = $raw_cookie;
+            }
+        }
+
+        // 2. From POST hidden field during form submission
+        if (empty($device_uuid) && !empty($_POST[$cookie_name])) {
+            // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Device telemetry input on login
+            $raw_post = sanitize_text_field(wp_unslash($_POST[$cookie_name]));
+            if (preg_match('/^[a-zA-Z0-9_-]{16,64}$/', $raw_post)) {
+                $device_uuid = $raw_post;
+            }
+        }
+
+        // 3. Fallback: Generate fresh cryptographically secure UUID
+        if (empty($device_uuid)) {
+            $device_uuid = wp_generate_password(32, false, false);
+        }
+
+        // 4. Set persistent cookie if not already set or headers not sent
+        self::set_device_cookie($device_uuid);
+
+        return $device_uuid;
+    }
+
+    /**
+     * Set long-lived persistent device cookie
+     */
+    public static function set_device_cookie(string $device_uuid): void {
+        if (empty($device_uuid) || headers_sent()) {
+            return;
+        }
+
+        $cookie_name = self::COOKIE_DEVICE_UUID;
+        if (isset($_COOKIE[$cookie_name]) && $_COOKIE[$cookie_name] === $device_uuid) {
+            return;
+        }
+
+        $expire = time() + (YEAR_IN_SECONDS * 2); // 2 years
+        $cookie_path = defined('COOKIEPATH') ? COOKIEPATH : '/';
+        $cookie_domain = defined('COOKIE_DOMAIN') ? COOKIE_DOMAIN : '';
+        $secure = is_ssl();
+
+        @setcookie($cookie_name, $device_uuid, [
+            'expires'  => $expire,
+            'path'     => $cookie_path,
+            'domain'   => $cookie_domain,
+            'secure'   => $secure,
+            'httponly' => false, // false allows client-side localStorage sync
+            'samesite' => 'Lax',
+        ]);
+        $_COOKIE[$cookie_name] = $device_uuid;
+    }
+
+    /**
+     * Calculate deterministic hardware and client environment fingerprint
+     */
+    public static function get_device_fingerprint(string $ua, string $screen = '', string $tz = ''): string {
+        $parsed = self::parse_device_details($ua, $screen);
+        $browser = $parsed['browser'] ?? 'Unknown';
+        $platform = $parsed['platform'] ?? 'Unknown';
+        $device_type = $parsed['device_type'] ?? 'Desktop';
+        return hash('sha256', $browser . '|' . $platform . '|' . $device_type . '|' . $tz);
+    }
+
+    /**
      * Cache the freshly minted session token from WordPress core's set_auth_cookie hook
      */
     public static function on_set_auth_cookie($auth_cookie, $expire, $expiration, $user_id, $scheme, $token) {
@@ -48,20 +137,21 @@ class LoginHistoryManager {
     }
 
     /**
-     * Inject screen size detector hidden inputs into login form
+     * Inject screen size detector and device UUID hidden inputs into login form
      */
     public static function render_login_screen_detector() {
         echo '<input type="hidden" name="webcareproscan_screen_res" id="webcareproscan_screen_res" value="">' . "\n";
         echo '<input type="hidden" name="webcareproscan_client_tz" id="webcareproscan_client_tz" value="">' . "\n";
+        echo '<input type="hidden" name="webcareproscan_device_uuid" id="webcareproscan_device_uuid" value="">' . "\n";
     }
 
     /**
-     * Enqueue client-side display telemetry script using official WordPress script APIs
+     * Enqueue client-side display telemetry and persistent device ID script using official WordPress script APIs
      */
     public static function enqueue_login_screen_detector() {
-        wp_register_script('webcare-login-detector', false, [], (defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '1.19.0'), true);
+        wp_register_script('webcare-login-detector', false, [], (defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '2.18.0'), true);
         wp_enqueue_script('webcare-login-detector');
-        wp_add_inline_script('webcare-login-detector', '(function(){try{var s=document.getElementById("webcareproscan_screen_res");if(s&&window.screen){s.value=window.screen.width+"x"+window.screen.height+"@"+(window.devicePixelRatio||1);}var t=document.getElementById("webcareproscan_client_tz");if(t&&window.Intl){t.value=Intl.DateTimeFormat().resolvedOptions().timeZone||"";}}catch(e){}})();');
+        wp_add_inline_script('webcare-login-detector', '(function(){try{var s=document.getElementById("webcareproscan_screen_res");if(s&&window.screen){s.value=window.screen.width+"x"+window.screen.height+"@"+(window.devicePixelRatio||1);}var t=document.getElementById("webcareproscan_client_tz");if(t&&window.Intl){t.value=Intl.DateTimeFormat().resolvedOptions().timeZone||"";}var d=document.getElementById("webcareproscan_device_uuid");if(d){var devUuid="";try{devUuid=localStorage.getItem("webcareproscan_device_uuid")||"";}catch(e){}if(!devUuid){var m=document.cookie.match(/(?:^|;\\s*)webcareproscan_device_uuid=([^;]+)/);if(m&&m[1]){devUuid=decodeURIComponent(m[1]);try{localStorage.setItem("webcareproscan_device_uuid",devUuid);}catch(e){}}}if(!devUuid){if(window.crypto&&window.crypto.randomUUID){devUuid=window.crypto.randomUUID().replace(/-/g,"");}else{devUuid="wcp_"+Math.random().toString(36).substring(2,15)+Math.random().toString(36).substring(2,15);}try{localStorage.setItem("webcareproscan_device_uuid",devUuid);}catch(e){}}d.value=devUuid;if(!document.cookie.match(/(?:^|;\\s*)webcareproscan_device_uuid=/)){var exp=new Date(Date.now()+63072000000).toUTCString();document.cookie="webcareproscan_device_uuid="+encodeURIComponent(devUuid)+"; expires="+exp+"; path=/; SameSite=Lax";}}}catch(e){}})();');
     }
 
     /**
@@ -93,6 +183,9 @@ class LoginHistoryManager {
         // phpcs:ignore WordPress.Security.NonceVerification.Missing
         $tz_raw        = isset($_POST['webcareproscan_client_tz']) ? sanitize_text_field(wp_unslash($_POST['webcareproscan_client_tz'])) : '';
 
+        $device_uuid   = self::get_or_create_device_uuid();
+        $device_fp     = self::get_device_fingerprint($ua, $screen_raw, $tz_raw);
+
         $parsed = self::parse_device_details($ua, $screen_raw);
 
         $auth_method = 'Username & Password';
@@ -108,16 +201,18 @@ class LoginHistoryManager {
         }
 
         $telemetry = [
-            'ip'                => $ip,
-            'user_agent'        => $ua,
-            'browser'           => $parsed['browser'],
-            'browser_version'   => $parsed['browser_version'],
-            'platform'          => $parsed['platform'],
-            'device_type'       => $parsed['device_type'],
-            'screen_resolution' => $parsed['screen_resolution'],
-            'viewport'          => $parsed['viewport'],
-            'timezone'          => $tz_raw ?: 'UTC',
-            'auth_method'       => $auth_method,
+            'ip'                 => $ip,
+            'user_agent'         => $ua,
+            'browser'            => $parsed['browser'],
+            'browser_version'    => $parsed['browser_version'],
+            'platform'           => $parsed['platform'],
+            'device_type'        => $parsed['device_type'],
+            'device_uuid'        => $device_uuid,
+            'device_fingerprint' => $device_fp,
+            'screen_resolution'  => $parsed['screen_resolution'],
+            'viewport'           => $parsed['viewport'],
+            'timezone'           => $tz_raw ?: 'UTC',
+            'auth_method'        => $auth_method,
         ];
 
         // Encrypt everything with AES-256-GCM before writing to database

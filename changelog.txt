@@ -19,6 +19,11 @@
   * Administrator Session Immunity & Self-Lockout Prevention (FirewallEngine.php):
     - Immunized active authenticated administrators from automated IP blocklisting in handle_rule_violation() and exempted active administrator sessions from USER-CUSTOM-IP-BLOCK rendering.
     - Added multi-header REST nonce resolution (HTTP_X_WP_NONCE, REDIRECT_HTTP_X_WP_NONCE, getallheaders(), _wpnonce, nonce) and cookie session token fallback verification in Layer 4, and exempted internal WebCare read inspection routes (/file/view, /post/view, /file/integrity, /waf/logs, etc.) from failing admin authentication when reverse proxies strip custom headers.
+  * Persistent Device Identity & Same-Device Re-Login Deduplication (LoginHistoryManager.php, SessionSentinel.php, AuthSecurityPage.tsx):
+    - Multi-Layered Persistent Device Identification: Engineered universal device identification decoupling physical devices from temporary WordPress session tokens. Injected a long-lived 2-year persistent cookie ('webcareproscan_device_uuid') combined with client-side localStorage synchronization and hardware/telemetry fingerprinting (browser, platform, device type, client timezone).
+    - Session Re-Login Consolidation & Ghost Device Elimination: Resolved an issue where logging out and re-authenticating from the same computer created duplicate "Logged Out" ghost device records and artificially inflated the registered devices count. When an administrator re-authenticates from a recognized device, SessionSentinel now detects the matching device UUID and hardware fingerprint, retires previous stale session tokens, updates login timestamps, and seamlessly reactivates the existing device card without creating duplicate rows.
+    - Retroactive Self-Healing & Telemetry Consolidation: Enhanced SessionSentinel::get_active_sessions() with pre-indexed fingerprint-to-UUID reconciliation that automatically coalesces legacy split session entries from the same physical browser into a unified active device card, consolidating IP history and audit logs.
+    - Recognized Device Indicators: Added recognized device telemetry chips in the Connected Devices cockpit highlighting recurring authenticated devices and cumulative login counts.
 
 v:2.17.0 - 2026-11-17
 - Routing Normalization Parity, Package Extraction Integrity & Incomplete Inspection Reporting:
