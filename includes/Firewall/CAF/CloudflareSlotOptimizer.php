@@ -381,7 +381,7 @@ class CloudflareSlotOptimizer {
         if (!empty($res['success'])) {
             $reserved_owner_slots = max(0, 5 - count($final_rules));
 
-            update_option('webcare_caf_last_cf_slot_sync', [
+            update_option('webcareproscan_caf_last_cf_slot_sync', [
                 'timestamp'             => time(),
                 'slot_budget'           => $slot_budget,
                 'webcare_rules'         => count($webcare_rules),

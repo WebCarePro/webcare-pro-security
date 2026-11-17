@@ -23,8 +23,8 @@ if (!defined('ABSPATH')) {
  */
 class LearningModeEngine {
 
-    public const OPTION_OBSERVATIONS = 'webcare_caf_learning_observations';
-    public const OPTION_SYNTHESIZED  = 'webcare_caf_synthesized_exemptions';
+    public const OPTION_OBSERVATIONS = 'webcareproscan_caf_learning_observations';
+    public const OPTION_SYNTHESIZED  = 'webcareproscan_caf_synthesized_exemptions';
     public const MAX_OBSERVATIONS    = 250;
 
     /**

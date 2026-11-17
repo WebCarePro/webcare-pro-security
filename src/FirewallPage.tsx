@@ -1531,7 +1531,8 @@ export const FirewallPage = ({
     waf_block_ai_prompt_injection: boolean;
     waf_guest_ajax_policy: 'monitor' | 'block' | 'off';
     waf_guest_ajax_custom_allowlist: string;
-    waf_guest_rest_policy: 'monitor' | 'off';
+    waf_guest_rest_policy: 'monitor' | 'block' | 'off';
+    waf_guest_rest_custom_allowlist: string;
     waf_runtime_rasp_privilege_guard: boolean;
     waf_upload_deep_mime_sanitizer: boolean;
   }>({
@@ -1620,7 +1621,8 @@ export const FirewallPage = ({
     waf_block_ai_prompt_injection: true,
     waf_guest_ajax_policy: 'monitor',
     waf_guest_ajax_custom_allowlist: '',
-    waf_guest_rest_policy: 'monitor',
+    waf_guest_rest_policy: 'block',
+    waf_guest_rest_custom_allowlist: '',
     waf_runtime_rasp_privilege_guard: true,
     waf_upload_deep_mime_sanitizer: true,
   });
@@ -1733,7 +1735,8 @@ export const FirewallPage = ({
           waf_block_ai_prompt_injection: s.waf_block_ai_prompt_injection !== false,
           waf_guest_ajax_policy: (s.waf_guest_ajax_policy === 'block' || s.waf_guest_ajax_policy === 'off') ? s.waf_guest_ajax_policy : 'monitor',
           waf_guest_ajax_custom_allowlist: s.waf_guest_ajax_custom_allowlist || '',
-          waf_guest_rest_policy: s.waf_guest_rest_policy === 'off' ? 'off' : 'monitor',
+          waf_guest_rest_policy: (s.waf_guest_rest_policy === 'block' || s.waf_guest_rest_policy === 'off') ? s.waf_guest_rest_policy : (s.waf_guest_rest_policy === 'monitor' ? 'monitor' : 'block'),
+          waf_guest_rest_custom_allowlist: s.waf_guest_rest_custom_allowlist || '',
           waf_runtime_rasp_privilege_guard: s.waf_runtime_rasp_privilege_guard !== false,
           waf_upload_deep_mime_sanitizer: s.waf_upload_deep_mime_sanitizer !== false,
         });
@@ -5675,18 +5678,19 @@ export const FirewallPage = ({
 
                       <button
                         type="button"
-                        className={`webcare-btn webcare-firewall-rule-save-btn ${(savedSingleRuleSuccess['waf_guest_ajax_policy'] || savedSingleRuleSuccess['waf_guest_ajax_custom_allowlist'] || savedSingleRuleSuccess['waf_guest_rest_policy']) ? 'is-saved' : ''}`}
+                        className={`webcare-btn webcare-firewall-rule-save-btn ${(savedSingleRuleSuccess['waf_guest_ajax_policy'] || savedSingleRuleSuccess['waf_guest_ajax_custom_allowlist'] || savedSingleRuleSuccess['waf_guest_rest_policy'] || savedSingleRuleSuccess['waf_guest_rest_custom_allowlist']) ? 'is-saved' : ''}`}
                         onClick={() => {
                           handleSaveSingleRule('waf_guest_ajax_policy', wafSettings.waf_guest_ajax_policy);
                           handleSaveSingleRule('waf_guest_ajax_custom_allowlist', wafSettings.waf_guest_ajax_custom_allowlist);
                           handleSaveSingleRule('waf_guest_rest_policy', wafSettings.waf_guest_rest_policy);
+                          handleSaveSingleRule('waf_guest_rest_custom_allowlist', wafSettings.waf_guest_rest_custom_allowlist);
                         }}
-                        disabled={savingSingleRuleKey === 'waf_guest_ajax_policy' || savingSingleRuleKey === 'waf_guest_ajax_custom_allowlist' || savingSingleRuleKey === 'waf_guest_rest_policy'}
+                        disabled={savingSingleRuleKey === 'waf_guest_ajax_policy' || savingSingleRuleKey === 'waf_guest_ajax_custom_allowlist' || savingSingleRuleKey === 'waf_guest_rest_policy' || savingSingleRuleKey === 'waf_guest_rest_custom_allowlist'}
                       >
-                        {(savingSingleRuleKey === 'waf_guest_ajax_policy' || savingSingleRuleKey === 'waf_guest_ajax_custom_allowlist' || savingSingleRuleKey === 'waf_guest_rest_policy') ? (
+                        {(savingSingleRuleKey === 'waf_guest_ajax_policy' || savingSingleRuleKey === 'waf_guest_ajax_custom_allowlist' || savingSingleRuleKey === 'waf_guest_rest_policy' || savingSingleRuleKey === 'waf_guest_rest_custom_allowlist') ? (
                           <Loader2 size={11} className="webcare-spin-icon" />
-                        ) : ((savedSingleRuleSuccess['waf_guest_ajax_policy'] || savedSingleRuleSuccess['waf_guest_ajax_custom_allowlist'] || savedSingleRuleSuccess['waf_guest_rest_policy']) ? <Check size={11} /> : <Save size={11} />)}
-                        {(savedSingleRuleSuccess['waf_guest_ajax_policy'] || savedSingleRuleSuccess['waf_guest_ajax_custom_allowlist'] || savedSingleRuleSuccess['waf_guest_rest_policy']) ? 'Saved' : 'Save'}
+                        ) : ((savedSingleRuleSuccess['waf_guest_ajax_policy'] || savedSingleRuleSuccess['waf_guest_ajax_custom_allowlist'] || savedSingleRuleSuccess['waf_guest_rest_policy'] || savedSingleRuleSuccess['waf_guest_rest_custom_allowlist']) ? <Check size={11} /> : <Save size={11} />)}
+                        {(savedSingleRuleSuccess['waf_guest_ajax_policy'] || savedSingleRuleSuccess['waf_guest_ajax_custom_allowlist'] || savedSingleRuleSuccess['waf_guest_rest_policy'] || savedSingleRuleSuccess['waf_guest_rest_custom_allowlist']) ? 'Saved' : 'Save'}
                       </button>
                     </div>
 
@@ -5720,15 +5724,18 @@ export const FirewallPage = ({
                           </label>
                           <select
                             value={wafSettings.waf_guest_rest_policy}
-                            onChange={(e) => setWafSettings({ ...wafSettings, waf_guest_rest_policy: e.target.value as 'monitor' | 'off' })}
+                            onChange={(e) => setWafSettings({ ...wafSettings, waf_guest_rest_policy: e.target.value as 'monitor' | 'block' | 'off' })}
                             className="webcare-input"
                             style={{ width: '100%', fontSize: '12px', padding: '6px 10px' }}
                           >
+                            <option value="block">Strict Block (Terminates Unauthorized Guest REST Mutations with HTTP 403)</option>
                             <option value="monitor">Monitor &amp; Baseline Guest Write Mutations (Safe)</option>
-                            <option value="off">Disabled</option>
+                            <option value="off">Disabled (Allow All Guest REST Mutations)</option>
                           </select>
                           <span style={{ fontSize: '10px', color: 'var(--webcare-text-muted, #64748b)', marginTop: '2px', display: 'block' }}>
-                            Logs unauthenticated POST, PUT, PATCH, and DELETE calls targeting non-public REST routes.
+                            {wafSettings.waf_guest_rest_policy === 'block' && 'Terminates unauthorized unauthenticated POST, PUT, PATCH, and DELETE mutations targeting non-public REST routes and batch endpoints with HTTP 403.'}
+                            {wafSettings.waf_guest_rest_policy === 'monitor' && 'Logs unauthenticated POST, PUT, PATCH, and DELETE calls targeting non-public REST routes with status "monitored".'}
+                            {wafSettings.waf_guest_rest_policy === 'off' && 'Policy inspection bypassed.'}
                           </span>
                         </div>
                       </div>
@@ -5748,6 +5755,25 @@ export const FirewallPage = ({
                           />
                           <span style={{ fontSize: '10px', color: 'var(--webcare-text-muted, #64748b)', marginTop: '2px', display: 'block' }}>
                             Permits bespoke frontend theme or plugin AJAX actions invoked by unauthenticated visitors without triggering policy flags.
+                          </span>
+                        </div>
+                      )}
+
+                      {wafSettings.waf_guest_rest_policy !== 'off' && (
+                        <div>
+                          <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--webcare-text-primary, #0f172a)', display: 'block', marginBottom: '4px' }}>
+                            Custom Allowed Guest REST Route Prefixes (One per line):
+                          </label>
+                          <textarea
+                            value={wafSettings.waf_guest_rest_custom_allowlist}
+                            onChange={(e) => setWafSettings({ ...wafSettings, waf_guest_rest_custom_allowlist: e.target.value })}
+                            placeholder="e.g.&#10;/my-plugin/v1/public-submit&#10;/custom-api/v1/lead"
+                            rows={3}
+                            className="webcare-input"
+                            style={{ width: '100%', fontSize: '11px', fontFamily: 'monospace', resize: 'vertical' }}
+                          />
+                          <span style={{ fontSize: '10px', color: 'var(--webcare-text-muted, #64748b)', marginTop: '2px', display: 'block' }}>
+                            Permits unauthenticated visitor POST/PUT/PATCH mutations targeting bespoke public plugin or theme REST routes without triggering Rule #37 drops.
                           </span>
                         </div>
                       )}

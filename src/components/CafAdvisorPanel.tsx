@@ -126,7 +126,7 @@ export const CafAdvisorPanel: React.FC<CafAdvisorPanelProps> = ({ apiRequest, on
     }
   };
 
-  if (loading && !data) {
+  if (loading || !data) {
     return (
       <div className="webcare-card webcare-firewall-card" style={{ padding: '24px', display: 'flex', alignItems: 'center', gap: '12px' }}>
         <Loader2 className="webcare-spin" size={20} color="#0284c7" />
@@ -137,7 +137,7 @@ export const CafAdvisorPanel: React.FC<CafAdvisorPanelProps> = ({ apiRequest, on
 
   const snapshot = data?.snapshot || {};
   const recs = data?.recommendations || {};
-  const activeProfile = data?.active_profile || 'balanced';
+  const activeProfile = data?.active_profile || data?.recommendations?.current_profile || 'cpanel_shared_saver';
   const riskScore = data?.residual_risk_score ?? 10;
   const isKilled = !!data?.is_killswitch_active;
 

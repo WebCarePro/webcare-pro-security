@@ -31,7 +31,7 @@ class MicroWafCompiler {
     const FAIL2BAN_LOG_REL = 'webcare-pro-security/waf-logs/fail2ban.log';
     const OPTION_STATUS = 'webcareproscan_micro_waf_status';
     const CAF_COMPILED_FILE_NAME = 'webcare-caf-compiled-rules.php';
-    const OPTION_CAF_HMAC = 'webcare_caf_compiled_hmac';
+    const OPTION_CAF_HMAC = 'webcareproscan_caf_compiled_hmac';
 
     /**
      * Get the absolute path to the compiled Micro-WAF directory.

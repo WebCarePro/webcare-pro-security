@@ -288,14 +288,12 @@ class FirewallEngine {
             $verified_user_id = (int) get_current_user_id();
         }
 
-        // Layer 2: Independent Cryptographic Auth Cookie Validation (essential at plugins_loaded: 0)
-        if ($verified_user_id <= 0) {
-            if (!function_exists('wp_validate_auth_cookie') && defined('ABSPATH') && file_exists(ABSPATH . 'wp-includes/pluggable.php')) {
-                require_once ABSPATH . 'wp-includes/pluggable.php';
-            }
+        // Layer 2: Independent Cryptographic Auth Cookie Validation & Session Token Extraction
+        if (!function_exists('wp_validate_auth_cookie') && defined('ABSPATH') && file_exists(ABSPATH . 'wp-includes/pluggable.php')) {
+            require_once ABSPATH . 'wp-includes/pluggable.php';
         }
 
-        if ($verified_user_id <= 0 && function_exists('wp_validate_auth_cookie')) {
+        if (function_exists('wp_validate_auth_cookie')) {
             $auth_cookie    = '';
             $cookie_schemes = ['logged_in', 'secure_auth', 'auth'];
             $is_pcp_sandbox = self::is_plugin_check_db_sandbox();
@@ -315,7 +313,9 @@ class FirewallEngine {
                     if (!$is_pcp_sandbox) {
                         $uid = (int) wp_validate_auth_cookie($auth_cookie, $scheme);
                         if ($uid > 0) {
-                            $verified_user_id = $uid;
+                            if ($verified_user_id <= 0) {
+                                $verified_user_id = $uid;
+                            }
                             if (function_exists('wp_parse_auth_cookie')) {
                                 $parsed_cookie = wp_parse_auth_cookie($auth_cookie, $scheme);
                                 if (!empty($parsed_cookie['token'])) {
@@ -327,7 +327,9 @@ class FirewallEngine {
                     } else {
                         $orig_auth = self::validate_cookie_against_original_tables($auth_cookie, $scheme, $orig_prefix);
                         if (!empty($orig_auth['user_id']) && !empty($orig_auth['is_admin'])) {
-                            $verified_user_id = (int) $orig_auth['user_id'];
+                            if ($verified_user_id <= 0) {
+                                $verified_user_id = (int) $orig_auth['user_id'];
+                            }
                             break;
                         }
                     }
@@ -335,7 +337,7 @@ class FirewallEngine {
             }
 
             // Fallback for default cookie names if constants aren't defined yet
-            if ($verified_user_id <= 0) {
+            if (empty($verified_session_token) || $verified_user_id <= 0) {
                 foreach ($_COOKIE as $c_name => $c_val) {
                     $scheme_guess = '';
                     if (strpos($c_name, 'wordpress_logged_in_') === 0) {
@@ -354,7 +356,9 @@ class FirewallEngine {
                     if (!$is_pcp_sandbox) {
                         $uid = (int) wp_validate_auth_cookie($cookie_val, $scheme_guess);
                         if ($uid > 0) {
-                            $verified_user_id = $uid;
+                            if ($verified_user_id <= 0) {
+                                $verified_user_id = $uid;
+                            }
                             if (function_exists('wp_parse_auth_cookie')) {
                                 $parsed_cookie = wp_parse_auth_cookie($cookie_val, $scheme_guess);
                                 if (!empty($parsed_cookie['token'])) {
@@ -366,7 +370,9 @@ class FirewallEngine {
                     } else {
                         $orig_auth = self::validate_cookie_against_original_tables($cookie_val, $scheme_guess, $orig_prefix);
                         if (!empty($orig_auth['user_id']) && !empty($orig_auth['is_admin'])) {
-                            $verified_user_id = (int) $orig_auth['user_id'];
+                            if ($verified_user_id <= 0) {
+                                $verified_user_id = (int) $orig_auth['user_id'];
+                            }
                             break;
                         }
                     }
@@ -438,17 +444,28 @@ class FirewallEngine {
             || $has_rest_query
             || (strpos($request_uri, 'rest_route=') !== false);
 
-        // Read-only inspection routes under WebCare Pro (/file/view, /post/view, /file/integrity, /containment/status, etc.)
-        // are safe read queries and should not fail admin authentication if nonce headers are stripped by a reverse proxy.
+        // Read-only inspection and safe diagnostic routes under WebCare Pro
+        // are safe admin queries and should not fail admin authentication if nonce headers are stripped or delayed by reverse proxies.
         $is_webcare_read_route = str_starts_with($norm_rest_route, '/webcare-pro-security/v1/')
             && in_array($norm_rest_route, [
                 '/webcare-pro-security/v1/file/view',
                 '/webcare-pro-security/v1/post/view',
                 '/webcare-pro-security/v1/file/integrity',
+                '/webcare-pro-security/v1/integrity/diff',
+                '/webcare-pro-security/v1/integrity/verify',
+                '/webcare-pro-security/v1/snapshots/list',
+                '/webcare-pro-security/v1/snapshots/diff',
+                '/webcare-pro-security/v1/snapshots/compare',
+                '/webcare-pro-security/v1/telemetry/snapshot',
                 '/webcare-pro-security/v1/containment/status',
                 '/webcare-pro-security/v1/caf/overview',
                 '/webcare-pro-security/v1/firewall/status',
                 '/webcare-pro-security/v1/firewall/redirect-shield/status',
+                '/webcare-pro-security/v1/redirect-shield/status',
+                '/webcare-pro-security/v1/firewall/redirect-shield/probe',
+                '/webcare-pro-security/v1/redirect-shield/probe',
+                '/webcare-pro-security/v1/firewall/redirect-shield/snapshot',
+                '/webcare-pro-security/v1/redirect-shield/snapshot',
                 '/webcare-pro-security/v1/waf/logs',
                 '/webcare-pro-security/v1/server-info',
                 '/webcare-pro-security/v1/rescue/status',
@@ -494,13 +511,19 @@ class FirewallEngine {
 
                 $nonce_valid = (bool) wp_verify_nonce($nonce, 'wp_rest');
 
-                // Fallback: verify with extracted cookie session token if wp_get_session_token was empty or mismatched scheme
-                if (!$nonce_valid && !empty($verified_session_token) && function_exists('wp_hash') && function_exists('wp_nonce_tick')) {
+                // Fallback: verify with extracted cookie session token (or empty token if session tokens uninitialized when created)
+                if (!$nonce_valid && function_exists('wp_hash') && function_exists('wp_nonce_tick')) {
                     $tick_i = wp_nonce_tick('wp_rest');
-                    $expected1 = substr(wp_hash($tick_i . '|wp_rest|' . $verified_user_id . '|' . $verified_session_token, 'nonce'), -12, 10);
-                    $expected2 = substr(wp_hash(($tick_i - 1) . '|wp_rest|' . $verified_user_id . '|' . $verified_session_token, 'nonce'), -12, 10);
-                    if (hash_equals($expected1, $nonce) || hash_equals($expected2, $nonce)) {
-                        $nonce_valid = true;
+                    $candidate_tokens = array_unique(array_filter([$verified_session_token, ''], static function ($t) {
+                        return is_string($t);
+                    }));
+                    foreach ($candidate_tokens as $cand_token) {
+                        $expected1 = substr(wp_hash($tick_i . '|wp_rest|' . $verified_user_id . '|' . $cand_token, 'nonce'), -12, 10);
+                        $expected2 = substr(wp_hash(($tick_i - 1) . '|wp_rest|' . $verified_user_id . '|' . $cand_token, 'nonce'), -12, 10);
+                        if (hash_equals($expected1, $nonce) || hash_equals($expected2, $nonce)) {
+                            $nonce_valid = true;
+                            break;
+                        }
                     }
                 }
 
@@ -1240,7 +1263,7 @@ class FirewallEngine {
         }
 
         // Context-Adaptive Firewall (CAF): Dormant Attack Surface Lockdown
-        $lock_dormant = (bool) get_option('webcare_caf_lock_dormant_surface', true);
+        $lock_dormant = (bool) get_option('webcareproscan_caf_lock_dormant_surface', get_option('webcare_caf_lock_dormant_surface', true));
         if (!$skip_operational_heuristics && $lock_dormant) {
             $raw_uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '';
             $decoded_check_uri = rawurldecode($raw_uri);
@@ -1248,7 +1271,7 @@ class FirewallEngine {
             // Check if URI targets an inactive plugin or theme directory
             if (preg_match('#/wp-content/plugins/([a-zA-Z0-9_-]+)/#i', $decoded_check_uri, $plugin_matches)) {
                 $target_slug = strtolower($plugin_matches[1]);
-                $cached_snapshot = get_option('webcare_caf_stack_snapshot');
+                $cached_snapshot = get_option('webcareproscan_caf_stack_snapshot', get_option('webcare_caf_stack_snapshot'));
                 $inactive_plugins = is_array($cached_snapshot) && !empty($cached_snapshot['inactive_plugins']) ? array_keys($cached_snapshot['inactive_plugins']) : [];
 
                 if (in_array($target_slug, $inactive_plugins, true)) {
@@ -1265,7 +1288,7 @@ class FirewallEngine {
                                     }
             } elseif (preg_match('#/wp-content/themes/([a-zA-Z0-9_-]+)/#i', $decoded_check_uri, $theme_matches)) {
                 $target_theme = strtolower($theme_matches[1]);
-                $cached_snapshot = get_option('webcare_caf_stack_snapshot');
+                $cached_snapshot = get_option('webcareproscan_caf_stack_snapshot', get_option('webcare_caf_stack_snapshot'));
                 $inactive_themes = is_array($cached_snapshot) && !empty($cached_snapshot['inactive_themes']) ? array_keys($cached_snapshot['inactive_themes']) : [];
 
                 if (in_array($target_theme, $inactive_themes, true)) {
@@ -6906,7 +6929,7 @@ class FirewallEngine {
         }
 
         $settings = SettingsManager::get_settings();
-        $policy = $settings['waf_guest_rest_policy'] ?? 'monitor';
+        $policy = $settings['waf_guest_rest_policy'] ?? 'block';
         if ($policy === 'off') {
             return $result;
         }
@@ -6967,6 +6990,9 @@ class FirewallEngine {
             }
         }
 
+        $custom_rest_raw = $settings['waf_guest_rest_custom_allowlist'] ?? '';
+        $custom_routes = !empty($custom_rest_raw) ? array_map('strtolower', array_filter(array_map('trim', explode("\n", $custom_rest_raw)))) : [];
+
         // Special handling for REST batch requests (/wp/v2/batch or /batch/v1):
         // Walk nested requests[] inside the batch payload to ensure unauthorized guest mutations aren't smuggled
         if (str_contains($route, '/batch')) {
@@ -7002,6 +7028,14 @@ class FirewallEngine {
                             if (str_starts_with($sub_path, $ssp)) {
                                 $is_sub_safe = true;
                                 break;
+                            }
+                        }
+                        if (!$is_sub_safe && !empty($custom_routes)) {
+                            foreach ($custom_routes as $c_rt) {
+                                if ($c_rt !== '' && str_starts_with($sub_path, '/' . ltrim($c_rt, '/'))) {
+                                    $is_sub_safe = true;
+                                    break;
+                                }
                             }
                         }
                         if (!$is_sub_safe) {
@@ -7052,6 +7086,14 @@ class FirewallEngine {
         foreach ($safe_prefixes as $prefix) {
             if (str_starts_with($route, $prefix) || strpos($route, $prefix) === 0) {
                 return $result;
+            }
+        }
+
+        if (!empty($custom_routes)) {
+            foreach ($custom_routes as $c_rt) {
+                if ($c_rt !== '' && str_starts_with($route, '/' . ltrim($c_rt, '/'))) {
+                    return $result;
+                }
             }
         }
 

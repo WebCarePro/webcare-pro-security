@@ -105,6 +105,15 @@ if (file_exists($webcareproscan_honeytoken_file)) {
     }
 }
 
+// Unconditionally purge ghost admin canary and canary tokens from database
+global $wpdb;
+if (isset($wpdb) && $wpdb instanceof \wpdb) {
+    // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+    $wpdb->query("DELETE FROM `{$wpdb->users}` WHERE `user_login` = 'webcare_canary_admin'");
+    // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+    $wpdb->query("DELETE FROM `{$wpdb->options}` WHERE `option_name` LIKE '%canary%' AND `option_name` LIKE '%webcare%'");
+}
+
 $webcareproscan_settings = get_option('webcareproscan_settings', []);
 $webcareproscan_delete_data = true; // Default to true for clean fresh uninstallation; can be configured in settings
 
@@ -152,20 +161,14 @@ if ($webcareproscan_delete_data) {
 
         // 2. Delete all plugin options, CAF settings, Cloudflare edge states, canaries, and transients
         if ($webcareproscan_delete_options) {
-            // Delete all options starting with webcareproscan_, _webcareproscan_, webcare_caf_, webcare_cf_, webcare_, _webcare_
+            $options_table = $prefix . 'options';
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
             $wpdb->query(
-                "DELETE FROM {$wpdb->options} 
-                 WHERE option_name LIKE 'webcareproscan\\_%'
-                    OR option_name LIKE '\\_webcareproscan\\_%'
-                    OR option_name LIKE 'webcare\\_caf\\_%'
-                    OR option_name LIKE 'webcare\\_cf\\_%'
-                    OR option_name LIKE 'webcare\\_%'
-                    OR option_name LIKE '\\_webcare\\_%'
-                    OR option_name LIKE '\\_transient\\_webcare%'
-                    OR option_name LIKE '\\_transient\\_timeout\\_webcare%'
-                    OR option_name LIKE '\\_site\\_transient\\_webcare%'
-                    OR option_name LIKE '\\_site\\_transient\\_timeout\\_webcare%'"
+                $wpdb->prepare(
+                    'DELETE FROM %i WHERE option_name LIKE %s',
+                    $options_table,
+                    '%webcare%'
+                )
             );
         }
     };
@@ -176,17 +179,7 @@ if ($webcareproscan_delete_data) {
     // Multisite cleanup: iterate all blogs and clean their respective tables and options
     if (is_multisite()) {
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-        $wpdb->query(
-            "DELETE FROM {$wpdb->sitemeta} 
-             WHERE meta_key LIKE 'webcareproscan\\_%'
-                OR meta_key LIKE '\\_webcareproscan\\_%'
-                OR meta_key LIKE 'webcare\\_caf\\_%'
-                OR meta_key LIKE 'webcare\\_cf\\_%'
-                OR meta_key LIKE 'webcare\\_%'
-                OR meta_key LIKE '\\_webcare\\_%'
-                OR meta_key LIKE '\\_site\\_transient\\_webcare%'
-                OR meta_key LIKE '\\_site\\_transient\\_timeout\\_webcare%'"
-        );
+        $wpdb->query("DELETE FROM `{$wpdb->sitemeta}` WHERE `meta_key` LIKE '%webcare%'");
 
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
         $webcareproscan_blogs = $wpdb->get_col("SELECT blog_id FROM {$wpdb->blogs}");
@@ -205,13 +198,7 @@ if ($webcareproscan_delete_data) {
 
     // 3. Purge plugin user meta (2FA tokens, backup codes, trusted devices, session meta)
     // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-    $wpdb->query(
-        "DELETE FROM {$wpdb->usermeta} 
-         WHERE meta_key LIKE 'webcareproscan\\_%' 
-            OR meta_key LIKE '\\_webcareproscan\\_%' 
-            OR meta_key LIKE 'webcare\\_%' 
-            OR meta_key LIKE '\\_webcare\\_%'"
-    );
+    $wpdb->query("DELETE FROM `{$wpdb->usermeta}` WHERE `meta_key` LIKE '%webcare%'");
 
     // 4. Purge Ghost Admin canary user and any canary tripwire accounts
     if (function_exists('get_user_by')) {

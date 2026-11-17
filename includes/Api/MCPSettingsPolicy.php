@@ -122,6 +122,7 @@ class MCPSettingsPolicy {
         'waf_guest_ajax_policy',
         'waf_guest_ajax_custom_allowlist',
         'waf_guest_rest_policy',
+        'waf_guest_rest_custom_allowlist',
         'login_hardening_enabled',
         'login_max_retries',
         'login_lockout_duration',

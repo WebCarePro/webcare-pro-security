@@ -23,9 +23,9 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 final class AdaptiveFirewallAdvisor {
 
-	public const OPTION_STACK_SNAPSHOT = 'webcare_caf_stack_snapshot';
-	public const OPTION_ACTIVE_PROFILE  = 'webcare_caf_active_profile';
-	public const OPTION_DORMANT_LOCK    = 'webcare_caf_lock_dormant_surface';
+	public const OPTION_STACK_SNAPSHOT = 'webcareproscan_caf_stack_snapshot';
+	public const OPTION_ACTIVE_PROFILE  = 'webcareproscan_caf_active_profile';
+	public const OPTION_DORMANT_LOCK    = 'webcareproscan_caf_lock_dormant_surface';
 
 	public const PROFILE_ECOMMERCE_HARDENED = 'ecommerce_hardened';
 	public const PROFILE_CORPORATE_BROCHURE = 'corporate_brochure';
@@ -49,6 +49,9 @@ final class AdaptiveFirewallAdvisor {
 	public static function has_ecosystem( string $ecosystem ): bool {
 		if ( self::$runtime_ecosystems === null ) {
 			$cached = get_option( self::OPTION_STACK_SNAPSHOT, [] );
+			if ( ! is_array( $cached ) || empty( $cached['detected_ecosystems'] ) ) {
+				$cached = get_option( 'webcare_caf_stack_snapshot', [] );
+			}
 			if ( is_array( $cached ) && isset( $cached['detected_ecosystems'] ) && is_array( $cached['detected_ecosystems'] ) ) {
 				self::$runtime_ecosystems = $cached['detected_ecosystems'];
 			} else {
@@ -90,6 +93,9 @@ final class AdaptiveFirewallAdvisor {
 	public static function is_plugin_slug_active( string $slug ): bool {
 		if ( self::$runtime_active_slugs === null ) {
 			$cached = get_option( self::OPTION_STACK_SNAPSHOT, [] );
+			if ( ! is_array( $cached ) || empty( $cached['active_plugins'] ) ) {
+				$cached = get_option( 'webcare_caf_stack_snapshot', [] );
+			}
 			if ( is_array( $cached ) && ! empty( $cached['active_plugins'] ) && is_array( $cached['active_plugins'] ) ) {
 				self::$runtime_active_slugs = array_keys( $cached['active_plugins'] );
 			} else {
@@ -108,6 +114,9 @@ final class AdaptiveFirewallAdvisor {
 	public static function get_active_profile_rules(): array {
 		if ( self::$runtime_profile_rules === null ) {
 			$profile_id = (string) get_option( self::OPTION_ACTIVE_PROFILE, '' );
+			if ( $profile_id === '' ) {
+				$profile_id = (string) get_option( 'webcare_caf_active_profile', '' );
+			}
 			if ( $profile_id === '' ) {
 				$profile_id = self::has_ecosystem( 'woocommerce' ) ? self::PROFILE_ECOMMERCE_HARDENED : self::PROFILE_BALANCED;
 			}
@@ -226,6 +235,9 @@ final class AdaptiveFirewallAdvisor {
 	public function get_stack_snapshot( bool $force_refresh = false ): StackSnapshot {
 		if ( ! $force_refresh ) {
 			$cached = get_option( self::OPTION_STACK_SNAPSHOT );
+			if ( ! is_array( $cached ) || empty( $cached['snapshot_hash'] ) ) {
+				$cached = get_option( 'webcare_caf_stack_snapshot' );
+			}
 			if ( is_array( $cached ) && ! empty( $cached['snapshot_hash'] ) ) {
 				return StackSnapshot::from_array( $cached );
 			}
@@ -477,8 +489,11 @@ final class AdaptiveFirewallAdvisor {
 		}
 
 		$recommended_profile = $this->recommend_profile( $snapshot );
-		$current_profile = get_option( self::OPTION_ACTIVE_PROFILE, $recommended_profile );
-		$lock_dormant = (bool) get_option( self::OPTION_DORMANT_LOCK, true );
+		$current_profile = (string) get_option( self::OPTION_ACTIVE_PROFILE, '' );
+		if ( '' === $current_profile ) {
+			$current_profile = (string) get_option( 'webcare_caf_active_profile', $recommended_profile );
+		}
+		$lock_dormant = (bool) get_option( self::OPTION_DORMANT_LOCK, get_option( 'webcare_caf_lock_dormant_surface', true ) );
 
 		// 1. Conflict avoidance exemptions
 		$conflict_engine = new ConflictAvoidanceEngine();

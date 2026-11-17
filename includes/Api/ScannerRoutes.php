@@ -498,42 +498,44 @@ class ScannerRoutes {
             'permission_callback' => $permission,
         ]);
 
-        // Redirect Hack Defense & .htaccess Armor Endpoints
-        register_rest_route(self::NAMESPACE, '/firewall/redirect-shield/status', [
-            'methods'             => ['GET', 'POST'],
-            'callback'            => [__CLASS__, 'get_redirect_shield_status'],
-            'permission_callback' => $permission,
-        ]);
+        // Redirect Hack Defense & .htaccess Armor Endpoints (Supports both /firewall/redirect-shield and /redirect-shield aliases)
+        foreach (['/firewall/redirect-shield', '/redirect-shield'] as $r_base) {
+            register_rest_route(self::NAMESPACE, $r_base . '/status', [
+                'methods'             => ['GET', 'POST'],
+                'callback'            => [__CLASS__, 'get_redirect_shield_status'],
+                'permission_callback' => $permission,
+            ]);
 
-        register_rest_route(self::NAMESPACE, '/firewall/redirect-shield/probe', [
-            'methods'             => 'POST',
-            'callback'            => [__CLASS__, 'run_redirect_canary_probe'],
-            'permission_callback' => $permission,
-        ]);
+            register_rest_route(self::NAMESPACE, $r_base . '/probe', [
+                'methods'             => 'POST',
+                'callback'            => [__CLASS__, 'run_redirect_canary_probe'],
+                'permission_callback' => $permission,
+            ]);
 
-        register_rest_route(self::NAMESPACE, '/firewall/redirect-shield/restore', [
-            'methods'             => 'POST',
-            'callback'            => [__CLASS__, 'restore_htaccess_vault_snapshot'],
-            'permission_callback' => $permission,
-        ]);
+            register_rest_route(self::NAMESPACE, $r_base . '/restore', [
+                'methods'             => 'POST',
+                'callback'            => [__CLASS__, 'restore_htaccess_vault_snapshot'],
+                'permission_callback' => $permission,
+            ]);
 
-        register_rest_route(self::NAMESPACE, '/firewall/redirect-shield/lock', [
-            'methods'             => 'POST',
-            'callback'            => [__CLASS__, 'toggle_htaccess_lock'],
-            'permission_callback' => $permission,
-        ]);
+            register_rest_route(self::NAMESPACE, $r_base . '/lock', [
+                'methods'             => 'POST',
+                'callback'            => [__CLASS__, 'toggle_htaccess_lock'],
+                'permission_callback' => $permission,
+            ]);
 
-        register_rest_route(self::NAMESPACE, '/firewall/redirect-shield/heal-urls', [
-            'methods'             => 'POST',
-            'callback'            => [__CLASS__, 'heal_database_core_urls'],
-            'permission_callback' => $permission,
-        ]);
+            register_rest_route(self::NAMESPACE, $r_base . '/heal-urls', [
+                'methods'             => 'POST',
+                'callback'            => [__CLASS__, 'heal_database_core_urls'],
+                'permission_callback' => $permission,
+            ]);
 
-        register_rest_route(self::NAMESPACE, '/firewall/redirect-shield/snapshot', [
-            'methods'             => 'POST',
-            'callback'            => [__CLASS__, 'create_htaccess_vault_snapshot'],
-            'permission_callback' => $permission,
-        ]);
+            register_rest_route(self::NAMESPACE, $r_base . '/snapshot', [
+                'methods'             => 'POST',
+                'callback'            => [__CLASS__, 'create_htaccess_vault_snapshot'],
+                'permission_callback' => $permission,
+            ]);
+        }
 
         // Context-Adaptive Firewall (CAF) & StackGuard Endpoints
         register_rest_route(self::NAMESPACE, '/caf/overview', [
@@ -3397,7 +3399,7 @@ class ScannerRoutes {
         // 2. Query SQL webcareproscan_firewall_logs table for modular & endpoint events
         $firewall_logs_table = $wpdb->prefix . 'webcareproscan_firewall_logs';
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
-        $table_exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $firewall_logs_table));
+        $table_exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $wpdb->esc_like($firewall_logs_table)));
         if ($table_exists === $firewall_logs_table) {
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
             $rows = $wpdb->get_results(
@@ -9214,7 +9216,7 @@ class ScannerRoutes {
             global $wpdb;
             $fw_table = $wpdb->prefix . 'webcareproscan_firewall_logs';
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-            if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $fw_table)) === $fw_table) {
+            if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $wpdb->esc_like($fw_table))) === $fw_table) {
                 // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
                 $sql_row = $wpdb->get_row(
                     $wpdb->prepare(
@@ -9301,7 +9303,7 @@ class ScannerRoutes {
                 global $wpdb;
                 $fw_table = $wpdb->prefix . 'webcareproscan_firewall_logs';
                 // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-                if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $fw_table)) === $fw_table) {
+                if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $wpdb->esc_like($fw_table))) === $fw_table) {
                     // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
                     $ip_hit = $wpdb->get_var(
                         $wpdb->prepare('SELECT ip_address FROM %i WHERE incident_id = %s ORDER BY id DESC LIMIT 1', $fw_table, $clean_code)
