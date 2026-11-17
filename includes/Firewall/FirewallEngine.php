@@ -7275,19 +7275,31 @@ class FirewallEngine {
             return false;
         }
 
-        // Strict namespace alignment: users & usermeta must match base prefix, options must match site prefix
+        // Determine expected sandbox site prefix for options table isolation (handles Single-Site & Multisite)
+        $is_ms = function_exists('is_multisite') && is_multisite();
+        $blog_id = isset($wpdb->blogid) ? (int) $wpdb->blogid : 0;
+        $expected_sandbox_site_prefix = ($is_ms && $blog_id > 1)
+            ? $expected_sandbox_base . $blog_id . '_'
+            : $expected_sandbox_base;
+        $expected_production_site_prefix = ($is_ms && $blog_id > 1)
+            ? $orig_prefix . $blog_id . '_'
+            : $orig_prefix;
+
+        // Strict namespace alignment: users & usermeta must match base prefix, options must match expected sandbox site prefix
         if (
             $wpdb->users !== $expected_sandbox_base . 'users' ||
             $wpdb->usermeta !== $expected_sandbox_base . 'usermeta' ||
-            $wpdb->options !== $wpdb->prefix . 'options'
+            $wpdb->prefix !== $expected_sandbox_site_prefix ||
+            $wpdb->options !== $expected_sandbox_site_prefix . 'options'
         ) {
             return false;
         }
 
-        // Strict non-equality: ensure no active table matches production tables
+        // Strict non-equality: ensure no active table matches production tables (network base or subsite)
         if (
             $wpdb->users === $orig_prefix . 'users' ||
             $wpdb->usermeta === $orig_prefix . 'usermeta' ||
+            $wpdb->options === $expected_production_site_prefix . 'options' ||
             $wpdb->options === $orig_prefix . 'options'
         ) {
             return false;
