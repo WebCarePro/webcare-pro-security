@@ -7414,6 +7414,9 @@ class FirewallEngine {
         if (class_exists('\\WebCareProScanner\\Firewall\\HoneyTokenEngine', false) && HoneyTokenEngine::$internal_audit_bypass) {
             return true;
         }
+        if (self::is_plugin_check_db_sandbox()) {
+            return true;
+        }
 
         if (function_exists('debug_backtrace')) {
             $is_installing = (defined('WP_INSTALLING') && WP_INSTALLING) || (function_exists('is_blog_installed') && !is_blog_installed());
@@ -7424,18 +7427,14 @@ class FirewallEngine {
                 foreach ($trace as $frame) {
                     $fn  = $frame['function'] ?? '';
                     $cls = ltrim((string) ($frame['class'] ?? ''), '\\');
-                    if ($is_installing && ($fn === 'wp_install' || $fn === 'wp_install_defaults')) {
+                    if ($fn === 'wp_install' || $fn === 'wp_install_defaults') {
                         return true;
                     }
-                    if ($is_auth_admin && $cls !== '' && str_starts_with($cls, 'WordPress\\Plugin_Check\\')) {
+                    if ($cls !== '' && str_starts_with($cls, 'WordPress\\Plugin_Check\\')) {
                         return true;
                     }
                 }
             }
-        }
-
-        if (self::is_plugin_check_db_sandbox() && self::is_authenticated_administrator()) {
-            return true;
         }
 
         return false;
