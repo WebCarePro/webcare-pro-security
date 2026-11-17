@@ -5679,6 +5679,10 @@ class ScannerRoutes {
      * Get paginated or filtered scanned file manifest from WebCare Scan Vault.
      */
     public static function get_scan_manifest(\WP_REST_Request $request) {
+        if (is_multisite() && !current_user_can('manage_network')) {
+            return new \WP_Error('rest_forbidden', __('Multisite network administrator privileges required.', 'webcare-pro-security'), ['status' => 403]);
+        }
+
         $scan_id = (int) $request->get_param('scan_id');
         if ($scan_id <= 0) {
             global $wpdb;
@@ -5700,11 +5704,12 @@ class ScannerRoutes {
         $result  = null;
         if (class_exists('\\WebCareProScanner\\Scan\\ScanVaultManager')) {
             $summary = \WebCareProScanner\Scan\ScanVaultManager::get_manifest_summary($scan_id);
-            $result  = \WebCareProScanner\Scan\ScanVaultManager::get_manifest_files($scan_id, $page, $per_page, $search, $status);
+            // Correct parameter order: ($scan_id, $page, $limit, $status, $search)
+            $result  = \WebCareProScanner\Scan\ScanVaultManager::get_manifest_files($scan_id, $page, $per_page, $status, $search);
         }
 
-        // Fallback for legacy scans stored in MySQL table
-        if (!$result || empty($result['files'])) {
+        // Fallback for legacy scans stored in MySQL table only when no Vault manifest exists
+        if (!$result || empty($result['success'])) {
             global $wpdb;
             $table_files = $wpdb->prefix . 'webcareproscan_scan_files';
             $where = ['scan_id = %d'];
@@ -5733,9 +5738,12 @@ class ScannerRoutes {
             ) ?: [];
 
             $result = [
+                'success'     => true,
                 'files'       => $legacy_files,
+                'total'       => $total_legacy,
                 'total_count' => $total_legacy,
                 'page'        => $page,
+                'limit'       => $per_page,
                 'per_page'    => $per_page,
                 'total_pages' => (int) ceil($total_legacy / max(1, $per_page)),
                 'source'      => 'legacy_database',
@@ -5754,6 +5762,10 @@ class ScannerRoutes {
      * Download the full raw Scan Vault JSON manifest for a given scan ID.
      */
     public static function download_scan_manifest(\WP_REST_Request $request) {
+        if (is_multisite() && !current_user_can('manage_network')) {
+            return new \WP_Error('rest_forbidden', __('Multisite network administrator privileges required.', 'webcare-pro-security'), ['status' => 403]);
+        }
+
         $scan_id = (int) $request->get_param('scan_id');
         if ($scan_id <= 0) {
             global $wpdb;
@@ -5772,9 +5784,12 @@ class ScannerRoutes {
         if (class_exists('\\WebCareProScanner\\Scan\\ScanVaultManager')) {
             $manifest_file = \WebCareProScanner\Scan\ScanVaultManager::find_manifest_file($scan_id);
             if ($manifest_file) {
-                $filename = basename($manifest_file);
-                if (str_ends_with($filename, '.temp.jsonl')) {
-                    $filename = \WebCareProScanner\Scan\ScanVaultManager::get_manifest_filename($scan_id);
+                $raw_base = basename($manifest_file);
+                if (str_ends_with($raw_base, '.temp.jsonl')) {
+                    $filename = \WebCareProScanner\Scan\ScanVaultManager::get_manifest_filename($scan_id, '', true);
+                } else {
+                    // Strip internal _{24-char-hmac} suffix from user-facing download filename
+                    $filename = (string) preg_replace('/_[a-f0-9]{24}\.json$/i', '.json', $raw_base);
                 }
                 $manifest_json = \WebCareProScanner\Scan\ScanVaultManager::get_full_manifest_content($scan_id);
             }

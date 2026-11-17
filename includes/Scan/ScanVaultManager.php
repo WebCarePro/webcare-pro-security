@@ -57,7 +57,16 @@ class ScanVaultManager {
     }
 
     /**
-     * Ensure vault directory is fortified against direct HTTP exposure.
+     * Generate a deterministic, unguessable 24-character HMAC token for a scan ID
+     * so vault files on Nginx/IIS/Caddy cannot be enumerated over HTTP.
+     */
+    public static function get_scan_vault_token(int $scan_id): string {
+        $salt = function_exists('wp_salt') ? wp_salt('auth') : (defined('AUTH_KEY') ? AUTH_KEY : 'wcp_scan_vault_key');
+        return substr(hash_hmac('sha256', 'wcp_scan_vault_manifest|' . $scan_id . '|' . ABSPATH, $salt), 0, 24);
+    }
+
+    /**
+     * Ensure vault directory is fortified against direct HTTP exposure across Apache, LiteSpeed, and IIS.
      */
     private static function lockdown_vault_directory(string $dir): void {
         $htaccess = rtrim($dir, '/\\') . '/.htaccess';
@@ -65,6 +74,14 @@ class ScanVaultManager {
             @file_put_contents(
                 $htaccess,
                 "# WebCare Pro Security Scan Vault - Direct Access Prohibited\n<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\n    Order deny,allow\n    Deny from all\n</IfModule>\n"
+            );
+        }
+
+        $web_config = rtrim($dir, '/\\') . '/web.config';
+        if (!file_exists($web_config)) {
+            @file_put_contents(
+                $web_config,
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<configuration>\n  <system.webServer>\n    <security>\n      <authorization>\n        <remove users=\"*\" roles=\"\" verbs=\"\" />\n        <add accessType=\"Deny\" users=\"*\" />\n      </authorization>\n    </security>\n  </system.webServer>\n</configuration>\n"
             );
         }
 
@@ -89,20 +106,25 @@ class ScanVaultManager {
     }
 
     /**
-     * Get path to temporary work buffer file for an in-progress scan
+     * Get path to temporary work buffer file for an in-progress scan (includes HMAC token)
      */
     public static function get_temp_file_path(int $scan_id): string {
-        $dir = self::get_vault_dir();
-        return rtrim($dir, '/\\') . "/scan_{$scan_id}.temp.jsonl";
+        $dir   = self::get_vault_dir();
+        $token = self::get_scan_vault_token($scan_id);
+        return rtrim($dir, '/\\') . "/scan_{$scan_id}_{$token}.temp.jsonl";
     }
 
     /**
-     * Generate canonical manifest filename
+     * Generate canonical on-disk manifest filename (with HMAC token) or clean export filename
      */
-    public static function get_manifest_filename(int $scan_id, string $datetime_str = ''): string {
+    public static function get_manifest_filename(int $scan_id, string $datetime_str = '', bool $for_export = false): string {
         $domain = self::get_clean_domain();
-        $dt = !empty($datetime_str) ? $datetime_str : gmdate('Y-m-d_H-i-s');
-        return "{$domain}_scan{$scan_id}_{$dt}.json";
+        $dt     = !empty($datetime_str) ? $datetime_str : gmdate('Y-m-d_H-i-s');
+        if ($for_export) {
+            return "{$domain}_scan{$scan_id}_{$dt}.json";
+        }
+        $token = self::get_scan_vault_token($scan_id);
+        return "{$domain}_scan{$scan_id}_{$dt}_{$token}.json";
     }
 
     /**
@@ -136,10 +158,14 @@ class ScanVaultManager {
             return $matches[0];
         }
 
-        // 3. Check for active in-progress work buffer file
+        // 3. Check for active in-progress work buffer file (HMAC-protected and legacy fallback)
         $temp = self::get_temp_file_path($scan_id);
         if (file_exists($temp)) {
             return $temp;
+        }
+        $legacy_temp = rtrim($dir, '/\\') . "/scan_{$scan_id}.temp.jsonl";
+        if (file_exists($legacy_temp)) {
+            return $legacy_temp;
         }
 
         return null;
@@ -547,9 +573,12 @@ class ScanVaultManager {
             'success'     => true,
             'files'       => $matched_files,
             'total'       => $total_matched,
+            'total_count' => $total_matched,
             'page'        => $page,
             'limit'       => $limit,
-            'total_pages' => max(1, ceil($total_matched / $limit)),
+            'per_page'    => $limit,
+            'total_pages' => max(1, (int) ceil($total_matched / $limit)),
+            'source'      => 'scan_vault',
         ];
     }
 
@@ -604,10 +633,15 @@ class ScanVaultManager {
                 }
             }
 
-            // Delete matching temp buffer
+            // Delete matching temp buffer (both HMAC-protected and legacy)
             $temp = self::get_temp_file_path($scan_id);
             if (file_exists($temp)) {
                 @unlink($temp);
+                $deleted = true;
+            }
+            $legacy_temp = rtrim($dir, '/\\') . "/scan_{$scan_id}.temp.jsonl";
+            if (file_exists($legacy_temp)) {
+                @unlink($legacy_temp);
                 $deleted = true;
             }
 

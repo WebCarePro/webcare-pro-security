@@ -973,7 +973,7 @@ class MicroWafCompiler {
         $out .= "        if (!\$mod_rescue_paused) {\n";
         $out .= "            // 5B. Custom rules evaluation: explicit immediate-block rules run even on allowlisted URLs\n";
         $out .= "            if (!\$mod_has_login_cookie && !empty(\$mod_rules['custom_rules_enforced'])) {\n";
-        $out .= "                \$mod_payload_rx = '/(?:\\\\bunion\\\\s+all\\\\s+select\\\\b|\\\\bselect\\\\b.{1,40}\\\\bfrom\\\\b.{1,40}\\\\bwp_users\\\\b|sleep\\\\s*\\\\(\\\\s*\\\\d+\\\\s*\\\\)|benchmark\\\\s*\\\\(|<script\\\\b|javascript:|wp_capabilities|(?:(?:\"|\'|\\\\b)(?:role|default_role|user_role|capabilities)\\\\b[^a-z0-9_]{0,20}\\\\badministrator\\\\b)|s:13:\"administrator\")/i';\n";
+        $out .= "                \$mod_payload_rx = '/(?:(?:^|[^a-z_]|[\\d.eE])union\\\\s+(?:all\\\\s+)?select\\\\b|\\\\bselect\\\\b.{1,40}\\\\bfrom\\\\b.{1,40}\\\\bwp_users\\\\b|sleep\\\\s*\\\\(\\\\s*\\\\d+\\\\s*\\\\)|benchmark\\\\s*\\\\(|<script\\\\b|javascript:|wp_capabilities|(?:(?:\"|\'|\\\\b)(?:role|default_role|user_role|capabilities)\\\\b[^a-z0-9_]{0,20}\\\\badministrator\\\\b)|s:13:\"administrator\")/i';\n";
         $out .= "                \$trusted_custom = is_array(\$mod_trusted['rule_ids'] ?? null) ? \$mod_trusted['rule_ids'] : [];\n";
         $out .= "                foreach (\$mod_rules['custom_rules_enforced'] as \$c_rule) {\n";
         $out .= "                    \$c_id = (string) (\$c_rule['rule_id'] ?? 'MOD-CUSTOM');\n";

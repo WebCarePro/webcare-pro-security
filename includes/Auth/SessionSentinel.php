@@ -441,15 +441,19 @@ class SessionSentinel {
 
                 $is_match = false;
                 // Match criteria 1: Persistent device UUID matches
-                if (!empty($s_uuid) && !empty($device_uuid) && $s_uuid === $device_uuid) {
+                if (!empty($s_uuid) && !empty($device_uuid)) {
+                    if (hash_equals((string) $s_uuid, (string) $device_uuid)) {
+                        $is_match = true;
+                    }
+                    // When both sessions have explicit device UUIDs and they differ, they are distinct browsers/devices;
+                    // never fall through to coarse fingerprint matching.
+                }
+                // Match criteria 2: Legacy session without a stored device_uuid — match hardware fingerprint + same IP
+                elseif (empty($s_uuid) && !empty($s_fp) && !empty($device_fp) && hash_equals((string) $s_fp, (string) $device_fp) && !empty($s_ip) && $s_ip === $ip) {
                     $is_match = true;
                 }
-                // Match criteria 2: Hardware fingerprint matches
-                elseif (!empty($s_fp) && !empty($device_fp) && $s_fp === $device_fp) {
-                    $is_match = true;
-                }
-                // Match criteria 3: Matching browser, platform, and IP (for legacy sessions created before UUID tracking)
-                elseif (!empty($s_ua) && substr(sanitize_text_field($ua), 0, 255) === $s_ua && !empty($s_ip) && $s_ip === $ip) {
+                // Match criteria 3: Matching full User-Agent and IP for legacy pre-UUID sessions
+                elseif (empty($s_uuid) && !empty($s_ua) && substr(sanitize_text_field($ua), 0, 255) === $s_ua && !empty($s_ip) && $s_ip === $ip) {
                     $is_match = true;
                 }
 
@@ -533,29 +537,39 @@ class SessionSentinel {
                 ? \WebCareProScanner\Auth\LoginHistoryManager::parse_device_details($ua, $screen_raw)
                 : ['browser' => 'Browser', 'browser_version' => '', 'platform' => 'Unknown OS', 'device_type' => 'Desktop', 'screen_resolution' => $screen_raw];
 
+            $resolved_auth_factor = !empty($auth_label)
+                ? $auth_label
+                : ($auth_type === 'passkey' ? 'Passkey (WebAuthn)' : ($auth_type === '2fa' ? '2FA TOTP' : ($auth_type === 'magic_link' ? 'Magic Link' : 'Password Only')));
+
             $current_login_record = [
-                'time'              => $now,
-                'time_formatted'    => date_i18n('Y-m-d H:i:s', $now),
-                'time_human'        => __('Active just now', 'webcare-pro-security'),
-                'ip'                => $ip,
-                'country'           => $country_info['country'],
-                'country_code'      => $country_info['country_code'],
-                'country_source'    => $country_info['country_source'],
-                'auth_type'         => $auth_type,
-                'auth_label'        => $auth_label,
-                'browser'           => $parsed_device['browser'],
-                'browser_version'   => $parsed_device['browser_version'],
-                'platform'          => $parsed_device['platform'],
-                'device_type'       => $parsed_device['device_type'],
-                'screen_resolution' => !empty($screen_raw) ? $screen_raw : ($parsed_device['screen_resolution'] ?? ''),
-                'timezone'          => !empty($tz_raw) ? $tz_raw : 'UTC',
-                'user_agent'        => substr(sanitize_text_field($ua), 0, 500),
-                'is_current'        => true,
+                'time'                 => $now,
+                'time_formatted'       => date_i18n('Y-m-d H:i:s', $now),
+                'time_human'           => __('Active just now', 'webcare-pro-security'),
+                'login_time'           => date_i18n('Y-m-d H:i:s', $now),
+                'login_time_formatted' => date_i18n('Y-m-d H:i:s', $now),
+                'login_time_human'     => __('Active just now', 'webcare-pro-security'),
+                'ip'                   => $ip,
+                'country'              => $country_info['country'],
+                'country_code'         => $country_info['country_code'],
+                'country_source'       => $country_info['country_source'],
+                'auth_type'            => $auth_type,
+                'auth_label'           => $auth_label,
+                'auth_factor'          => $resolved_auth_factor,
+                'browser'              => $parsed_device['browser'],
+                'browser_version'      => $parsed_device['browser_version'],
+                'platform'             => $parsed_device['platform'],
+                'device_type'          => $parsed_device['device_type'],
+                'screen_resolution'    => !empty($screen_raw) ? $screen_raw : ($parsed_device['screen_resolution'] ?? ''),
+                'timezone'             => !empty($tz_raw) ? $tz_raw : 'UTC',
+                'user_agent'           => substr(sanitize_text_field($ua), 0, 500),
+                'is_current'           => true,
+                'is_active'            => true,
             ];
 
             // Mark previous logins on this device as historical
             foreach ($existing_logins as &$pl) {
                 $pl['is_current'] = false;
+                $pl['is_active']  = false;
             }
             unset($pl);
 
@@ -1814,26 +1828,56 @@ class SessionSentinel {
 
                 $login_records = $decoded['login_records'] ?? ($meta['login_records'] ?? []);
                 if (empty($login_records) || !is_array($login_records)) {
+                    $fallback_factor = !empty($auth_label)
+                        ? $auth_label
+                        : ($auth_type === 'passkey' ? 'Passkey (WebAuthn)' : ($auth_type === '2fa' ? '2FA TOTP' : 'Password Only'));
                     $login_records = [
                         [
-                            'time'              => $login_ts,
-                            'time_formatted'    => date_i18n('Y-m-d H:i:s', $login_ts),
-                            'time_human'        => human_time_diff($login_ts, time()) . ' ago',
-                            'ip'                => $ip,
-                            'country'           => $country,
-                            'country_code'      => $country_code,
-                            'auth_type'         => $auth_type,
-                            'auth_label'        => $auth_label,
-                            'browser'           => $browser_info['browser'],
-                            'browser_version'   => $browser_ver,
-                            'platform'          => $browser_info['platform'],
-                            'device_type'       => $browser_info['device_type'],
-                            'screen_resolution' => $screen_res,
-                            'timezone'          => $timezone ?: 'UTC',
-                            'user_agent'        => $ua,
-                            'is_current'        => $is_current,
+                            'time'                 => $login_ts,
+                            'time_formatted'       => date_i18n('Y-m-d H:i:s', $login_ts),
+                            'time_human'           => human_time_diff($login_ts, time()) . ' ago',
+                            'login_time'           => date_i18n('Y-m-d H:i:s', $login_ts),
+                            'login_time_formatted' => date_i18n('Y-m-d H:i:s', $login_ts),
+                            'login_time_human'     => human_time_diff($login_ts, time()) . ' ago',
+                            'ip'                   => $ip,
+                            'country'              => $country,
+                            'country_code'         => $country_code,
+                            'auth_type'            => $auth_type,
+                            'auth_label'           => $auth_label,
+                            'auth_factor'          => $fallback_factor,
+                            'browser'              => $browser_info['browser'],
+                            'browser_version'      => $browser_ver,
+                            'platform'             => $browser_info['platform'],
+                            'device_type'          => $browser_info['device_type'],
+                            'screen_resolution'    => $screen_res,
+                            'timezone'             => $timezone ?: 'UTC',
+                            'user_agent'           => $ua,
+                            'is_current'           => $is_current,
+                            'is_active'            => $is_current && !$is_logged_out,
                         ]
                     ];
+                } else {
+                    foreach ($login_records as $lr_idx => &$lr_item) {
+                        if (!is_array($lr_item)) {
+                            continue;
+                        }
+                        $lr_ts = isset($lr_item['time']) && is_numeric($lr_item['time']) ? (int) $lr_item['time'] : $login_ts;
+                        $lr_fmt = $lr_item['time_formatted'] ?? ($lr_item['login_time_formatted'] ?? date_i18n('Y-m-d H:i:s', $lr_ts));
+                        $lr_hum = ($lr_idx === 0 && $is_current && !$is_logged_out)
+                            ? __('Active now', 'webcare-pro-security')
+                            : (human_time_diff($lr_ts, time()) . ' ago');
+                        $lr_item['time']                 = $lr_ts;
+                        $lr_item['time_formatted']       = $lr_fmt;
+                        $lr_item['time_human']           = $lr_hum;
+                        $lr_item['login_time']           = $lr_item['login_time'] ?? $lr_fmt;
+                        $lr_item['login_time_formatted'] = $lr_fmt;
+                        $lr_item['login_time_human']     = $lr_hum;
+                        $lr_item['auth_factor']          = $lr_item['auth_factor']
+                            ?? (!empty($lr_item['auth_label']) ? $lr_item['auth_label'] : (!empty($lr_item['auth_type']) ? strtoupper((string) $lr_item['auth_type']) : 'Password Only'));
+                        $lr_item['is_current']           = ($lr_idx === 0) ? $is_current : (!empty($lr_item['is_current']));
+                        $lr_item['is_active']            = ($lr_idx === 0) ? ($is_current && !$is_logged_out) : (!empty($lr_item['is_current']) && !$is_logged_out);
+                    }
+                    unset($lr_item);
                 }
 
                 $device_first_seen_ts = (int) ($meta['device_first_seen'] ?? ($decoded['device_first_seen'] ?? $login_ts));
@@ -2106,7 +2150,7 @@ class SessionSentinel {
             if (!is_array($rec)) {
                 continue;
             }
-            $time_val = (int) ($rec['time'] ?? ($rec['time_raw'] ?? 0));
+            $time_val = (int) ($rec['time'] ?? ($rec['time_raw'] ?? (is_numeric($rec['login_time'] ?? null) ? $rec['login_time'] : (strtotime((string) ($rec['login_time'] ?? '')) ?: 0))));
             $ip_val   = (string) ($rec['ip'] ?? '');
             $sig = "{$time_val}|{$ip_val}";
             if (!isset($seen[$sig])) {
@@ -2115,8 +2159,8 @@ class SessionSentinel {
             }
         }
         usort($unique, function ($x, $y) {
-            $tx = (int) ($x['time'] ?? ($x['time_raw'] ?? 0));
-            $ty = (int) ($y['time'] ?? ($y['time_raw'] ?? 0));
+            $tx = (int) ($x['time'] ?? ($x['time_raw'] ?? (is_numeric($x['login_time'] ?? null) ? $x['login_time'] : (strtotime((string) ($x['login_time'] ?? '')) ?: 0))));
+            $ty = (int) ($y['time'] ?? ($y['time_raw'] ?? (is_numeric($y['login_time'] ?? null) ? $y['login_time'] : (strtotime((string) ($y['login_time'] ?? '')) ?: 0))));
             return $ty <=> $tx;
         });
         return array_slice($unique, 0, 50);

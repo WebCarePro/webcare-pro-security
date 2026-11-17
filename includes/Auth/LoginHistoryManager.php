@@ -46,9 +46,15 @@ class LoginHistoryManager {
     }
 
     /**
-     * Ensure persistent device identification cookie is initialized early
+     * Ensure persistent device identification cookie is initialized on login screen or for authenticated users.
+     * Never emit Set-Cookie on anonymous frontend requests to preserve full-page edge caching (Cloudflare/Varnish/LSCache).
      */
     public static function ensure_device_cookie() {
+        $is_login_request = did_action('login_init') > 0
+            || (isset($GLOBALS['pagenow']) && $GLOBALS['pagenow'] === 'wp-login.php');
+        if (!$is_login_request && (!function_exists('is_user_logged_in') || !is_user_logged_in())) {
+            return;
+        }
         self::get_or_create_device_uuid();
     }
 
@@ -122,11 +128,13 @@ class LoginHistoryManager {
      * Calculate deterministic hardware and client environment fingerprint
      */
     public static function get_device_fingerprint(string $ua, string $screen = '', string $tz = ''): string {
-        $parsed = self::parse_device_details($ua, $screen);
-        $browser = $parsed['browser'] ?? 'Unknown';
-        $platform = $parsed['platform'] ?? 'Unknown';
+        $parsed      = self::parse_device_details($ua, $screen);
+        $browser     = $parsed['browser'] ?? 'Unknown';
+        $browser_ver = !empty($parsed['browser_version']) ? explode('.', (string) $parsed['browser_version'])[0] : '';
+        $platform    = $parsed['platform'] ?? 'Unknown';
         $device_type = $parsed['device_type'] ?? 'Desktop';
-        return hash('sha256', $browser . '|' . $platform . '|' . $device_type . '|' . $tz);
+        $screen_norm = $parsed['screen_resolution'] ?? $screen;
+        return hash('sha256', $browser . '|' . $browser_ver . '|' . $platform . '|' . $device_type . '|' . $screen_norm . '|' . $tz);
     }
 
     /**
@@ -216,8 +224,8 @@ class LoginHistoryManager {
             'screen_resolution'  => $parsed['screen_resolution'],
             'viewport'           => $parsed['viewport'],
             'timezone'           => $tz_raw ?: 'UTC',
-            'country'            => $country_info['name'] ?? 'Unknown',
-            'country_code'       => $country_info['code'] ?? 'XX',
+            'country'            => $country_info['country'] ?? ($country_info['name'] ?? 'Unknown'),
+            'country_code'       => $country_info['country_code'] ?? ($country_info['code'] ?? 'XX'),
             'auth_method'        => $auth_method,
         ];
 
@@ -639,8 +647,8 @@ class LoginHistoryManager {
                     'screen_resolution'  => '1920x1080 (Estimated)',
                     'viewport'           => '',
                     'timezone'           => 'UTC',
-                    'country'            => $cf_c['name'] ?? 'Unknown',
-                    'country_code'       => $cf_c['code'] ?? 'XX',
+                    'country'            => $cf_c['country'] ?? ($cf_c['name'] ?? 'Unknown'),
+                    'country_code'       => $cf_c['country_code'] ?? ($cf_c['code'] ?? 'XX'),
                     'user_agent'         => $sdata['ua'] ?? $client_ua,
                     'auth_method'        => 'Active WordPress Session',
                 ];

@@ -445,7 +445,7 @@ class FirewallEngine {
             || (strpos($request_uri, 'rest_route=') !== false);
 
         // Read-only inspection and safe diagnostic routes under WebCare Pro
-        // are safe admin queries and should not fail admin authentication if nonce headers are stripped or delayed by reverse proxies.
+        // (excludes mutating /probe and /snapshot routes which require Layer 4 REST nonce verification).
         $is_webcare_read_route = str_starts_with($norm_rest_route, '/webcare-pro-security/v1/')
             && in_array($norm_rest_route, [
                 '/webcare-pro-security/v1/file/view',
@@ -462,10 +462,6 @@ class FirewallEngine {
                 '/webcare-pro-security/v1/firewall/status',
                 '/webcare-pro-security/v1/firewall/redirect-shield/status',
                 '/webcare-pro-security/v1/redirect-shield/status',
-                '/webcare-pro-security/v1/firewall/redirect-shield/probe',
-                '/webcare-pro-security/v1/redirect-shield/probe',
-                '/webcare-pro-security/v1/firewall/redirect-shield/snapshot',
-                '/webcare-pro-security/v1/redirect-shield/snapshot',
                 '/webcare-pro-security/v1/waf/logs',
                 '/webcare-pro-security/v1/server-info',
                 '/webcare-pro-security/v1/rescue/status',
@@ -6954,6 +6950,22 @@ class FirewallEngine {
             return $result;
         }
 
+        // Permit requests carrying explicit API / Webhook / MCP authentication credentials so the route's
+        // own permission_callback can cryptographically verify the token without a false-positive guest block.
+        // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+        $has_api_auth_credential = !empty($_SERVER['HTTP_AUTHORIZATION'])
+            || !empty($_SERVER['REDIRECT_HTTP_AUTHORIZATION'])
+            || !empty($_SERVER['PHP_AUTH_USER'])
+            || !empty($_SERVER['HTTP_X_MCP_TOKEN'])
+            || !empty($_SERVER['HTTP_X_WC_WEBHOOK_SIGNATURE'])
+            || !empty($_SERVER['HTTP_STRIPE_SIGNATURE'])
+            || (!empty($_GET['consumer_key']) && !empty($_GET['consumer_secret']))
+            || !empty($_GET['oauth_consumer_key']);
+
+        if ($has_api_auth_credential) {
+            return $result;
+        }
+
         // Server Origin & Host Loopback Immunity:
         // Internal loopback requests originating from the server itself are trusted internal operations.
         $client_ip = self::get_client_ip();
@@ -7019,10 +7031,11 @@ class FirewallEngine {
                     if (in_array($sub_method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
                         $is_sub_safe = false;
                         $safe_sub_prefixes = [
-                            '/wc/store/', '/contact-form-7/', '/wpforms/', '/fluentform/',
-                            '/ninja-forms/', '/frm/', '/gf/', '/paypal/', '/wc-stripe/',
-                            '/stripe/', '/surecart/', '/wp/v2/comments',
+                            '/wc/store/', '/wc/', '/contact-form-7/', '/wpforms/', '/fluentform/',
+                            '/ninja-forms/', '/frm/', '/gf/', '/ws-form/', '/elementor/', '/bricks/',
+                            '/paypal/', '/wc-stripe/', '/stripe/', '/surecart/', '/wp/v2/comments',
                             '/webcare-pro-security/v1/auth/webauthn/',
+                            '/webcare-pro-security/v1/mcp/',
                         ];
                         foreach ($safe_sub_prefixes as $ssp) {
                             if (str_starts_with($sub_path, $ssp)) {
@@ -7069,7 +7082,18 @@ class FirewallEngine {
             '/ninja-forms/',
             '/frm/',
             '/gf/',
+            '/ws-form/',
+            '/happyforms/',
+            '/everest-forms/',
+            '/metform/',
+            '/elementor/',
+            '/elementor-pro/',
+            '/bricks/',
             '/wc/store/',
+            '/wc/',
+            '/wc-analytics/',
+            '/wc-auth/',
+            '/woocommerce/',
             '/paypal/',
             '/wc-stripe/',
             '/stripe/',
@@ -7077,10 +7101,22 @@ class FirewallEngine {
             '/square/',
             '/surecart/',
             '/givewp/',
+            '/learndash/',
+            '/ldlms/',
+            '/tutor/',
+            '/lifterlms/',
+            '/memberpress/',
+            '/mp/',
+            '/mailpoet/',
+            '/koko-analytics/',
+            '/burst/',
+            '/independent-analytics/',
+            '/litespeed/',
             '/wp/v2/comments',
             '/akismet/',
             '/jetpack/',
             '/webcare-pro-security/v1/auth/webauthn/',
+            '/webcare-pro-security/v1/mcp/',
         ];
 
         foreach ($safe_prefixes as $prefix) {
@@ -7093,6 +7129,35 @@ class FirewallEngine {
             foreach ($custom_routes as $c_rt) {
                 if ($c_rt !== '' && str_starts_with($route, '/' . ltrim($c_rt, '/'))) {
                     return $result;
+                }
+            }
+        }
+
+        // Route Permission Introspection (Zero-FP Guard):
+        // If the target REST route defines a dedicated non-public permission_callback (not '__return_true'),
+        // WordPress Core's WP_REST_Server::respond_to_request() will enforce that capability/token check directly.
+        // Rule #37 only needs to hard-block routes that dangerously expose unauthenticated write mutations
+        // via 'permission_callback' => '__return_true' (or missing permission_callback).
+        if ($server instanceof \WP_REST_Server) {
+            $all_routes = $server->get_routes();
+            foreach ($all_routes as $route_regex => $handlers) {
+                if (@preg_match('@^' . $route_regex . '$@i', $request->get_route())) {
+                    foreach ((array) $handlers as $handler) {
+                        $h_methods = $handler['methods'] ?? [];
+                        $method_matched = is_array($h_methods)
+                            ? !empty($h_methods[$method])
+                            : (str_contains(strtoupper((string) $h_methods), $method));
+                        if (!$method_matched) {
+                            continue;
+                        }
+                        $perm_cb = $handler['permission_callback'] ?? null;
+                        $is_permissive_public = ($perm_cb === null || $perm_cb === '' || $perm_cb === '__return_true' || $perm_cb === ['__return_true']);
+                        if (!$is_permissive_public) {
+                            // Route enforces its own capability/token permission_callback; let WP_REST_Server evaluate it
+                            return $result;
+                        }
+                    }
+                    break;
                 }
             }
         }
