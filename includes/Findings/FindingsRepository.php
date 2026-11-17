@@ -21,6 +21,12 @@ class FindingsRepository {
             return;
         }
 
+        // Offload scanned file telemetry to WebCare Scan Vault JSON manifest (zero database write bloat)
+        if (class_exists('\\WebCareProScanner\\Scan\\ScanVaultManager')) {
+            \WebCareProScanner\Scan\ScanVaultManager::append_batch($scan_id, $rows);
+            return;
+        }
+
         global $wpdb;
         $table = $wpdb->prefix . 'webcareproscan_scan_files';
         $now = current_time('mysql');

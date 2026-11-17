@@ -757,6 +757,36 @@ export const ScanLogsPage: React.FC<ScanLogsPageProps> = ({
             <div className="webcare-inspector-header-actions">
               <button
                 type="button"
+                className="webcare-btn webcare-btn-clean"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                title="Download raw forensic scan manifest JSON (includes all audited file paths, symlinks, hashes & permissions)"
+                onClick={async () => {
+                  try {
+                    const res = await apiRequest({
+                      path: `/scan/manifest/download?scan_id=${selectedScanDetail.scan.id}`,
+                      method: 'GET',
+                    });
+                    if (res && res.manifest_json) {
+                      const blob = new Blob([res.manifest_json], { type: 'application/json' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = res.filename || `scan_${selectedScanDetail.scan.id}_manifest.json`;
+                      document.body.appendChild(a);
+                      a.click();
+                      document.body.removeChild(a);
+                      URL.revokeObjectURL(url);
+                    }
+                  } catch (err) {
+                    console.error('Failed to download scan manifest', err);
+                  }
+                }}
+              >
+                <Download size={14} />
+                <span>Vault JSON Manifest</span>
+              </button>
+              <button
+                type="button"
                 className="webcare-btn webcare-btn-quarantine-vault"
                 onClick={() => handleNavTabChange('quarantine')}
               >

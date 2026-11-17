@@ -116,6 +116,19 @@ class ScannerRoutes {
             'permission_callback' => $permission,
         ]);
 
+        // Scan Manifest Vault Endpoints (Paginated Inspection & Direct JSON Download)
+        register_rest_route(self::NAMESPACE, '/scan/manifest', [
+            'methods'             => 'GET',
+            'callback'            => [__CLASS__, 'get_scan_manifest'],
+            'permission_callback' => $permission,
+        ]);
+
+        register_rest_route(self::NAMESPACE, '/scan/manifest/download', [
+            'methods'             => 'GET',
+            'callback'            => [__CLASS__, 'download_scan_manifest'],
+            'permission_callback' => $permission,
+        ]);
+
         // Server Information
         register_rest_route(self::NAMESPACE, '/server-info', [
             'methods'             => 'GET',
@@ -4220,9 +4233,11 @@ class ScannerRoutes {
             $file_status = !empty($findings) ? 'threat' : 'clean';
 
             $batch_files_records[] = [
-                'file_path' => $rel_path,
-                'file_size' => $file_size,
-                'status'    => $file_status,
+                'file_path'    => $rel_path,
+                'full_path'    => $filepath,
+                'file_size'    => $file_size,
+                'status'       => $file_status,
+                'threat_count' => count($findings),
             ];
 
             $processed_count++;
@@ -4254,27 +4269,9 @@ class ScannerRoutes {
             }
         }
 
-        // Bulk insert scanned file telemetry in a single high-efficiency SQL query instead of N individual queries
-        if (!empty($batch_files_records)) {
-            $now_mysql = current_time('mysql');
-            $now_gmt   = gmdate('Y-m-d H:i:s');
-            $placeholders = [];
-            $values = [];
-            foreach ($batch_files_records as $rec) {
-                $placeholders[] = '(%d, %s, %d, %s, %s, %s)';
-                $values[] = $scan_id;
-                $values[] = $rec['file_path'];
-                $values[] = $rec['file_size'];
-                $values[] = $rec['status'];
-                $values[] = $now_mysql;
-                $values[] = $now_gmt;
-            }
-            $insert_query = "INSERT INTO `{$table_files}` (scan_id, file_path, file_size, status, scanned_at, scanned_at_gmt) VALUES " . implode(', ', $placeholders);
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
-            $wpdb->query(
-                // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
-                $wpdb->prepare($insert_query, $values)
-            );
+        // Offload scanned file telemetry to WebCare Scan Vault JSON manifest (zero database write bloat)
+        if (!empty($batch_files_records) && class_exists('\\WebCareProScanner\\Scan\\ScanVaultManager')) {
+            \WebCareProScanner\Scan\ScanVaultManager::append_batch($scan_id, $batch_files_records);
         }
 
         $remaining = \WebCareProScanner\Scan\ScanQueueManager::advance($scan_id, $processed_count, $bytes_consumed);
@@ -4880,6 +4877,11 @@ class ScannerRoutes {
             ];
             $diagnostics = self::build_scan_diagnostics($completed_scan_row);
 
+            // Assemble and seal immutable Scan Vault JSON manifest
+            if (class_exists('\\WebCareProScanner\\Scan\\ScanVaultManager')) {
+                \WebCareProScanner\Scan\ScanVaultManager::finalize_manifest($scan_id, $completed_scan_row);
+            }
+
             // Release the scan lock upon completion
             ScanLock::release($scan_id);
 
@@ -5069,13 +5071,21 @@ class ScannerRoutes {
             $latest_scan['issues_found'] = $open_issues_count;
         }
 
-        $files_list_sql = "SELECT * FROM `{$table_files}` WHERE scan_id = %d ORDER BY id ASC";
+        $files_list_sql = "SELECT * FROM `{$table_files}` WHERE scan_id = %d ORDER BY id ASC LIMIT 500";
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
         $scanned_files = $wpdb->get_results(
             // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
             $wpdb->prepare($files_list_sql, $latest_scan['id']),
             ARRAY_A
         );
+
+        $manifest_summary = null;
+        if (class_exists('\\WebCareProScanner\\Scan\\ScanVaultManager')) {
+            $manifest_summary = \WebCareProScanner\Scan\ScanVaultManager::get_manifest_summary((int) $latest_scan['id']);
+            if (empty($scanned_files) && !empty($manifest_summary)) {
+                $scanned_files = \WebCareProScanner\Scan\ScanVaultManager::get_manifest_sample((int) $latest_scan['id'], 100);
+            }
+        }
 
         $scorer = new RiskScorer();
         $summary = $scorer->calculate($issues);
@@ -5093,13 +5103,14 @@ class ScannerRoutes {
         $diagnostics = self::build_scan_diagnostics($latest_scan);
 
         return rest_ensure_response([
-            'has_scan'        => true,
-            'scan'            => $latest_scan,
-            'summary'         => $summary,
-            'issues'          => $issues,
-            'files'           => $scanned_files,
-            'diagnostics'     => $diagnostics,
-            'available_scans' => $available_scans ?: [],
+            'has_scan'         => true,
+            'scan'             => $latest_scan,
+            'summary'          => $summary,
+            'issues'           => $issues,
+            'files'            => $scanned_files ?: [],
+            'manifest_summary' => $manifest_summary,
+            'diagnostics'      => $diagnostics,
+            'available_scans'  => $available_scans ?: [],
         ]);
     }
 
@@ -5288,6 +5299,11 @@ class ScannerRoutes {
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.NotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
             $wpdb->query($del_scans_sql);
 
+            // Clear historical Scan Vault JSON manifests as well
+            if (class_exists('\\WebCareProScanner\\Scan\\ScanVaultManager')) {
+                \WebCareProScanner\Scan\ScanVaultManager::clear_historical_manifests($running_ids);
+            }
+
             // Do NOT release lock because the scan is actively running!
             return rest_ensure_response([
                 'success'        => true,
@@ -5311,6 +5327,11 @@ class ScannerRoutes {
         $trunc_files = "TRUNCATE TABLE `{$table_files}`";
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.NotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
         $wpdb->query($trunc_files);
+
+        // Clear all Scan Vault JSON manifests
+        if (class_exists('\\WebCareProScanner\\Scan\\ScanVaultManager')) {
+            \WebCareProScanner\Scan\ScanVaultManager::clear_all_manifests();
+        }
 
         ScanLock::release(ScanLock::get_locked_scan_id() ?: 0);
 
@@ -5358,6 +5379,14 @@ class ScannerRoutes {
             $wpdb->prepare($fc_sql, $scan_id)
         );
 
+        $manifest_summary = null;
+        if (class_exists('\\WebCareProScanner\\Scan\\ScanVaultManager')) {
+            $manifest_summary = \WebCareProScanner\Scan\ScanVaultManager::get_manifest_summary($scan_id);
+            if ($files_count === 0 && !empty($manifest_summary['files_count'])) {
+                $files_count = (int) $manifest_summary['files_count'];
+            }
+        }
+
         if (empty($scan['trigger_type'])) {
             $scan['trigger_type'] = 'manual';
         }
@@ -5378,12 +5407,13 @@ class ScannerRoutes {
         }
 
         return rest_ensure_response([
-            'success'      => true,
-            'scan'         => $scan,
-            'summary'      => $summary,
-            'issues'       => $issues,
-            'files_count'  => $files_count,
-            'diagnostics'  => $diagnostics,
+            'success'          => true,
+            'scan'             => $scan,
+            'summary'          => $summary,
+            'issues'           => $issues,
+            'files_count'      => $files_count,
+            'manifest_summary' => $manifest_summary,
+            'diagnostics'      => $diagnostics,
             'interruption' => $interruption,
         ]);
     }
@@ -5643,6 +5673,148 @@ class ScannerRoutes {
         }
 
         return rest_ensure_response($response_data);
+    }
+
+    /**
+     * Get paginated or filtered scanned file manifest from WebCare Scan Vault.
+     */
+    public static function get_scan_manifest(\WP_REST_Request $request) {
+        $scan_id = (int) $request->get_param('scan_id');
+        if ($scan_id <= 0) {
+            global $wpdb;
+            $table_scans = $wpdb->prefix . 'webcareproscan_scans';
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
+            $scan_id = (int) $wpdb->get_var("SELECT id FROM `{$table_scans}` ORDER BY id DESC LIMIT 1");
+        }
+
+        if ($scan_id <= 0) {
+            return new \WP_Error('no_scans', __('No scans found.', 'webcare-pro-security'), ['status' => 404]);
+        }
+
+        $page     = max(1, (int) $request->get_param('page'));
+        $per_page = max(1, min(500, (int) ($request->get_param('per_page') ?: 50)));
+        $search   = sanitize_text_field((string) $request->get_param('search'));
+        $status   = sanitize_text_field((string) $request->get_param('status'));
+
+        $summary = null;
+        $result  = null;
+        if (class_exists('\\WebCareProScanner\\Scan\\ScanVaultManager')) {
+            $summary = \WebCareProScanner\Scan\ScanVaultManager::get_manifest_summary($scan_id);
+            $result  = \WebCareProScanner\Scan\ScanVaultManager::get_manifest_files($scan_id, $page, $per_page, $search, $status);
+        }
+
+        // Fallback for legacy scans stored in MySQL table
+        if (!$result || empty($result['files'])) {
+            global $wpdb;
+            $table_files = $wpdb->prefix . 'webcareproscan_scan_files';
+            $where = ['scan_id = %d'];
+            $params = [$scan_id];
+            if ($status) {
+                $where[] = 'status = %s';
+                $params[] = $status;
+            }
+            if ($search) {
+                $where[] = 'file_path LIKE %s';
+                $params[] = '%' . $wpdb->esc_like($search) . '%';
+            }
+            $where_sql = implode(' AND ', $where);
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
+            $total_legacy = (int) $wpdb->get_var(
+                // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+                $wpdb->prepare("SELECT COUNT(*) FROM `{$table_files}` WHERE {$where_sql}", $params)
+            );
+            $offset = ($page - 1) * $per_page;
+            $params_page = array_merge($params, [$per_page, $offset]);
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
+            $legacy_files = $wpdb->get_results(
+                // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+                $wpdb->prepare("SELECT * FROM `{$table_files}` WHERE {$where_sql} ORDER BY id ASC LIMIT %d OFFSET %d", $params_page),
+                ARRAY_A
+            ) ?: [];
+
+            $result = [
+                'files'       => $legacy_files,
+                'total_count' => $total_legacy,
+                'page'        => $page,
+                'per_page'    => $per_page,
+                'total_pages' => (int) ceil($total_legacy / max(1, $per_page)),
+                'source'      => 'legacy_database',
+            ];
+        }
+
+        return rest_ensure_response([
+            'success'   => true,
+            'scan_id'   => $scan_id,
+            'summary'   => $summary,
+            'manifest'  => $result,
+        ]);
+    }
+
+    /**
+     * Download the full raw Scan Vault JSON manifest for a given scan ID.
+     */
+    public static function download_scan_manifest(\WP_REST_Request $request) {
+        $scan_id = (int) $request->get_param('scan_id');
+        if ($scan_id <= 0) {
+            global $wpdb;
+            $table_scans = $wpdb->prefix . 'webcareproscan_scans';
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
+            $scan_id = (int) $wpdb->get_var("SELECT id FROM `{$table_scans}` ORDER BY id DESC LIMIT 1");
+        }
+
+        if ($scan_id <= 0) {
+            return new \WP_Error('no_scans', __('No scans found.', 'webcare-pro-security'), ['status' => 404]);
+        }
+
+        $manifest_json = null;
+        $filename      = null;
+
+        if (class_exists('\\WebCareProScanner\\Scan\\ScanVaultManager')) {
+            $manifest_file = \WebCareProScanner\Scan\ScanVaultManager::find_manifest_file($scan_id);
+            if ($manifest_file) {
+                $filename = basename($manifest_file);
+                if (str_ends_with($filename, '.temp.jsonl')) {
+                    $filename = \WebCareProScanner\Scan\ScanVaultManager::get_manifest_filename($scan_id);
+                }
+                $manifest_json = \WebCareProScanner\Scan\ScanVaultManager::get_full_manifest_content($scan_id);
+            }
+        }
+
+        if (!$manifest_json) {
+            // Check legacy database fallback
+            global $wpdb;
+            $table_files = $wpdb->prefix . 'webcareproscan_scan_files';
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
+            $legacy_files = $wpdb->get_results(
+                // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+                $wpdb->prepare("SELECT * FROM `{$table_files}` WHERE scan_id = %d ORDER BY id ASC", $scan_id),
+                ARRAY_A
+            );
+
+            if (!empty($legacy_files)) {
+                $host_raw = wp_parse_url(get_site_url(), PHP_URL_HOST) ?: 'site';
+                $domain   = strtolower(preg_replace('/[^a-z0-9]/i', '-', preg_replace('/^www\./i', '', $host_raw)));
+                $filename = "{$domain}_scan{$scan_id}_legacy.json";
+                $manifest_json = (string) wp_json_encode([
+                    'vault_format' => '1.0-legacy-db',
+                    'scan_id'      => $scan_id,
+                    'site_url'     => get_site_url(),
+                    'files_count'  => count($legacy_files),
+                    'files'        => $legacy_files,
+                ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+            }
+        }
+
+        if (!$manifest_json) {
+            return new \WP_Error('manifest_not_found', __('Scan Vault manifest JSON file was not found for this scan.', 'webcare-pro-security'), ['status' => 404]);
+        }
+
+        return rest_ensure_response([
+            'success'       => true,
+            'scan_id'       => $scan_id,
+            'filename'      => $filename ?: "scan_{$scan_id}_manifest.json",
+            'manifest_json' => $manifest_json,
+        ]);
     }
 
     public static function get_server_info(\WP_REST_Request $request) {

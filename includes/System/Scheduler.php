@@ -181,6 +181,7 @@ class Scheduler {
          try {
              $scanned_count = 0;
              $file_scanner = new \WebCareProScanner\Filesystem\FileScanner();
+             $cron_batch_records = [];
 
              // 2. Scan discovered filesystem files
              foreach ($files as $idx => $filepath) {
@@ -199,15 +200,18 @@ class Scheduler {
                  $file_size = @filesize($filepath) ?: 0;
                  $file_status = !empty($findings) ? 'threat' : 'clean';
 
-                 // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-                 $wpdb->insert($table_files, [
-                     'scan_id'    => $scan_id,
-                     'file_path'  => $rel_path,
-                     'file_size'  => $file_size,
-                     'status'     => $file_status,
-                     'scanned_at'     => current_time('mysql'),
-                     'scanned_at_gmt' => gmdate('Y-m-d H:i:s'),
-                 ]);
+                 $cron_batch_records[] = [
+                     'file_path'    => $rel_path,
+                     'full_path'    => $filepath,
+                     'file_size'    => $file_size,
+                     'status'       => $file_status,
+                     'threat_count' => count($findings),
+                 ];
+
+                 if (count($cron_batch_records) >= 50 && class_exists('\\WebCareProScanner\\Scan\\ScanVaultManager')) {
+                     \WebCareProScanner\Scan\ScanVaultManager::append_batch($scan_id, $cron_batch_records);
+                     $cron_batch_records = [];
+                 }
 
                  foreach ($findings as $f) {
                      $item = is_array($f) ? $f : (method_exists($f, 'to_array') ? $f->to_array() : (array) $f);
@@ -230,6 +234,12 @@ class Scheduler {
                  }
 
                  $scanned_count++;
+             }
+
+             // Flush any remaining buffered files to WebCare Scan Vault JSON manifest
+             if (!empty($cron_batch_records) && class_exists('\\WebCareProScanner\\Scan\\ScanVaultManager')) {
+                 \WebCareProScanner\Scan\ScanVaultManager::append_batch($scan_id, $cron_batch_records);
+                 $cron_batch_records = [];
              }
 
              // 3. Run target-specific deep audit engines
@@ -382,6 +392,20 @@ class Scheduler {
                  'duration_ms'   => $duration_ms,
                  'completed_at'  => $completed_at_exact,
              ], ['id' => $scan_id]);
+
+             // Assemble and seal immutable Scan Vault JSON manifest
+             if (class_exists('\\WebCareProScanner\\Scan\\ScanVaultManager')) {
+                 \WebCareProScanner\Scan\ScanVaultManager::finalize_manifest($scan_id, [
+                     'id'            => $scan_id,
+                     'status'        => 'completed',
+                     'issues_found'  => $open_issues_count,
+                     'risk_score'    => $risk_score,
+                     'duration'      => $duration,
+                     'duration_ms'   => $duration_ms,
+                     'scanned_files' => $scanned_count,
+                     'completed_at'  => $completed_at_exact,
+                 ]);
+             }
 
              // Release exclusive lock
              \WebCareProScanner\Scan\ScanLock::release($scan_id);
