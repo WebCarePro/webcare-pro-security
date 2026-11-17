@@ -40,6 +40,7 @@ export interface FindingForensicsDrawerProps {
   onRemediateDbRow?: (issue: any, action: string) => void;
   onDeleteCronHook?: (issue: any) => void;
   onRemediateUser?: (issue: any, action: string, role?: string, targetAdminId?: number) => void;
+  onDisableWpDebug?: (issue: any) => void;
   onCopyPath?: (path: string) => void;
   copiedPath?: string | null;
 }
@@ -53,6 +54,7 @@ export const FindingForensicsDrawer: React.FC<FindingForensicsDrawerProps> = ({
   onRemediateDbRow,
   onDeleteCronHook,
   onRemediateUser,
+  onDisableWpDebug,
   onCopyPath,
   copiedPath
 }) => {
@@ -263,6 +265,9 @@ export const FindingForensicsDrawer: React.FC<FindingForensicsDrawerProps> = ({
     }
     if (isUser) {
       return 'Review this WordPress user account configuration and role permissions in WP-Admin Users.';
+    }
+    if (issue.type === 'wp_debug_enabled' || (Boolean(issue.file_path && issue.file_path.endsWith('wp-config.php')) && (issue.type?.includes('debug') || issue.description?.includes('WP_DEBUG')))) {
+      return 'WordPress debugging is enabled in production. Detailed errors, stack traces, and sensitive database configurations can be exposed to public visitors. 1-Click disable WP_DEBUG to lock down your configuration.';
     }
     if (issue.type === 'unsafe_permissions') {
       return 'World-writable permissions detected on server files. Enforce standard 0644 for files or 0755 for directories to prevent unauthorized local execution.';
@@ -657,6 +662,73 @@ export const FindingForensicsDrawer: React.FC<FindingForensicsDrawerProps> = ({
                   <span>Change Password in Profile</span>
                   <ArrowUpRight size={11} />
                 </a>
+              </div>
+            )}
+
+            {/* WordPress Debugging Lockdown Remediation Box */}
+            {(issue.type === 'wp_debug_enabled' || (Boolean(issue.file_path && issue.file_path.endsWith('wp-config.php')) && (issue.type?.includes('debug') || issue.description?.includes('WP_DEBUG')))) && (
+              <div
+                style={{
+                  background: 'rgba(5, 150, 105, 0.05)',
+                  border: '1px solid rgba(5, 150, 105, 0.25)',
+                  borderRadius: '10px',
+                  padding: '14px 18px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  flexWrap: 'wrap',
+                  gap: '12px'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: '280px' }}>
+                  <div
+                    style={{
+                      width: '38px',
+                      height: '38px',
+                      borderRadius: '8px',
+                      background: 'rgba(5, 150, 105, 0.12)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexShrink: 0
+                    }}
+                  >
+                    <ShieldCheck size={18} color="#059669" />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '13px', fontWeight: 700, color: '#047857' }}>
+                      Production Hardening: WP_DEBUG is Active
+                    </div>
+                    <div style={{ fontSize: '12px', color: 'var(--webcare-text-secondary, #475569)', marginTop: '2px', lineHeight: 1.45 }}>
+                      Live error output exposes server file paths, SQL queries, and potential credentials to visitors. 1-Click disable comments out debug blocks, sets <code>WP_DEBUG</code>, <code>WP_DEBUG_LOG</code>, and <code>WP_DEBUG_DISPLAY</code> to <code>false</code>, silences <code>display_errors</code>, and creates an encrypted rollback backup.
+                    </div>
+                  </div>
+                </div>
+
+                {issue.status === 'open' && onDisableWpDebug && (
+                  <button
+                    type="button"
+                    className="webcare-btn"
+                    style={{
+                      background: 'linear-gradient(135deg, #059669 0%, #047857 100%)',
+                      color: '#ffffff',
+                      border: '1px solid #047857',
+                      padding: '8px 16px',
+                      borderRadius: '7px',
+                      fontSize: '12.5px',
+                      fontWeight: 700,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      cursor: 'pointer',
+                      boxShadow: '0 2px 4px rgba(5, 150, 105, 0.25)'
+                    }}
+                    onClick={() => onDisableWpDebug(issue)}
+                  >
+                    <ShieldCheck size={14} />
+                    <span>Disable WordPress Debugging</span>
+                  </button>
+                )}
               </div>
             )}
 

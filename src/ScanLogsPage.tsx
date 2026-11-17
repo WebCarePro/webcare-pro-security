@@ -1609,8 +1609,8 @@ export const ScanLogsPage: React.FC<ScanLogsPageProps> = ({
                                       </button>
                                     )}
 
-{/* WP_DEBUG 1-Click Disable */}
-                                    {issue.type === 'wp_debug_enabled' && handleDisableWpDebug && (
+                                    {/* WP_DEBUG 1-Click Disable */}
+                                    {(issue.type === 'wp_debug_enabled' || (Boolean(issue.file_path && issue.file_path.endsWith('wp-config.php')) && (issue.type?.includes('debug') || issue.description?.includes('WP_DEBUG')))) && handleDisableWpDebug && (
                                       <button
                                         type="button"
                                         className="webcare-btn"
@@ -1886,6 +1886,7 @@ export const ScanLogsPage: React.FC<ScanLogsPageProps> = ({
                                   onRemediateDbRow={handleRemediateDbRow}
                                   onDeleteCronHook={handleDeleteCronHook}
                                   onRemediateUser={handleRemediateUser}
+                                  onDisableWpDebug={handleDisableWpDebug}
                                   onCopyPath={copyToClipboard}
                                   copiedPath={copiedIssuePath}
                                 />

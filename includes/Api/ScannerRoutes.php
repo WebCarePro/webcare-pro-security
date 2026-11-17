@@ -8457,35 +8457,42 @@ class ScannerRoutes {
             'FTP_USER', 'FTP_PASS', 'FTP_HOST', 'FTP_BASE',
             'FTP_SSL', 'FTP_SSH', 'FTP_PUBKEY', 'FTP_PRIKEY',
             'WEBCARE_VAULT_KEY', 'WEBCARE_MASTER_KEY', 'WEBCARE_ENCRYPTION_KEY',
-            'CLOUDFLARE_API_KEY', 'CLOUDFLARE_API_TOKEN',
+            'CLOUDFLARE_API_KEY', 'CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_TOKEN',
         ];
 
         $keys_pattern = implode('|', array_map('preg_quote', $sensitive_keys));
 
-        // Mask define( 'KEY', 'VALUE' ) or define("KEY", "VALUE")
+        // 1. Mask define( 'KEY', 'VALUE' ) or define("KEY", "VALUE") - works across all quote styles and formatting
         $new_content = preg_replace_callback(
-            "/define\\s*\\(\\s*(['\"])(" . $keys_pattern . ")\\1\\s*,\\s*(['\"])(.*?)\\3(\\s*\\))/i",
+            "/define\\s*\\(\\s*(['\"])(" . $keys_pattern . ")\\1\\s*,\\s*([^;)]*?)\\s*\\)/i",
             function ($matches) use (&$is_masked) {
                 $is_masked = true;
                 $quote = $matches[1];
                 $key = $matches[2];
-                $val_quote = $matches[3];
-                $close = $matches[5];
-                return "define( {$quote}{$key}{$quote}, {$val_quote}••••••••••••••••{$val_quote}{$close} /* [REDACTED BY WEBCARE PRO SECURITY] */";
+                return "define( {$quote}{$key}{$quote}, '••••••••••••••••' ) /* [REDACTED BY WEBCARE PRO SECURITY] */";
             },
             $content
         );
 
-        // Also mask .env style or assignment style: DB_PASSWORD=xxxx or DB_PASS=xxxx
-        $env_keys = 'DB_PASSWORD|DB_PASS|DB_USER|DB_USERNAME|DB_HOST|DB_NAME|FTP_PASS|FTP_PASSWORD|WEBCARE_VAULT_KEY|WEBCARE_MASTER_KEY|WEBCARE_ENCRYPTION_KEY|CLOUDFLARE_API_KEY|CLOUDFLARE_API_TOKEN';
+        // 2. Mask .env style or assignment style: DB_PASSWORD=xxxx or DB_NAME=xxxx
+        $env_keys = 'DB_PASSWORD|DB_PASS|DB_USER|DB_USERNAME|DB_HOST|DB_NAME|FTP_PASS|FTP_PASSWORD|WEBCARE_VAULT_KEY|WEBCARE_MASTER_KEY|WEBCARE_ENCRYPTION_KEY|CLOUDFLARE_API_KEY|CLOUDFLARE_API_TOKEN|CLOUDFLARE_TOKEN';
         $new_content = preg_replace_callback(
-            "/^(\\s*(" . $env_keys . ")\\s*=\\s*)(['\"]?)(.+?)\\3(\\s*(?:#.*)?)$/mi",
+            "/^(\\s*(" . $env_keys . ")\\s*=\\s*)(.*?)$/mi",
             function ($matches) use (&$is_masked) {
                 $is_masked = true;
                 $prefix = $matches[1];
-                $quote = $matches[3];
-                $suffix = $matches[5];
-                return "{$prefix}{$quote}••••••••••••••••{$quote}{$suffix} # [REDACTED BY WEBCARE PRO SECURITY]";
+                return "{$prefix}'••••••••••••••••' # [REDACTED BY WEBCARE PRO SECURITY]";
+            },
+            $new_content
+        );
+
+        // 3. Mask array or variable assignment style: $db_password = '...' or $_ENV['DB_PASSWORD'] = '...'
+        $new_content = preg_replace_callback(
+            "/((?:\\\$|\\b_ENV\\[['\"]|\\b_SERVER\\[['\"])(" . $keys_pattern . ")(?:['\"]\\])?\\s*=\\s*)(['\"]).*?\\3/i",
+            function ($matches) use (&$is_masked) {
+                $is_masked = true;
+                $prefix = $matches[1];
+                return "{$prefix}'••••••••••••••••' /* [REDACTED BY WEBCARE PRO SECURITY] */";
             },
             $new_content
         );

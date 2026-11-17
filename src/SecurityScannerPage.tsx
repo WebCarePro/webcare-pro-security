@@ -2480,6 +2480,32 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                             </button>
                           )}
 
+                          {/* 5.1 Disable WordPress Debugging */}
+                          {issue.status === 'open' && (issue.type === 'wp_debug_enabled' || (Boolean(issue.file_path && issue.file_path.endsWith('wp-config.php')) && (issue.type?.includes('debug') || issue.description?.includes('WP_DEBUG')))) && handleDisableWpDebug && (
+                            <button
+                              type="button"
+                              className="webcare-btn"
+                              style={{
+                                background: '#ecfdf5',
+                                color: '#047857',
+                                border: '1px solid #6ee7b7',
+                                padding: '6px 14px',
+                                borderRadius: '7px',
+                                fontSize: '12px',
+                                fontWeight: 700,
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                cursor: 'pointer'
+                              }}
+                              onClick={() => handleDisableWpDebug(issue)}
+                              title="1-Click Fix: Intelligently comment out debugging and disable WP_DEBUG in wp-config.php"
+                            >
+                              <ShieldCheck size={13} color="#059669" />
+                              <span>Disable Debugging</span>
+                            </button>
+                          )}
+
                           {/* 5.5 Delete Rogue / Unknown File */}
                           {issue.status === 'open' && isPhysicalFile && isUnknownFile && (
                             <button
@@ -2623,6 +2649,7 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                             onRemediateDbRow={handleRemediateDbRow}
                             onDeleteCronHook={handleDeleteCronHook}
                             onRemediateUser={handleRemediateUser}
+                            onDisableWpDebug={handleDisableWpDebug}
                             onCopyPath={handleCopyPath}
                             copiedPath={copiedIssuePath}
                           />
@@ -3273,6 +3300,31 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                                   </button>
                                 )}
 
+                                {/* 4.1 Disable WordPress Debugging */}
+                                {issue.status === 'open' && (issue.type === 'wp_debug_enabled' || (Boolean(issue.file_path && issue.file_path.endsWith('wp-config.php')) && (issue.type?.includes('debug') || issue.description?.includes('WP_DEBUG')))) && handleDisableWpDebug && (
+                                  <button
+                                    type="button"
+                                    className="webcare-btn"
+                                    style={{
+                                      background: '#ecfdf5',
+                                      color: '#047857',
+                                      border: '1px solid #6ee7b7',
+                                      fontSize: '12px',
+                                      padding: '4px 10px',
+                                      borderRadius: '6px',
+                                      fontWeight: 600,
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '4px'
+                                    }}
+                                    onClick={() => handleDisableWpDebug(issue)}
+                                    title="1-Click Fix: Intelligently comment out debugging and disable WP_DEBUG in wp-config.php"
+                                  >
+                                    <ShieldCheck size={12} color="#059669" />
+                                    <span>Disable Debug</span>
+                                  </button>
+                                )}
+
                                 {/* 5. Compare Visual Diff */}
                                 {isFimEligible && (
                                   <button
@@ -3386,6 +3438,7 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                                   onRemediateDbRow={handleRemediateDbRow}
                                   onDeleteCronHook={handleDeleteCronHook}
                                   onRemediateUser={handleRemediateUser}
+                                  onDisableWpDebug={handleDisableWpDebug}
                                   onCopyPath={handleCopyPath}
                                   copiedPath={copiedIssuePath}
                                 />
