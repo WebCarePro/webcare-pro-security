@@ -11410,12 +11410,12 @@ class ScannerRoutes {
         }
 
         // Strict input sanitization and length bounds
-        $raw_res = sanitize_text_field(substr((string) ($params['screen_resolution'] ?? ''), 0, 20));
+        $raw_res = sanitize_text_field(substr((string) ($params['screen_resolution'] ?? ''), 0, 32));
         $raw_vp  = sanitize_text_field(substr((string) ($params['viewport'] ?? ''), 0, 20));
         $raw_tz  = sanitize_text_field(substr((string) ($params['timezone'] ?? ''), 0, 64));
 
-        // Format validation (screen and viewport should follow WxH format e.g. 1920x1080)
-        $clean_res = preg_match('/^\d{2,5}x\d{2,5}$/', $raw_res) ? $raw_res : '';
+        // Format validation (screen and viewport should follow WxH format e.g. 1920x1080 or 1920x1080@1.25)
+        $clean_res = preg_match('/^\d{2,5}x\d{2,5}(@[0-9.]+)?$/', $raw_res) ? $raw_res : '';
         $clean_vp  = preg_match('/^\d{2,5}x\d{2,5}$/', $raw_vp) ? $raw_vp : '';
         $clean_tz  = preg_match('/^[a-zA-Z0-9_\-\/\+\:\. ]{1,64}$/', $raw_tz) ? $raw_tz : '';
 

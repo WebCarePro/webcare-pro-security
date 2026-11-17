@@ -200,6 +200,10 @@ class LoginHistoryManager {
             $auth_method = 'REST API Application Password';
         }
 
+        $country_info = class_exists('\\WebCareProScanner\\Auth\\SessionSentinel')
+            ? SessionSentinel::get_cloudflare_country($ip)
+            : ['code' => 'XX', 'name' => 'Unknown', 'cf_header' => false];
+
         $telemetry = [
             'ip'                 => $ip,
             'user_agent'         => $ua,
@@ -212,6 +216,8 @@ class LoginHistoryManager {
             'screen_resolution'  => $parsed['screen_resolution'],
             'viewport'           => $parsed['viewport'],
             'timezone'           => $tz_raw ?: 'UTC',
+            'country'            => $country_info['name'] ?? 'Unknown',
+            'country_code'       => $country_info['code'] ?? 'XX',
             'auth_method'        => $auth_method,
         ];
 
@@ -289,6 +295,39 @@ class LoginHistoryManager {
         $re_encrypted = SecretVault::encrypt((string) wp_json_encode($payload));
         $now = current_time('mysql');
         $now_gmt = gmdate('Y-m-d H:i:s');
+
+        // Also synchronize telemetry into SessionSentinel active session metadata
+        if (class_exists('\\WebCareProScanner\\Auth\\SessionSentinel')) {
+            $sessions_meta = SessionSentinel::get_stored_session_meta($user_id);
+            if (!empty($sessions_meta) && is_array($sessions_meta)) {
+                $canonical_v  = $session_token ? (strlen($session_token) === 64 && ctype_xdigit($session_token) ? $session_token : hash('sha256', $session_token)) : '';
+                $updated_meta = false;
+
+                foreach ($sessions_meta as $key => &$s_entry) {
+                    if (!is_array($s_entry)) {
+                        continue;
+                    }
+                    $s_token = (strlen($key) === 64 && ctype_xdigit($key)) ? $key : hash('sha256', $key);
+                    if ((!empty($canonical_v) && $s_token === $canonical_v) || (empty($canonical_v) && empty($s_entry['logged_out']))) {
+                        if (!empty($client_telemetry['screen_resolution'])) {
+                            $s_entry['screen_resolution'] = sanitize_text_field($client_telemetry['screen_resolution']);
+                        }
+                        if (!empty($client_telemetry['timezone'])) {
+                            $s_entry['timezone'] = sanitize_text_field($client_telemetry['timezone']);
+                        }
+                        $updated_meta = true;
+                        if (!empty($canonical_v)) {
+                            break;
+                        }
+                    }
+                }
+                unset($s_entry);
+
+                if ($updated_meta) {
+                    SessionSentinel::save_stored_session_meta($user_id, $sessions_meta);
+                }
+            }
+        }
 
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
         return $wpdb->update(
@@ -562,6 +601,8 @@ class LoginHistoryManager {
                 'screen_resolution'  => $data['screen_resolution'] ?? 'Standard Desktop',
                 'viewport'           => $data['viewport'] ?? '',
                 'timezone'           => $data['timezone'] ?? 'UTC',
+                'country'            => $data['country'] ?? 'Unknown',
+                'country_code'       => $data['country_code'] ?? 'XX',
                 'user_agent'         => $data['user_agent'] ?? '',
                 'auth_method'        => $data['auth_method'] ?? 'Password',
             ];
@@ -577,6 +618,9 @@ class LoginHistoryManager {
                 $s_login = isset($sdata['login']) ? (int) $sdata['login'] : time();
                 $dur = max(1, time() - $s_login);
                 $session_ip = $sdata['ip'] ?? 'Unknown IP';
+                $cf_c = class_exists('\\WebCareProScanner\\Auth\\SessionSentinel')
+                    ? SessionSentinel::get_cloudflare_country($session_ip)
+                    : ['code' => 'XX', 'name' => 'Unknown'];
 
                 $history[] = [
                     'id'                 => 1,
@@ -595,6 +639,8 @@ class LoginHistoryManager {
                     'screen_resolution'  => '1920x1080 (Estimated)',
                     'viewport'           => '',
                     'timezone'           => 'UTC',
+                    'country'            => $cf_c['name'] ?? 'Unknown',
+                    'country_code'       => $cf_c['code'] ?? 'XX',
                     'user_agent'         => $sdata['ua'] ?? $client_ua,
                     'auth_method'        => 'Active WordPress Session',
                 ];

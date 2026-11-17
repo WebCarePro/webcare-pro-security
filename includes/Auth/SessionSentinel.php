@@ -522,6 +522,48 @@ class SessionSentinel {
                 $existing_events = array_slice($existing_events, -50);
             }
 
+            // 4. Retrieve existing login records for this device or initialize array
+            $existing_logins = [];
+            if ($matched_entry && !empty($matched_entry['login_records']) && is_array($matched_entry['login_records'])) {
+                $existing_logins = $matched_entry['login_records'];
+            }
+
+            $country_info = self::get_cloudflare_country($ip);
+            $parsed_device = class_exists('\\WebCareProScanner\\Auth\\LoginHistoryManager')
+                ? \WebCareProScanner\Auth\LoginHistoryManager::parse_device_details($ua, $screen_raw)
+                : ['browser' => 'Browser', 'browser_version' => '', 'platform' => 'Unknown OS', 'device_type' => 'Desktop', 'screen_resolution' => $screen_raw];
+
+            $current_login_record = [
+                'time'              => $now,
+                'time_formatted'    => date_i18n('Y-m-d H:i:s', $now),
+                'time_human'        => __('Active just now', 'webcare-pro-security'),
+                'ip'                => $ip,
+                'country'           => $country_info['country'],
+                'country_code'      => $country_info['country_code'],
+                'country_source'    => $country_info['country_source'],
+                'auth_type'         => $auth_type,
+                'auth_label'        => $auth_label,
+                'browser'           => $parsed_device['browser'],
+                'browser_version'   => $parsed_device['browser_version'],
+                'platform'          => $parsed_device['platform'],
+                'device_type'       => $parsed_device['device_type'],
+                'screen_resolution' => !empty($screen_raw) ? $screen_raw : ($parsed_device['screen_resolution'] ?? ''),
+                'timezone'          => !empty($tz_raw) ? $tz_raw : 'UTC',
+                'user_agent'        => substr(sanitize_text_field($ua), 0, 500),
+                'is_current'        => true,
+            ];
+
+            // Mark previous logins on this device as historical
+            foreach ($existing_logins as &$pl) {
+                $pl['is_current'] = false;
+            }
+            unset($pl);
+
+            array_unshift($existing_logins, $current_login_record);
+            if (count($existing_logins) > 50) {
+                $existing_logins = array_slice($existing_logins, 0, 50);
+            }
+
             $entry = [
                 'device_uuid'        => $device_uuid,
                 'device_fingerprint' => $device_fp,
@@ -537,9 +579,19 @@ class SessionSentinel {
                 'revocation_reason'  => null,
                 'ip_history'         => $existing_history,
                 'ip_events'          => $existing_events,
+                'login_records'      => $existing_logins,
                 'auth_type'          => $auth_type,
                 'auth_label'         => $auth_label,
                 'auth_details'       => $auth_details,
+                'screen_resolution'  => !empty($screen_raw) ? $screen_raw : ($parsed_device['screen_resolution'] ?? ''),
+                'timezone'           => !empty($tz_raw) ? $tz_raw : 'UTC',
+                'browser'            => $parsed_device['browser'],
+                'browser_version'    => $parsed_device['browser_version'],
+                'platform'           => $parsed_device['platform'],
+                'device_type'        => $parsed_device['device_type'],
+                'country'            => $country_info['country'],
+                'country_code'       => $country_info['country_code'],
+                'user_agent'         => substr(sanitize_text_field($ua), 0, 500),
                 'encrypted_meta'     => class_exists('\\WebCareProScanner\\Security\\SecretVault') ? \WebCareProScanner\Security\SecretVault::encrypt((string) wp_json_encode([
                     'device_uuid'        => $device_uuid,
                     'device_fingerprint' => $device_fp,
@@ -549,7 +601,16 @@ class SessionSentinel {
                     'current_ip'         => $ip,
                     'ip_history'         => $existing_history,
                     'ip_events'          => $existing_events,
-                    'user_agent'         => substr(sanitize_text_field($ua), 0, 255),
+                    'login_records'      => $existing_logins,
+                    'user_agent'         => substr(sanitize_text_field($ua), 0, 500),
+                    'browser'            => $parsed_device['browser'],
+                    'browser_version'    => $parsed_device['browser_version'],
+                    'platform'           => $parsed_device['platform'],
+                    'device_type'        => $parsed_device['device_type'],
+                    'screen_resolution'  => !empty($screen_raw) ? $screen_raw : ($parsed_device['screen_resolution'] ?? ''),
+                    'timezone'           => !empty($tz_raw) ? $tz_raw : 'UTC',
+                    'country'            => $country_info['country'],
+                    'country_code'       => $country_info['country_code'],
                     'auth_type'          => $auth_type,
                     'auth_label'         => $auth_label,
                     'auth_details'       => $auth_details,
@@ -1449,6 +1510,23 @@ class SessionSentinel {
                         $existing['meta']['ip_events'] = array_slice(array_merge($e_events, $n_events), -50);
                     }
 
+                    // Merge Login Records
+                    $e_logins = $existing['meta']['login_records'] ?? ($existing['decoded']['login_records'] ?? []);
+                    $n_logins = $meta['login_records'] ?? ($decoded['login_records'] ?? []);
+                    $existing['meta']['login_records'] = self::merge_login_records($e_logins, $n_logins);
+
+                    // Carry forward telemetry
+                    if (empty($existing['meta']['screen_resolution']) && !empty($meta['screen_resolution'])) {
+                        $existing['meta']['screen_resolution'] = $meta['screen_resolution'];
+                    }
+                    if (empty($existing['meta']['timezone']) && !empty($meta['timezone'])) {
+                        $existing['meta']['timezone'] = $meta['timezone'];
+                    }
+                    if (empty($existing['meta']['country']) && !empty($meta['country'])) {
+                        $existing['meta']['country'] = $meta['country'];
+                        $existing['meta']['country_code'] = $meta['country_code'] ?? '';
+                    }
+
                     // Carry forward timestamps
                     $existing['meta']['login_time'] = max((int)($existing['meta']['login_time'] ?? 0), (int)($meta['login_time'] ?? 0));
                     $existing['meta']['last_seen']  = max((int)($existing['meta']['last_seen'] ?? 0), (int)($meta['last_seen'] ?? 0));
@@ -1718,6 +1796,48 @@ class SessionSentinel {
                     ? (int) max(1, ceil(($thirty_days_seconds - $elapsed_inactive) / DAY_IN_SECONDS))
                     : 0;
 
+                $parsed_device = class_exists('\\WebCareProScanner\\Auth\\LoginHistoryManager')
+                    ? \WebCareProScanner\Auth\LoginHistoryManager::parse_device_details($ua, '')
+                    : ['browser' => $browser_info['browser'], 'browser_version' => '', 'platform' => $browser_info['platform'], 'device_type' => $browser_info['device_type'], 'screen_resolution' => ''];
+
+                $screen_res  = $decoded['screen_resolution'] ?? ($meta['screen_resolution'] ?? ($parsed_device['screen_resolution'] ?? ''));
+                $timezone    = $decoded['timezone'] ?? ($meta['timezone'] ?? '');
+                $browser_ver = $decoded['browser_version'] ?? ($meta['browser_version'] ?? ($parsed_device['browser_version'] ?? ''));
+                $country     = $decoded['country'] ?? ($meta['country'] ?? '');
+                $country_code= $decoded['country_code'] ?? ($meta['country_code'] ?? '');
+
+                if (empty($country) || $country === 'Unknown') {
+                    $cf_geo = self::get_cloudflare_country($ip);
+                    $country = $cf_geo['country'];
+                    $country_code = $cf_geo['country_code'];
+                }
+
+                $login_records = $decoded['login_records'] ?? ($meta['login_records'] ?? []);
+                if (empty($login_records) || !is_array($login_records)) {
+                    $login_records = [
+                        [
+                            'time'              => $login_ts,
+                            'time_formatted'    => date_i18n('Y-m-d H:i:s', $login_ts),
+                            'time_human'        => human_time_diff($login_ts, time()) . ' ago',
+                            'ip'                => $ip,
+                            'country'           => $country,
+                            'country_code'      => $country_code,
+                            'auth_type'         => $auth_type,
+                            'auth_label'        => $auth_label,
+                            'browser'           => $browser_info['browser'],
+                            'browser_version'   => $browser_ver,
+                            'platform'          => $browser_info['platform'],
+                            'device_type'       => $browser_info['device_type'],
+                            'screen_resolution' => $screen_res,
+                            'timezone'          => $timezone ?: 'UTC',
+                            'user_agent'        => $ua,
+                            'is_current'        => $is_current,
+                        ]
+                    ];
+                }
+
+                $device_first_seen_ts = (int) ($meta['device_first_seen'] ?? ($decoded['device_first_seen'] ?? $login_ts));
+
                 $results[] = [
                     'session_id'               => substr((string) $verifier, 0, 16),
                     'token'                    => (string) $verifier,
@@ -1768,10 +1888,19 @@ class SessionSentinel {
                     'expiration_raw'           => $expiration_ts,
                     'expiration_human'         => $expiration_human,
                     'browser'                  => $browser_info['browser'],
+                    'browser_version'          => $browser_ver,
                     'platform'                 => $browser_info['platform'],
                     'device_type'              => $browser_info['device_type'],
+                    'screen_resolution'        => $screen_res,
+                    'timezone'                 => $timezone ?: 'UTC',
+                    'country'                  => $country,
+                    'country_code'             => $country_code,
                     'device_uuid'              => $d_uuid,
-                    'total_logins'             => (int) ($meta['total_logins'] ?? ($decoded['total_logins'] ?? 1)),
+                    'total_logins'             => max((int) ($meta['total_logins'] ?? ($decoded['total_logins'] ?? 1)), count($login_records)),
+                    'login_records'            => $login_records,
+                    'device_first_seen'        => $device_first_seen_ts,
+                    'device_first_seen_human'  => human_time_diff($device_first_seen_ts, time()) . ' ago',
+                    'device_first_seen_formatted' => date_i18n('Y-m-d H:i:s', $device_first_seen_ts),
                     'user_agent'               => $ua,
                     'auth_type'                => $auth_type,
                     'auth_label'               => $auth_label,
@@ -1864,6 +1993,133 @@ class SessionSentinel {
             'platform'    => $platform,
             'device_type' => $device_type,
         ];
+    }
+
+    /**
+     * Map common ISO country codes to readable names with (CC) suffix.
+     */
+    public static function country_code_to_name(string $code): string {
+        $map = [
+            'US' => 'United States',
+            'GB' => 'United Kingdom',
+            'CA' => 'Canada',
+            'DE' => 'Germany',
+            'FR' => 'France',
+            'NL' => 'Netherlands',
+            'AU' => 'Australia',
+            'JP' => 'Japan',
+            'SG' => 'Singapore',
+            'IN' => 'India',
+            'BR' => 'Brazil',
+            'BD' => 'Bangladesh',
+            'CN' => 'China',
+            'RU' => 'Russia',
+            'UA' => 'Ukraine',
+            'SE' => 'Sweden',
+            'CH' => 'Switzerland',
+            'ES' => 'Spain',
+            'IT' => 'Italy',
+            'PL' => 'Poland',
+            'PK' => 'Pakistan',
+            'ID' => 'Indonesia',
+            'MY' => 'Malaysia',
+            'TR' => 'Turkey',
+            'AE' => 'United Arab Emirates',
+            'SA' => 'Saudi Arabia',
+            'EG' => 'Egypt',
+            'ZA' => 'South Africa',
+            'NZ' => 'New Zealand',
+            'IE' => 'Ireland',
+            'HK' => 'Hong Kong',
+            'KR' => 'South Korea',
+            'VN' => 'Vietnam',
+            'TH' => 'Thailand',
+            'PH' => 'Philippines',
+            'RO' => 'Romania',
+            'AT' => 'Austria',
+            'BE' => 'Belgium',
+            'NO' => 'Norway',
+            'DK' => 'Denmark',
+            'FI' => 'Finland',
+            'PT' => 'Portugal',
+            'GR' => 'Greece',
+            'CZ' => 'Czech Republic',
+            'HU' => 'Hungary',
+            'IL' => 'Israel',
+            'AR' => 'Argentina',
+            'CL' => 'Chile',
+            'CO' => 'Colombia',
+            'MX' => 'Mexico',
+        ];
+        $upper = strtoupper(trim($code));
+        return isset($map[$upper]) ? "{$map[$upper]} ({$upper})" : $upper;
+    }
+
+    /**
+     * Resolve visitor Country strictly from Cloudflare Edge Headers without third-party APIs.
+     *
+     * @param string $ip
+     * @return array
+     */
+    public static function get_cloudflare_country(string $ip = ''): array {
+        $code = '';
+        if (!empty($_SERVER['HTTP_CF_IPCOUNTRY'])) {
+            $code = strtoupper(sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_IPCOUNTRY'])));
+        } elseif (!empty($_SERVER['HTTP_CF_CONNECTING_IP_COUNTRY'])) {
+            $code = strtoupper(sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_CONNECTING_IP_COUNTRY'])));
+        }
+
+        if (!empty($code) && $code !== 'XX' && $code !== 'T1') {
+            return [
+                'country_code'   => $code,
+                'country'        => self::country_code_to_name($code),
+                'country_source' => 'Cloudflare Edge (CF-IPCountry)',
+                'is_cf'          => true,
+            ];
+        }
+
+        if ($ip === '127.0.0.1' || $ip === '::1' || (class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine') && \WebCareProScanner\Firewall\FirewallEngine::is_private_ip($ip))) {
+            return [
+                'country_code'   => 'LAN',
+                'country'        => 'Localhost / Internal Network',
+                'country_source' => 'Internal IP Scope',
+                'is_cf'          => false,
+            ];
+        }
+
+        return [
+            'country_code'   => 'Unknown',
+            'country'        => 'Unknown',
+            'country_source' => 'Direct Origin (No CF Header)',
+            'is_cf'          => false,
+        ];
+    }
+
+    /**
+     * Deduplicate and merge device login records ordered chronologically descending.
+     */
+    public static function merge_login_records(array $list_a, array $list_b): array {
+        $combined = array_merge($list_a, $list_b);
+        $seen = [];
+        $unique = [];
+        foreach ($combined as $rec) {
+            if (!is_array($rec)) {
+                continue;
+            }
+            $time_val = (int) ($rec['time'] ?? ($rec['time_raw'] ?? 0));
+            $ip_val   = (string) ($rec['ip'] ?? '');
+            $sig = "{$time_val}|{$ip_val}";
+            if (!isset($seen[$sig])) {
+                $seen[$sig] = true;
+                $unique[] = $rec;
+            }
+        }
+        usort($unique, function ($x, $y) {
+            $tx = (int) ($x['time'] ?? ($x['time_raw'] ?? 0));
+            $ty = (int) ($y['time'] ?? ($y['time_raw'] ?? 0));
+            return $ty <=> $tx;
+        });
+        return array_slice($unique, 0, 50);
     }
 
     /**
