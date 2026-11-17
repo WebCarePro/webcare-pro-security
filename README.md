@@ -28,7 +28,7 @@
 **WebCare Pro Security & Firewall** is a modern, high-performance WordPress security, malware detection, and forensic auditing plugin engineered by **[Mir Alamin](https://www.upwork.com/freelancers/~0162afa9a578170c67)** ([WebCare Pro](https://webcarespro.com)). 
 
 > [!NOTE]
-> **Active Engineering & Senior Architecture (v2.13.0)**  
+> **Active Engineering & Senior Architecture (v2.17.0)**  
 > WebCare Pro Security & Firewall is actively developed and battle-tested by solo engineer **Mir Alamin**. Rapid architectural upgrades, engine hardening, and new security primitives are released continuously.
 
 Unlike heavy, bloated security plugins that degrade server performance with background overhead, WebCare Pro Security & Firewall combines **memory-safe PHP batch auditing engines** with a responsive **React 18 single-page administrative dashboard**. It provides deep insight into your file system, WordPress core integrity, plugin and theme source code, database tables, cron jobs, active administrative sessions, runtime memory hooks, and server configurations—giving developers, sysadmins, and site owners complete visibility and control over their WordPress security posture.
@@ -59,7 +59,7 @@ Unlike heavy, bloated security plugins that degrade server performance with back
 
 ## 🌟 Top Core Features & Architectural Highlights
 
-WebCare Pro Security & Firewall combines lightweight, memory-efficient PHP 8.3+ streaming engines with a modern React 18 single-page cockpit. While the plugin contains **91 specialized subsystems** (documented exhaustively in [features.md](features.md)), these 12 core pillars represent the heart of its enterprise defense model:
+WebCare Pro Security & Firewall combines lightweight, memory-efficient PHP 8.3+ streaming engines with a modern React 18 single-page cockpit. While the plugin contains **99 specialized subsystems** (documented exhaustively in [features.md](features.md)), these 16 core pillars represent the heart of its enterprise defense model:
 
 ### 1. 📊 Executive Cyber Command Center & React 18 SOC Cockpit
 - **Dynamic Security Health Score:** High-precision circular SVG meter displaying your live security posture (0–100%) and letter grade (A+ through F).
@@ -99,14 +99,14 @@ WebCare Pro Security & Firewall combines lightweight, memory-efficient PHP 8.3+ 
 - **Bi-Directional Unban Sync:** Unbanning an IP locally in WordPress immediately purges matching Zone IP Access Rules and Account IP Lists on Cloudflare Edge.
 
 ### 7. 🪝 In-Memory RASP Hook Firewalls & Privilege Escalation Traps
-- **Core Option Tampering Guard:** Intercepts unauthenticated runtime tampering targeting `users_can_register`, `default_role`, `siteurl`, `home`, and `active_plugins`.
+- **Core Option Tampering Guard:** Intercepts unauthenticated runtime tampering targeting `admin_email`, `users_can_register`, `default_role`, `siteurl`, `home`, and `active_plugins`.
 - **Privilege Escalation Interceptor:** Immediately blocks unauthorized attempts to promote users to `administrator` or `editor` roles without `manage_options` capability.
 - **Unauthorized Admin Registration Trap:** Detects guest registration workflows attempting to birth accounts with administrative roles and forces demotion to subscriber.
 - **Direct User Meta Privilege Trap:** Traps raw SQL or REST metadata injections targeting `wp_capabilities`, `wp_user_level`, or `_application_passwords`.
 - **Test Harness Sandbox Immunity:** Full compatibility with WordPress Plugin Check (PCP) sandboxed execution, ensuring compliance tests never trigger false privilege alerts.
 
-### 8. 🩹 1-Click Auto-Cure, Surgical Remediation & Rollback Vault
-- **Official Release Mirrors:** Surgically restores altered core, plugin, and theme files back to clean, official WordPress.org code without reinstalling WordPress.
+### 8. 🩹 1-Click Auto-Cure, CRC-32 Package Integrity & Rollback Vault
+- **Official Release Mirrors:** Surgically restores altered core, plugin, and theme files back to clean, official WordPress.org release packages with 100MB streaming limits, 10MB per-entry caps, and CRC-32 integrity validation.
 - **Non-Destructive Webshell Stripping:** Neutralizes obfuscated code blocks and malicious headers while preserving legitimate file customizations with tokenizer syntax verification.
 - **Pre-Cure Safety Snapshots:** Generates timestamped Gzip backups in the WebCare Vault before any file remediation, enabling instant 1-click rollbacks.
 
@@ -126,15 +126,32 @@ WebCare Pro Security & Firewall combines lightweight, memory-efficient PHP 8.3+ 
 - **Pure PHP RFC 6238 TOTP 2FA:** High-security HMAC-SHA-512 and SHA-1 two-factor authentication compatible with Google Authenticator, 1Password, and YubiKey.
 - **REST Application Password Shield:** Mandatory Step-Up 2FA on `authorize-application.php` blocks 1-click token consent phishing traps.
 
-### 12. 🧠 Model Context Protocol (MCP) Agentic AI SecOps Automation
+### 12. 🔒 Dual-Layer AEAD Session Sentinel & 30-Day Forensic Retention
+- **Dual-Layer Authenticated Encryption:** Encrypts administrator session records and complete IP access histories across both WordPress user meta and an isolated, HMAC-sealed `.wcpvault` file.
+- **Account-Based Consolidation:** Consolidates multiple active sessions and connected devices per administrator account with collapsible device cards.
+- **30-Day Forensic Retention Invariant:** Prevents deletion of active and recently active sessions (<30 days) to protect historical audit trails against tamper and premature purging.
+
+### 13. 🌐 Outbound Egress & SSRF Perimeter Shield with Core Loopback Parity
+- **Deep Egress Filtering:** Intercepts outbound cURL and socket connections, blocking internal service ports (MySQL 3306, Redis 6379, Memcached 11211, Docker 2375) and cloud metadata (`169.254.169.254`).
+- **Verified Loopback Self-Communication Parity:** Automatically permits legitimate WordPress Core self-requests (Site Health HTTPS check, Page Cache test, REST query-string validation `index.php?rest_route=...`, and `wp-cron.php`) and internal diagnostics.
+
+### 14. ⏰ Real-Time WP-Cron Control Center & Overdue Auto-Recovery
+- **Live Engine Mode Display:** Clearly displays whether WP-Cron runs on visitor traffic (WordPress Native Engine) or via server crontab (`DISABLE_WP_CRON` constant active in `wp-config.php`).
+- **Overdue Task Auto-Recovery:** Detects stalled or past-timestamp tasks and automatically reschedules them fresh into the future with 1-click "Reschedule Overdue" controls and manual "Run Now" triggers.
+
+### 15. 👥 Community Forum CAF Profile & Multi-Stack Shield
+- **Community Forum Ecosystem:** Tailored smart profile for bbPress, BuddyPress, BuddyBoss Platform, wpForo, Asgaros Forum, Simple:Press, and ForumWP with topic/reply spam velocity suppression and member directory anti-scraping shields.
+- **Composable Hybrid Profiles:** Harmonizes carding velocity limits, cart session immunity, student session concurrency, and forum anti-spam guards across multi-stack environments (e.g. WooCommerce + Forums + LMS).
+
+### 16. 🧠 Model Context Protocol (MCP) Agentic AI SecOps Automation
 - **Native JSON-RPC 2.0 Surface:** Securely connect external AI developer agents (Claude Desktop, Cursor IDE, Antigravity) directly to WordPress security operations.
 - **Encrypted Bearer Authentication:** Secure AEAD-encrypted tokens, strict read-only default permissions, configurable rate limits, and an immutable 150-event ring-buffer execution log.
 
 ---
 
 > [!TIP]
-> ### 📖 Looking for the Complete 91-Engine Catalog?
-> WebCare Pro Security & Firewall includes over **91 specialized security engines, behavioral monitors, and forensic subsystems**.
+> ### 📖 Looking for the Complete 99-Subsystem Catalog?
+> WebCare Pro Security & Firewall includes over **99 specialized security engines, behavioral monitors, and forensic subsystems**.
 > 
 > 👉 **[Explore the Complete Features & Architecture Catalog in `features.md`](features.md)** for exhaustive dual-level documentation (plain-English summaries for site owners + deep technical architecture for systems engineers).
 ---

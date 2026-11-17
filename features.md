@@ -99,6 +99,14 @@ Built with a high-performance **React 18 + TypeScript** administrative single-pa
 89. [2026 Advanced Smart Rules Suite (Rules #48–#54) & In-Depth Perimeter Armor](#89-2026-advanced-smart-rules-suite-rules-4854--in-depth-perimeter-armor)
 90. [High-Traffic WooCommerce & E-Commerce Production Hardening](#90-high-traffic-woocommerce--e-commerce-production-hardening)
 91. [Production Telemetry Intelligence & Zero-False-Positive Refinements](#91-production-telemetry-intelligence--zero-false-positive-refinements)
+92. [Outbound Egress & SSRF Perimeter Shield with Verified Core Loopback Parity](#92-outbound-egress--ssrf-perimeter-shield-with-verified-core-loopback-parity)
+93. [Real-Time WP-Cron Control Center & Overdue Schedule Auto-Recovery](#93-real-time-wp-cron-control-center--overdue-schedule-auto-recovery)
+94. [Community Forum CAF Profile & Composable Hybrid Multi-Stack Portal (bbPress, BuddyPress, wpForo)](#94-community-forum-caf-profile--composable-hybrid-multi-stack-portal-bbpress-buddypress-wpforo)
+95. [Dual-Layer Database & Vault Session Encryption with 30-Day Forensic Retention Lock](#95-dual-layer-database--vault-session-encryption-with-30-day-forensic-retention-lock)
+96. [Package-Based Remediation & CRC-32 Archive-Entry Integrity Validation](#96-package-based-remediation--crc-32-archive-entry-integrity-validation)
+97. [Multisite Subsite Table Isolation & Fail-Closed Sandbox Detection (PCP Hardening)](#97-multisite-subsite-table-isolation--fail-closed-sandbox-detection-pcp-hardening)
+98. [Interactive Scan Options & Memory Governor Modal with Dynamic Cache Exclusions](#98-interactive-scan-options--memory-governor-modal-with-dynamic-cache-exclusions)
+99. [Origin Resource Shield & Universal Cloud/VPS Architecture-Agnostic Edge Offload](#99-origin-resource-shield--universal-cloudvps-architecture-agnostic-edge-offload)
 
 ---
 
@@ -220,7 +228,7 @@ When dangerous hacker files or alien scripts are found, you shouldn't just leave
 
 ### ⚙️ Deep Technical Details & Architecture (For Developers & Engineers)
 - **Safe Cryptographic Isolation:** Safely isolates infected or unknown files into a protected, `.htaccess`-guarded directory outside executable paths. Preserves original file permissions, timestamps, and SHA-256 cryptographic hashes in `wp_webcareproscan_quarantine`.
-- **Intelligent Quarantine Eligibility Safeguards:** Enforces strict boundary checks (`canQuarantineIssue`): prevents quarantining critical configuration files (`wp-config.php`, `.htaccess`, `wp-settings.php`, `wp-load.php`) to eliminate site crashes. Restricts quarantine strictly to alien and rogue files.
+- **Intelligent Quarantine Eligibility Safeguards:** Enforces strict boundary checks (`canQuarantineIssue`): prevents quarantining critical configuration files (`wp-config.php`, `.htaccess`, `wp-settings.php`, `wp-load.php`) to eliminate site crashes. Restricts quarantine strictly to alien and rogue files. Automatic 1-click quarantine on scan completion is purposefully omitted by design to prevent false positives from automatically disabling mission-critical website files—every quarantine action requires explicit administrator review and confirmation.
 - **Quarantine Vault Hub (`QuarantineTab`):** Responsive table with horizontal overflow support, displaying original path, quarantine filename, isolation date, file size, and SHA-256 hash, with 1-click instant file restoration and permanent vault deletion.
 
 ---
@@ -341,12 +349,14 @@ Every day, thousands of malicious computers around the world are used to launch 
 ## 15. Active Session Sentinel & Anti-Hijack Defense
 
 ### 💡 Plain-English Overview (For Everyone & Non-Tech Users)
-If a hacker steals an administrator's browser cookie (through a malicious browser extension or unsecured Wi-Fi), they could browse your WordPress dashboard without knowing your password. Active Session Sentinel monitors all logged-in administrator sessions. It shows you what device they are on, whether they used a secure Passkey or 2FA, their IP location, and gives you a 1-click button to immediately kick out any session that looks suspicious.
+If a hacker steals an administrator's browser cookie (through a malicious browser extension or unsecured Wi-Fi), they could browse your WordPress dashboard without knowing your password. Active Session Sentinel monitors all logged-in administrator sessions. It shows you what device they are on, whether they used a secure Passkey or 2FA, their IP location, and gives you a 1-click button to immediately kick out any session that looks suspicious. All session records are double-encrypted with military-grade encryption, and a 30-day forensic lock ensures attackers cannot erase their login history after an intrusion.
 
 ### ⚙️ Deep Technical Details & Architecture (For Developers & Engineers)
+- **Dual-Layer Database & Vault Session Encryption (`SessionSentinel.php`):** Implements authenticated AES-256-GCM encryption for all session records across both WordPress user meta (`webcareproscan_session_meta`) and an isolated, tamper-evident security vault file (`admin_session_history.vault.json`) sealed with HMAC-SHA256 and directory access controls.
+- **Account-Based Consolidation:** Consolidates multiple active sessions, connected browsers, and platforms into clean user identity accounts rather than disconnected per-device cards, featuring collapsible device drawers with an active device counter badge.
+- **30-Day Forensic Retention Invariant:** Enforces a strict 30-day forensic retention lock: active devices and recently logged-out devices (<30 days) are locked against deletion (with remaining days displayed in the UI and server-side 403 enforcement), ensuring audit trails cannot be prematurely purged while allowing permanent removal of records older than 30 days.
+- **Dynamic IP Shift Tracking (Replacing Rigid IP Lock):** Replaced legacy strict IP locking (which frequently locked out mobile administrators switching cell towers) with dynamic network IP shift detection that flags ISP roaming and session jumps without disrupting legitimate workflows.
 - **Multi-Factor & Passkey Authentication Tracking:** Enriched session token metadata with real-time authentication method detection (`passkey`, `2fa`, `magic_link`, `password`), device categorization (Desktop/Mobile/Tablet), idle activity formatting, and session lifespan countdowns.
-- **High-Contrast Sentinel Metrics Bar:** Summary metrics strip displaying total active administrator sessions, Passkey Verified sessions, 2FA TOTP Protected sessions, Magic Support Links, and single-factor Password Only sessions.
-- **Real-Time Risk & Sandboxing Notice Strips:** Contextual warning and info banners for single-factor administrator sessions, network IP shifts (ISP dynamic roaming), and unverified elevated administrator sessions.
 - **1-Click Remote Session Destruction:** Allows administrators to instantly terminate individual suspicious sessions or purge all remote sessions in one click via `wp_destroy_other_sessions()`.
 
 ---
@@ -982,7 +992,7 @@ Modern malware doesn't always hide in PHP files; attackers frequently inject mal
 Every web hosting environment is different. Shared hosting accounts often have strict CPU limits, while dedicated servers have plenty of power. WebCare Pro Security gives you complete control over scan speed and resource usage. You can slow down scans with micro-pauses to keep CPU usage low, choose between interactive or background scanning, skip bulky image files, and exclude huge database tables with a few clicks.
 
 ### ⚙️ Deep Technical Details & Architecture (For Developers & Engineers)
-- **Configurable Inter-Batch CPU Throttling (`scan_batch_delay_ms`):** Introduces selectable rest pauses (0ms, 50ms, 150ms, 300ms, 500ms) between REST batches to keep CPU load low and prevent cPanel/CloudLinux LVE throttling.
+- **Configurable Inter-Batch CPU Throttling (`scan_batch_delay_ms`):** Introduces selectable rest pauses (0ms, 50ms, 150ms, 300ms, 500ms) between REST batches to keep CPU load low and prevent CPU throttling and host resource limits across shared, containerized, and virtual server environments.
 - **Flexible Execution Worker Strategies (`scan_execution_strategy`):** Switch between interactive client-side polling (`ajax_client`), autonomous cron (`wp_cli_cron`), and non-blocking background workers (`background_worker`).
 - **Media Uploads Scan Depth Modes (`scan_uploads_mode`):** Offers *Smart Executable & Stager Mode* (skips benign raster images for 10x faster scans) vs *Deep Raster & EXIF Polyglot Audit Mode*.
 - **Symlink Traversal Policy Controls (`scan_symlink_policy`):** Granular controls (`ignore`, `follow_intree`, `follow_all`) prevent recursive loops and safely accommodate Roots Bedrock and Composer installations.
@@ -1379,6 +1389,114 @@ Real-world production environments introduce edge cases: modern smartphones and 
 - **Synthetic Performance Audit Runner Immunity (`BotReconDefense::is_synthetic_performance_tool()`):** Identifies read-only synthetic audit user-agents (`PTST/`, `WebPageTest`, `Chrome-Lighthouse`, `Google-PageSpeed`, `PageSpeed`, `GTmetrix`, `SpeedCurve`, `PingdomTMS`) on `GET`/`HEAD` requests and exempts them from 404 rate-limiting during automated site diagnostics.
 - **Cloudflare Edge Rule 1 & Jetpack Smart Pass Integration:** Stripped `/xmlrpc.php` from Cloudflare Edge Rule 1 Wirefilter, routing XML-RPC traffic to the origin server where the Automattic Jetpack Smart Pass (`is_verified_jetpack_request()`) validates authentic synchronization from official Automattic CIDR subnets (`192.0.64.0/18`, `198.181.116.0/22`) while blocking unauthorized attacker probes.
 - **Plugin Check (PCP) Test Harness & Sandbox Immunity:** Added dynamic sandbox table prefix exemptions (`_pc_`), caller stack inspection (`Plugin_Check`, `Runtime_Environment`, `Amend_DB_Base_Prefix`), and immediate referer/action fast-paths across all 4 Runtime RASP hooks (`rasp_guard_critical_options`, `rasp_guard_user_role_assignment`, `rasp_guard_user_registration`, `rasp_guard_user_metadata_injection`), preventing test runners in wp-admin from triggering privilege violation logs.
+
+---
+
+## 92. Outbound Egress & SSRF Perimeter Shield with Verified Core Loopback Parity
+
+### 💡 Plain-English Overview (For Everyone & Non-Tech Users)
+When a website is hacked or runs a vulnerable plugin, attackers often try to force the server to connect to malicious external computers (to download webshells or send stolen data) or probe internal private databases and cloud services (like AWS metadata). WebCare Pro's Outbound Egress Firewall blocks these unauthorized connections. Importantly, it automatically recognizes WordPress's own internal health checks (like Site Health HTTPS tests, caching diagnostics, and automated background jobs) so your website's built-in tools continue working smoothly without being blocked.
+
+### ⚙️ Deep Technical Details & Architecture (For Developers & Engineers)
+- **Strict Egress Port & Destination Boundaries (`OutboundEgressFirewall.php`):** Intercepts outbound HTTP/cURL requests via `pre_http_request` and `http_api_curl`, blocking dangerous internal service ports (MySQL 3306, Redis 6379, Memcached 11211, Docker 2375, SSH 22, Telnet 23) and cloud metadata services (`169.254.169.254`, `fd00:ec2::254`).
+- **Loopback & Core Self-Communication Parity:** Automatically detects and permits legitimate WordPress Core self-requests targeting the site's own home/site URLs and local loopbacks (`localhost`, `127.0.0.1`, `::1`, and server interface IPs on ports 80, 443, 8484, 8282, 8080, etc.), including Site Health HTTPS checks, REST query-string validation (`index.php?rest_route=...`), Page Cache tests, and `wp-cron.php`.
+- **Diagnostic Tool Self-Pass:** Automatically authorizes internal WebCare Pro diagnostic engines (`RedirectCanaryEngine`, `CheckoutSkimmerSentinel`, `PulseHealthCheck`, and `ServerSecurityEngine`).
+- **Unified Log Synchronization:** Synchronizes `FirewallEngine::clear_logs()` so that clearing WAF logs purges both ingress WAF incidents and outbound egress violation records.
+
+---
+
+## 93. Real-Time WP-Cron Control Center & Overdue Schedule Auto-Recovery
+
+### 💡 Plain-English Overview (For Everyone & Non-Tech Users)
+WordPress relies on an internal system called "WP-Cron" to perform scheduled tasks—like publishing scheduled blog posts, checking for plugin updates, sending WooCommerce customer emails, and running automated security scans. If your tasks become overdue or get stuck, your site can fall behind. The WP-Cron Control Center gives you a real-time view of your background tasks, tells you whether your site uses the built-in visitor cron or a true server crontab, and provides a 1-click "Reschedule Overdue" button to unstick tasks instantly.
+
+### ⚙️ Deep Technical Details & Architecture (For Developers & Engineers)
+- **Real-Time WP-Cron Status Indicators (`CronManagerPage.tsx`):** Renders dynamic, theme-adaptive status badges in the navigation and header indicating whether WP-Cron is "Native Engine" (visitor traffic) or "System Cron Mode" (with `DISABLE_WP_CRON` constant active in `wp-config.php`), with live server clock and timezone synchronization.
+- **Overdue Task Auto-Recovery Engine (`CronControlCenter.php`):** Enhances `ensure_scheduled()` and `repair_missing_schedules()` to identify overdue tasks (where `next_run < current_time`), automatically clearing stale past schedules and resetting recurring tasks fresh into the future.
+- **Manual Worker Trigger & Dynamic Rescheduling:** Provides instant manual execution ("▷ Run Now") for any registered or background worker, advancing future run timestamps immediately.
+- **Audit Logging & History (`CronExecutionLogger.php`):** Tracks background cron execution durations, memory deltas, and completion statuses inside `webcareproscan_cron_logs`.
+
+---
+
+## 94. Community Forum CAF Profile & Composable Hybrid Multi-Stack Portal (bbPress, BuddyPress, wpForo)
+
+### 💡 Plain-English Overview (For Everyone & Non-Tech Users)
+Community websites with user forums (like bbPress, BuddyPress, or wpForo) face unique security challenges: spammers use automated bots to flood discussion forums with thousands of junk replies and scrape member profiles. Normal firewalls often mistake legitimate member discussions or rich text formatting for hacker attacks. The Community Forum Smart Profile automatically protects member directories from scrapers, limits topic/reply spam velocity, and permits BBCode and rich-text discussion without false alarms.
+
+### ⚙️ Deep Technical Details & Architecture (For Developers & Engineers)
+- **Ecosystem Recognition (`AdaptiveFirewallAdvisor.php`, `ProfileManager.php`):** Automatically detects forum platforms (bbPress, BuddyPress, BuddyBoss Platform, wpForo, Asgaros Forum, Simple:Press, and ForumWP) and activates the `community_forum` CAF profile.
+- **Topic & Reply Spam Velocity Suppression:** Limits rapid-fire unverified topic and reply submissions while granting authenticated members with positive reputation safe-pass immunity.
+- **Member Directory Anti-Scraping Shield:** Limits aggressive automated crawling of member profile URLs (`/members/`, `/users/`, `/profile/`) to prevent automated user enumeration.
+- **Scoped AJAX & REST Safe-Passes (`ConflictAvoidanceEngine.php`, `MicroWafCompiler.php`):** Automatically whitelists forum AJAX actions (`bbp_new_topic`, `bbp_new_reply`, `wpforo_submit`, `asgarosforum_add_post`) and REST endpoints (`wpforo/v1`, `buddyboss/v1`, `buddypress/v1`).
+- **Hybrid Commerce & Community Multi-Stack Harmonization:** Dynamically composes multi-stack profiles (`hybrid_commerce_community`) allowing WooCommerce, forums, and membership plugins to coexist with tailored velocity rules.
+
+---
+
+## 95. Dual-Layer Database & Vault Session Encryption with 30-Day Forensic Retention Lock
+
+### 💡 Plain-English Overview (For Everyone & Non-Tech Users)
+When an administrator logs into WordPress, sensitive device information and IP addresses are recorded to help you spot unauthorized logins. Storing this information in plain text in the database exposes your security logs to anyone who accesses a database backup. WebCare Pro Security encrypts all session records twice using military-grade encryption: once inside the database and once inside a tamper-sealed backup file. Even better, it enforces a 30-day forensic lock so that recent session records cannot be deleted, ensuring an attacker cannot erase their tracks after breaking in.
+
+### ⚙️ Deep Technical Details & Architecture (For Developers & Engineers)
+- **Dual-Layer Authenticated Encryption (`SessionSentinel.php`):** Encrypts administrator session records and complete IP access history using AES-256-GCM AEAD encryption in user meta (`webcareproscan_session_meta`) and stores an isolated, tamper-evident backup in `admin_session_history.vault.json` sealed with HMAC-SHA256.
+- **Account-Centric Consolidation:** Restructures session management to group connected browsers, mobile devices, and active platforms under verified user identities with collapsible cards.
+- **30-Day Forensic Retention Invariant:** Prevents deletion of active sessions and historical records younger than 30 days (`remaining_days` displayed in the UI and enforced server-side with HTTP 403), ensuring historical forensics cannot be prematurely wiped by attackers.
+- **Concurrent Lockfile Serialization:** Employs exclusive `flock()` locks during session synchronization (`sync_to_auth_vault()`) to prevent race conditions during simultaneous logins.
+
+---
+
+## 96. Package-Based Remediation & CRC-32 Archive-Entry Integrity Validation
+
+### 💡 Plain-English Overview (For Everyone & Non-Tech Users)
+When a WordPress core file or popular plugin file is modified by malware, you need to restore the clean original file. Some plugins download unverified files from unknown mirrors. WebCare Pro Security restores files with extreme care: it first checks your local pristine vault, and if downloading is needed, it fetches official release packages directly from `downloads.wordpress.org` over encrypted HTTPS, verifies the zip archive's cryptographic CRC-32 checksums, protects against zip-bombs, and restores the pristine file surgically without breaking your site.
+
+### ⚙️ Deep Technical Details & Architecture (For Developers & Engineers)
+- **Official Package Extraction (`RemediationManager.php`):** Refactored official core, plugin, and theme file restoration to prioritize verified local FIM vault baselines, falling back to official release package extraction from `downloads.wordpress.org` via WordPress's native `download_url()` and `ZipArchive`.
+- **Strict HTTPS & Hostname Verification:** Validates that package downloads originate exclusively from verified `downloads.wordpress.org` hostnames over encrypted HTTPS.
+- **Resource Exhaustion & Zip-Bomb Safeguards:** Implements streamed response limiting capped at 100 MB (plus 1 sentinel byte with immediate rejection above 100 MB), `ZipArchive::CHECKCONS` consistency checks, path traversal verification, and a 10 MB per-entry uncompressed size limit.
+- **Fail-Closed CRC-32 Archive-Entry Validation:** Calculates CRC-32 checksums of extracted file bytes and strictly matches them against the zip entry's CRC-32 metadata before writing to disk, failing closed on any checksum mismatch.
+
+---
+
+## 97. Multisite Subsite Table Isolation & Fail-Closed Sandbox Detection (PCP Hardening)
+
+### 💡 Plain-English Overview (For Everyone & Non-Tech Users)
+WordPress Multisite networks run multiple websites from a single installation, with each site having its own database tables (like `wp_2_options`, `wp_3_options`). Additionally, compliance tools like WordPress Plugin Check (PCP) create temporary "sandbox" databases during testing. WebCare Pro's sandbox detector enforces strict table isolation: it verifies that test sandboxes only affect temporary test tables and never touch your live subsite data, and ensures normal Multisite subsite actions (like changing a site title) are never mistaken for test sandboxes.
+
+### ⚙️ Deep Technical Details & Architecture (For Developers & Engineers)
+- **Strict Table Isolation Verification (`FirewallEngine.php`):** Requires `$wpdb->base_prefix` to strictly equal `$orig_prefix . 'pc_'`, and verifies that `$wpdb->users` and `$wpdb->usermeta` match the exact isolated sandbox namespace (`wp_pc_users` / `wp_pc_usermeta`).
+- **Multisite Options Alignment & Fail-Closed Blog ID Validation:** Dynamically calculates expected subsite sandbox prefixes (`$expected_sandbox_site_prefix = ($is_ms && $blog_id > 1) ? $expected_sandbox_base . $blog_id . '_' : $expected_sandbox_base`) and verifies that `$wpdb->prefix` and `$wpdb->options` strictly match the isolated namespace while physically diverging from live production options.
+- **Fail-Closed Multisite Blog ID Validation:** Strictly requires `$wpdb->blogid` on multisite installations to be a valid positive integer or decimal digit string (`ctype_digit()`), rejecting missing, zero, negative, or corrupted blog IDs.
+- **Multisite Subsite Immunity in Hook Strippers (`Plugin.php`):** Ensures normal subsite option changes (e.g. updating `blogname` or `blogdescription` on `wp_2_`) are never stripped, restricting hook detachment exclusively to genuine Plugin Check sandbox or install routines.
+
+---
+
+## 98. Interactive Scan Options & Memory Governor Modal with Dynamic Cache Exclusions
+
+### 💡 Plain-English Overview (For Everyone & Non-Tech Users)
+Every server is configured differently. Some shared hosting plans have strict memory and CPU limits, while dedicated servers have plenty of power. The Scan Options Modal allows you to optimize scanner speed with one click—choosing from Recommended Balanced, Shared Hosting (which reserves 40% RAM for website visitors), or Turbo VPS. You can also toggle the "Ignore Cache Folder" switch to instantly exclude 22 recognized caching and temporary folders, or add your own custom ignore patterns.
+
+### ⚙️ Deep Technical Details & Architecture (For Developers & Engineers)
+- **In-Place Modal Dialog (`ScanOptionsModal.tsx`):** Replaces redirects with an in-place, categorized configuration dialog featuring 4 dedicated sub-tabs: Performance & Visitor Uptime, Scheduled Scans & Automation, Exclusions & Paths, and Developer Diagnostics.
+- **One-Click Performance Presets:**
+  - *Recommended Balanced:* Standard production configuration with balanced batch sizes.
+  - *Shared Host / WooCommerce:* Implements a memory governor reserving 40% RAM for visitor traffic with inter-batch pauses.
+  - *Turbo VPS / Dedicated:* High-throughput batch processing for high-resource servers.
+- **Interactive "Ignore Cache Folder" Dynamic Toggle:** Toggling ON dynamically injects 22 recognized WordPress cache, optimizer, minification, and package manager directories (`wp-content/cache/*`, `litespeed/*`, `w3tc-cache/*`, `wfcache/*`, `wp-rocket/*`, `autoptimize/*`, `vendor/*`, `node_modules/*`, etc.) without duplicates. Toggling OFF strips them cleanly while preserving custom user paths.
+- **Path Boundary Matching Hardening (`SettingsManager.php`):** Enforces trailing-slash boundary normalization and wildcard matching in `is_path_excluded()`, eliminating scanner bypass vulnerabilities.
+
+---
+
+## 99. Origin Resource Shield & Universal Cloud/VPS Architecture-Agnostic Edge Offload
+
+### 💡 Plain-English Overview (For Everyone & Non-Tech Users)
+When a massive bot swarm or hacker probe hits your website, processing thousands of malicious requests inside PHP and MySQL can exhaust your server's memory and CPU, causing slow load times or 503 errors for legitimate customers. The Origin Resource Shield connects your website to Cloudflare's free edge network. Threats are stopped and banned at Cloudflare's global edge servers before they ever reach your hosting server—protecting Cloud VPS, dedicated bare-metal, Docker containers, and managed WordPress hosts alike.
+
+### ⚙️ Deep Technical Details & Architecture (For Developers & Engineers)
+- **Architecture-Agnostic Origin Shield:** Eliminates hosting-specific terminology in favor of universal edge offloading metrics applicable to Cloud VPS (DigitalOcean, Linode, AWS EC2, Hetzner), bare-metal servers, containerized Docker/Kubernetes environments, and managed WordPress hosts.
+- **PHP-FPM & MySQL Contention Relief:** Offloads IP bans directly to Cloudflare Edge Access Rules via post-response shutdown hooks (`fastcgi_finish_request()`), ensuring origin PHP-FPM workers and MySQL connection pools are preserved for legitimate visitor traffic.
+- **Automated Origin Survival Mode:** Automatically engages during distributed layer-7 surges and credential stuffing swarms, escalating edge challenge rules to absorb traffic spikes before server resource thresholds are breached.
+- **Live Connection Telemetry:** Validates edge connectivity against Cloudflare's Zone API, displaying verified zone indicators and real-time proxy status pills.
 
 ---
 

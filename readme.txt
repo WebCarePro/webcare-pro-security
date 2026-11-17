@@ -227,7 +227,30 @@ To compile the React admin application from source:
 == Changelog ==
 
 = 2.17.0 =
-* REST Query-Route Normalization, Package Extraction Integrity & Incomplete Inspection Reporting: Preserved raw rest_route backslashes in the pre-bootstrap preload and modeled WordPress-added superglobal slashes in runtime parity coverage; both paths remove control characters, apply three-pass decoding and slash collapsing, and retain case-insensitive policy matching; hardened official release ZIP remediation with strict host validation, a 100 MB plus one-byte transport sentinel, archive consistency checks, and CRC-32 entry integrity validation; and exposed structured incomplete inspection findings when wp_get_themes() is unavailable in non-standard runtimes.
+* WordPress Plugin Check (PCP) Sandbox & Elementor Compatibility Guard: Resolved initial-attempt AJAX crash by stripping Elementor kit synchronization hooks during temporary sandbox or install routines.
+* Multisite Subsite Options Isolation & Fail-Closed Table Isolation: Enforced exact database table namespace alignment (wp_pc_users, wp_pc_usermeta, wp_pc_options, and wp_pc_{blog_id}_options) and fail-closed Multisite blog ID validation with ctype_digit(), guaranteeing zero isolation leaks.
+* Runtime RASP Hook Defense Sandbox Decoupling: Decoupled temporary Plugin Check sandbox environments from production privilege escalation traps, ensuring tests execute with 0 false-positive incident logs.
+* Official Script Enqueuing Standards: Migrated all raw inline admin scripts to official wp_register_script(), wp_enqueue_script(), and wp_add_inline_script() calls.
+* Package-Based Remediation & CRC-32 Archive Integrity: Hardened file restoration from official downloads.wordpress.org release packages with 100MB streaming limits, 10MB per-entry caps, and CRC-32 integrity validation.
+* Outbound Egress & SSRF Loopback Parity: Added automatic loopback permission for legitimate WordPress Core self-requests (Site Health, Page Cache, wp-cron.php) while strictly blocking internal service ports and cloud metadata.
+* Real-Time WP-Cron Engine Status & Overdue Recovery: Added high-contrast WP-Cron status indicators (Native vs System Cron Mode) and 1-click overdue task auto-recovery.
+* Community Forum CAF Profile & Multi-Stack Shield: Introduced smart ecosystem profiles for bbPress, BuddyPress, and wpForo with topic spam suppression and authenticated BBCode safe-passes.
+* Dual-Layer Database & Vault Session Encryption: AES-256-GCM authenticated encryption for administrator sessions in user meta and HMAC-sealed .wcpvault file with a 30-day forensic retention lock.
+* Interactive "Ignore Cache Folder" Dynamic Exclusions Toggle: Easily toggle 22 recognized WordPress cache, optimizer, and minification directories with wildcard support.
+* Universal Architecture-Agnostic Origin Shield: Modernized edge defense copy and telemetry to describe offloading perimeter filtering across Cloud VPS, bare-metal, Docker, and managed hosting.
+* REST Query-Route Normalization & Incomplete Theme Reporting: Preserved raw rest_route backslashes in pre-bootstrap preload with three-pass decoding, and exposed structured warnings when wp_get_themes() is unavailable in non-standard runtimes.
+
+= 2.16.0 =
+* Administrator Rollback & Privilege Hook Resiliency: Detaches RASP hooks during administrator recovery, restricts writes strictly to target user restoration, and reattaches hooks in finally blocks.
+* Behavioral Threat Scoring for RASP Violations: Routes non-critical option, role, and usermeta violations through behavioral scoring instead of immediate IP bans.
+* Application Password UUID Matching: Enforces unique, complete UUID verification and preserves immutable fields including app_id.
+* Orphaned-Post Reassignment Authorization: Requires explicitly validated administrator IDs and server-side manage_options capability for orphaned post transfers.
+* Bounded Cache Traversal & Truncation Warnings: Implemented depth budgets (depth <= 5) and structured warnings when cache directories cannot be inspected.
+* Preload Micro-WAF Authenticated Session Decoupling: Defers POST and JSON body inspection for cryptographically verified authenticated sessions carrying valid preload auth cookies to post-boot WAF.
+* Remote MCP Execution Lockdown & Opt-In Threat Feeds: Restricted remote /mcp/execute and /mcp/rpc endpoints strictly to read-only tools, rejecting mutating actions with HTTP 403; switched DNSBL and threat feed sync to explicit opt-in.
+* Database Schema Verification & Non-Executable Vault Storage: Verified all 7 custom tables exist before recording schema version, and stored emergency rollback snapshots as non-executable .wcpvault blobs with HMAC authentication.
+* Sensitive Credential Redaction in WAF Logs & Learning Mode: Recursively scrubs passwords, tokens, API keys, cookies, and nonces from logs and learning mode observation payloads.
+* Shopper Zero-Lockout Immunity: Centralized ban protection ensuring active, cryptographically verified shopper sessions and whitelisted IPs are never locked out by automated heuristics.
 
 = 2.15.0 =
 * Zero-Gap Fail-Closed Streaming & Multipart Resource Ceilings: Enforced explicit inspection ceiling across all request bodies including multipart/form-data and total $_FILES sizes; implemented fail-closed stream state tracking on fopen/fread/short reads; unified heuristic representation from parsed structures with recursive password masking; removed 512KB config truncation; and upgraded media polyglot inspection from head/tail sampling to full-stream chunked streaming with overlap.
@@ -280,6 +303,16 @@ To compile the React admin application from source:
 * Cloudflare Edge "4 + 1" Smart Consolidation: Consolidates enterprise edge defense into 4 master compound rules on Cloudflare Free Plan, leaving 1 custom rule slot 100% free for site owner rules.
 * Zero-Day Redirect Hack Defense & .htaccess Vault Armor: 5-vector synthetic canary probes (Mobile, Googlebot, External Referer) detecting cloaked redirects, paired with a 5-version rolling .htaccess rollback vault.
 * Next-Gen Cryptographic Self-Defense: Real-time SHA-256 integrity audits against an embedded 204-file cryptographic manifest, detecting modified, missing, or rogue files with 1-click self-repair.
+
+= 2.8.0 =
+* Outbound Egress & SSRF Firewall Webhook Exemption: Automatically exempts configured DevSecOps notification webhooks (Slack, Discord, ClickUp, Asana) from exfiltration blocks with accurate caller attribution.
+* Accurate Scanner Caller Attribution: Refined backtrace stack analysis to attribute outbound HTTP calls from WebCare Pro Security accurately rather than falling through to WordPress Core.
+* DevSecOps Host Allowlist Expansion: Added official webhook endpoints to default approved hosts with extensible filtering for custom destinations.
+
+= 2.6.0 =
+* AI/MCP Agent Governance & Plaintext Key Vaulting: Discovers autonomous agents, flags exposed REST routes missing authorization, and migrates plaintext API secrets into AES-256-GCM AEAD encrypted storage.
+* Zero-Quarantine Surgical In-File Remediation: Restores altered files from compressed pristine baselines with pre-repair snapshots and CrashGuard loopback health check probes.
+* ActionScheduler Keyset Cursor Pagination: Non-locking primary key cursor pagination across wp_actionscheduler_actions, eliminating InnoDB row-lock contention on busy WooCommerce stores.
 
 = 2.4.0 =
 * AI/MCP Agent Governance & Plaintext Key Vaulting (AiAgentInventoryScanner.php, SecretVault.php): Discovers autonomous agents, LLM integrations, and MCP tools across active plugins, registered REST namespaces, and option keys. Automatically flags exposed REST routes missing authorization callbacks and migrates plaintext API secrets (OpenAI, Anthropic, Gemini, MCP) into AES-256-GCM AEAD encrypted storage.

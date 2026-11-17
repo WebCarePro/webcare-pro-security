@@ -1,6 +1,6 @@
 {
   "version": "2.17.0",
-  "generated_at": "2026-11-17T01:54:57.146Z",
+  "generated_at": "2026-11-17T02:12:10.084Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -940,12 +940,12 @@
       "size": 438
     },
     "README.md": {
-      "sha256": "d54675f569cf6a2ed64bd222dd3572d8b0270468c9e665de0ad4b5c25ff0f1cd",
-      "size": 26630
+      "sha256": "5b8583d53617a72252b3a50e4b547681361f3f5ead3ed834f97f74bf1e792079",
+      "size": 28847
     },
     "readme.txt": {
-      "sha256": "5cf5a2072ff49f0c10b1506f252e886c921f1686a53475585b4a70bb50553ab1",
-      "size": 44169
+      "sha256": "1582e2baa2a010f89e1db7358167fc30b7dea868df313129decb921a5261fda0",
+      "size": 48981
     },
     "uninstall.php": {
       "sha256": "38617ff46e244653fae189b3165b76caea95498dfe31f300cb5887cbd28809c3",
