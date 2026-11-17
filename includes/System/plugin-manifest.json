@@ -1,6 +1,6 @@
 {
   "version": "2.17.0",
-  "generated_at": "2026-11-17T13:15:54.728Z",
+  "generated_at": "2026-11-17T13:37:04.964Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -912,8 +912,8 @@
       "size": 57821
     },
     "includes/WordPress/RestApiInventory.php": {
-      "sha256": "ebafa0bbd880d82a0aa0b220099f7837ec059689a21fa666e0344359f76511c7",
-      "size": 37891
+      "sha256": "ff2ae114cfe2afc38f208e6f6eb6b7b4ccdd97e356735b06f010a7c184b49f36",
+      "size": 39375
     },
     "includes/WordPress/UpdateScanner.php": {
       "sha256": "b1fe653c8113de9d0229d858a8f3a436c6c5b1fba0664ef973c4ab1471464c36",

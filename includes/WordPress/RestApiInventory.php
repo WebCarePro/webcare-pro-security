@@ -188,7 +188,17 @@ class RestApiInventory {
      * @param bool $deep_forensics Include cryptographic file SHA-256 hashes & official checksum lookups.
      * @return array
      */
-    public static function get_inventory(bool $deep_forensics = false): array {
+    public static function get_inventory(bool $deep_forensics = false, bool $force_refresh = false): array {
+        static $request_cache = [];
+        $cache_key = $deep_forensics ? 'deep' : 'standard';
+        if (!$force_refresh && isset($request_cache[$cache_key])) {
+            return $request_cache[$cache_key];
+        }
+
+        if (function_exists('wp_raise_memory_limit')) {
+            wp_raise_memory_limit('admin');
+        }
+
         if (!empty($GLOBALS['wp_rest_server']) && is_object($GLOBALS['wp_rest_server']) && method_exists($GLOBALS['wp_rest_server'], 'get_routes')) {
             $server = $GLOBALS['wp_rest_server'];
         } elseif (function_exists('rest_get_server')) {
@@ -478,7 +488,7 @@ class RestApiInventory {
             }
         }
 
-        return [
+        $payload = [
             'total_routes'                    => $total_routes,
             'public_routes_count'             => $public_routes_count,
             'discovery_index_routes_count'    => $discovery_index_count,
@@ -494,6 +504,9 @@ class RestApiInventory {
             'ajax_nopriv'                     => $ajax_nopriv,
             'settings'                        => $settings,
         ];
+
+        $request_cache[$cache_key] = $payload;
+        return $payload;
     }
 
     /**
@@ -589,7 +602,6 @@ class RestApiInventory {
      * of a live REST endpoint or wp_ajax_nopriv handler.
      */
     private static function reflect_callable_attribution($callable, array $comp_index, bool $deep_forensics, array &$file_cache): array {
-        static $ast_token_cache = [];
         static $ast_posture_cache = [];
 
         $result = [
@@ -659,19 +671,22 @@ class RestApiInventory {
             return $result;
         }
 
+        $norm_file    = wp_normalize_path($abs_file);
+        $abspath_norm = wp_normalize_path(rtrim(ABSPATH, '/\\') . '/');
+        $content_norm = wp_normalize_path(rtrim(WP_CONTENT_DIR, '/\\') . '/');
+
+        $is_core_file = str_starts_with($norm_file, $abspath_norm . WPINC . '/') || str_starts_with($norm_file, $abspath_norm . 'wp-admin/');
+
         // Evaluate internal nonce/capability/signature guard & mutation sinks on the declaring method AST slice
-        if ($method_abs_file && $method_start && $method_end && class_exists('\\WebCareProScanner\\Firewall\\Modular\\SiteBehavioralAnalyzer')) {
+        // Core WordPress handlers are skipped as they are governed by official core permission callbacks
+        if (!$is_core_file && $method_abs_file && $method_start && $method_end && class_exists('\\WebCareProScanner\\Firewall\\Modular\\SiteBehavioralAnalyzer')) {
             $posture_key = $method_abs_file . ':' . $method_start . '-' . $method_end;
             if (!isset($ast_posture_cache[$posture_key])) {
-                $ast_posture_cache[$posture_key] = self::inspect_method_ast_posture($method_abs_file, (int) $method_start, (int) $method_end, $ast_token_cache);
+                $ast_posture_cache[$posture_key] = self::inspect_method_ast_posture($method_abs_file, (int) $method_start, (int) $method_end);
             }
             $result['internal_guard']     = $ast_posture_cache[$posture_key]['internal_guard'];
             $result['has_dangerous_sink'] = $ast_posture_cache[$posture_key]['has_dangerous_sink'];
         }
-
-        $norm_file    = wp_normalize_path($abs_file);
-        $abspath_norm = wp_normalize_path(rtrim(ABSPATH, '/\\') . '/');
-        $content_norm = wp_normalize_path(rtrim(WP_CONTENT_DIR, '/\\') . '/');
 
         $rel_path = str_starts_with($norm_file, $content_norm)
             ? ltrim(substr($norm_file, strlen($content_norm)), '/')
@@ -743,51 +758,73 @@ class RestApiInventory {
     }
 
     /**
+     * Check if available PHP memory is depleted or approaching memory_limit (> 75%).
+     *
+     * @return bool
+     */
+    private static function is_memory_exhausted_or_low(): bool {
+        $limit = ini_get('memory_limit');
+        if (!$limit || $limit === '-1') {
+            return false;
+        }
+        $limit_bytes = function_exists('wp_convert_hr_to_bytes')
+            ? wp_convert_hr_to_bytes($limit)
+            : (int) $limit;
+        if ($limit_bytes <= 0) {
+            return false;
+        }
+        $used = memory_get_usage(true);
+        return ($used / $limit_bytes) >= 0.75;
+    }
+
+    /**
      * Tokenize and inspect a specific line-ranged callback method/function body for internal
-     * nonce/capability/signature guards and state-mutating sinks.
+     * nonce/capability/signature guards and state-mutating sinks using line-sliced streaming.
      *
      * @param string $file_path  Absolute PHP file path containing the declaring method.
      * @param int    $start_line 1-based start line from PHP Reflection.
      * @param int    $end_line   1-based end line from PHP Reflection.
-     * @param array  $token_cache Per-request tokenized file cache.
      * @return array{internal_guard:string,has_dangerous_sink:?bool}
      */
-    private static function inspect_method_ast_posture(string $file_path, int $start_line, int $end_line, array &$token_cache): array {
+    private static function inspect_method_ast_posture(string $file_path, int $start_line, int $end_line): array {
         $empty = ['internal_guard' => '', 'has_dangerous_sink' => null];
-        if (!is_readable($file_path) || @filesize($file_path) > 512000) {
+
+        // Guard against missing files, massive files, or inverted line ranges
+        if ($start_line <= 0 || $end_line < $start_line || ($end_line - $start_line) > 600) {
+            return $empty;
+        }
+        if (!is_readable($file_path) || @filesize($file_path) > 1048576) {
             return $empty;
         }
 
-        if (!isset($token_cache[$file_path])) {
-            $src = @file_get_contents($file_path);
-            if (!is_string($src) || $src === '') {
-                $token_cache[$file_path] = [];
-            } else {
-                $token_cache[$file_path] = @token_get_all($src) ?: [];
-            }
-        }
-
-        $all_tokens = $token_cache[$file_path];
-        if (empty($all_tokens)) {
+        // Memory Governor: prevent memory exhaustion by aborting AST parsing if available RAM is low
+        if (self::is_memory_exhausted_or_low()) {
             return $empty;
         }
 
-        $slice        = [];
-        $current_line = 1;
-        foreach ($all_tokens as $t) {
-            if (is_array($t)) {
-                $current_line = (int) $t[2];
-                if ($current_line >= $start_line && $current_line <= $end_line) {
-                    $slice[] = $t;
-                }
-                $current_line += substr_count((string) $t[1], "\n");
-                if ($current_line > $end_line) {
-                    break;
-                }
-            } elseif ($current_line >= $start_line && $current_line <= $end_line) {
-                $slice[] = $t;
+        // Line-sliced extraction via SplFileObject: extracts ONLY the specific method lines
+        // instead of loading and tokenizing the entire multi-megabyte controller file into memory.
+        $lines = '';
+        try {
+            $file = new \SplFileObject($file_path, 'r');
+            $file->seek($start_line - 1);
+            $curr = $start_line;
+            while (!$file->eof() && $curr <= $end_line) {
+                $lines .= $file->current();
+                $file->next();
+                $curr++;
             }
+        } catch (\Throwable $e) {
+            return $empty;
         }
+
+        if (trim($lines) === '') {
+            return $empty;
+        }
+
+        // Wrap snippet inside a dummy class so visibility keywords (public/protected/private) tokenize cleanly
+        $snippet = "<?php\nclass _WcpTmpMethodHolder_ {\n" . $lines . "\n}\n";
+        $slice   = @token_get_all($snippet) ?: [];
 
         if (empty($slice)) {
             return $empty;
