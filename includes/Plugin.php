@@ -29,24 +29,18 @@ class Plugin {
 
         // 0. Sandbox & Installation Guard: Prevent third-party kit managers (e.g. Elementor) from crashing during wp_install / Plugin Check sandbox initialization
         $guard_sandbox_install = static function(): void {
-            global $wpdb;
-            $is_sandbox_db = isset($wpdb->base_prefix) && $wpdb->prefix !== $wpdb->base_prefix;
-            $is_installing = (function_exists('wp_installing') && wp_installing()) || (defined('WP_INSTALLING') && WP_INSTALLING);
-            $is_populating = (function_exists('did_action') && did_action('populate_options') > 0);
+            $is_pcp_sandbox = class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine', false)
+                && \WebCareProScanner\Firewall\FirewallEngine::is_plugin_check_db_sandbox();
+            $is_installing  = (function_exists('wp_installing') && wp_installing()) || (defined('WP_INSTALLING') && WP_INSTALLING);
 
-            if ($is_sandbox_db || $is_installing || $is_populating) {
+            if ($is_pcp_sandbox || $is_installing) {
                 remove_all_actions('update_option_blogname');
                 remove_all_actions('update_option_blogdescription');
             }
         };
 
-        // Unconditionally strip during populate_options (only ever called during wp_install / upgrade routines)
-        add_action('populate_options', static function(): void {
-            remove_all_actions('update_option_blogname');
-            remove_all_actions('update_option_blogdescription');
-        }, 0);
-
-        // Pre-option filters run before do_action('update_option_{$option}') is dispatched
+        // Guard populate_options, pre-option filters, and update_option actions
+        add_action('populate_options', $guard_sandbox_install, 0);
         add_filter('pre_update_option_blogname', static function($value) use ($guard_sandbox_install) {
             $guard_sandbox_install();
             return $value;
@@ -55,8 +49,6 @@ class Plugin {
             $guard_sandbox_install();
             return $value;
         }, 0);
-
-        // Fallback priority 0 action in case filters were bypassed
         add_action('update_option_blogname', $guard_sandbox_install, 0);
         add_action('update_option_blogdescription', $guard_sandbox_install, 0);
 

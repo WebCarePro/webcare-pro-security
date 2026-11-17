@@ -7258,7 +7258,17 @@ class FirewallEngine {
         if ($wpdb->base_prefix === $orig_prefix) {
             return false;
         }
-        if (!str_starts_with($wpdb->base_prefix, $orig_prefix) || !str_ends_with($wpdb->base_prefix, '_pc_')) {
+        if (!str_starts_with($wpdb->base_prefix, $orig_prefix) || !str_contains($wpdb->base_prefix, 'pc_')) {
+            return false;
+        }
+
+        // Table Isolation Guard: Verify active critical user and usermeta tables are physically isolated from production
+        $orig_users = $orig_prefix . 'users';
+        $orig_usermeta = $orig_prefix . 'usermeta';
+        if (isset($wpdb->users) && $wpdb->users === $orig_users) {
+            return false;
+        }
+        if (isset($wpdb->usermeta) && $wpdb->usermeta === $orig_usermeta) {
             return false;
         }
 
