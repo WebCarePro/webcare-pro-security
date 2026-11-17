@@ -84,6 +84,23 @@ final class HtaccessShield {
 
         // 3. Clear-Site-Data header emitter after remediation
         add_action('send_headers', [self::class, 'handle_send_headers'], 10);
+
+        // 4. LiteSpeed & Apache mod_rewrite auto-detection filter (ensures WordPress save_mod_rewrite_rules never fails)
+        add_filter('got_rewrite', static function ($got_rewrite) {
+            if ($got_rewrite) {
+                return true;
+            }
+            $server = !empty($_SERVER['SERVER_SOFTWARE']) ? sanitize_text_field(wp_unslash($_SERVER['SERVER_SOFTWARE'])) : '';
+            if (stripos($server, 'LiteSpeed') !== false || stripos($server, 'Apache') !== false) {
+                return true;
+            }
+            return $got_rewrite;
+        });
+
+        // 5. Auto-heal missing root .htaccess on admin requests to prevent broken REST API routes
+        if (is_admin()) {
+            add_action('admin_init', ['\\WebCareProScanner\\Firewall\\HtaccessVaultManager', 'ensure_clean_htaccess_exists'], 1);
+        }
     }
 
     /**

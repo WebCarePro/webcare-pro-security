@@ -351,6 +351,12 @@ final class HtaccessVaultManager {
             }
         }
 
+        // 4. Fallback to canonical clean WordPress template if no vault snapshots exist yet
+        if ($clean_content === '') {
+            $clean_content = self::get_canonical_wordpress_htaccess();
+            $source        = 'canonical_template';
+        }
+
         if (trim($clean_content) === '') {
             return [
                 'success' => false,
@@ -561,6 +567,51 @@ final class HtaccessVaultManager {
 
         $list = json_decode($dec, true);
         return is_array($list) ? $list : [];
+    }
+
+    /**
+     * Ensure a clean root .htaccess exists on Apache and LiteSpeed web servers.
+     * Auto-heals missing .htaccess files to prevent broken permalinks and REST API JSON parse failures.
+     *
+     * @return bool
+     */
+    public static function ensure_clean_htaccess_exists(): bool {
+        $htaccess_path = ABSPATH . '.htaccess';
+        if (file_exists($htaccess_path)) {
+            return true;
+        }
+
+        $server = !empty($_SERVER['SERVER_SOFTWARE']) ? sanitize_text_field(wp_unslash($_SERVER['SERVER_SOFTWARE'])) : '';
+        $is_apache_or_litespeed = (stripos($server, 'Apache') !== false || stripos($server, 'LiteSpeed') !== false);
+        if (!$is_apache_or_litespeed) {
+            return false;
+        }
+
+        if (!wp_is_writable(ABSPATH)) {
+            return false;
+        }
+
+        $res = self::restore_snapshot(1);
+        return !empty($res['success']);
+    }
+
+    /**
+     * Return canonical standard WordPress rewrite rules for .htaccess.
+     *
+     * @return string
+     */
+    public static function get_canonical_wordpress_htaccess(): string {
+        return "# BEGIN WordPress\n"
+            . "<IfModule mod_rewrite.c>\n"
+            . "RewriteEngine On\n"
+            . "RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]\n"
+            . "RewriteBase /\n"
+            . "RewriteRule ^index\\.php$ - [L]\n"
+            . "RewriteCond %{REQUEST_FILENAME} !-f\n"
+            . "RewriteCond %{REQUEST_FILENAME} !-d\n"
+            . "RewriteRule . /index.php [L]\n"
+            . "</IfModule>\n"
+            . "# END WordPress\n";
     }
 
     /**
