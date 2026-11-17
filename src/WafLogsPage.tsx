@@ -116,6 +116,12 @@ export interface WafIncident {
     expires_at?: string;
     rule_id?: string;
   };
+  is_last_hit_for_ip?: boolean;
+  ip_total_hits?: number;
+  ip_first_seen?: number;
+  ip_last_seen?: number;
+  ip_distinct_vectors?: string[];
+  ip_distinct_targets?: string[];
 }
 
 /**
@@ -2771,33 +2777,74 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
                         {/* Action Taken */}
                         {visibleColumns.action && (
                           <td style={{ padding: '10px 12px' }}>
-                            <span className={`webcare-badge-pill ${
-                              log.action_taken === 'blocked'
-                                ? 'webcare-badge-danger'
-                                : (log.action_taken === 'bypassed'
-                                  ? 'webcare-badge-info'
-                                  : (log.action_taken === 'allowed' ? 'webcare-badge-clean' : 'webcare-badge-warn'))
-                            }`} style={{
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '4px',
-                              padding: '2px 8px',
-                              borderRadius: '4px',
-                              fontSize: '11px',
-                              fontWeight: 800,
-                              textTransform: 'uppercase'
-                            }}>
-                              {log.action_taken === 'blocked' ? (
+                            {log.is_last_hit_for_ip && log.is_banned && (log.cf_synced || log.ban_scope === 'edge_synced') ? (
+                              <span
+                                className="webcare-badge-pill webcare-badge-danger"
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  padding: '2px 8px',
+                                  borderRadius: '4px',
+                                  fontSize: '11px',
+                                  fontWeight: 800,
+                                  textTransform: 'uppercase',
+                                  background: 'rgba(239, 68, 68, 0.14)',
+                                  border: '1px solid rgba(249, 115, 22, 0.45)',
+                                  color: '#dc2626'
+                                }}
+                                title="Terminal recorded hit from this IP. Active IP ban is synchronized to Cloudflare Edge."
+                              >
+                                <Cloud size={12} style={{ color: '#ea580c' }} />
+                                <span>Blocked (CF Ban)</span>
+                              </span>
+                            ) : log.is_last_hit_for_ip && log.is_banned ? (
+                              <span
+                                className="webcare-badge-pill webcare-badge-danger"
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  padding: '2px 8px',
+                                  borderRadius: '4px',
+                                  fontSize: '11px',
+                                  fontWeight: 800,
+                                  textTransform: 'uppercase'
+                                }}
+                                title="Terminal recorded hit from this IP. Active IP ban enforced on Origin WAF."
+                              >
                                 <ShieldAlert size={12} />
-                              ) : (log.action_taken === 'bypassed' ? (
-                                <ShieldCheck size={12} color="#4f46e5" />
-                              ) : (log.action_taken === 'allowed' ? (
-                                <CheckCircle2 size={12} />
-                              ) : (
-                                <Activity size={12} />
-                              )))}
-                              <span>{log.action_taken === 'bypassed' ? 'BYPASSED' : log.action_taken}</span>
-                            </span>
+                                <span>Blocked (Local Ban)</span>
+                              </span>
+                            ) : (
+                              <span className={`webcare-badge-pill ${
+                                log.action_taken === 'blocked'
+                                  ? 'webcare-badge-danger'
+                                  : (log.action_taken === 'bypassed'
+                                    ? 'webcare-badge-info'
+                                    : (log.action_taken === 'allowed' ? 'webcare-badge-clean' : 'webcare-badge-warn'))
+                              }`} style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                padding: '2px 8px',
+                                borderRadius: '4px',
+                                fontSize: '11px',
+                                fontWeight: 800,
+                                textTransform: 'uppercase'
+                              }}>
+                                {log.action_taken === 'blocked' ? (
+                                  <ShieldAlert size={12} />
+                                ) : (log.action_taken === 'bypassed' ? (
+                                  <ShieldCheck size={12} color="#4f46e5" />
+                                ) : (log.action_taken === 'allowed' ? (
+                                  <CheckCircle2 size={12} />
+                                ) : (
+                                  <Activity size={12} />
+                                )))}
+                                <span>{log.action_taken === 'bypassed' ? 'BYPASSED' : log.action_taken}</span>
+                              </span>
+                            )}
                           </td>
                         )}
 
@@ -3118,6 +3165,163 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
                                     </button>
                                   )}
                                 </div>
+                              </div>
+
+                              {/* Attacker Activity Timeline & Forensic Scope Dossier */}
+                              <div style={{
+                                padding: '12px 14px',
+                                borderRadius: '8px',
+                                background: 'var(--webcare-bg-surface-elevated, #f8fafc)',
+                                border: '1px solid var(--webcare-border, #e2e8f0)',
+                                marginBottom: '14px'
+                              }}>
+                                {/* Header with Title and External Threat Intelligence Links */}
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <Target size={15} color="#4f46e5" />
+                                    <span style={{ fontSize: '12px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.03em', color: 'var(--webcare-text-primary, #0f172a)' }}>
+                                      Attacker Activity Dossier &amp; Timeline Scope
+                                    </span>
+                                    {log.is_last_hit_for_ip ? (
+                                      <span className="webcare-badge-pill webcare-badge-danger" style={{ fontSize: '10px', fontWeight: 800, padding: '2px 6px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                        <Zap size={10} />
+                                        Terminal Hit (Final Incursion)
+                                      </span>
+                                    ) : (
+                                      <span className="webcare-badge-pill webcare-badge-info" style={{ fontSize: '10px', fontWeight: 700, padding: '2px 6px' }}>
+                                        Multi-Stage Surge Hit
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {/* External Threat Intelligence Check Links */}
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                    <a
+                                      href={`https://www.abuseipdb.com/check/${encodeURIComponent(log.ip_address)}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="webcare-btn-micro"
+                                      style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', textDecoration: 'none', color: '#dc2626' }}
+                                      title="Check IP reputation and abuse reports on AbuseIPDB"
+                                    >
+                                      <span>AbuseIPDB</span>
+                                      <ExternalLink size={10} />
+                                    </a>
+                                    <a
+                                      href={`https://www.virustotal.com/gui/ip-address/${encodeURIComponent(log.ip_address)}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="webcare-btn-micro"
+                                      style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', textDecoration: 'none', color: '#4f46e5' }}
+                                      title="Lookup IP address on VirusTotal"
+                                    >
+                                      <span>VirusTotal</span>
+                                      <ExternalLink size={10} />
+                                    </a>
+                                    <a
+                                      href={`https://ipinfo.io/${encodeURIComponent(log.ip_address)}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="webcare-btn-micro"
+                                      style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', textDecoration: 'none', color: '#0284c7' }}
+                                      title="Inspect ASN, ISP, and Geolocation on IPinfo"
+                                    >
+                                      <span>IPinfo / ASN</span>
+                                      <ExternalLink size={10} />
+                                    </a>
+                                  </div>
+                                </div>
+
+                                {/* Terminal Hit / Ban Sequence Context Banner */}
+                                <div style={{
+                                  fontSize: '12px',
+                                  lineHeight: 1.5,
+                                  padding: '8px 12px',
+                                  borderRadius: '6px',
+                                  background: log.is_last_hit_for_ip && (log.cf_synced || log.ban_scope === 'edge_synced')
+                                    ? 'rgba(249, 115, 22, 0.08)'
+                                    : (log.is_last_hit_for_ip && log.is_banned ? 'rgba(239, 68, 68, 0.07)' : 'rgba(79, 70, 229, 0.04)'),
+                                  borderLeft: `3px solid ${log.is_last_hit_for_ip && (log.cf_synced || log.ban_scope === 'edge_synced')
+                                    ? '#ea580c'
+                                    : (log.is_last_hit_for_ip && log.is_banned ? '#dc2626' : '#4f46e5')}`,
+                                  marginBottom: '10px',
+                                  color: 'var(--webcare-text-primary, #0f172a)'
+                                }}>
+                                  {log.is_last_hit_for_ip && (log.cf_synced || log.ban_scope === 'edge_synced') ? (
+                                    <div>
+                                      <strong>⚡ Terminal Recorded Hit • Cloudflare Edge Ban Active:</strong> This log entry is the final request received at your origin server from IP <code>{log.ip_address}</code> before edge banishment. All subsequent attempts from this IP are terminated at Cloudflare Anycast edge data centers without consuming origin PHP-FPM workers or MySQL database connections.
+                                    </div>
+                                  ) : (log.is_last_hit_for_ip && log.is_banned ? (
+                                    <div>
+                                      <strong>⚡ Terminal Recorded Hit • Origin WAF Block Active:</strong> This request is the final probe received from IP <code>{log.ip_address}</code> before being locked out on the Origin WAF. Sync to Cloudflare Edge to offload perimeter filtering.
+                                    </div>
+                                  ) : (log.is_last_hit_for_ip ? (
+                                    <div>
+                                      <strong>Terminal Recorded Hit:</strong> This request is the most recent activity recorded from IP <code>{log.ip_address}</code> in the current log retention window.
+                                    </div>
+                                  ) : (
+                                    <div>
+                                      <strong>Reconnaissance Incursion:</strong> This request is part of a multi-stage attack sequence from IP <code>{log.ip_address}</code> ({log.ip_total_hits || 'multiple'} incursions recorded). Click <em>&ldquo;Filter All Hits from {log.ip_address}&rdquo;</em> above to examine the attacker&apos;s full traversal sequence.
+                                    </div>
+                                  )))}
+                                </div>
+
+                                {/* Activity Telemetry 4-Pill Metric Row */}
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '8px', marginBottom: '10px' }}>
+                                  <div style={{ background: 'var(--webcare-bg-surface, #ffffff)', padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--webcare-border-standard, #e2e8f0)' }}>
+                                    <div style={{ fontSize: '10.5px', color: 'var(--webcare-text-muted, #64748b)', fontWeight: 700, textTransform: 'uppercase' }}>Total Incursions</div>
+                                    <div style={{ fontSize: '14px', fontWeight: 800, color: 'var(--webcare-text-primary, #0f172a)', marginTop: '2px' }}>
+                                      {log.ip_total_hits || 1} <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--webcare-text-muted, #64748b)' }}>hits</span>
+                                    </div>
+                                  </div>
+                                  <div style={{ background: 'var(--webcare-bg-surface, #ffffff)', padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--webcare-border-standard, #e2e8f0)' }}>
+                                    <div style={{ fontSize: '10.5px', color: 'var(--webcare-text-muted, #64748b)', fontWeight: 700, textTransform: 'uppercase' }}>First Observed</div>
+                                    <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--webcare-text-primary, #0f172a)', marginTop: '3px' }}>
+                                      {log.ip_first_seen ? formatRelativeTime(new Date(log.ip_first_seen * 1000)) : 'Recorded'}
+                                    </div>
+                                  </div>
+                                  <div style={{ background: 'var(--webcare-bg-surface, #ffffff)', padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--webcare-border-standard, #e2e8f0)' }}>
+                                    <div style={{ fontSize: '10.5px', color: 'var(--webcare-text-muted, #64748b)', fontWeight: 700, textTransform: 'uppercase' }}>Latest Incursion</div>
+                                    <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--webcare-text-primary, #0f172a)', marginTop: '3px' }}>
+                                      {log.ip_last_seen ? formatRelativeTime(new Date(log.ip_last_seen * 1000)) : 'Recent'}
+                                    </div>
+                                  </div>
+                                  <div style={{ background: 'var(--webcare-bg-surface, #ffffff)', padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--webcare-border-standard, #e2e8f0)' }}>
+                                    <div style={{ fontSize: '10.5px', color: 'var(--webcare-text-muted, #64748b)', fontWeight: 700, textTransform: 'uppercase' }}>Attacker Scope</div>
+                                    <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--webcare-text-primary, #0f172a)', marginTop: '3px' }}>
+                                      {log.ip_distinct_targets?.length || 1} URI{(log.ip_distinct_targets?.length || 1) !== 1 ? 's' : ''} &bull; {log.ip_distinct_vectors?.length || 1} Vector{(log.ip_distinct_vectors?.length || 1) !== 1 ? 's' : ''}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Probed Targets & Triggered Vectors Chips */}
+                                {((log.ip_distinct_targets && log.ip_distinct_targets.length > 0) || (log.ip_distinct_vectors && log.ip_distinct_vectors.length > 0)) && (
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                    {log.ip_distinct_targets && log.ip_distinct_targets.length > 0 && (
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', fontSize: '11px' }}>
+                                        <span style={{ color: 'var(--webcare-text-muted, #64748b)', fontWeight: 700 }}>Probed Targets:</span>
+                                        {log.ip_distinct_targets.slice(0, 5).map((tgt, tIdx) => (
+                                          <code key={tIdx} style={{ fontSize: '11px', background: 'var(--webcare-bg-surface, #ffffff)', padding: '2px 6px', borderRadius: '4px', border: '1px solid var(--webcare-border-standard, #e2e8f0)', color: '#0284c7' }}>
+                                            {tgt}
+                                          </code>
+                                        ))}
+                                        {log.ip_distinct_targets.length > 5 && (
+                                          <span style={{ color: 'var(--webcare-text-muted, #64748b)', fontSize: '10px' }}>+{log.ip_distinct_targets.length - 5} more</span>
+                                        )}
+                                      </div>
+                                    )}
+                                    {log.ip_distinct_vectors && log.ip_distinct_vectors.length > 0 && (
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', fontSize: '11px' }}>
+                                        <span style={{ color: 'var(--webcare-text-muted, #64748b)', fontWeight: 700 }}>Triggered Vectors:</span>
+                                        {log.ip_distinct_vectors.map((vec, vIdx) => (
+                                          <span key={vIdx} style={{ fontSize: '11px', background: 'rgba(79, 70, 229, 0.08)', color: '#4f46e5', padding: '1px 6px', borderRadius: '4px', border: '1px solid rgba(79, 70, 229, 0.2)', fontWeight: 600 }}>
+                                            {vec}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
                               </div>
 
                               {/* 4-Column Metadata Grid */}

@@ -487,6 +487,49 @@ class WafFileLogger {
 
         $total = count($all_matched);
 
+        // Aggregate per-IP attacker activity and terminal hit attribution across all matched records
+        $ip_stats = [];
+        foreach ($all_matched as $idx => $entry) {
+            $entry_ip = (string) ($entry['ip_address'] ?? '');
+            if ($entry_ip === '') {
+                continue;
+            }
+            $entry_ts = isset($entry['timestamp']) ? (int) $entry['timestamp'] : (int) strtotime((string) ($entry['created_at'] ?? 'now'));
+            $entry_id = (string) ($entry['id'] ?? (string) $idx);
+
+            if (!isset($ip_stats[$entry_ip])) {
+                $ip_stats[$entry_ip] = [
+                    'total_hits'       => 0,
+                    'first_seen'       => $entry_ts,
+                    'last_seen'        => $entry_ts,
+                    'latest_log_id'    => $entry_id,
+                    'latest_timestamp' => $entry_ts,
+                    'categories'       => [],
+                    'endpoints'        => [],
+                ];
+            }
+
+            $ip_stats[$entry_ip]['total_hits']++;
+
+            if ($entry_ts < $ip_stats[$entry_ip]['first_seen']) {
+                $ip_stats[$entry_ip]['first_seen'] = $entry_ts;
+            }
+
+            if ($entry_ts >= $ip_stats[$entry_ip]['latest_timestamp']) {
+                $ip_stats[$entry_ip]['latest_timestamp'] = $entry_ts;
+                $ip_stats[$entry_ip]['latest_log_id']    = $entry_id;
+                $ip_stats[$entry_ip]['last_seen']        = $entry_ts;
+            }
+
+            if (!empty($entry['rule_category'])) {
+                $ip_stats[$entry_ip]['categories'][$entry['rule_category']] = true;
+            }
+            if (!empty($entry['request_uri'])) {
+                $clean_path = (string) wp_parse_url($entry['request_uri'], PHP_URL_PATH);
+                $ip_stats[$entry_ip]['endpoints'][$clean_path !== '' ? $clean_path : $entry['request_uri']] = true;
+            }
+        }
+
         // Sorting
         $sort_by    = sanitize_key($filters['sort_by'] ?? 'created_at');
         $sort_order = strtolower(sanitize_key($filters['sort_order'] ?? 'desc')) === 'asc' ? 'asc' : 'desc';
@@ -571,6 +614,16 @@ class WafFileLogger {
             if ($ban_meta) {
                 $log['ban_meta'] = $ban_meta;
             }
+
+            // Attacker activity timeline & terminal hit correlation
+            $log_id                     = (string) ($log['id'] ?? '');
+            $is_last_hit                = ($ip !== '' && isset($ip_stats[$ip]) && (string) $ip_stats[$ip]['latest_log_id'] === $log_id);
+            $log['is_last_hit_for_ip']  = $is_last_hit;
+            $log['ip_total_hits']       = isset($ip_stats[$ip]) ? (int) $ip_stats[$ip]['total_hits'] : 1;
+            $log['ip_first_seen']       = isset($ip_stats[$ip]) ? (int) $ip_stats[$ip]['first_seen'] : (isset($log['timestamp']) ? (int) $log['timestamp'] : time());
+            $log['ip_last_seen']        = isset($ip_stats[$ip]) ? (int) $ip_stats[$ip]['last_seen'] : (isset($log['timestamp']) ? (int) $log['timestamp'] : time());
+            $log['ip_distinct_vectors'] = isset($ip_stats[$ip]) ? array_values(array_keys($ip_stats[$ip]['categories'])) : [];
+            $log['ip_distinct_targets'] = isset($ip_stats[$ip]) ? array_values(array_keys($ip_stats[$ip]['endpoints'])) : [];
         }
         unset($log);
 
