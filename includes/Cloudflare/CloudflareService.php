@@ -473,9 +473,9 @@ class CloudflareService {
             'plan'              => $plan_name,
             'memory_limit'      => $memory_limit,
             'savings_estimate'  => $savings_estimate,
-            'headline'          => __('Shared Hosting & Resource Optimization Advisory', 'webcare-pro-security'),
-            'summary'           => __('On shared cPanel, Plesk, or CloudLinux hosting, running deep PHP inspection for high-volume bot probes can exhaust strictly throttled CPU and RAM limits (often triggering 508 Resource Limit Reached). Offloading perimeter protection to Cloudflare Free Edge blocks 90%+ of automated probes before they ever reach your hosting server.', 'webcare-pro-security'),
-            'expert_note'       => __('Advisory by Mir Alamin (WebCare Pro) — Senior Linux SysAdmin & WordPress Security Engineer. Offload perimeter probes to Cloudflare Free Edge, while WebCare local origin firewall handles authenticated WordPress sessions and deep POST payloads.', 'webcare-pro-security'),
+            'headline'          => __('Origin Resource Shield & Edge Offload Advisory', 'webcare-pro-security'),
+            'summary'           => __('Executing PHP-FPM processes for high-volume exploit scanners and automated bot floods drains server CPU, memory pools, and database connections across Cloud VPS, dedicated, or managed hosts. Offloading perimeter protection to Cloudflare Free Edge blocks 90%+ of automated probes at the network edge before they ever reach your hosting server.', 'webcare-pro-security'),
+            'expert_note'       => __('Advisory by Mir Alamin (WebCare Pro) — Senior Linux SysAdmin & WordPress Security Engineer. Cloudflare Free Edge terminates volumetric bots and crawler noise with 0ms origin overhead, keeping server PHP-FPM workers and MySQL connections 100% free for legitimate visitors, shoppers, and admin operations.', 'webcare-pro-security'),
         ];
     }
 

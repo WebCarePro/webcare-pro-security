@@ -335,7 +335,7 @@ export const CloudflareSlotVisualizer: React.FC<CloudflareSlotVisualizerProps> =
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <Cpu size={18} color={isSurvivalActive ? '#ef4444' : '#10b981'} />
               <h4 className="webcare-firewall-section-title" style={{ margin: 0, fontSize: '16px' }}>
-                Origin Survival Mode (cPanel &amp; Shared Hosting Circuit Breaker)
+                Origin Survival Mode (Automated DDoS &amp; L7 Surge Circuit Breaker)
               </h4>
               <span
                 className={`webcare-badge-pill ${isSurvivalActive ? 'webcare-badge-danger' : 'webcare-badge-clean'}`}
@@ -345,7 +345,7 @@ export const CloudflareSlotVisualizer: React.FC<CloudflareSlotVisualizerProps> =
               </span>
             </div>
             <p className="webcare-firewall-section-desc" style={{ marginTop: '4px', marginBottom: 0 }}>
-              Protects shared hosting and cPanel accounts against 508 Resource Limit crashes. Automatically offloads CPU load to Cloudflare Edge during bot surges or DDoS attacks.
+              Protects origin server CPU, memory, and PHP-FPM workers against volumetric surges, L7 floods, and resource exhaustion. Automatically offloads defense to Cloudflare Edge challenge mode during bot surges or DDoS attacks.
             </p>
           </div>
 

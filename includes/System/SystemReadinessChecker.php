@@ -50,7 +50,7 @@ class SystemReadinessChecker {
             'required'    => '>= ' . self::MIN_PHP_VERSION,
             'recommended' => '>= ' . self::RECOMMENDED_PHP,
             'description' => __('Requires PHP 8.3+ for modern cryptographic primitives, read-only classes, typed constants, and memory optimizations (PHP 8.1 and 8.2 are officially EOL).', 'webcare-pro-security'),
-            'remedy'      => __('Upgrade your hosting environment or cPanel/Plesk PHP version selector to PHP 8.3 or PHP 8.4.', 'webcare-pro-security'),
+            'remedy'      => __('Upgrade your hosting environment, cloud server, or PHP version selector to PHP 8.3 or PHP 8.4.', 'webcare-pro-security'),
         ];
 
         // 2. WordPress Version
