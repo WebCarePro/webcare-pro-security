@@ -111,12 +111,14 @@ class SessionSentinel {
             $vault_file = rtrim($vault_dir, '/\\') . '/' . self::VAULT_FILE;
             $lock_file  = $vault_file . '.lock';
 
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen -- Atomic file lock for concurrent vault write protection.
             $lock_fp = @fopen($lock_file, 'c+');
             if (!$lock_fp) {
                 return;
             }
 
             if (!@flock($lock_fp, LOCK_EX)) {
+                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
                 @fclose($lock_fp);
                 return;
             }
@@ -147,10 +149,12 @@ class SessionSentinel {
 
                 $tmp_file = $vault_file . '.' . uniqid('wcp_vault_', true) . '.tmp';
                 if (@file_put_contents($tmp_file, $encoded_container, LOCK_EX) !== false) {
+                    // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename -- Atomic vault replacement prevents partial file reads.
                     @rename($tmp_file, $vault_file);
                 }
             } finally {
                 @flock($lock_fp, LOCK_UN);
+                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
                 @fclose($lock_fp);
             }
         } catch (\Throwable $e) {
@@ -1070,7 +1074,7 @@ class SessionSentinel {
         $wp_sessions = get_user_meta($user_id, 'session_tokens', true) ?: [];
         if (isset($wp_sessions[$hashed]) || isset($wp_sessions[$session_token])) {
             throw new \RuntimeException(
-                __('Active Device: This device is currently active. You must log out the device before it can be considered for removal.', 'webcare-pro-security')
+                esc_html__('Active Device: This device is currently active. You must log out the device before it can be considered for removal.', 'webcare-pro-security')
             );
         }
 
@@ -1078,7 +1082,7 @@ class SessionSentinel {
         $is_logged_out = (!empty($entry['is_revoked']) || ($entry['status'] ?? '') === 'logged_out');
         if (!$is_logged_out) {
             throw new \RuntimeException(
-                __('Active Device: This device record is not logged out. You must log out the device first.', 'webcare-pro-security')
+                esc_html__('Active Device: This device record is not logged out. You must log out the device first.', 'webcare-pro-security')
             );
         }
 
@@ -1090,11 +1094,13 @@ class SessionSentinel {
 
         if ($elapsed < $thirty_days_seconds) {
             $days_remaining = (int) max(1, ceil(($thirty_days_seconds - $elapsed) / DAY_IN_SECONDS));
-            throw new \RuntimeException(sprintf(
-                /* translators: %d: number of days remaining */
-                __('Forensic Retention Lock: Device records are preserved for 30 days after logout for audit compliance. This record will become eligible for removal in %d days.', 'webcare-pro-security'),
-                $days_remaining
-            ));
+            throw new \RuntimeException(
+                esc_html(sprintf(
+                    /* translators: %d: number of days remaining */
+                    __('Forensic Retention Lock: Device records are preserved for 30 days after logout for audit compliance. This record will become eligible for removal in %d days.', 'webcare-pro-security'),
+                    $days_remaining
+                ))
+            );
         }
 
         // 4. Eligible for removal! Unset from session metadata and save encrypted to DB & Vault

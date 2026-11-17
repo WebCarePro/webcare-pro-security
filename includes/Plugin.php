@@ -27,6 +27,39 @@ class Plugin {
         $is_cron  = (defined('DOING_CRON') && DOING_CRON);
         $is_admin = is_admin();
 
+        // 0. Sandbox & Installation Guard: Prevent third-party kit managers (e.g. Elementor) from crashing during wp_install / Plugin Check sandbox initialization
+        $guard_sandbox_install = static function(): void {
+            global $wpdb;
+            $is_sandbox_db = isset($wpdb->base_prefix) && $wpdb->prefix !== $wpdb->base_prefix;
+            $is_installing = (function_exists('wp_installing') && wp_installing()) || (defined('WP_INSTALLING') && WP_INSTALLING);
+            $is_populating = (function_exists('did_action') && did_action('populate_options') > 0);
+
+            if ($is_sandbox_db || $is_installing || $is_populating) {
+                remove_all_actions('update_option_blogname');
+                remove_all_actions('update_option_blogdescription');
+            }
+        };
+
+        // Unconditionally strip during populate_options (only ever called during wp_install / upgrade routines)
+        add_action('populate_options', static function(): void {
+            remove_all_actions('update_option_blogname');
+            remove_all_actions('update_option_blogdescription');
+        }, 0);
+
+        // Pre-option filters run before do_action('update_option_{$option}') is dispatched
+        add_filter('pre_update_option_blogname', static function($value) use ($guard_sandbox_install) {
+            $guard_sandbox_install();
+            return $value;
+        }, 0);
+        add_filter('pre_update_option_blogdescription', static function($value) use ($guard_sandbox_install) {
+            $guard_sandbox_install();
+            return $value;
+        }, 0);
+
+        // Fallback priority 0 action in case filters were bypassed
+        add_action('update_option_blogname', $guard_sandbox_install, 0);
+        add_action('update_option_blogdescription', $guard_sandbox_install, 0);
+
         // 1. Always-On Lightweight Runtime Security (WAF, Auth, Session, Headers)
         \WebCareProScanner\Firewall\WafFileLogger::init();
         \WebCareProScanner\Firewall\FirewallEngine::init();
