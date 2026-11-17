@@ -918,6 +918,42 @@ class HoneyTokenEngine {
     }
 
     /**
+     * Purge all database canaries and ghost admin users (used during uninstall or manual reset).
+     */
+    public static function purge_canaries(): void {
+        self::$internal_audit_bypass = true;
+        try {
+            global $wpdb;
+
+            // 1. Delete Ghost Admin canary user
+            $canary_user = get_user_by('login', self::CANARY_ADMIN_USER);
+            if ($canary_user instanceof \WP_User) {
+                if (!function_exists('wp_delete_user')) {
+                    require_once ABSPATH . 'wp-admin/includes/user.php';
+                }
+                if (function_exists('wp_delete_user')) {
+                    wp_delete_user($canary_user->ID);
+                }
+            }
+            // Direct query cleanup in case user API is unavailable during uninstall
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->users} WHERE user_login = %s", self::CANARY_ADMIN_USER));
+
+            // 2. Delete canary options
+            delete_option(self::OPTION_CANARY_DB_PLANTED);
+            delete_option('_webcareproscan_canary_admin_planted');
+            foreach (self::CANARY_HONEY_OPTIONS as $k) {
+                delete_option($k);
+            }
+            // Direct query purge for any canary options
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_webcareproscan_canary_%' OR option_name = 'webcareproscan_canary_db_planted'");
+        } finally {
+            self::$internal_audit_bypass = false;
+        }
+    }
+
+    /**
      * Retrieve recent caught bots.
      *
      * @param int $limit

@@ -92,6 +92,18 @@ if (file_exists($webcareproscan_server_sec_file)) {
     }
 }
 
+// Clean up database canaries and ghost admin users before options deletion
+$webcareproscan_honeytoken_file = dirname(__FILE__) . '/includes/Firewall/HoneyTokenEngine.php';
+if (file_exists($webcareproscan_honeytoken_file)) {
+    require_once $webcareproscan_honeytoken_file;
+    if (class_exists('\\WebCareProScanner\\Firewall\\HoneyTokenEngine') && method_exists('\\WebCareProScanner\\Firewall\\HoneyTokenEngine', 'purge_canaries')) {
+        try {
+            \WebCareProScanner\Firewall\HoneyTokenEngine::purge_canaries();
+        } catch (\Throwable $e) {
+            // Fail safely
+        }
+    }
+}
 
 $webcareproscan_settings = get_option('webcareproscan_settings', []);
 $webcareproscan_delete_data = true; // Default to true for clean fresh uninstallation; can be configured in settings
@@ -108,75 +120,114 @@ if ($webcareproscan_delete_data) {
     $webcareproscan_delete_crons   = !isset($webcareproscan_settings['uninstall_delete_crons']) || !empty($webcareproscan_settings['uninstall_delete_crons']);
     $webcareproscan_delete_uploads = !isset($webcareproscan_settings['uninstall_delete_uploads']) || !empty($webcareproscan_settings['uninstall_delete_uploads']);
 
-    // 1. Drop all custom plugin tables
-    if ($webcareproscan_drop_tables) {
-        $webcareproscan_tables = [
-            $wpdb->prefix . 'webcareproscan_scans',
-            $wpdb->prefix . 'webcareproscan_scan_issues',
-            $wpdb->prefix . 'webcareproscan_scan_files',
-            $wpdb->prefix . 'webcareproscan_quarantine',
-            $wpdb->prefix . 'webcareproscan_firewall_logs',
-            $wpdb->prefix . 'webcareproscan_login_history',
-            $wpdb->prefix . 'webcareproscan_cron_logs',
-        ];
+    // Helper closure to drop custom tables and delete all WebCare options for a given prefix/blog
+    $webcareproscan_clean_blog_tables_and_options = static function ($prefix) use ($wpdb, $webcareproscan_drop_tables, $webcareproscan_delete_options) {
+        // 1. Drop all custom plugin tables
+        if ($webcareproscan_drop_tables) {
+            $webcareproscan_tables = [
+                $prefix . 'webcareproscan_scans',
+                $prefix . 'webcareproscan_scan_issues',
+                $prefix . 'webcareproscan_scan_files',
+                $prefix . 'webcareproscan_quarantine',
+                $prefix . 'webcareproscan_firewall_logs',
+                $prefix . 'webcareproscan_login_history',
+                $prefix . 'webcareproscan_cron_logs',
+            ];
 
-        foreach ($webcareproscan_tables as $webcareproscan_table) {
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.DirectDatabaseQuery.SchemaChange, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-            $wpdb->query("DROP TABLE IF EXISTS `{$webcareproscan_table}`");
-        }
-    }
+            foreach ($webcareproscan_tables as $webcareproscan_table) {
+                // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.DirectDatabaseQuery.SchemaChange, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+                $wpdb->query("DROP TABLE IF EXISTS `{$webcareproscan_table}`");
+            }
 
-    // 2. Delete all plugin options (both exact keys and wildcard prefixes)
-    if ($webcareproscan_delete_options) {
-        $webcareproscan_plugin_options = [
-            'webcareproscan_settings',
-            'webcareproscan_db_version',
-            'webcareproscan_welcome_dismissed',
-            'webcareproscan_server_security_options',
-            'webcareproscan_self_defense_hashes',
-            'webcareproscan_self_defense_last_audit',
-            'webcareproscan_remediation_backups',
-            'webcareproscan_threat_intel_ips',
-            'webcareproscan_threat_intel_meta',
-            'webcareproscan_threat_intel_cves',
-            'webcareproscan_login_lockouts',
-            'webcareproscan_mcp_audit_log',
-            'webcareproscan_active_patches',
-            'webcareproscan_whitelist_rules',
-            'webcareproscan_behavioral_baseline',
-            'webcareproscan_firewall_blacklist_ips',
-            'webcareproscan_vault_rotation_state',
-            'webcareproscan_vault_salt',
-            'webcareproscan_vault_old_key_blob',
-            'webcareproscan_vault_new_key_blob',
-            'webcareproscan_scan_lock',
-            'webcareproscan_circuit_breaker_safe_mode',
-            'webcareproscan_circuit_breaker_last_incident',
-            'webcareproscan_circuit_breaker_archive',
-            'webcareproscan_circuit_breaker_history',
-            'webcareproscan_cloudflare_rate_limit_config',
-        ];
-        foreach ($webcareproscan_plugin_options as $webcareproscan_opt) {
-            delete_option($webcareproscan_opt);
-            delete_site_option($webcareproscan_opt);
-        }
-
-        // Comprehensive cleanup for dynamic/wildcard options (e.g. webcareproscan_vault_backup_*, webcareproscan_vault_ephem_*, webcareproscan_*)
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'webcareproscan_%'");
-        if (is_multisite()) {
+            // Drop any dynamic tables created under this prefix
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-            $wpdb->query("DELETE FROM {$wpdb->sitemeta} WHERE meta_key LIKE 'webcareproscan_%'");
+            $dynamic_tables = $wpdb->get_col($wpdb->prepare("SHOW TABLES LIKE %s", $wpdb->esc_like($prefix . 'webcareproscan_') . '%'));
+            if (!empty($dynamic_tables)) {
+                foreach ($dynamic_tables as $dyn_table) {
+                    // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.DirectDatabaseQuery.SchemaChange, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+                    $wpdb->query("DROP TABLE IF EXISTS `{$dyn_table}`");
+                }
+            }
         }
 
-        // 3. Purge all plugin transients and temporary caches
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_webcareproscan_%' OR option_name LIKE '_transient_timeout_webcareproscan_%'");
+        // 2. Delete all plugin options, CAF settings, Cloudflare edge states, canaries, and transients
+        if ($webcareproscan_delete_options) {
+            // Delete all options starting with webcareproscan_, _webcareproscan_, webcare_caf_, webcare_cf_, webcare_, _webcare_
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            $wpdb->query(
+                "DELETE FROM {$wpdb->options} 
+                 WHERE option_name LIKE 'webcareproscan_%'
+                    OR option_name LIKE '_webcareproscan_%'
+                    OR option_name LIKE 'webcare_caf_%'
+                    OR option_name LIKE 'webcare_cf_%'
+                    OR option_name LIKE 'webcare_%'
+                    OR option_name LIKE '_webcare_%'
+                    OR option_name LIKE '_transient_webcare%'
+                    OR option_name LIKE '_transient_timeout_webcare%'
+                    OR option_name LIKE '_site_transient_webcare%'
+                    OR option_name LIKE '_site_transient_timeout_webcare%'"
+            );
+        }
+    };
 
-        // 4. Purge plugin user meta (2FA tokens, backup codes, trusted devices, session meta)
+    // Clean active blog
+    $webcareproscan_clean_blog_tables_and_options($wpdb->prefix);
+
+    // Multisite cleanup: iterate all blogs and clean their respective tables and options
+    if (is_multisite()) {
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-        $wpdb->query("DELETE FROM {$wpdb->usermeta} WHERE meta_key LIKE '_webcareproscan_%' OR meta_key LIKE 'webcareproscan_%'");
+        $wpdb->query(
+            "DELETE FROM {$wpdb->sitemeta} 
+             WHERE meta_key LIKE 'webcareproscan_%'
+                OR meta_key LIKE '_webcareproscan_%'
+                OR meta_key LIKE 'webcare_caf_%'
+                OR meta_key LIKE 'webcare_cf_%'
+                OR meta_key LIKE 'webcare_%'
+                OR meta_key LIKE '_webcare_%'
+                OR meta_key LIKE '_site_transient_webcare%'
+                OR meta_key LIKE '_site_transient_timeout_webcare%'"
+        );
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $webcareproscan_blogs = $wpdb->get_col("SELECT blog_id FROM {$wpdb->blogs}");
+        if (!empty($webcareproscan_blogs)) {
+            $webcareproscan_current_blog_id = (int) get_current_blog_id();
+            foreach ($webcareproscan_blogs as $webcareproscan_b_id) {
+                if ((int) $webcareproscan_b_id === $webcareproscan_current_blog_id) {
+                    continue;
+                }
+                switch_to_blog((int) $webcareproscan_b_id);
+                $webcareproscan_clean_blog_tables_and_options($wpdb->prefix);
+                restore_current_blog();
+            }
+        }
     }
+
+    // 3. Purge plugin user meta (2FA tokens, backup codes, trusted devices, session meta)
+    // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+    $wpdb->query(
+        "DELETE FROM {$wpdb->usermeta} 
+         WHERE meta_key LIKE 'webcareproscan_%' 
+            OR meta_key LIKE '_webcareproscan_%' 
+            OR meta_key LIKE 'webcare_%' 
+            OR meta_key LIKE '_webcare_%'"
+    );
+
+    // 4. Purge Ghost Admin canary user and any canary tripwire accounts
+    if (function_exists('get_user_by')) {
+        $webcare_canary_user = get_user_by('login', 'webcare_canary_admin');
+        if ($webcare_canary_user instanceof \WP_User) {
+            if (!function_exists('wp_delete_user')) {
+                require_once ABSPATH . 'wp-admin/includes/user.php';
+            }
+            if (function_exists('wp_delete_user')) {
+                wp_delete_user($webcare_canary_user->ID);
+            }
+        }
+    }
+    // Fail-safe direct delete for canary user from wp_users
+    // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+    $wpdb->query("DELETE FROM {$wpdb->users} WHERE user_login = 'webcare_canary_admin'");
 
     // 5. Clear scheduled cron jobs
     if ($webcareproscan_delete_crons) {
@@ -201,9 +252,25 @@ if ($webcareproscan_delete_data) {
         foreach ($webcareproscan_cron_hooks as $webcareproscan_hook) {
             wp_clear_scheduled_hook($webcareproscan_hook);
         }
+
+        // Dynamically clear any remaining scheduled cron jobs starting with webcareproscan_ or webcare_
+        if (function_exists('_get_cron_array')) {
+            $webcareproscan_all_crons = _get_cron_array();
+            if (is_array($webcareproscan_all_crons)) {
+                foreach ($webcareproscan_all_crons as $webcareproscan_cron_time => $webcareproscan_cron_hooks) {
+                    if (is_array($webcareproscan_cron_hooks)) {
+                        foreach ($webcareproscan_cron_hooks as $webcareproscan_cron_hook_name => $webcareproscan_cron_args) {
+                            if (str_starts_with($webcareproscan_cron_hook_name, 'webcareproscan_') || str_starts_with($webcareproscan_cron_hook_name, 'webcare_')) {
+                                wp_clear_scheduled_hook($webcareproscan_cron_hook_name);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
-    // 6. Remove all plugin-created files in uploads (logs, quarantine, backups)
+    // 6. Remove all plugin-created files in uploads (logs, quarantine, backups, compiled binaries)
     if ($webcareproscan_delete_uploads) {
         $webcareproscan_upload_dir = wp_upload_dir();
         if (!empty($webcareproscan_upload_dir['basedir'])) {
@@ -214,12 +281,44 @@ if ($webcareproscan_delete_data) {
                     require_once ABSPATH . 'wp-admin/includes/file.php';
                     WP_Filesystem();
                 }
+                $webcareproscan_deleted = false;
                 if ($wp_filesystem && is_object($wp_filesystem) && method_exists($wp_filesystem, 'delete')) {
                     try {
-                        $wp_filesystem->delete($webcareproscan_storage_dir, true);
+                        $webcareproscan_deleted = (bool) $wp_filesystem->delete($webcareproscan_storage_dir, true);
                     } catch (\Throwable $e) {
-                        // Fail safely
+                        $webcareproscan_deleted = false;
                     }
+                }
+                // Fallback recursive delete using standard WordPress functions if wp_filesystem failed
+                if (!$webcareproscan_deleted && is_dir($webcareproscan_storage_dir)) {
+                    $webcare_del_recursive = static function ($dir, $del_fn) {
+                        if (!is_dir($dir)) {
+                            return;
+                        }
+                        $items = @scandir($dir);
+                        if (!is_array($items)) {
+                            return;
+                        }
+                        foreach ($items as $item) {
+                            if ($item === '.' || $item === '..') {
+                                continue;
+                            }
+                            $path = $dir . DIRECTORY_SEPARATOR . $item;
+                            if (is_dir($path)) {
+                                $del_fn($path, $del_fn);
+                            } else {
+                                wp_delete_file($path);
+                            }
+                        }
+                        global $wp_filesystem;
+                        if ($wp_filesystem && is_object($wp_filesystem) && method_exists($wp_filesystem, 'rmdir')) {
+                            $wp_filesystem->rmdir($dir);
+                        } else {
+                            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_rmdir -- Fallback directory purge during plugin uninstallation.
+                            @rmdir($dir);
+                        }
+                    };
+                    $webcare_del_recursive($webcareproscan_storage_dir, $webcare_del_recursive);
                 }
             }
         }

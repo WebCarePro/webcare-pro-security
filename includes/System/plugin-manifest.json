@@ -1,6 +1,6 @@
 {
   "version": "2.17.0",
-  "generated_at": "2026-11-17T17:19:09.648Z",
+  "generated_at": "2026-11-17T17:33:23.467Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -476,8 +476,8 @@
       "size": 14112
     },
     "includes/Firewall/HoneyTokenEngine.php": {
-      "sha256": "f9acfb776ee0454432e904cc6ebcd6f2c1638dd27113894a74d284adc95fc6af",
-      "size": 43733
+      "sha256": "3c8ef1f7cdaf2fbd62afb6a228a89078595cba86463200f94bedcc8f1be819c1",
+      "size": 45467
     },
     "includes/Firewall/HtaccessShield.php": {
       "sha256": "2a17fa32182928c335006e5e7eb64ec6aa732a54bf465aec8ccb360edc58a94c",
@@ -948,8 +948,8 @@
       "size": 48981
     },
     "uninstall.php": {
-      "sha256": "38617ff46e244653fae189b3165b76caea95498dfe31f300cb5887cbd28809c3",
-      "size": 10583
+      "sha256": "470672e8aa5bfb0cbfb90acf42958bf066102836dae7d8cfdd42398868411a1e",
+      "size": 16029
     },
     "webcare-pro-security.php": {
       "sha256": "b313035fd271a6b246a9b641cf57806ac2fcd7db554927d839bfc1b06c7f15bf",
