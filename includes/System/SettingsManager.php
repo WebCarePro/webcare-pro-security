@@ -1040,24 +1040,32 @@ class SettingsManager {
         // 12. Cloudflare Edge Defense Integration (Encrypted with SecretVault)
         $clean['cloudflare_enabled']        = !empty($merged['cloudflare_enabled']);
         $in_cf_token                        = trim($input['cloudflare_api_token'] ?? '');
-        $is_masked_token                    = $in_cf_token === '' || strpos($in_cf_token, '••') !== false;
-        $old_cf_token_val                   = \WebCareProScanner\Security\SecretVault::decrypt($current['cloudflare_api_token'] ?? '');
-        $cf_token_val                       = $is_masked_token
-            ? $old_cf_token_val
-            : sanitize_text_field($in_cf_token);
-        $clean['cloudflare_api_token']      = ($cf_token_val === $old_cf_token_val && !empty($current['cloudflare_api_token']))
-            ? $current['cloudflare_api_token']
-            : \WebCareProScanner\Security\SecretVault::encrypt($cf_token_val);
+        $is_disconnect                      = !empty($input['cloudflare_disconnect']) || !empty($input['cloudflare_clear']) || (array_key_exists('cloudflare_api_token', $input) && $in_cf_token === '' && empty($clean['cloudflare_enabled']));
 
-        $in_zone_id                         = trim($input['cloudflare_zone_id'] ?? '');
-        $is_masked_zone                     = $in_zone_id === '' || strpos($in_zone_id, '••') !== false;
-        $old_zone_id_val                    = \WebCareProScanner\Security\SecretVault::decrypt($current['cloudflare_zone_id'] ?? '');
-        $zone_id_val                        = $is_masked_zone
-            ? $old_zone_id_val
-            : sanitize_text_field($in_zone_id);
-        $clean['cloudflare_zone_id']        = ($zone_id_val === $old_zone_id_val && !empty($current['cloudflare_zone_id']))
-            ? $current['cloudflare_zone_id']
-            : \WebCareProScanner\Security\SecretVault::encrypt($zone_id_val);
+        if ($is_disconnect) {
+            $clean['cloudflare_enabled']   = false;
+            $clean['cloudflare_api_token'] = '';
+            $clean['cloudflare_zone_id']   = '';
+        } else {
+            $is_masked_token                    = $in_cf_token === '' || strpos($in_cf_token, '••') !== false;
+            $old_cf_token_val                   = \WebCareProScanner\Security\SecretVault::decrypt($current['cloudflare_api_token'] ?? '');
+            $cf_token_val                       = $is_masked_token
+                ? $old_cf_token_val
+                : sanitize_text_field($in_cf_token);
+            $clean['cloudflare_api_token']      = ($cf_token_val === $old_cf_token_val && !empty($current['cloudflare_api_token']))
+                ? $current['cloudflare_api_token']
+                : (!empty($cf_token_val) ? \WebCareProScanner\Security\SecretVault::encrypt($cf_token_val) : '');
+
+            $in_zone_id                         = trim($input['cloudflare_zone_id'] ?? '');
+            $is_masked_zone                     = $in_zone_id === '' || strpos($in_zone_id, '••') !== false;
+            $old_zone_id_val                    = \WebCareProScanner\Security\SecretVault::decrypt($current['cloudflare_zone_id'] ?? '');
+            $zone_id_val                        = $is_masked_zone
+                ? $old_zone_id_val
+                : sanitize_text_field($in_zone_id);
+            $clean['cloudflare_zone_id']        = ($zone_id_val === $old_zone_id_val && !empty($current['cloudflare_zone_id']))
+                ? $current['cloudflare_zone_id']
+                : (!empty($zone_id_val) ? \WebCareProScanner\Security\SecretVault::encrypt($zone_id_val) : '');
+        }
 
         if (!empty($clean['cloudflare_enabled'])) {
             if (isset($input['cloudflare_auto_sync_bans'])) {

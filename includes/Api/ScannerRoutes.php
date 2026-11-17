@@ -2742,6 +2742,10 @@ class ScannerRoutes {
                     $firewall_payload['cloudflare_zone_id']        = $cf_zone;
                     $firewall_payload['cloudflare_auto_sync_bans'] = true;
                 }
+            } elseif (!empty($params['cloudflare']['zone_id'])) {
+                $firewall_payload['cloudflare_enabled']        = true;
+                $firewall_payload['cloudflare_zone_id']        = sanitize_text_field($params['cloudflare']['zone_id']);
+                $firewall_payload['cloudflare_auto_sync_bans'] = true;
             }
 
             // 6. Scheduled Scan Frequency & Advanced Engine Settings
