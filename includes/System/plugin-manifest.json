@@ -1,6 +1,6 @@
 {
   "version": "2.17.0",
-  "generated_at": "2026-11-17T13:37:04.964Z",
+  "generated_at": "2026-11-17T14:10:46.595Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -692,8 +692,8 @@
       "size": 32218
     },
     "includes/Plugin.php": {
-      "sha256": "5487817693717266123beb58cd049a3cd31440e4a84423044b550e8952870039",
-      "size": 13171
+      "sha256": "cc92a81cea156986122f7f9f793dfae683aef007d6d82611c616cb0628bdb36a",
+      "size": 13308
     },
     "includes/Quarantine/CoreRepairManager.php": {
       "sha256": "e4b6a6438e72eefdfcc59fe1b4db45caf4cf269c62a1143b0f61ba998a90e3b9",
@@ -864,8 +864,8 @@
       "size": 19448
     },
     "includes/System/Cron/CronRegistry.php": {
-      "sha256": "d4eef546e88755b281157544e041e9c28e7fde0237ae19d2587a20112a9c9261",
-      "size": 21276
+      "sha256": "ff053acd9481624f0a6e12132c243eb6f374033de93a1e76c187ffb35d7d6903",
+      "size": 25347
     },
     "includes/System/PulseHealthCheck.php": {
       "sha256": "2595bc5bdbc9cb713be1b843a1fc157464613c6758c904cfe0fbb49a5cc39437",

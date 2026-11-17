@@ -75,15 +75,17 @@ class Plugin {
         \WebCareProScanner\WordPress\RestApiInventory::init();
         \WebCareProScanner\Core\ModuleRegistry::boot_all();
 
-        // 2. REST API Routes (Loaded lazily only when WP REST API initializes)
+        // 2. Custom WP-Cron Schedules (Always active across all request contexts so wp_reschedule_event never fails with invalid_schedule)
+        \WebCareProScanner\System\Cron\CronControlCenter::register_filters();
+
+        // 3. REST API Routes (Loaded lazily only when WP REST API initializes)
         add_action('rest_api_init', static function (): void {
             ScannerRoutes::register();
         });
 
-        // 3. Admin, Cron & WP-CLI Heavy Subsystems (Never booted on public storefront GET/POST)
+        // 4. Admin, Cron & WP-CLI Heavy Subsystems (Never booted on public storefront GET/POST)
         if ($is_admin || $is_cron || $is_cli) {
             self::ensure_uploads_storage_protected();
-            \WebCareProScanner\System\Cron\CronControlCenter::register_filters();
             AdminMenu::register();
             \WebCareProScanner\System\Scheduler::register();
             \WebCareProScanner\Backup\DatabaseBackup::init();
