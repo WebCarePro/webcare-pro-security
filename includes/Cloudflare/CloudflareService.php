@@ -450,12 +450,14 @@ class CloudflareService {
             : __('Up to 90% reduction in malicious PHP worker invocations on your hosting plan.', 'webcare-pro-security');
 
         $settings = SettingsManager::get_settings();
-        $api_configured = !empty($settings['cloudflare_api_token']) && !empty($settings['cloudflare_zone_id']);
+        $has_keys = !empty($settings['cloudflare_api_token']) && !empty($settings['cloudflare_zone_id']);
+        $api_configured = false;
         $zone_name = '';
         $plan_name = '';
-        if ($api_configured) {
+        if ($has_keys) {
             $verify = self::verify_zone($settings['cloudflare_zone_id']);
             if (!empty($verify['success'])) {
+                $api_configured = true;
                 $zone_name = $verify['zone_name'] ?? '';
                 $plan_name = $verify['plan'] ?? 'Free';
             }
@@ -466,6 +468,7 @@ class CloudflareService {
             'is_shared_hosting' => $is_shared_candidate,
             'has_cloudflare'    => $has_cloudflare,
             'api_configured'    => $api_configured,
+            'has_keys'          => $has_keys,
             'zone_name'         => $zone_name,
             'plan'              => $plan_name,
             'memory_limit'      => $memory_limit,
