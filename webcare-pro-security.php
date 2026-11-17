@@ -152,7 +152,17 @@ register_activation_hook(__FILE__, function () {
     // 2. Install Database Schema
     \WebCareProScanner\Database\Migration::install();
 
-    // 3. Queue First-Time Onboarding Wizard Redirect
+    // 3. Compile Baseline Preload Micro-WAF Binary
+    if (class_exists('\\WebCareProScanner\\Firewall\\MicroWafCompiler')) {
+        \WebCareProScanner\Firewall\MicroWafCompiler::compile();
+    }
+
+    // 4. Archive Clean .htaccess Baseline into Vault
+    if (class_exists('\\WebCareProScanner\\Firewall\\HtaccessVaultManager')) {
+        \WebCareProScanner\Firewall\HtaccessVaultManager::snapshot_current_if_clean('plugin_activation');
+    }
+
+    // 5. Queue First-Time Onboarding Wizard Redirect
     if (!get_option('webcareproscan_wizard_completed', false)) {
         add_option('webcareproscan_activation_redirect_wizard', true);
     }

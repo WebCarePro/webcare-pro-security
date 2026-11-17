@@ -104,7 +104,7 @@ final class HtaccessVaultManager {
         if (!file_exists($htaccess_path)) {
             return [
                 'success' => false,
-                'message' => __('No .htaccess file present in root directory.', 'webcare-pro-security'),
+                'message' => __('No .htaccess file present in root directory. Click "Generate Standard .htaccess" to restore it.', 'webcare-pro-security'),
             ];
         }
 
@@ -582,8 +582,9 @@ final class HtaccessVaultManager {
         }
 
         $server = !empty($_SERVER['SERVER_SOFTWARE']) ? sanitize_text_field(wp_unslash($_SERVER['SERVER_SOFTWARE'])) : '';
-        $is_apache_or_litespeed = (stripos($server, 'Apache') !== false || stripos($server, 'LiteSpeed') !== false);
-        if (!$is_apache_or_litespeed) {
+        $is_apache_or_litespeed = (stripos($server, 'Apache') !== false || stripos($server, 'LiteSpeed') !== false || !empty($_SERVER['LITESPEED_SERVER_SOFTWARE']));
+        $has_pretty_permalinks  = !empty(get_option('permalink_structure'));
+        if (!$is_apache_or_litespeed && !$has_pretty_permalinks) {
             return false;
         }
 

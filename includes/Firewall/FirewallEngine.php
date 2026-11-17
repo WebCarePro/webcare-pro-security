@@ -503,6 +503,18 @@ class FirewallEngine {
             $clean_get_route = str_replace(["\0", "\r", "\n"], '', $clean_get_route);
             return '/' . trim((string) preg_replace('#/+#', '/', $clean_get_route), '/');
         }
+        if (preg_match('/(?:^|[?&])rest_route=([^&]+)/i', $clean_uri, $qm)) {
+            $raw_get_route = (string) $qm[1];
+            for ($i = 0; $i < 3; $i++) {
+                $decoded = rawurldecode($raw_get_route);
+                if ($decoded === $raw_get_route) {
+                    break;
+                }
+                $raw_get_route = $decoded;
+            }
+            $raw_get_route = str_replace(["\0", "\r", "\n"], '', $raw_get_route);
+            return '/' . trim((string) preg_replace('#/+#', '/', $raw_get_route), '/');
+        }
         return '';
     }
 
@@ -2822,8 +2834,15 @@ class FirewallEngine {
             exit;
         }
 
-        // 2. Generic REST API structured JSON error
-        if (defined('REST_REQUEST') && REST_REQUEST) {
+        // 2. Generic REST API structured JSON error (detect via constant or request URI before rest_api_loaded)
+        // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Early firewall block page rendering before authentication/nonce setup.
+        $has_rest_route_param = isset($_GET['rest_route']) && !empty($_GET['rest_route']);
+        $is_rest_call = (defined('REST_REQUEST') && REST_REQUEST)
+            || (strpos($raw_uri, '/wp-json/') !== false)
+            || $has_rest_route_param
+            || (strpos($raw_uri, 'rest_route=') !== false);
+
+        if ($is_rest_call) {
             status_header(403);
             header('Content-Type: application/json; charset=utf-8');
             echo wp_json_encode([
@@ -2833,6 +2852,8 @@ class FirewallEngine {
                     'status'      => 403,
                     'incident_id' => $incident_id,
                     'ref_code'    => $ref_code,
+                    'rule_id'     => $rule['id'] ?? 'WAF-BLOCK',
+                    'category'    => $rule['category'] ?? 'Security Shield',
                 ],
             ]);
             exit;
@@ -5519,18 +5540,11 @@ class FirewallEngine {
         $whitelist_str = $settings['waf_whitelisted_ips'] ?? '';
         $is_whitelisted = self::is_ip_whitelisted($client_ip, $whitelist_str);
 
-        // Auto-whitelist verified authenticated administrator sessions operating within WordPress Admin or WebCare Pro API
+        // Auto-whitelist verified authenticated administrator sessions operating strictly within WebCare Pro REST API
         $req_uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '';
         $clean_uri = str_replace(["\0", "\r", "\n"], '', $req_uri);
         $norm_rest_route = self::resolve_normalized_rest_route($clean_uri);
-        $is_admin_context = (
-            $is_admin && (
-                is_admin()
-                || strpos($clean_uri, '/wp-admin/') !== false
-                || str_starts_with($norm_rest_route, '/webcare-pro-security/v1/')
-                || strpos($clean_uri, '/webcare-pro-security/v1/') !== false
-            )
-        );
+        $is_admin_context = $is_admin && str_starts_with($norm_rest_route, '/webcare-pro-security/v1/');
 
         if ($is_admin_context) {
             return [
@@ -5978,21 +5992,13 @@ class FirewallEngine {
             exit;
         }
 
-        // Defense-in-depth: Verified authenticated administrators operating within WordPress Admin or WebCare Pro's own REST API
-        // must NEVER be blocked with 403 or banned. Legitimate site maintenance (scanning, diffing, viewing files, editing settings)
-        // must proceed unimpeded.
+        // Defense-in-depth: Verified authenticated administrators operating strictly within WebCare Pro's own REST API
+        // (where REST nonces are cryptographically validated) must proceed unimpeded for file inspection, diffing, and settings.
         $req_uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '';
         $clean_uri = str_replace(["\0", "\r", "\n"], '', $req_uri);
         $norm_rest_route = self::resolve_normalized_rest_route($clean_uri);
         $is_admin_session = self::is_authenticated_administrator();
-        $is_admin_context = (
-            $is_admin_session && (
-                is_admin()
-                || strpos($clean_uri, '/wp-admin/') !== false
-                || str_starts_with($norm_rest_route, '/webcare-pro-security/v1/')
-                || strpos($clean_uri, '/webcare-pro-security/v1/') !== false
-            )
-        );
+        $is_admin_context = $is_admin_session && str_starts_with($norm_rest_route, '/webcare-pro-security/v1/');
         if ($is_admin_context) {
             $log_telemetry = isset($settings['waf_whitelist_log_telemetry']) ? !empty($settings['waf_whitelist_log_telemetry']) : true;
             if ($log_telemetry) {

@@ -297,13 +297,6 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
             }
         }
 
-        // Legitimate background security scanners (Wordfence, Solid Security, Sucuri, iThemes)
-        // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-        $action = isset($_REQUEST['action']) && is_string($_REQUEST['action']) ? sanitize_key($_REQUEST['action']) : '';
-        if ($action !== '' && (strpos($action, 'wordfence_') === 0 || strpos($action, 'wf_') === 0 || $action === 'wordfence_doscan')) {
-            return false;
-        }
-
         // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Raw URI routing path requires multi-pass decoding without percent octet distortion
         $raw_request_uri = isset($_SERVER['REQUEST_URI']) ? (string) wp_unslash($_SERVER['REQUEST_URI']) : '';
         $request_uri = str_replace(["\0", "\r", "\n"], '', $raw_request_uri);
@@ -441,28 +434,75 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
     }
 
     /**
-     * Check if current SQL query originates from a verified security scanner (Wordfence, Solid Security, Sucuri, etc.) or Core admin.
+     * Check if current SQL query originates from a verified security scanner (Wordfence, Solid Security, Sucuri, etc.) or Core schema maintenance.
      *
      * @return bool
      */
     public static function is_legitimate_security_or_core_caller(): bool {
         // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_debug_backtrace -- Provenance validation for RASP
-        $frames = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 25);
+        $frames = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 15);
+        $origin_frame = null;
+
+        // Skip internal RASP, WAF, and $wpdb database frames to locate the true direct SQL originator
         foreach ($frames as $frame) {
             $file = isset($frame['file']) ? wp_normalize_path((string) $frame['file']) : '';
             if ($file === '') {
                 continue;
             }
             if (
-                strpos($file, '/plugins/wordfence/') !== false
-                || strpos($file, '/plugins/better-wp-security/') !== false
-                || strpos($file, '/plugins/sucuri-scanner/') !== false
-                || strpos($file, '/plugins/all-in-one-wp-security-and-firewall/') !== false
-                || strpos($file, '/wp-admin/') !== false
+                strpos($file, '/includes/Firewall/') !== false
+                || strpos($file, '/wp-includes/class-wpdb.php') !== false
+                || strpos($file, '/wp-includes/wp-db.php') !== false
+                || strpos($file, '/wp-includes/class-wp-hook.php') !== false
+                || strpos($file, '/wp-includes/plugin.php') !== false
+            ) {
+                continue;
+            }
+            $origin_frame = $frame;
+            break;
+        }
+
+        if (!$origin_frame || !isset($origin_frame['file'])) {
+            return false;
+        }
+
+        $origin_file = wp_normalize_path((string) $origin_frame['file']);
+
+        // Explicitly exclude generic AJAX and POST routing entry points
+        if (
+            str_ends_with($origin_file, '/wp-admin/admin-ajax.php')
+            || str_ends_with($origin_file, '/wp-admin/admin-post.php')
+        ) {
+            return false;
+        }
+
+        // Anchor legitimate security plugin callers to defined WP_PLUGIN_DIR
+        $plugin_dir = defined('WP_PLUGIN_DIR') ? wp_normalize_path(WP_PLUGIN_DIR) : '';
+        if ($plugin_dir !== '') {
+            $legitimate_plugin_prefixes = [
+                $plugin_dir . '/wordfence/',
+                $plugin_dir . '/better-wp-security/',
+                $plugin_dir . '/sucuri-scanner/',
+                $plugin_dir . '/all-in-one-wp-security-and-firewall/',
+            ];
+            foreach ($legitimate_plugin_prefixes as $prefix) {
+                if (str_starts_with($origin_file, $prefix)) {
+                    return true;
+                }
+            }
+        }
+
+        // Anchor legitimate WordPress Core schema maintenance callers in /wp-admin/includes/
+        $admin_includes_dir = defined('ABSPATH') ? wp_normalize_path(ABSPATH . 'wp-admin/includes/') : '';
+        if ($admin_includes_dir !== '' && str_starts_with($origin_file, $admin_includes_dir)) {
+            if (
+                str_ends_with($origin_file, '/wp-admin/includes/upgrade.php')
+                || str_ends_with($origin_file, '/wp-admin/includes/schema.php')
             ) {
                 return true;
             }
         }
+
         return false;
     }
 

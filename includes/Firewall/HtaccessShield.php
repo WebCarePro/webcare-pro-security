@@ -86,16 +86,18 @@ final class HtaccessShield {
         add_action('send_headers', [self::class, 'handle_send_headers'], 10);
 
         // 4. LiteSpeed & Apache mod_rewrite auto-detection filter (ensures WordPress save_mod_rewrite_rules never fails)
-        add_filter('got_rewrite', static function ($got_rewrite) {
+        $rewrite_filter = static function ($got_rewrite) {
             if ($got_rewrite) {
                 return true;
             }
             $server = !empty($_SERVER['SERVER_SOFTWARE']) ? sanitize_text_field(wp_unslash($_SERVER['SERVER_SOFTWARE'])) : '';
-            if (stripos($server, 'LiteSpeed') !== false || stripos($server, 'Apache') !== false) {
+            if (stripos($server, 'LiteSpeed') !== false || stripos($server, 'Apache') !== false || !empty($_SERVER['LITESPEED_SERVER_SOFTWARE'])) {
                 return true;
             }
             return $got_rewrite;
-        });
+        };
+        add_filter('got_rewrite', $rewrite_filter);
+        add_filter('got_url_rewrite', $rewrite_filter);
 
         // 5. Auto-heal missing root .htaccess on admin requests to prevent broken REST API routes
         if (is_admin()) {

@@ -269,28 +269,15 @@ class ObjectCacheIntegritySentinel {
         // 4. Scan RAM Options for Serialized PHP Closures & Execution Sinks
         if ($alloptions_cached && is_array($ram_alloptions)) {
             foreach ($ram_alloptions as $opt_k => $opt_v) {
-                // Whitelist Guard: Skip legitimate security audit logs, scan telemetry, and forensic stores that intentionally record intercepted payloads or code analysis findings
-                $is_security_log_store = (
-                    (str_starts_with($opt_k, 'webcareproscan_') && (
-                        str_contains($opt_k, 'log') ||
-                        str_contains($opt_k, 'gatekeeper') ||
-                        str_contains($opt_k, 'audit') ||
-                        str_contains($opt_k, 'history') ||
-                        str_contains($opt_k, 'finding') ||
-                        str_contains($opt_k, 'snapshot') ||
-                        str_contains($opt_k, 'payload') ||
-                        str_contains($opt_k, 'telemetry') ||
-                        str_contains($opt_k, 'report') ||
-                        str_contains($opt_k, 'cve') ||
-                        str_contains($opt_k, 'signature')
-                    )) ||
+                // Whitelist Guard: Skip legitimate WebCare Pro security options, audit logs, scan findings,
+                // and third-party security stores that intentionally record intercepted signatures or telemetry
+                if (
+                    str_starts_with($opt_k, 'webcareproscan_') ||
                     str_starts_with($opt_k, 'wordfence_') ||
                     str_starts_with($opt_k, 'wf_') ||
                     str_starts_with($opt_k, 'sucuri_') ||
                     str_starts_with($opt_k, 'itsec_')
-                );
-
-                if ($is_security_log_store) {
+                ) {
                     continue;
                 }
 
