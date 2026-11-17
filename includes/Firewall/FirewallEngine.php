@@ -7252,23 +7252,44 @@ class FirewallEngine {
     public static function is_plugin_check_db_sandbox(): bool {
         global $wpdb;
         $orig_prefix = isset($GLOBALS['table_prefix']) && is_string($GLOBALS['table_prefix']) ? $GLOBALS['table_prefix'] : '';
-        if ($orig_prefix === '' || !isset($wpdb->base_prefix) || !is_string($wpdb->base_prefix)) {
+        if ($orig_prefix === '' || !isset($wpdb->base_prefix, $wpdb->prefix) || !is_string($wpdb->base_prefix) || !is_string($wpdb->prefix)) {
             return false;
         }
         if ($wpdb->base_prefix === $orig_prefix) {
             return false;
         }
-        if (!str_starts_with($wpdb->base_prefix, $orig_prefix) || !str_contains($wpdb->base_prefix, 'pc_')) {
+
+        // Strict expected Plugin Check base prefix match (Amend_DB_Base_Prefix appends 'pc_')
+        $expected_sandbox_base = $orig_prefix . 'pc_';
+        if ($wpdb->base_prefix !== $expected_sandbox_base) {
             return false;
         }
 
-        // Table Isolation Guard: Verify active critical user and usermeta tables are physically isolated from production
-        $orig_users = $orig_prefix . 'users';
-        $orig_usermeta = $orig_prefix . 'usermeta';
-        if (isset($wpdb->users) && $wpdb->users === $orig_users) {
+        // Table Isolation Guard: Fail-closed type and presence validation for critical tables
+        if (
+            !isset($wpdb->users, $wpdb->usermeta, $wpdb->options) ||
+            !is_string($wpdb->users) || $wpdb->users === '' ||
+            !is_string($wpdb->usermeta) || $wpdb->usermeta === '' ||
+            !is_string($wpdb->options) || $wpdb->options === ''
+        ) {
             return false;
         }
-        if (isset($wpdb->usermeta) && $wpdb->usermeta === $orig_usermeta) {
+
+        // Strict namespace alignment: users & usermeta must match base prefix, options must match site prefix
+        if (
+            $wpdb->users !== $expected_sandbox_base . 'users' ||
+            $wpdb->usermeta !== $expected_sandbox_base . 'usermeta' ||
+            $wpdb->options !== $wpdb->prefix . 'options'
+        ) {
+            return false;
+        }
+
+        // Strict non-equality: ensure no active table matches production tables
+        if (
+            $wpdb->users === $orig_prefix . 'users' ||
+            $wpdb->usermeta === $orig_prefix . 'usermeta' ||
+            $wpdb->options === $orig_prefix . 'options'
+        ) {
             return false;
         }
 
