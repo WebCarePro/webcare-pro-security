@@ -141,6 +141,8 @@ class Plugin {
         $_REQUEST['action']      = 'plugin_check_run_checks';
         $spoof_rejected          = !\WebCareProScanner\Firewall\FirewallEngine::is_plugin_check_db_sandbox();
         $sandbox_detected        = false;
+        $mismatched_meta_ok      = false;
+        $mismatched_users_ok     = false;
         global $wpdb;
         $prev_prefix = $wpdb->set_prefix($orig_prefix . 'pc_');
         try {
@@ -148,6 +150,17 @@ class Plugin {
                 define('WEBCAREPROSCAN_PCP_TEST_HARNESS', true);
             }
             $sandbox_detected = \WebCareProScanner\Firewall\FirewallEngine::is_plugin_check_db_sandbox();
+
+            // Mismatched namespace rejection (fail closed)
+            $prev_meta = $wpdb->usermeta;
+            $wpdb->usermeta = 'wp_custom_usermeta';
+            $mismatched_meta_ok = !\WebCareProScanner\Firewall\FirewallEngine::is_plugin_check_db_sandbox();
+            $wpdb->usermeta = $prev_meta;
+
+            $prev_users = $wpdb->users;
+            $wpdb->users = 'wp_custom_users';
+            $mismatched_users_ok = !\WebCareProScanner\Firewall\FirewallEngine::is_plugin_check_db_sandbox();
+            $wpdb->users = $prev_users;
         } finally {
             $wpdb->set_prefix($prev_prefix);
             if ($saved_ref === null) {
@@ -161,7 +174,7 @@ class Plugin {
                 $_REQUEST['action'] = $saved_act;
             }
         }
-        $checks['pcp_sandbox_guard'] = ($orig_prefix === ($GLOBALS['table_prefix'] ?? 'wp_') && $spoof_rejected && $sandbox_detected);
+        $checks['pcp_sandbox_guard'] = ($orig_prefix === ($GLOBALS['table_prefix'] ?? 'wp_') && $spoof_rejected && $sandbox_detected && $mismatched_meta_ok && $mismatched_users_ok);
 
         // 3c. Verify original-table cookie validator rejects invalid cookies and validates authentic admin cookies
         $rm_cookie = new \ReflectionMethod(\WebCareProScanner\Firewall\FirewallEngine::class, 'validate_cookie_against_original_tables');
