@@ -130,6 +130,12 @@ class ScannerRoutes {
             'permission_callback' => $permission,
         ]);
 
+        register_rest_route(self::NAMESPACE, '/system/telemetry-snapshot', [
+            'methods'             => 'GET',
+            'callback'            => [__CLASS__, 'get_telemetry_snapshot'],
+            'permission_callback' => $permission,
+        ]);
+
         // System Readiness & Pre-Flight Compatibility Report
         register_rest_route(self::NAMESPACE, '/readiness', [
             'methods'             => 'GET',

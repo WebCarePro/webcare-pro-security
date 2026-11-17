@@ -5515,13 +5515,36 @@ class FirewallEngine {
      * @return array [ 'is_whitelisted' => bool, 'is_admin' => bool, 'full_bypass' => bool ]
      */
     public static function check_ip_whitelist_context(string $client_ip, array $settings, ?array $rule = null): array {
+        $is_admin = self::is_authenticated_administrator();
         $whitelist_str = $settings['waf_whitelisted_ips'] ?? '';
         $is_whitelisted = self::is_ip_whitelisted($client_ip, $whitelist_str);
+
+        // Auto-whitelist verified authenticated administrator sessions operating within WordPress Admin or WebCare Pro API
+        $req_uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '';
+        $clean_uri = str_replace(["\0", "\r", "\n"], '', $req_uri);
+        $norm_rest_route = self::resolve_normalized_rest_route($clean_uri);
+        $is_admin_context = (
+            $is_admin && (
+                is_admin()
+                || strpos($clean_uri, '/wp-admin/') !== false
+                || str_starts_with($norm_rest_route, '/webcare-pro-security/v1/')
+                || strpos($clean_uri, '/webcare-pro-security/v1/') !== false
+            )
+        );
+
+        if ($is_admin_context) {
+            return [
+                'is_whitelisted' => true,
+                'is_admin'       => true,
+                'full_bypass'    => true,
+                'rule_bypass'    => false,
+            ];
+        }
 
         if (!$is_whitelisted) {
             return [
                 'is_whitelisted' => false,
-                'is_admin'       => false,
+                'is_admin'       => $is_admin,
                 'full_bypass'    => false,
                 'rule_bypass'    => false,
             ];
@@ -5953,6 +5976,31 @@ class FirewallEngine {
                 'status_code' => $status_code,
             ]);
             exit;
+        }
+
+        // Defense-in-depth: Verified authenticated administrators operating within WordPress Admin or WebCare Pro's own REST API
+        // must NEVER be blocked with 403 or banned. Legitimate site maintenance (scanning, diffing, viewing files, editing settings)
+        // must proceed unimpeded.
+        $req_uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '';
+        $clean_uri = str_replace(["\0", "\r", "\n"], '', $req_uri);
+        $norm_rest_route = self::resolve_normalized_rest_route($clean_uri);
+        $is_admin_session = self::is_authenticated_administrator();
+        $is_admin_context = (
+            $is_admin_session && (
+                is_admin()
+                || strpos($clean_uri, '/wp-admin/') !== false
+                || str_starts_with($norm_rest_route, '/webcare-pro-security/v1/')
+                || strpos($clean_uri, '/webcare-pro-security/v1/') !== false
+            )
+        );
+        if ($is_admin_context) {
+            $log_telemetry = isset($settings['waf_whitelist_log_telemetry']) ? !empty($settings['waf_whitelist_log_telemetry']) : true;
+            if ($log_telemetry) {
+                $bypass_rule = $rule;
+                $bypass_rule['description'] = ($rule['description'] ?? 'Firewall trigger') . ' [Bypassed via Authenticated Administrator Session]';
+                self::log_incident($bypass_rule, 'bypassed');
+            }
+            return;
         }
 
         // Tiered Context-Aware & Rule-Scoped IP Whitelist Interceptor
