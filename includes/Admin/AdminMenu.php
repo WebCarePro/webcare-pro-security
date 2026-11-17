@@ -746,30 +746,31 @@ class AdminMenu {
         echo '</div>';
 
         // AJAX script to permanently persist dismissal when clicking native WP notice "X" close button
-        ?>
-        <script>
+        $notice_dismiss_js = '
         (function() {
-            var notice = document.getElementById('webcare-quarantined-users-notice');
+            var notice = document.getElementById("webcare-quarantined-users-notice");
             if (!notice) return;
-            notice.addEventListener('click', function(e) {
-                var btn = e.target.closest('.notice-dismiss');
+            notice.addEventListener("click", function(e) {
+                var btn = e.target.closest(".notice-dismiss");
                 if (!btn) return;
-                var nonce = notice.getAttribute('data-nonce');
-                if (!nonce || typeof ajaxurl === 'undefined') return;
+                var nonce = notice.getAttribute("data-nonce");
+                if (!nonce || typeof ajaxurl === "undefined") return;
 
                 var data = new URLSearchParams();
-                data.append('action', 'webcareproscan_dismiss_quarantined_notice');
-                data.append('nonce', nonce);
+                data.append("action", "webcareproscan_dismiss_quarantined_notice");
+                data.append("nonce", nonce);
 
                 fetch(ajaxurl, {
-                    method: 'POST',
+                    method: "POST",
                     body: data,
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+                    headers: { "Content-Type": "application/x-www-form-urlencoded" }
                 }).catch(function() {});
             });
         })();
-        </script>
-        <?php
+        ';
+        wp_register_script('webcare-quarantined-notice-js', false, ['common'], defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '1.0.0', true);
+        wp_enqueue_script('webcare-quarantined-notice-js');
+        wp_add_inline_script('webcare-quarantined-notice-js', $notice_dismiss_js);
     }
 
     /**
@@ -944,27 +945,28 @@ class AdminMenu {
                 </div>
             </div>
         </div>
-
-        <script>
+        <?php
+        $saving_label = esc_js(__('Saving preference...', 'webcare-pro-security'));
+        $uninstall_modal_js = '
         (function() {
             var targetDeleteLink = null;
-            var overlay = document.getElementById('webcare-uninstall-modal-overlay');
-            var cancelBtn = document.getElementById('webcare-uninstall-cancel-btn');
-            var confirmBtn = document.getElementById('webcare-uninstall-confirm-btn');
+            var overlay = document.getElementById("webcare-uninstall-modal-overlay");
+            var cancelBtn = document.getElementById("webcare-uninstall-cancel-btn");
+            var confirmBtn = document.getElementById("webcare-uninstall-confirm-btn");
 
             if (!overlay || !cancelBtn || !confirmBtn) return;
 
             // Intercept click on the "Delete" action link for this plugin
-            document.addEventListener('click', function(e) {
-                var link = e.target.closest('a');
+            document.addEventListener("click", function(e) {
+                var link = e.target.closest("a");
                 if (!link) return;
 
-                var href = link.getAttribute('href') || '';
-                var isDelete = href.indexOf('action=delete-selected') !== -1 || (link.classList.contains('delete') && href.indexOf('plugins.php') !== -1);
-                var isWebCarePlugin = href.indexOf('webcare-pro-security') !== -1;
+                var href = link.getAttribute("href") || "";
+                var isDelete = href.indexOf("action=delete-selected") !== -1 || (link.classList.contains("delete") && href.indexOf("plugins.php") !== -1);
+                var isWebCarePlugin = href.indexOf("webcare-pro-security") !== -1;
 
                 if (!isWebCarePlugin) {
-                    var row = link.closest('tr[data-plugin*="webcare-"]');
+                    var row = link.closest("tr[data-plugin*=\"webcare-\"]");
                     if (row) isWebCarePlugin = true;
                 }
 
@@ -972,47 +974,47 @@ class AdminMenu {
                     e.preventDefault();
                     e.stopImmediatePropagation();
                     targetDeleteLink = href;
-                    overlay.style.display = 'flex';
+                    overlay.style.display = "flex";
                 }
             }, true);
 
             // Cancel button
-            cancelBtn.addEventListener('click', function() {
-                overlay.style.display = 'none';
+            cancelBtn.addEventListener("click", function() {
+                overlay.style.display = "none";
                 targetDeleteLink = null;
             });
 
             // Close on backdrop click
-            overlay.addEventListener('click', function(e) {
+            overlay.addEventListener("click", function(e) {
                 if (e.target === overlay) {
-                    overlay.style.display = 'none';
+                    overlay.style.display = "none";
                     targetDeleteLink = null;
                 }
             });
 
             // Confirm & Save preference via AJAX before proceeding
-            confirmBtn.addEventListener('click', function() {
-                var selected = document.querySelector('input[name="webcareproscan_uninstall_choice"]:checked');
-                var shouldPurge = selected ? selected.value === 'purge' : false;
+            confirmBtn.addEventListener("click", function() {
+                var selected = document.querySelector("input[name=\"webcareproscan_uninstall_choice\"]:checked");
+                var shouldPurge = selected ? selected.value === "purge" : false;
 
                 confirmBtn.disabled = true;
-                confirmBtn.innerText = '<?php echo esc_js(__('Saving preference...', 'webcare-pro-security')); ?>';
+                confirmBtn.innerText = "' . $saving_label . '";
 
                 var data = new URLSearchParams();
-                data.append('action', 'webcareproscan_set_uninstall_purge');
-                data.append('nonce', '<?php echo esc_js($nonce); ?>');
-                data.append('purge', shouldPurge ? '1' : '0');
+                data.append("action", "webcareproscan_set_uninstall_purge");
+                data.append("nonce", "' . esc_js($nonce) . '");
+                data.append("purge", shouldPurge ? "1" : "0");
 
                 fetch(ajaxurl, {
-                    method: 'POST',
+                    method: "POST",
                     body: data,
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+                    headers: { "Content-Type": "application/x-www-form-urlencoded" }
                 }).then(function() {
                     // Navigate to WordPress native delete confirmation
                     if (targetDeleteLink) {
                         window.location.href = targetDeleteLink;
                     } else {
-                        overlay.style.display = 'none';
+                        overlay.style.display = "none";
                     }
                 }).catch(function() {
                     if (targetDeleteLink) {
@@ -1021,8 +1023,11 @@ class AdminMenu {
                 });
             });
         })();
-        </script>
-        <?php
+        ';
+
+        wp_register_script('webcare-uninstall-modal-js', false, ['common'], defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '1.0.0', true);
+        wp_enqueue_script('webcare-uninstall-modal-js');
+        wp_add_inline_script('webcare-uninstall-modal-js', $uninstall_modal_js);
     }
 }
 
