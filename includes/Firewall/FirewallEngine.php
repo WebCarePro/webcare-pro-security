@@ -6908,13 +6908,61 @@ class FirewallEngine {
     }
 
     /**
+     * Cryptographically verify whether a REST request to an MCP endpoint carries a valid,
+     * non-expired WebCare Pro MCP Bearer token from an allowed client IP/CIDR.
+     *
+     * @param \WP_REST_Request $request
+     * @param string           $client_ip
+     * @return bool
+     */
+    public static function is_verified_mcp_bearer_request($request, string $client_ip): bool {
+        if (!($request instanceof \WP_REST_Request)) {
+            return false;
+        }
+
+        $mcp_enabled = (bool) SettingsManager::get('mcp_enabled', false);
+        if (!$mcp_enabled) {
+            return false;
+        }
+
+        $auth_header = (string) $request->get_header('Authorization');
+        if ($auth_header === '' || !preg_match('/^\s*Bearer\s+(\S+)\s*$/i', $auth_header, $matches)) {
+            return false;
+        }
+
+        $token    = (string) $matches[1];
+        $expected = (string) SettingsManager::get('mcp_token', '');
+        if ($expected === '' || !hash_equals($expected, $token)) {
+            return false;
+        }
+
+        // Verify optional token TTL expiration
+        $ttl_days   = (int) SettingsManager::get('mcp_token_ttl_days', 0);
+        $created_at = (int) SettingsManager::get('mcp_token_created_at', 0);
+        if ($ttl_days > 0 && $created_at > 0 && time() > ($created_at + ($ttl_days * 86400))) {
+            return false;
+        }
+
+        // Verify optional client IP/CIDR allowlist
+        $raw_cidrs = trim((string) SettingsManager::get('mcp_allowed_cidrs', ''));
+        if ($raw_cidrs !== '' && class_exists('\\WebCareProScanner\\Api\\MCPAntiLockoutValidator')) {
+            $cidrs = \WebCareProScanner\Api\MCPAntiLockoutValidator::parse_cidr_list($raw_cidrs);
+            if (!empty($cidrs) && !\WebCareProScanner\Api\MCPAntiLockoutValidator::ip_matches_cidr_list($client_ip, $cidrs)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
      * Rule #37: Guest REST API Mutation Guard.
      * Inspects REST API mutations (POST, PUT, PATCH, DELETE) from unauthenticated visitors.
-     * Whitelists safe public namespaces (contact forms, analytics, store carts).
+     * Whitelists explicit safe public guest endpoints (contact forms, WooCommerce Store API cart/checkout, comments).
      * Normalizes HTTP method overrides and unpacks REST batch requests (/wp/v2/batch, /batch/v1).
-     * Flags anomalous unknown guest write mutations in WAF telemetry.
+     * Flags or blocks anomalous unauthenticated guest write mutations.
      *
-     * @param mixed $result
+     * @param mixed           $result
      * @param \WP_REST_Server $server
      * @param \WP_REST_Request $request
      * @return mixed
@@ -6941,28 +6989,13 @@ class FirewallEngine {
             $method = $override_method;
         }
 
-        // Authenticated users and verified administrators are completely permitted
+        // Authenticated users (including valid WP Application Passwords & valid WooCommerce REST API keys
+        // verified via determine_current_user) and verified administrators/editors are permitted
         $is_logged_in = (function_exists('is_user_logged_in') && is_user_logged_in())
             || self::is_authenticated_administrator()
             || self::is_authenticated_editor_or_builder();
 
         if ($is_logged_in) {
-            return $result;
-        }
-
-        // Permit requests carrying explicit API / Webhook / MCP authentication credentials so the route's
-        // own permission_callback can cryptographically verify the token without a false-positive guest block.
-        // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-        $has_api_auth_credential = !empty($_SERVER['HTTP_AUTHORIZATION'])
-            || !empty($_SERVER['REDIRECT_HTTP_AUTHORIZATION'])
-            || !empty($_SERVER['PHP_AUTH_USER'])
-            || !empty($_SERVER['HTTP_X_MCP_TOKEN'])
-            || !empty($_SERVER['HTTP_X_WC_WEBHOOK_SIGNATURE'])
-            || !empty($_SERVER['HTTP_STRIPE_SIGNATURE'])
-            || (!empty($_GET['consumer_key']) && !empty($_GET['consumer_secret']))
-            || !empty($_GET['oauth_consumer_key']);
-
-        if ($has_api_auth_credential) {
             return $result;
         }
 
@@ -6976,6 +7009,7 @@ class FirewallEngine {
         $route = strtolower($request->get_route());
 
         // 1. Check Store API Catalog Scraping (Rule #42) on ALL methods (including GET /wc/store/v1/products)
+        // Must execute BEFORE any route allowlist or credential check!
         if (preg_match('#^/wc/store(?:/v\d+)?/products#i', $route)) {
             $scrape_lock_error = self::check_and_track_catalog_scraping('Store API Products Endpoint');
             if ($scrape_lock_error) {
@@ -7002,79 +7036,18 @@ class FirewallEngine {
             }
         }
 
-        $custom_rest_raw = $settings['waf_guest_rest_custom_allowlist'] ?? '';
-        $custom_routes = !empty($custom_rest_raw) ? array_map('strtolower', array_filter(array_map('trim', explode("\n", $custom_rest_raw)))) : [];
-
-        // Special handling for REST batch requests (/wp/v2/batch or /batch/v1):
-        // Walk nested requests[] inside the batch payload to ensure unauthorized guest mutations aren't smuggled
-        if (str_contains($route, '/batch')) {
-            $body_params = $request->get_json_params();
-            if (is_array($body_params) && !empty($body_params['requests']) && is_array($body_params['requests'])) {
-                foreach ($body_params['requests'] as $sub_req) {
-                    $sub_method = strtoupper($sub_req['method'] ?? 'GET');
-                    $sub_path   = strtolower($sub_req['path'] ?? '');
-
-                    // Inspect sub-requests targeting WooCommerce Block Checkout or Coupons
-                    if (preg_match('#^/wc/store(?:/v\d+)?/checkout#i', $sub_path) && in_array($sub_method, ['POST', 'PUT', 'PATCH'], true)) {
-                        $block_error = self::check_woo_carding_lockout();
-                        if ($block_error) {
-                            return $block_error;
-                        }
-                    }
-                    if (preg_match('#^/wc/store(?:/v\d+)?/cart/(?:coupons|apply-coupon)#i', $sub_path) && in_array($sub_method, ['POST', 'PUT', 'PATCH'], true)) {
-                        $coupon_lock_error = self::check_woo_coupon_lockout();
-                        if ($coupon_lock_error) {
-                            return $coupon_lock_error;
-                        }
-                    }
-
-                    if (in_array($sub_method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
-                        $is_sub_safe = false;
-                        $safe_sub_prefixes = [
-                            '/wc/store/', '/wc/', '/contact-form-7/', '/wpforms/', '/fluentform/',
-                            '/ninja-forms/', '/frm/', '/gf/', '/ws-form/', '/elementor/', '/bricks/',
-                            '/paypal/', '/wc-stripe/', '/stripe/', '/surecart/', '/wp/v2/comments',
-                            '/webcare-pro-security/v1/auth/webauthn/',
-                            '/webcare-pro-security/v1/mcp/',
-                        ];
-                        foreach ($safe_sub_prefixes as $ssp) {
-                            if (str_starts_with($sub_path, $ssp)) {
-                                $is_sub_safe = true;
-                                break;
-                            }
-                        }
-                        if (!$is_sub_safe && !empty($custom_routes)) {
-                            foreach ($custom_routes as $c_rt) {
-                                if ($c_rt !== '' && str_starts_with($sub_path, '/' . ltrim($c_rt, '/'))) {
-                                    $is_sub_safe = true;
-                                    break;
-                                }
-                            }
-                        }
-                        if (!$is_sub_safe) {
-                            $rule_triggered = [
-                                'id'          => 'WAF-GUEST-REST-BATCH-MUTATION',
-                                'name'        => 'Unauthenticated REST Batch Mutation Probe (Rule #37)',
-                                'category'    => 'Behavioral Defense',
-                                'description' => sprintf('Unauthenticated %s request smuggled inside REST batch for route "%s".', $sub_method, esc_html($sub_path)),
-                                'match_type'  => 'Guest REST Batch Mutation',
-                                'match_value' => $sub_path,
-                                'payload'     => "Method: {$sub_method} SubRoute: {$sub_path} IP: {$client_ip}",
-                            ];
-                            if ($policy === 'block') {
-                                self::log_incident($rule_triggered, 'blocked');
-                                return new \WP_Error('webcare_waf_rest_batch_blocked', __('Unauthorized guest REST batch mutation blocked by WebCare Firewall.', 'webcare-pro-security'), ['status' => 403]);
-                            }
-                            self::log_incident($rule_triggered, 'monitored');
-                            break;
-                        }
-                    }
-                }
-            }
+        // 3. Cryptographically verified WebCare MCP Bearer token requests (only on /mcp/rpc and /mcp/execute)
+        if (
+            in_array($route, ['/webcare-pro-security/v1/mcp/rpc', '/webcare-pro-security/v1/mcp/execute'], true)
+            && self::is_verified_mcp_bearer_request($request, $client_ip)
+        ) {
             return $result;
         }
 
-        // Whitelist recognized safe public mutating routes
+        $custom_rest_raw = $settings['waf_guest_rest_custom_allowlist'] ?? '';
+        $custom_routes = !empty($custom_rest_raw) ? array_map('strtolower', array_filter(array_map('trim', explode("\n", $custom_rest_raw)))) : [];
+
+        // Exact public guest mutation prefixes (forms, Store API cart/checkout, payment webhooks, comments, WebAuthn login)
         $safe_prefixes = [
             '/contact-form-7/',
             '/wpforms/',
@@ -7082,18 +7055,7 @@ class FirewallEngine {
             '/ninja-forms/',
             '/frm/',
             '/gf/',
-            '/ws-form/',
-            '/happyforms/',
-            '/everest-forms/',
-            '/metform/',
-            '/elementor/',
-            '/elementor-pro/',
-            '/bricks/',
             '/wc/store/',
-            '/wc/',
-            '/wc-analytics/',
-            '/wc-auth/',
-            '/woocommerce/',
             '/paypal/',
             '/wc-stripe/',
             '/stripe/',
@@ -7101,26 +7063,100 @@ class FirewallEngine {
             '/square/',
             '/surecart/',
             '/givewp/',
-            '/learndash/',
-            '/ldlms/',
-            '/tutor/',
-            '/lifterlms/',
-            '/memberpress/',
-            '/mp/',
-            '/mailpoet/',
-            '/koko-analytics/',
-            '/burst/',
-            '/independent-analytics/',
-            '/litespeed/',
             '/wp/v2/comments',
             '/akismet/',
             '/jetpack/',
-            '/webcare-pro-security/v1/auth/webauthn/',
-            '/webcare-pro-security/v1/mcp/',
+            '/webcare-pro-security/v1/auth/webauthn/login-options',
+            '/webcare-pro-security/v1/auth/webauthn/login-verify',
         ];
 
+        // Special handling for REST batch requests (/wp/v2/batch or /batch/v1):
+        // Walk nested requests[] inside the batch payload to ensure unauthorized guest mutations aren't smuggled
+        if (str_contains($route, '/batch')) {
+            $body_params = $request->get_json_params();
+            if (!is_array($body_params) || empty($body_params['requests']) || !is_array($body_params['requests'])) {
+                // Reject or flag empty/malformed unauthenticated batch mutation requests
+                $rule_triggered = [
+                    'id'          => 'WAF-GUEST-REST-BATCH-MUTATION',
+                    'name'        => 'Unauthenticated REST Batch Mutation Probe (Rule #37)',
+                    'category'    => 'Behavioral Defense',
+                    'description' => sprintf('Unauthenticated %s request to REST batch endpoint "%s" without valid sub-requests.', $method, esc_html($route)),
+                    'match_type'  => 'Guest REST Batch Mutation',
+                    'match_value' => $route,
+                    'payload'     => "Method: {$method} Route: {$route} IP: {$client_ip}",
+                ];
+                if ($policy === 'block') {
+                    self::log_incident($rule_triggered, 'blocked');
+                    return new \WP_Error('webcare_waf_rest_batch_blocked', __('Unauthorized guest REST batch mutation blocked by WebCare Firewall.', 'webcare-pro-security'), ['status' => 403]);
+                }
+                self::log_incident($rule_triggered, 'monitored');
+                return $result;
+            }
+
+            foreach ($body_params['requests'] as $sub_req) {
+                $sub_method = strtoupper($sub_req['method'] ?? 'GET');
+                $sub_path   = strtolower((string) wp_parse_url((string) ($sub_req['path'] ?? ''), PHP_URL_PATH));
+
+                // Inspect sub-requests targeting WooCommerce Store API Products, Checkout, or Coupons
+                if (preg_match('#^/wc/store(?:/v\d+)?/products#i', $sub_path)) {
+                    $scrape_lock_error = self::check_and_track_catalog_scraping('Store API Batch Products Endpoint');
+                    if ($scrape_lock_error) {
+                        return $scrape_lock_error;
+                    }
+                }
+                if (preg_match('#^/wc/store(?:/v\d+)?/checkout#i', $sub_path) && in_array($sub_method, ['POST', 'PUT', 'PATCH'], true)) {
+                    $block_error = self::check_woo_carding_lockout();
+                    if ($block_error) {
+                        return $block_error;
+                    }
+                }
+                if (preg_match('#^/wc/store(?:/v\d+)?/cart/(?:coupons|apply-coupon)#i', $sub_path) && in_array($sub_method, ['POST', 'PUT', 'PATCH'], true)) {
+                    $coupon_lock_error = self::check_woo_coupon_lockout();
+                    if ($coupon_lock_error) {
+                        return $coupon_lock_error;
+                    }
+                }
+
+                if (in_array($sub_method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
+                    $is_sub_safe = false;
+                    foreach ($safe_prefixes as $ssp) {
+                        if (str_starts_with($sub_path, $ssp)) {
+                            $is_sub_safe = true;
+                            break;
+                        }
+                    }
+                    if (!$is_sub_safe && !empty($custom_routes)) {
+                        foreach ($custom_routes as $c_rt) {
+                            if ($c_rt !== '' && str_starts_with($sub_path, '/' . ltrim($c_rt, '/'))) {
+                                $is_sub_safe = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!$is_sub_safe) {
+                        $rule_triggered = [
+                            'id'          => 'WAF-GUEST-REST-BATCH-MUTATION',
+                            'name'        => 'Unauthenticated REST Batch Mutation Probe (Rule #37)',
+                            'category'    => 'Behavioral Defense',
+                            'description' => sprintf('Unauthenticated %s request smuggled inside REST batch for route "%s".', $sub_method, esc_html($sub_path)),
+                            'match_type'  => 'Guest REST Batch Mutation',
+                            'match_value' => $sub_path,
+                            'payload'     => "Method: {$sub_method} SubRoute: {$sub_path} IP: {$client_ip}",
+                        ];
+                        if ($policy === 'block') {
+                            self::log_incident($rule_triggered, 'blocked');
+                            return new \WP_Error('webcare_waf_rest_batch_blocked', __('Unauthorized guest REST batch mutation blocked by WebCare Firewall.', 'webcare-pro-security'), ['status' => 403]);
+                        }
+                        self::log_incident($rule_triggered, 'monitored');
+                        break;
+                    }
+                }
+            }
+            return $result;
+        }
+
         foreach ($safe_prefixes as $prefix) {
-            if (str_starts_with($route, $prefix) || strpos($route, $prefix) === 0) {
+            if (str_starts_with($route, $prefix)) {
                 return $result;
             }
         }
@@ -7133,37 +7169,7 @@ class FirewallEngine {
             }
         }
 
-        // Route Permission Introspection (Zero-FP Guard):
-        // If the target REST route defines a dedicated non-public permission_callback (not '__return_true'),
-        // WordPress Core's WP_REST_Server::respond_to_request() will enforce that capability/token check directly.
-        // Rule #37 only needs to hard-block routes that dangerously expose unauthenticated write mutations
-        // via 'permission_callback' => '__return_true' (or missing permission_callback).
-        if ($server instanceof \WP_REST_Server) {
-            $all_routes = $server->get_routes();
-            foreach ($all_routes as $route_regex => $handlers) {
-                if (@preg_match('@^' . $route_regex . '$@i', $request->get_route())) {
-                    foreach ((array) $handlers as $handler) {
-                        $h_methods = $handler['methods'] ?? [];
-                        $method_matched = is_array($h_methods)
-                            ? !empty($h_methods[$method])
-                            : (str_contains(strtoupper((string) $h_methods), $method));
-                        if (!$method_matched) {
-                            continue;
-                        }
-                        $perm_cb = $handler['permission_callback'] ?? null;
-                        $is_permissive_public = ($perm_cb === null || $perm_cb === '' || $perm_cb === '__return_true' || $perm_cb === ['__return_true']);
-                        if (!$is_permissive_public) {
-                            // Route enforces its own capability/token permission_callback; let WP_REST_Server evaluate it
-                            return $result;
-                        }
-                    }
-                    break;
-                }
-            }
-        }
-
-        // Flag unregistered guest REST write mutation
-        $client_ip = self::get_client_ip();
+        // Flag or block unregistered guest REST write mutation
         $rule_triggered = [
             'id'          => 'WAF-GUEST-REST-MUTATION',
             'name'        => 'Unauthenticated REST API Mutation Probe (Rule #37)',
@@ -7176,10 +7182,15 @@ class FirewallEngine {
 
         if ($policy === 'block') {
             self::log_incident($rule_triggered, 'blocked');
-            return new \WP_Error('webcare_waf_rest_blocked', __('Unauthorized guest REST mutation blocked by WebCare Firewall.', 'webcare-pro-security'), ['status' => 403]);
+            return new \WP_Error(
+                'webcare_waf_rest_blocked',
+                __('Unauthorized guest REST API mutation blocked by WebCare Firewall.', 'webcare-pro-security'),
+                ['status' => 403]
+            );
         }
 
         self::log_incident($rule_triggered, 'monitored');
+
         return $result;
     }
 
