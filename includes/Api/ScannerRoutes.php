@@ -1257,33 +1257,20 @@ class ScannerRoutes {
             if (current_user_can('manage_options')) {
                 return true;
             }
-            $auth_header = $request->get_header('Authorization');
-            if (!empty($auth_header) && preg_match('/Bearer\s+(\S+)/i', $auth_header, $matches)) {
-                $token    = $matches[1];
-                $expected = (string) \WebCareProScanner\System\SettingsManager::get('mcp_token', '');
-                if ($expected === '' || !hash_equals($expected, $token)) {
-                    return false;
-                }
-
-                // Check optional token TTL expiration
-                $ttl_days   = (int) \WebCareProScanner\System\SettingsManager::get('mcp_token_ttl_days', 0);
-                $created_at = (int) \WebCareProScanner\System\SettingsManager::get('mcp_token_created_at', 0);
-                if ($ttl_days > 0 && $created_at > 0 && time() > ($created_at + ($ttl_days * 86400))) {
-                    return new \WP_Error('mcp_token_expired', __('MCP Bearer token has expired. Rotate the token in WP Admin.', 'webcare-pro-security'), ['status' => 401]);
-                }
-
-                // Check optional client IP/CIDR allowlist
-                $raw_cidrs = trim((string) \WebCareProScanner\System\SettingsManager::get('mcp_allowed_cidrs', ''));
-                if ($raw_cidrs !== '') {
-                    $cidrs     = \WebCareProScanner\Api\MCPAntiLockoutValidator::parse_cidr_list($raw_cidrs);
-                    $client_ip = \WebCareProScanner\Firewall\FirewallEngine::get_client_ip();
-                    if (!empty($cidrs) && !\WebCareProScanner\Api\MCPAntiLockoutValidator::ip_matches_cidr_list($client_ip, $cidrs)) {
-                        return new \WP_Error('mcp_ip_denied', __('Client IP is not in the MCP allowed CIDR list.', 'webcare-pro-security'), ['status' => 403]);
-                    }
-                }
-
+            $client_ip    = \WebCareProScanner\Firewall\FirewallEngine::get_client_ip();
+            $verification = \WebCareProScanner\Api\MCPAntiLockoutValidator::verify_mcp_bearer_request($request, $client_ip);
+            if (!empty($verification['allowed'])) {
                 return true;
             }
+
+            if (($verification['reason'] ?? '') === 'expired') {
+                return new \WP_Error('mcp_token_expired', __('MCP Bearer token has expired. Rotate the token in WP Admin.', 'webcare-pro-security'), ['status' => 401]);
+            }
+
+            if (in_array(($verification['reason'] ?? ''), ['cidr_denied', 'invalid_cidr_configuration'], true)) {
+                return new \WP_Error('mcp_ip_denied', __('Client IP is not permitted by the MCP allowed CIDR configuration.', 'webcare-pro-security'), ['status' => 403]);
+            }
+
             return false;
         };
 

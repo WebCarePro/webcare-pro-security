@@ -55,6 +55,7 @@ class Plugin {
         // 1. Always-On Lightweight Runtime Security (WAF, Auth, Session, Headers)
         \WebCareProScanner\Firewall\WafFileLogger::init();
         \WebCareProScanner\Firewall\FirewallEngine::init();
+        \WebCareProScanner\Scan\ScanVaultManager::register();
         \WebCareProScanner\Firewall\RescueAssistantManager::init();
         \WebCareProScanner\Firewall\DistributedVelocityShield::init();
         \WebCareProScanner\Firewall\FormSpamProtectionEngine::init();
@@ -209,6 +210,86 @@ class Plugin {
         }
         $checks['pcp_orig_cookie_auth'] = $cookie_ok;
 
+        // 3d. Regression checks for fail-closed MCP TTL/CIDR parsing and vault policy repair.
+        $cidr_validator = \WebCareProScanner\Api\MCPAntiLockoutValidator::class;
+        $bad_cidrs = $cidr_validator::parse_cidr_list(",,\n  ,");
+        $valid_cidrs = $cidr_validator::parse_cidr_list('192.0.2.0/24');
+        $checks['mcp_cidr_fail_closed'] = !$cidr_validator::is_valid_cidr_list($bad_cidrs)
+            && !$cidr_validator::is_valid_cidr_list(['0.0.0.0/not-a-prefix'])
+            && !$cidr_validator::ip_matches_cidr_list('192.0.2.5', ['0.0.0.0/not-a-prefix'])
+            && $cidr_validator::is_valid_cidr_list($valid_cidrs)
+            && $cidr_validator::ip_matches_cidr_list('192.0.2.5', $valid_cidrs)
+            && !$cidr_validator::ip_matches_cidr_list('198.51.100.7', $valid_cidrs);
+
+        $ttl_parser = new \ReflectionMethod($cidr_validator, 'parse_non_negative_integer');
+        $ttl_parser->setAccessible(true);
+        $checks['mcp_ttl_parse_strict'] = $ttl_parser->invoke(null, '30', 365) === 30
+            && $ttl_parser->invoke(null, '30days', 365) === null
+            && $ttl_parser->invoke(null, -1, 365) === null;
+        $doctor_now = time();
+        $checks['mcp_ttl_fail_closed'] = empty($cidr_validator::validate_mcp_token_lifetime(30, 0, $doctor_now)['valid'])
+            && (($cidr_validator::validate_mcp_token_lifetime(30, $doctor_now - (31 * DAY_IN_SECONDS), $doctor_now)['reason'] ?? '') === 'expired')
+            && !empty($cidr_validator::validate_mcp_token_lifetime(30, $doctor_now - DAY_IN_SECONDS, $doctor_now)['valid']);
+
+        $guest_route_check = new \ReflectionMethod(\WebCareProScanner\Firewall\FirewallEngine::class, 'is_safe_guest_rest_mutation_route');
+        $guest_route_check->setAccessible(true);
+        $checks['guest_rest_routes_narrowed'] = $guest_route_check->invoke(null, '/wc/store/v1/checkout', 'POST', [])
+            && $guest_route_check->invoke(null, '/wc/store/v1/cart/items/abc123', 'DELETE', [])
+            && !$guest_route_check->invoke(null, '/wc/store/v1/products', 'POST', [])
+            && !$guest_route_check->invoke(null, '/stripe/v1/webhook', 'POST', [])
+            && !$guest_route_check->invoke(null, '/paypal/v1/private-action', 'POST', []);
+
+        $vault_htaccess_check = false;
+        $htaccess_test_path = wp_tempnam('webcare-vault-policy');
+        if (is_string($htaccess_test_path) && $htaccess_test_path !== '') {
+            try {
+                $tampered_htaccess = "RewriteEngine On\nRewriteRule ^safe$ - [L]\nRequire all granted\n";
+                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents -- Temporary local diagnostic fixture.
+                if (@file_put_contents($htaccess_test_path, $tampered_htaccess, LOCK_EX) !== false) {
+                    $htaccess_repair = new \ReflectionMethod(\WebCareProScanner\Scan\ScanVaultManager::class, 'enforce_htaccess_vault_policy');
+                    $htaccess_repair->setAccessible(true);
+                    $htaccess_repair->invoke(null, $htaccess_test_path);
+                    $repaired_htaccess = (string) @file_get_contents($htaccess_test_path);
+                    $vault_htaccess_check = str_contains($repaired_htaccess, 'RewriteRule ^safe$ - [L]')
+                        && !preg_match('/^\s*Require\s+all\s+granted\s*$/mi', $repaired_htaccess)
+                        && substr_count($repaired_htaccess, 'Require all denied') === 1
+                        && str_contains($repaired_htaccess, 'Options -Indexes');
+                }
+            } catch (\Throwable $e) {
+                $vault_htaccess_check = false;
+            } finally {
+                wp_delete_file($htaccess_test_path);
+            }
+        }
+        $checks['vault_apache_tamper_repaired'] = $vault_htaccess_check;
+
+        $vault_iis_check = false;
+        $iis_test_path = wp_tempnam('webcare-vault-policy');
+        if (is_string($iis_test_path) && $iis_test_path !== '') {
+            try {
+                $tampered_web_config = '<?xml version="1.0"?><configuration><system.webServer><rewrite><rules><rule name="KeepRule" /></rules></rewrite><security><authorization><add accessType="Allow" users="*" /></authorization></security></system.webServer></configuration>';
+                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents -- Temporary local diagnostic fixture.
+                if (@file_put_contents($iis_test_path, $tampered_web_config, LOCK_EX) !== false) {
+                    $iis_repair = new \ReflectionMethod(\WebCareProScanner\Scan\ScanVaultManager::class, 'enforce_iis_vault_policy');
+                    $iis_repair->setAccessible(true);
+                    $iis_repair->invoke(null, $iis_test_path);
+                    $repaired_web_config = (string) @file_get_contents($iis_test_path);
+                    $vault_iis_check = str_contains($repaired_web_config, 'accessType="Deny"')
+                        && str_contains($repaired_web_config, 'users="*"')
+                        && !str_contains($repaired_web_config, 'accessType="Allow"')
+                        && str_contains($repaired_web_config, 'directoryBrowse enabled="false"');
+                    if (class_exists('DOMDocument')) {
+                        $vault_iis_check = $vault_iis_check && str_contains($repaired_web_config, 'KeepRule');
+                    }
+                }
+            } catch (\Throwable $e) {
+                $vault_iis_check = false;
+            } finally {
+                wp_delete_file($iis_test_path);
+            }
+        }
+        $checks['vault_iis_tamper_repaired'] = $vault_iis_check;
+
         // 4. REST API Authz Audit: ensure no admin route under webcare-pro-security/v1 uses __return_true
         $server = rest_get_server();
         $routes = $server->get_routes('webcare-pro-security/v1');
@@ -232,6 +313,12 @@ class Plugin {
             empty($checks['ssrf_metadata_blocked']) ||
             empty($checks['pcp_sandbox_guard']) ||
             empty($checks['pcp_orig_cookie_auth']) ||
+            empty($checks['mcp_cidr_fail_closed']) ||
+            empty($checks['mcp_ttl_parse_strict']) ||
+            empty($checks['mcp_ttl_fail_closed']) ||
+            empty($checks['guest_rest_routes_narrowed']) ||
+            empty($checks['vault_apache_tamper_repaired']) ||
+            empty($checks['vault_iis_tamper_repaired']) ||
             empty($checks['rest_no_open_admin'])
         ) {
             \WP_CLI::error('WebCare Doctor detected a failed security self-check.');

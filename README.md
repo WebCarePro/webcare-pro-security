@@ -21,6 +21,8 @@
   <a href="#-featured-spotlight-cryptographic-secret-vault--database-encryption-at-rest"><img src="https://img.shields.io/badge/Security-AES--256--GCM%20AEAD%20Vault-blueviolet.svg?logo=securityscorecard&logoColor=white" alt="Cryptographic Secret Vault"/></a>
 </p>
 
+> Current release metadata: `{"version": "2.18.0"}`
+
 ---
 
 ## 🛡️ Overview

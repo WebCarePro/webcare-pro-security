@@ -5,6 +5,7 @@ use WebCareProScanner\Auth\SessionSentinel;
 use WebCareProScanner\Cloudflare\CloudflareService;
 use WebCareProScanner\Firewall\FirewallEngine;
 use WebCareProScanner\System\ServerInfo;
+use WebCareProScanner\System\SettingsManager;
 
 if (!defined('ABSPATH')) {
     exit;
@@ -20,6 +21,108 @@ if (!defined('ABSPATH')) {
  * Author: Mir Alamin (WebCare Pro)
  */
 class MCPAntiLockoutValidator {
+
+    /**
+     * Verify an MCP Bearer request and all configured token restrictions.
+     *
+     * @param mixed  $request
+     * @param string $client_ip
+     * @return array{allowed:bool,reason:string}
+     */
+    public static function verify_mcp_bearer_request($request, string $client_ip): array {
+        if (!($request instanceof \WP_REST_Request)) {
+            return ['allowed' => false, 'reason' => 'invalid_request'];
+        }
+
+        $enabled = SettingsManager::get('mcp_enabled', false);
+        if (!in_array($enabled, [true, 1, '1'], true)) {
+            return ['allowed' => false, 'reason' => 'disabled'];
+        }
+
+        $auth_header = $request->get_header('Authorization');
+        if (!is_string($auth_header) || !preg_match('/\ABearer[ \t]+([^\s]+)\z/i', trim($auth_header), $matches)) {
+            return ['allowed' => false, 'reason' => 'invalid_bearer'];
+        }
+
+        $expected_token = SettingsManager::get('mcp_token', '');
+        if (!is_string($expected_token) || $expected_token === '' || !hash_equals($expected_token, $matches[1])) {
+            return ['allowed' => false, 'reason' => 'invalid_token'];
+        }
+
+        $lifetime = self::validate_mcp_token_lifetime(
+            SettingsManager::get('mcp_token_ttl_days', 0),
+            SettingsManager::get('mcp_token_created_at', 0)
+        );
+        if (empty($lifetime['valid'])) {
+            return ['allowed' => false, 'reason' => (string) ($lifetime['reason'] ?? 'invalid_ttl')];
+        }
+
+        $raw_cidrs = SettingsManager::get('mcp_allowed_cidrs', '');
+        if (!is_string($raw_cidrs)) {
+            return ['allowed' => false, 'reason' => 'invalid_cidr_configuration'];
+        }
+        $raw_cidrs = trim($raw_cidrs);
+        if ($raw_cidrs !== '') {
+            $cidrs = self::parse_cidr_list($raw_cidrs);
+            if (!self::is_valid_cidr_list($cidrs) || !self::ip_matches_cidr_list($client_ip, $cidrs)) {
+                return ['allowed' => false, 'reason' => 'cidr_denied'];
+            }
+        }
+
+        return ['allowed' => true, 'reason' => ''];
+    }
+
+    /**
+     * Validate the configured token lifetime without lossy numeric casts.
+     *
+     * @param mixed    $ttl_value
+     * @param mixed    $created_at_value
+     * @param int|null $now
+     * @return array{valid:bool,reason:string}
+     */
+    public static function validate_mcp_token_lifetime($ttl_value, $created_at_value, ?int $now = null): array {
+        $ttl_days = self::parse_non_negative_integer($ttl_value, 365);
+        if ($ttl_days === null) {
+            return ['valid' => false, 'reason' => 'invalid_ttl'];
+        }
+
+        if ($ttl_days === 0) {
+            return ['valid' => true, 'reason' => ''];
+        }
+
+        $created_at = self::parse_non_negative_integer($created_at_value, PHP_INT_MAX);
+        $now = $now ?? time();
+        if ($created_at === null || $created_at <= 0 || $created_at > $now) {
+            return ['valid' => false, 'reason' => 'invalid_created_at'];
+        }
+
+        $ttl_seconds = $ttl_days * (defined('DAY_IN_SECONDS') ? DAY_IN_SECONDS : 86400);
+        if ($now >= ($created_at + $ttl_seconds)) {
+            return ['valid' => false, 'reason' => 'expired'];
+        }
+
+        return ['valid' => true, 'reason' => ''];
+    }
+
+    /**
+     * Parse a non-negative integer setting without accepting partial or lossy casts.
+     *
+     * @param mixed $value
+     * @param int   $max
+     * @return int|null
+     */
+    private static function parse_non_negative_integer($value, int $max): ?int {
+        if (is_int($value)) {
+            return ($value >= 0 && $value <= $max) ? $value : null;
+        }
+
+        if (!is_string($value) || !preg_match('/\A(?:0|[1-9][0-9]*)\z/D', $value)) {
+            return null;
+        }
+
+        $parsed = filter_var($value, FILTER_VALIDATE_INT, ['options' => ['min_range' => 0, 'max_range' => $max]]);
+        return ($parsed === false) ? null : (int) $parsed;
+    }
 
     /**
      * Gather all protected IP addresses and ranges that MCP actions must never ban.
@@ -88,13 +191,20 @@ class MCPAntiLockoutValidator {
                 }
                 continue;
             }
-            [$subnet, $prefix] = explode('/', $entry, 2);
+            $parts = explode('/', $entry);
+            if (count($parts) !== 2 || !preg_match('/\A[0-9]+\z/D', $parts[1])) {
+                continue;
+            }
+            [$subnet, $prefix] = $parts;
             $subnet_bin = @inet_pton(trim($subnet));
             if ($subnet_bin === false || strlen($subnet_bin) !== strlen($ip_bin)) {
                 continue;
             }
             $bits      = strlen($ip_bin) * 8;
-            $prefix_i  = max(0, min($bits, (int) $prefix));
+            $prefix_i  = (int) $prefix;
+            if ($prefix_i < 0 || $prefix_i > $bits) {
+                continue;
+            }
             $full_bytes = intdiv($prefix_i, 8);
             $rem_bits  = $prefix_i % 8;
 
@@ -111,6 +221,46 @@ class MCPAntiLockoutValidator {
         }
 
         return false;
+    }
+
+    /**
+     * Require a non-empty list containing only valid IP addresses or CIDR ranges.
+     *
+     * @param array<int,string> $entries
+     * @return bool
+     */
+    public static function is_valid_cidr_list(array $entries): bool {
+        if (empty($entries)) {
+            return false;
+        }
+
+        foreach ($entries as $entry) {
+            if (!is_string($entry)) {
+                return false;
+            }
+            $entry = trim($entry);
+            if ($entry === '') {
+                return false;
+            }
+
+            if (filter_var($entry, FILTER_VALIDATE_IP)) {
+                continue;
+            }
+
+            $parts = explode('/', $entry);
+            if (count($parts) !== 2 || !filter_var(trim($parts[0]), FILTER_VALIDATE_IP) || !preg_match('/\A[0-9]+\z/D', $parts[1])) {
+                return false;
+            }
+
+            $address = trim($parts[0]);
+            $bits    = filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) ? 32 : 128;
+            $prefix  = filter_var($parts[1], FILTER_VALIDATE_INT, ['options' => ['min_range' => 0, 'max_range' => $bits]]);
+            if ($prefix === false) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**

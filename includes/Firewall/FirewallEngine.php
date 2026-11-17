@@ -6916,43 +6916,52 @@ class FirewallEngine {
      * @return bool
      */
     public static function is_verified_mcp_bearer_request($request, string $client_ip): bool {
-        if (!($request instanceof \WP_REST_Request)) {
+        if (!class_exists('\\WebCareProScanner\\Api\\MCPAntiLockoutValidator')) {
             return false;
         }
 
-        $mcp_enabled = (bool) SettingsManager::get('mcp_enabled', false);
-        if (!$mcp_enabled) {
-            return false;
-        }
+        $verification = \WebCareProScanner\Api\MCPAntiLockoutValidator::verify_mcp_bearer_request($request, $client_ip);
+        return !empty($verification['allowed']);
+    }
 
-        $auth_header = (string) $request->get_header('Authorization');
-        if ($auth_header === '' || !preg_match('/^\s*Bearer\s+(\S+)\s*$/i', $auth_header, $matches)) {
-            return false;
-        }
-
-        $token    = (string) $matches[1];
-        $expected = (string) SettingsManager::get('mcp_token', '');
-        if ($expected === '' || !hash_equals($expected, $token)) {
-            return false;
-        }
-
-        // Verify optional token TTL expiration
-        $ttl_days   = (int) SettingsManager::get('mcp_token_ttl_days', 0);
-        $created_at = (int) SettingsManager::get('mcp_token_created_at', 0);
-        if ($ttl_days > 0 && $created_at > 0 && time() > ($created_at + ($ttl_days * 86400))) {
-            return false;
-        }
-
-        // Verify optional client IP/CIDR allowlist
-        $raw_cidrs = trim((string) SettingsManager::get('mcp_allowed_cidrs', ''));
-        if ($raw_cidrs !== '' && class_exists('\\WebCareProScanner\\Api\\MCPAntiLockoutValidator')) {
-            $cidrs = \WebCareProScanner\Api\MCPAntiLockoutValidator::parse_cidr_list($raw_cidrs);
-            if (!empty($cidrs) && !\WebCareProScanner\Api\MCPAntiLockoutValidator::ip_matches_cidr_list($client_ip, $cidrs)) {
-                return false;
+    /**
+     * Check whether a guest mutation targets a deliberately public REST route.
+     * WooCommerce payment gateway callbacks use WC-API query endpoints; broad REST
+     * namespace exemptions for payment plugins are therefore unnecessary.
+     *
+     * @param string        $route
+     * @param string            $method
+     * @param array<int,string> $safe_prefixes
+     * @return bool
+     */
+    private static function is_safe_guest_rest_mutation_route(string $route, string $method, array $safe_prefixes): bool {
+        foreach ($safe_prefixes as $prefix) {
+            if (str_starts_with($route, $prefix)) {
+                return true;
             }
         }
 
-        return true;
+        // WooCommerce documents these public cart and checkout resources with specific write verbs.
+        if (preg_match('#^/wc/store(?:/v[0-9]+)?/cart(?:/(add-item|remove-item|update-item|apply-coupon|remove-coupon|update-customer|select-shipping-rate))?$#', $route)) {
+            return $method === 'POST';
+        }
+        if (preg_match('#^/wc/store(?:/v[0-9]+)?/cart/items(?:/[^/]+)?$#', $route)) {
+            if ($route === '/wc/store/cart/items' || preg_match('#^/wc/store/v[0-9]+/cart/items$#', $route)) {
+                return in_array($method, ['POST', 'DELETE'], true);
+            }
+            return in_array($method, ['POST', 'PUT', 'DELETE'], true);
+        }
+        if (preg_match('#^/wc/store(?:/v[0-9]+)?/cart/coupons$#', $route)) {
+            return in_array($method, ['POST', 'DELETE'], true);
+        }
+        if (preg_match('#^/wc/store(?:/v[0-9]+)?/cart/coupon/[^/]+$#', $route)) {
+            return $method === 'DELETE';
+        }
+        if (preg_match('#^/wc/store(?:/v[0-9]+)?/checkout(?:/[0-9]+)?$#', $route)) {
+            return in_array($method, ['POST', 'PUT'], true);
+        }
+
+        return false;
     }
 
     /**
@@ -7047,7 +7056,8 @@ class FirewallEngine {
         $custom_rest_raw = $settings['waf_guest_rest_custom_allowlist'] ?? '';
         $custom_routes = !empty($custom_rest_raw) ? array_map('strtolower', array_filter(array_map('trim', explode("\n", $custom_rest_raw)))) : [];
 
-        // Exact public guest mutation prefixes (forms, Store API cart/checkout, payment webhooks, comments, WebAuthn login)
+        // Public guest mutation prefixes. Payment providers use signed WC-API callbacks outside
+        // the REST dispatcher; unknown third-party REST routes must be configured explicitly.
         $safe_prefixes = [
             '/contact-form-7/',
             '/wpforms/',
@@ -7055,14 +7065,6 @@ class FirewallEngine {
             '/ninja-forms/',
             '/frm/',
             '/gf/',
-            '/wc/store/',
-            '/paypal/',
-            '/wc-stripe/',
-            '/stripe/',
-            '/mollie/',
-            '/square/',
-            '/surecart/',
-            '/givewp/',
             '/wp/v2/comments',
             '/akismet/',
             '/jetpack/',
@@ -7118,13 +7120,7 @@ class FirewallEngine {
                 }
 
                 if (in_array($sub_method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
-                    $is_sub_safe = false;
-                    foreach ($safe_prefixes as $ssp) {
-                        if (str_starts_with($sub_path, $ssp)) {
-                            $is_sub_safe = true;
-                            break;
-                        }
-                    }
+                    $is_sub_safe = self::is_safe_guest_rest_mutation_route($sub_path, $sub_method, $safe_prefixes);
                     if (!$is_sub_safe && !empty($custom_routes)) {
                         foreach ($custom_routes as $c_rt) {
                             if ($c_rt !== '' && str_starts_with($sub_path, '/' . ltrim($c_rt, '/'))) {
@@ -7155,10 +7151,8 @@ class FirewallEngine {
             return $result;
         }
 
-        foreach ($safe_prefixes as $prefix) {
-            if (str_starts_with($route, $prefix)) {
-                return $result;
-            }
+        if (self::is_safe_guest_rest_mutation_route($route, $method, $safe_prefixes)) {
+            return $result;
         }
 
         if (!empty($custom_routes)) {

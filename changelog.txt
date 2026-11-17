@@ -1,5 +1,8 @@
 ﻿v:2.18.0 - 2026-11-18
 - Security Audit Hardening, Multisite Network Parity & Administrator Self-Lockout Remediation:
+  * MCP Bearer exemptions now share strict fail-closed token, TTL, timestamp, and CIDR validation across WAF inspection and REST route permissions; malformed prefixes such as non-numeric CIDR masks cannot broaden access.
+  * Scan Vault access rules now repair Apache authorization structure and IIS deny rules while preserving unrelated configuration within the dedicated vault directory; parent uploads rules are left untouched. Added daily retention cleanup for abandoned temp files and stale option references, plus tampering regression checks in the WP-CLI doctor.
+  * Removed broad payment-provider REST namespace exemptions and narrowed WooCommerce Store API writes to documented cart and checkout routes and verbs; provider-specific REST callbacks must be explicitly configured.
   * Behavioral WAF Rule #37 Active Blocking & Custom Allowlist (SettingsManager.php, FirewallEngine.php, FirewallPage.tsx):
     - Switched Rule #37 (Unauthenticated REST API Mutation & Batch Shield) from Monitor/Learning mode to Active Blocking ('block') by default, immediately terminating unauthorized visitor POST, PUT, PATCH, and DELETE mutations targeting non-public REST routes and batch endpoints (/batch/v1, /wp/v2/batch) with HTTP 403 Forbidden. Added a dedicated Custom Allowed Guest REST Route Prefixes configuration textarea to permit legitimate bespoke public API endpoints without tripping drops.
   * Dual-Route Aliasing & Sub-Path Normalization for Redirect Shield (ScannerRoutes.php, api.ts):
