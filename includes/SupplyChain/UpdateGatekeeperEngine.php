@@ -523,7 +523,7 @@ class UpdateGatekeeperEngine {
             unset($snapshots[$oldest_id]);
         }
 
-        update_option(self::OPTION_SNAPSHOTS, $snapshots);
+        update_option(self::OPTION_SNAPSHOTS, $snapshots, false);
         return $snapshot_id;
     }
 
@@ -614,7 +614,7 @@ class UpdateGatekeeperEngine {
      * @return bool
      */
     public static function clear_logs(): bool {
-        return update_option(self::OPTION_LOGS, []);
+        return update_option(self::OPTION_LOGS, [], false);
     }
 
     /**
@@ -644,7 +644,14 @@ class UpdateGatekeeperEngine {
         if (count($logs) > 60) {
             $logs = array_slice($logs, 0, 60);
         }
-        update_option(self::OPTION_LOGS, $logs);
+        update_option(self::OPTION_LOGS, $logs, false);
+
+        // Ensure option is evicted from alloptions in-memory cache
+        $alloptions = wp_cache_get('alloptions', 'options');
+        if (is_array($alloptions) && isset($alloptions[self::OPTION_LOGS])) {
+            unset($alloptions[self::OPTION_LOGS]);
+            wp_cache_set('alloptions', $alloptions, 'options');
+        }
     }
 
     /**

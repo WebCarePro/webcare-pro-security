@@ -1481,7 +1481,7 @@ class CloudflareService {
                 'reason'     => $clean_note,
                 'created_at' => current_time('mysql'),
             ];
-            update_option('webcareproscan_cf_active_edge_bans', $active_edge_bans);
+            update_option('webcareproscan_cf_active_edge_bans', $active_edge_bans, false);
 
             return [
                 'success' => true,
@@ -1560,7 +1560,7 @@ class CloudflareService {
                         ];
                     }
                 }
-                update_option('webcareproscan_cf_active_edge_bans', $ledger);
+                update_option('webcareproscan_cf_active_edge_bans', $ledger, false);
             }
 
             return [
@@ -1675,7 +1675,7 @@ class CloudflareService {
                     }
                 }
                 if ($modified_bans) {
-                    update_option('webcareproscan_cf_active_edge_bans', $active_edge_bans);
+                    update_option('webcareproscan_cf_active_edge_bans', $active_edge_bans, false);
                 }
             }
 
@@ -1755,7 +1755,7 @@ class CloudflareService {
                 $active_edge_bans = get_option('webcareproscan_cf_active_edge_bans', []);
                 if (is_array($active_edge_bans) && isset($active_edge_bans[$target_val])) {
                     unset($active_edge_bans[$target_val]);
-                    update_option('webcareproscan_cf_active_edge_bans', $active_edge_bans);
+                    update_option('webcareproscan_cf_active_edge_bans', $active_edge_bans, false);
                 }
 
                 return [
@@ -1770,7 +1770,7 @@ class CloudflareService {
         $active_edge_bans = get_option('webcareproscan_cf_active_edge_bans', []);
         if (is_array($active_edge_bans) && isset($active_edge_bans[$target_val])) {
             unset($active_edge_bans[$target_val]);
-            update_option('webcareproscan_cf_active_edge_bans', $active_edge_bans);
+            update_option('webcareproscan_cf_active_edge_bans', $active_edge_bans, false);
         }
 
         // Fallback: If not found in active Cloudflare access rules, report clean notice

@@ -1,6 +1,6 @@
 {
   "version": "2.17.0",
-  "generated_at": "2026-11-17T12:25:42.554Z",
+  "generated_at": "2026-11-17T12:49:25.178Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -232,8 +232,8 @@
       "size": 53387
     },
     "includes/Cloudflare/CloudflareService.php": {
-      "sha256": "b020260e107d3e61831c1ca46fb72f03f59b27e5cf709d0c4c2b29bbea2c89c0",
-      "size": 97633
+      "sha256": "b907e42ca70e8a6f80c3ac87c1b4fcb8a0a1d72c6f47a57bfb45c655d2625320",
+      "size": 97668
     },
     "includes/Content/BlockDirectiveSanitizer.php": {
       "sha256": "642e6ac48edfb5c557f7842f0b68405048371a363582a6a2983413e2da1d6cac",
@@ -636,8 +636,8 @@
       "size": 20765
     },
     "includes/Integrity/ObjectCacheIntegritySentinel.php": {
-      "sha256": "9e12c451d902cdf6794bdbf771f7b28c805f86abfbded86a16cb00ece7b28ef2",
-      "size": 23720
+      "sha256": "0207d86978b9d7afc5045313c37c00607670d81c943065c274109b0bebdda463",
+      "size": 25542
     },
     "includes/Integrity/PluginIntegrity.php": {
       "sha256": "b89bdebb0b00f38f47a76101b946913c7c73b3a6ba62ebe2a8468dcb383780c9",
@@ -796,8 +796,8 @@
       "size": 32716
     },
     "includes/SupplyChain/UpdateGatekeeperEngine.php": {
-      "sha256": "341a6f1d7484a9e9609dcfc179d07ca60a253325699d12c01854231719dc67ae",
-      "size": 28799
+      "sha256": "8bbb553d5cbddc7d699e019d811d99efe213888340f48a0734c9912ce55ab469",
+      "size": 29153
     },
     "includes/System/ActivityLogs/ActivityCanonicalizer.php": {
       "sha256": "a8859132bb05668c6f992d4827323d76144fe7e9fa56a0f41806043566ffb9ee",

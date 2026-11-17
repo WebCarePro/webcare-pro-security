@@ -269,6 +269,31 @@ class ObjectCacheIntegritySentinel {
         // 4. Scan RAM Options for Serialized PHP Closures & Execution Sinks
         if ($alloptions_cached && is_array($ram_alloptions)) {
             foreach ($ram_alloptions as $opt_k => $opt_v) {
+                // Whitelist Guard: Skip legitimate security audit logs, scan telemetry, and forensic stores that intentionally record intercepted payloads or code analysis findings
+                $is_security_log_store = (
+                    (str_starts_with($opt_k, 'webcareproscan_') && (
+                        str_contains($opt_k, 'log') ||
+                        str_contains($opt_k, 'gatekeeper') ||
+                        str_contains($opt_k, 'audit') ||
+                        str_contains($opt_k, 'history') ||
+                        str_contains($opt_k, 'finding') ||
+                        str_contains($opt_k, 'snapshot') ||
+                        str_contains($opt_k, 'payload') ||
+                        str_contains($opt_k, 'telemetry') ||
+                        str_contains($opt_k, 'report') ||
+                        str_contains($opt_k, 'cve') ||
+                        str_contains($opt_k, 'signature')
+                    )) ||
+                    str_starts_with($opt_k, 'wordfence_') ||
+                    str_starts_with($opt_k, 'wf_') ||
+                    str_starts_with($opt_k, 'sucuri_') ||
+                    str_starts_with($opt_k, 'itsec_')
+                );
+
+                if ($is_security_log_store) {
+                    continue;
+                }
+
                 $serialized_repr = is_scalar($opt_v) ? (string) $opt_v : serialize($opt_v);
 
                 // Detect serialized closures
@@ -450,6 +475,13 @@ class ObjectCacheIntegritySentinel {
             foreach (array_keys(self::CRITICAL_KEYS) as $key) {
                 wp_cache_delete($key, 'options');
             }
+        }
+
+        // 2.5 Ensure internal log stores and heavy ledgers are decoupled from autoload before re-priming
+        global $wpdb;
+        if (!empty($wpdb->options)) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            $wpdb->query("UPDATE {$wpdb->options} SET autoload = 'no' WHERE option_name LIKE 'webcareproscan_%_logs' OR option_name LIKE 'webcareproscan_%_snapshots' OR option_name = 'webcareproscan_cf_active_edge_bans'");
         }
 
         // 3. Force re-prime of alloptions from clean MySQL database
