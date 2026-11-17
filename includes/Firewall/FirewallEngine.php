@@ -7277,7 +7277,20 @@ class FirewallEngine {
 
         // Determine expected sandbox site prefix for options table isolation (handles Single-Site & Multisite)
         $is_ms = function_exists('is_multisite') && is_multisite();
-        $blog_id = isset($wpdb->blogid) ? (int) $wpdb->blogid : 0;
+        if ($is_ms) {
+            // Fail closed if blogid is missing, non-numeric, or non-positive on Multisite
+            if (
+                !isset($wpdb->blogid) ||
+                (!is_int($wpdb->blogid) && (!is_string($wpdb->blogid) || !ctype_digit($wpdb->blogid))) ||
+                (int) $wpdb->blogid < 1
+            ) {
+                return false;
+            }
+            $blog_id = (int) $wpdb->blogid;
+        } else {
+            $blog_id = 1;
+        }
+
         $expected_sandbox_site_prefix = ($is_ms && $blog_id > 1)
             ? $expected_sandbox_base . $blog_id . '_'
             : $expected_sandbox_base;
