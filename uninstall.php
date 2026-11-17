@@ -156,16 +156,16 @@ if ($webcareproscan_delete_data) {
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
             $wpdb->query(
                 "DELETE FROM {$wpdb->options} 
-                 WHERE option_name LIKE 'webcareproscan_%'
-                    OR option_name LIKE '_webcareproscan_%'
-                    OR option_name LIKE 'webcare_caf_%'
-                    OR option_name LIKE 'webcare_cf_%'
-                    OR option_name LIKE 'webcare_%'
-                    OR option_name LIKE '_webcare_%'
-                    OR option_name LIKE '_transient_webcare%'
-                    OR option_name LIKE '_transient_timeout_webcare%'
-                    OR option_name LIKE '_site_transient_webcare%'
-                    OR option_name LIKE '_site_transient_timeout_webcare%'"
+                 WHERE option_name LIKE 'webcareproscan\\_%'
+                    OR option_name LIKE '\\_webcareproscan\\_%'
+                    OR option_name LIKE 'webcare\\_caf\\_%'
+                    OR option_name LIKE 'webcare\\_cf\\_%'
+                    OR option_name LIKE 'webcare\\_%'
+                    OR option_name LIKE '\\_webcare\\_%'
+                    OR option_name LIKE '\\_transient\\_webcare%'
+                    OR option_name LIKE '\\_transient\\_timeout\\_webcare%'
+                    OR option_name LIKE '\\_site\\_transient\\_webcare%'
+                    OR option_name LIKE '\\_site\\_transient\\_timeout\\_webcare%'"
             );
         }
     };
@@ -178,14 +178,14 @@ if ($webcareproscan_delete_data) {
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
         $wpdb->query(
             "DELETE FROM {$wpdb->sitemeta} 
-             WHERE meta_key LIKE 'webcareproscan_%'
-                OR meta_key LIKE '_webcareproscan_%'
-                OR meta_key LIKE 'webcare_caf_%'
-                OR meta_key LIKE 'webcare_cf_%'
-                OR meta_key LIKE 'webcare_%'
-                OR meta_key LIKE '_webcare_%'
-                OR meta_key LIKE '_site_transient_webcare%'
-                OR meta_key LIKE '_site_transient_timeout_webcare%'"
+             WHERE meta_key LIKE 'webcareproscan\\_%'
+                OR meta_key LIKE '\\_webcareproscan\\_%'
+                OR meta_key LIKE 'webcare\\_caf\\_%'
+                OR meta_key LIKE 'webcare\\_cf\\_%'
+                OR meta_key LIKE 'webcare\\_%'
+                OR meta_key LIKE '\\_webcare\\_%'
+                OR meta_key LIKE '\\_site\\_transient\\_webcare%'
+                OR meta_key LIKE '\\_site\\_transient\\_timeout\\_webcare%'"
         );
 
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
@@ -207,10 +207,10 @@ if ($webcareproscan_delete_data) {
     // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
     $wpdb->query(
         "DELETE FROM {$wpdb->usermeta} 
-         WHERE meta_key LIKE 'webcareproscan_%' 
-            OR meta_key LIKE '_webcareproscan_%' 
-            OR meta_key LIKE 'webcare_%' 
-            OR meta_key LIKE '_webcare_%'"
+         WHERE meta_key LIKE 'webcareproscan\\_%' 
+            OR meta_key LIKE '\\_webcareproscan\\_%' 
+            OR meta_key LIKE 'webcare\\_%' 
+            OR meta_key LIKE '\\_webcare\\_%'"
     );
 
     // 4. Purge Ghost Admin canary user and any canary tripwire accounts

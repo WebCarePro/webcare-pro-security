@@ -455,6 +455,7 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                 || strpos($file, '/wp-includes/wp-db.php') !== false
                 || strpos($file, '/wp-includes/class-wp-hook.php') !== false
                 || strpos($file, '/wp-includes/plugin.php') !== false
+                || strpos($file, '/wp-includes/option.php') !== false
             ) {
                 continue;
             }
@@ -531,6 +532,7 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                 || strpos($file, '/wp-includes/wp-db.php') !== false
                 || strpos($file, '/wp-includes/class-wp-hook.php') !== false
                 || strpos($file, '/wp-includes/plugin.php') !== false
+                || strpos($file, '/wp-includes/option.php') !== false
             ) {
                 continue;
             }

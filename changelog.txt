@@ -1,4 +1,18 @@
-﻿v:2.17.0 - 2026-11-17
+﻿v:2.18.0 - 2026-11-18
+- Security Audit Hardening, Multisite Network Parity & Administrator Self-Lockout Remediation:
+  * Redirect Shield Route Hardening & Mutating Endpoint Method Enforcement (ScannerRoutes.php):
+    - Reverted all state-mutating endpoints (/firewall/redirect-shield/probe, /restore, /lock, /heal-urls, /snapshot) from ['GET', 'POST'] back to 'POST' only, preserving ['GET', 'POST'] strictly on the read-only /status endpoint to eliminate unsolicited state modification and enforce CSRF resilience.
+  * WordPress Multisite Network Administrator Privilege Parity (ScannerRoutes.php):
+    - Added strict Multisite network administrator authorization guards (is_multisite() && !current_user_can('manage_network')) across all 20 shared-filesystem and global user management endpoints (view_file_content, repair_core_file, remediate_user, restore_user_account, restore_self_defense_file, restore_local_snapshot_file, delete_local_snapshot, quarantine_file, restore_quarantine, delete_quarantine, clear_restored_quarantine, save_server_security_config, deploy_server_security_htaccess, compile_micro_waf, install_micro_waf_preload, uninstall_micro_waf_preload), guaranteeing subsite administrators cannot inspect system configuration files or mutate network assets.
+  * Uninstallation Teardown & MySQL Wildcard Escaping (uninstall.php):
+    - Escaped literal underscores with backslashes (webcare\_%, \_webcare\_%, webcare\_caf\_%, webcare\_cf\_%, \_transient\_webcare%, etc.) across all database option, user meta, and site meta purge queries, preventing accidental single-character wildcard matches and ensuring complete database cleanup upon uninstallation.
+  * SQL RASP Provenance Intermediate Frame Skip (RuntimeSqlRaspEngine.php):
+    - Added /wp-includes/option.php to the intermediate caller frame skip list in is_legitimate_security_or_core_caller() and is_legitimate_option_caller(), preventing false-positive SQL RASP alerts during WordPress core option retrieval.
+  * Administrator Session Immunity & Self-Lockout Prevention (FirewallEngine.php):
+    - Immunized active authenticated administrators from automated IP blocklisting in handle_rule_violation() and exempted active administrator sessions from USER-CUSTOM-IP-BLOCK rendering.
+    - Added multi-header REST nonce resolution (HTTP_X_WP_NONCE, REDIRECT_HTTP_X_WP_NONCE, getallheaders(), _wpnonce, nonce) and cookie session token fallback verification in Layer 4, and exempted internal WebCare read inspection routes (/file/view, /post/view, /file/integrity, /waf/logs, etc.) from failing admin authentication when reverse proxies strip custom headers.
+
+v:2.17.0 - 2026-11-17
 - Routing Normalization Parity, Package Extraction Integrity & Incomplete Inspection Reporting:
   * WAF Logs Terminal Hit Attribution & Attacker Activity Dossier (WafFileLogger.php, WafLogsPage.tsx):
     - Terminal Hit Action Indicator [Blocked (CF Ban)]: Enhanced WafLogsPage.tsx and WafFileLogger.php to track and highlight the terminal (most recent) hit from an attacker IP. When an IP is actively banned and synchronized to Cloudflare Edge, its terminal hit in the "Action Taken" column displays a prominent [Blocked (CF Ban)] badge with an orange Cloud icon and informative tooltip, visually confirming that this entry was the final incursion before edge banishment took effect.

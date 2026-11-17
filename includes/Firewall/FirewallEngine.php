@@ -281,6 +281,7 @@ class FirewallEngine {
         }
 
         $verified_user_id = 0;
+        $verified_session_token = '';
 
         // Layer 1: Check standard WordPress authenticated session if available (skip during PCP _pc_ DB sandboxing so $current_user isn't cached as 0 against *_pc_users)
         if (!self::is_plugin_check_db_sandbox() && function_exists('is_user_logged_in') && is_user_logged_in() && function_exists('get_current_user_id')) {
@@ -315,6 +316,12 @@ class FirewallEngine {
                         $uid = (int) wp_validate_auth_cookie($auth_cookie, $scheme);
                         if ($uid > 0) {
                             $verified_user_id = $uid;
+                            if (function_exists('wp_parse_auth_cookie')) {
+                                $parsed_cookie = wp_parse_auth_cookie($auth_cookie, $scheme);
+                                if (!empty($parsed_cookie['token'])) {
+                                    $verified_session_token = (string) $parsed_cookie['token'];
+                                }
+                            }
                             break;
                         }
                     } else {
@@ -348,6 +355,12 @@ class FirewallEngine {
                         $uid = (int) wp_validate_auth_cookie($cookie_val, $scheme_guess);
                         if ($uid > 0) {
                             $verified_user_id = $uid;
+                            if (function_exists('wp_parse_auth_cookie')) {
+                                $parsed_cookie = wp_parse_auth_cookie($cookie_val, $scheme_guess);
+                                if (!empty($parsed_cookie['token'])) {
+                                    $verified_session_token = (string) $parsed_cookie['token'];
+                                }
+                            }
                             break;
                         }
                     } else {
@@ -415,6 +428,8 @@ class FirewallEngine {
 
         // Layer 4: Cryptographic Nonce Verification on REST API & AJAX Mutation Requests
         $request_uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '';
+        $clean_uri = str_replace(["\0", "\r", "\n"], '', $request_uri);
+        $norm_rest_route = self::resolve_normalized_rest_route($clean_uri);
         $method = strtoupper(isset($_SERVER['REQUEST_METHOD']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_METHOD'])) : 'GET');
         // phpcs:ignore WordPress.Security.NonceVerification.Recommended
         $has_rest_query = !empty($_GET['rest_route']) || !empty($_POST['rest_route']);
@@ -423,13 +438,44 @@ class FirewallEngine {
             || $has_rest_query
             || (strpos($request_uri, 'rest_route=') !== false);
 
-        if ($is_rest_call && in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
-            $nonce = isset($_SERVER['HTTP_X_WP_NONCE']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_X_WP_NONCE'])) : '';
-            // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+        // Read-only inspection routes under WebCare Pro (/file/view, /post/view, /file/integrity, /containment/status, etc.)
+        // are safe read queries and should not fail admin authentication if nonce headers are stripped by a reverse proxy.
+        $is_webcare_read_route = str_starts_with($norm_rest_route, '/webcare-pro-security/v1/')
+            && in_array($norm_rest_route, [
+                '/webcare-pro-security/v1/file/view',
+                '/webcare-pro-security/v1/post/view',
+                '/webcare-pro-security/v1/file/integrity',
+                '/webcare-pro-security/v1/containment/status',
+                '/webcare-pro-security/v1/caf/overview',
+                '/webcare-pro-security/v1/firewall/status',
+                '/webcare-pro-security/v1/firewall/redirect-shield/status',
+                '/webcare-pro-security/v1/waf/logs',
+                '/webcare-pro-security/v1/server-info',
+                '/webcare-pro-security/v1/rescue/status',
+            ], true);
+
+        if ($is_rest_call && !$is_webcare_read_route && in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
+            $nonce = '';
+            if (!empty($_SERVER['HTTP_X_WP_NONCE'])) {
+                $nonce = sanitize_text_field(wp_unslash($_SERVER['HTTP_X_WP_NONCE']));
+            } elseif (!empty($_SERVER['REDIRECT_HTTP_X_WP_NONCE'])) {
+                $nonce = sanitize_text_field(wp_unslash($_SERVER['REDIRECT_HTTP_X_WP_NONCE']));
+            } elseif (function_exists('getallheaders')) {
+                $all_h = getallheaders();
+                if (!empty($all_h['X-WP-Nonce'])) {
+                    $nonce = sanitize_text_field(wp_unslash($all_h['X-WP-Nonce']));
+                } elseif (!empty($all_h['x-wp-nonce'])) {
+                    $nonce = sanitize_text_field(wp_unslash($all_h['x-wp-nonce']));
+                }
+            }
             if (empty($nonce) && !empty($_REQUEST['_wpnonce'])) {
                 // phpcs:ignore WordPress.Security.NonceVerification.Recommended
                 $nonce = sanitize_text_field(wp_unslash($_REQUEST['_wpnonce']));
+            } elseif (empty($nonce) && !empty($_REQUEST['nonce'])) {
+                // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+                $nonce = sanitize_text_field(wp_unslash($_REQUEST['nonce']));
             }
+
             if (empty($nonce)) {
                 // REST mutation without nonce header is untrusted (protects against CSRF)
                 if (function_exists('did_action') && did_action('init')) {
@@ -446,7 +492,17 @@ class FirewallEngine {
                     wp_set_current_user($verified_user_id);
                 }
 
-                $nonce_valid = wp_verify_nonce($nonce, 'wp_rest');
+                $nonce_valid = (bool) wp_verify_nonce($nonce, 'wp_rest');
+
+                // Fallback: verify with extracted cookie session token if wp_get_session_token was empty or mismatched scheme
+                if (!$nonce_valid && !empty($verified_session_token) && function_exists('wp_hash') && function_exists('wp_nonce_tick')) {
+                    $tick_i = wp_nonce_tick('wp_rest');
+                    $expected1 = substr(wp_hash($tick_i . '|wp_rest|' . $verified_user_id . '|' . $verified_session_token, 'nonce'), -12, 10);
+                    $expected2 = substr(wp_hash(($tick_i - 1) . '|wp_rest|' . $verified_user_id . '|' . $verified_session_token, 'nonce'), -12, 10);
+                    if (hash_equals($expected1, $nonce) || hash_equals($expected2, $nonce)) {
+                        $nonce_valid = true;
+                    }
+                }
 
                 if ($prev_uid !== $verified_user_id && function_exists('wp_set_current_user')) {
                     wp_set_current_user($prev_uid);
@@ -884,8 +940,11 @@ class FirewallEngine {
 
                         $is_verified_human_session = self::is_exempt_from_operational_ban();
 
-                        if ($is_non_exploit_operational_ban && $is_verified_human_session) {
-                            // Allow verified shopper/member or administrator through operational IP bans while still running full WAF exploit inspection below
+                        if (self::is_authenticated_administrator()) {
+                            // Active authenticated administrator sessions are never blocked by IP blocklists
+                            $matching_entry = null;
+                        } elseif ($is_non_exploit_operational_ban && $is_verified_human_session) {
+                            // Allow verified shopper/member through operational IP bans while still running full WAF exploit inspection below
                             $matching_entry = null;
                         }
 
@@ -1928,8 +1987,11 @@ class FirewallEngine {
 
                         $is_verified_human_session = self::is_exempt_from_operational_ban();
 
-                        if ($is_non_exploit_operational_ban && $is_verified_human_session) {
-                            // Allow verified shopper/member or administrator through operational IP bans while still running full WAF exploit inspection below
+                        if (self::is_authenticated_administrator()) {
+                            // Active authenticated administrator sessions are never blocked by IP blocklists
+                            $matching_entry = null;
+                        } elseif ($is_non_exploit_operational_ban && $is_verified_human_session) {
+                            // Allow verified shopper/member through operational IP bans while still running full WAF exploit inspection below
                             $matching_entry = null;
                         }
 
@@ -6156,6 +6218,11 @@ class FirewallEngine {
         // Cloudflare sync preference: automatically sync if globally enabled in settings (cloudflare_auto_sync_bans) or explicitly requested by rule
         $cf_auto_sync_active = !empty($settings['cloudflare_enabled']) && !empty($settings['cloudflare_auto_sync_bans']);
         $rule_sync_cf        = $eligible_for_ip_ban && ($cf_auto_sync_active || !empty($rule['sync_cloudflare']));
+
+        // Critical safety invariant: An authenticated administrator's own IP address must NEVER be banned or added to waf_blocked_ips.
+        if ($is_admin_session || (function_exists('is_user_logged_in') && is_user_logged_in() && function_exists('current_user_can') && current_user_can('manage_options'))) {
+            $eligible_for_ip_ban = false;
+        }
 
         if ($eligible_for_ip_ban) {
             $ban_reason        = sprintf('[%s] %s', $rule_id_str ?: $rule_cat, $rule['description'] ?? 'Critical WAF exploit intercepted');

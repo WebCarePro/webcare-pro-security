@@ -506,31 +506,31 @@ class ScannerRoutes {
         ]);
 
         register_rest_route(self::NAMESPACE, '/firewall/redirect-shield/probe', [
-            'methods'             => ['GET', 'POST'],
+            'methods'             => 'POST',
             'callback'            => [__CLASS__, 'run_redirect_canary_probe'],
             'permission_callback' => $permission,
         ]);
 
         register_rest_route(self::NAMESPACE, '/firewall/redirect-shield/restore', [
-            'methods'             => ['GET', 'POST'],
+            'methods'             => 'POST',
             'callback'            => [__CLASS__, 'restore_htaccess_vault_snapshot'],
             'permission_callback' => $permission,
         ]);
 
         register_rest_route(self::NAMESPACE, '/firewall/redirect-shield/lock', [
-            'methods'             => ['GET', 'POST'],
+            'methods'             => 'POST',
             'callback'            => [__CLASS__, 'toggle_htaccess_lock'],
             'permission_callback' => $permission,
         ]);
 
         register_rest_route(self::NAMESPACE, '/firewall/redirect-shield/heal-urls', [
-            'methods'             => ['GET', 'POST'],
+            'methods'             => 'POST',
             'callback'            => [__CLASS__, 'heal_database_core_urls'],
             'permission_callback' => $permission,
         ]);
 
         register_rest_route(self::NAMESPACE, '/firewall/redirect-shield/snapshot', [
-            'methods'             => ['GET', 'POST'],
+            'methods'             => 'POST',
             'callback'            => [__CLASS__, 'create_htaccess_vault_snapshot'],
             'permission_callback' => $permission,
         ]);
@@ -5142,6 +5142,9 @@ class ScannerRoutes {
     }
 
     public static function quarantine_file(\WP_REST_Request $request) {
+        if (is_multisite() && !current_user_can('manage_network')) {
+            return new \WP_Error('rest_forbidden', __('Multisite network administrator privileges required.', 'webcare-pro-security'), ['status' => 403]);
+        }
         $file_path = sanitize_text_field($request->get_param('file_path'));
         $issue_id = $request->get_param('issue_id') ? (int) $request->get_param('issue_id') : null;
         $scan_id = $request->get_param('scan_id') ? (int) $request->get_param('scan_id') : null;
@@ -5153,6 +5156,9 @@ class ScannerRoutes {
     }
 
     public static function restore_quarantine(\WP_REST_Request $request) {
+        if (is_multisite() && !current_user_can('manage_network')) {
+            return new \WP_Error('rest_forbidden', __('Multisite network administrator privileges required.', 'webcare-pro-security'), ['status' => 403]);
+        }
         $quarantine_id = (int) $request->get_param('id');
         $overwrite     = !empty($request->get_param('overwrite'));
         $allow_legacy  = !empty($request->get_param('allow_legacy'));
@@ -5164,6 +5170,9 @@ class ScannerRoutes {
     }
 
     public static function delete_quarantine(\WP_REST_Request $request) {
+        if (is_multisite() && !current_user_can('manage_network')) {
+            return new \WP_Error('rest_forbidden', __('Multisite network administrator privileges required.', 'webcare-pro-security'), ['status' => 403]);
+        }
         $quarantine_id = (int) $request->get_param('id');
         $qm = new QuarantineManager();
         $result = $qm->delete_record($quarantine_id);
@@ -5172,6 +5181,9 @@ class ScannerRoutes {
     }
 
     public static function clear_restored_quarantine(\WP_REST_Request $request) {
+        if (is_multisite() && !current_user_can('manage_network')) {
+            return new \WP_Error('rest_forbidden', __('Multisite network administrator privileges required.', 'webcare-pro-security'), ['status' => 403]);
+        }
         $qm = new QuarantineManager();
         $result = $qm->clear_restored_records();
 
@@ -8170,6 +8182,9 @@ class ScannerRoutes {
      * Safely read and return file content for code inspection popup modal.
      */
     public static function view_file_content(\WP_REST_Request $request) {
+        if (is_multisite() && !current_user_can('manage_network')) {
+            return new \WP_Error('rest_forbidden', __('Multisite network administrator privileges required.', 'webcare-pro-security'), ['status' => 403]);
+        }
         $raw_path = sanitize_text_field($request->get_param('file_path') ?: ($request->get_param('path') ?: ''));
         if (empty($raw_path)) {
             return new \WP_Error('missing_path', __('File path parameter is required.', 'webcare-pro-security'), ['status' => 400]);
@@ -8902,11 +8917,14 @@ class ScannerRoutes {
      * Safely repair an infected core file by pulling the pristine version from WP.org.
      */
     public static function repair_core_file(\WP_REST_Request $request) {
+        if (is_multisite() && !current_user_can('manage_network')) {
+            return new \WP_Error('rest_forbidden', __('Multisite network administrator privileges required.', 'webcare-pro-security'), ['status' => 403]);
+        }
         $file_path = sanitize_text_field($request->get_param('file_path'));
         $issue_id = (int) $request->get_param('issue_id');
 
         if (empty($file_path)) {
-            return new \WP_Error('missing_params', 'File path is required.', ['status' => 400]);
+            return new \WP_Error('missing_params', __('File path is required.', 'webcare-pro-security'), ['status' => 400]);
         }
 
         $repair_manager = new CoreRepairManager();
@@ -9529,6 +9547,9 @@ class ScannerRoutes {
     }
 
     public static function save_server_security_config(\WP_REST_Request $request) {
+        if (is_multisite() && !current_user_can('manage_network')) {
+            return new \WP_Error('rest_forbidden', __('Multisite network administrator privileges required.', 'webcare-pro-security'), ['status' => 403]);
+        }
         if (!class_exists('\\WebCareProScanner\\Firewall\\ServerSecurityEngine')) {
             $f = WEBCAREPROSCAN_PATH . 'includes/Firewall/ServerSecurityEngine.php';
             if (file_exists($f)) {
@@ -9562,6 +9583,9 @@ class ScannerRoutes {
     }
 
     public static function deploy_server_security_htaccess(\WP_REST_Request $request) {
+        if (is_multisite() && !current_user_can('manage_network')) {
+            return new \WP_Error('rest_forbidden', __('Multisite network administrator privileges required.', 'webcare-pro-security'), ['status' => 403]);
+        }
         if (!class_exists('\\WebCareProScanner\\Firewall\\ServerSecurityEngine')) {
             $f = WEBCAREPROSCAN_PATH . 'includes/Firewall/ServerSecurityEngine.php';
             if (file_exists($f)) {
@@ -9652,6 +9676,9 @@ class ScannerRoutes {
     }
 
     public static function restore_htaccess_vault_snapshot(\WP_REST_Request $request) {
+        if (is_multisite() && !current_user_can('manage_network')) {
+            return new \WP_Error('rest_forbidden', __('Multisite network administrator privileges required.', 'webcare-pro-security'), ['status' => 403]);
+        }
         if (!class_exists('\\WebCareProScanner\\Firewall\\HtaccessVaultManager')) {
             return rest_ensure_response([
                 'success' => false,
@@ -9667,6 +9694,9 @@ class ScannerRoutes {
     }
 
     public static function toggle_htaccess_lock(\WP_REST_Request $request) {
+        if (is_multisite() && !current_user_can('manage_network')) {
+            return new \WP_Error('rest_forbidden', __('Multisite network administrator privileges required.', 'webcare-pro-security'), ['status' => 403]);
+        }
         if (!class_exists('\\WebCareProScanner\\Firewall\\HtaccessVaultManager')) {
             return rest_ensure_response([
                 'success' => false,
@@ -9694,6 +9724,9 @@ class ScannerRoutes {
     }
 
     public static function heal_database_core_urls() {
+        if (is_multisite() && !current_user_can('manage_network')) {
+            return new \WP_Error('rest_forbidden', __('Multisite network administrator privileges required.', 'webcare-pro-security'), ['status' => 403]);
+        }
         if (!class_exists('\\WebCareProScanner\\Firewall\\RedirectCanaryEngine')) {
             return rest_ensure_response([
                 'success' => false,
@@ -9706,6 +9739,9 @@ class ScannerRoutes {
     }
 
     public static function create_htaccess_vault_snapshot() {
+        if (is_multisite() && !current_user_can('manage_network')) {
+            return new \WP_Error('rest_forbidden', __('Multisite network administrator privileges required.', 'webcare-pro-security'), ['status' => 403]);
+        }
         if (!class_exists('\\WebCareProScanner\\Firewall\\HtaccessVaultManager')) {
             return rest_ensure_response([
                 'success' => false,
@@ -9729,6 +9765,9 @@ class ScannerRoutes {
     }
 
     public static function compile_micro_waf(\WP_REST_Request $request) {
+        if (is_multisite() && !current_user_can('manage_network')) {
+            return new \WP_Error('rest_forbidden', __('Multisite network administrator privileges required.', 'webcare-pro-security'), ['status' => 403]);
+        }
         if (!class_exists('\\WebCareProScanner\\Firewall\\MicroWafCompiler')) {
             $f = WEBCAREPROSCAN_PATH . 'includes/Firewall/MicroWafCompiler.php';
             if (file_exists($f)) {
@@ -9740,6 +9779,9 @@ class ScannerRoutes {
     }
 
     public static function install_micro_waf_preload(\WP_REST_Request $request) {
+        if (is_multisite() && !current_user_can('manage_network')) {
+            return new \WP_Error('rest_forbidden', __('Multisite network administrator privileges required.', 'webcare-pro-security'), ['status' => 403]);
+        }
         if (!class_exists('\\WebCareProScanner\\Firewall\\MicroWafCompiler')) {
             $f = WEBCAREPROSCAN_PATH . 'includes/Firewall/MicroWafCompiler.php';
             if (file_exists($f)) {
@@ -9751,6 +9793,9 @@ class ScannerRoutes {
     }
 
     public static function uninstall_micro_waf_preload(\WP_REST_Request $request) {
+        if (is_multisite() && !current_user_can('manage_network')) {
+            return new \WP_Error('rest_forbidden', __('Multisite network administrator privileges required.', 'webcare-pro-security'), ['status' => 403]);
+        }
         if (!class_exists('\\WebCareProScanner\\Firewall\\MicroWafCompiler')) {
             $f = WEBCAREPROSCAN_PATH . 'includes/Firewall/MicroWafCompiler.php';
             if (file_exists($f)) {
@@ -10398,6 +10443,9 @@ class ScannerRoutes {
      * - 'delete_user': Safely deletes anomalous/ghost account with mandatory pre-action snapshot.
      */
     public static function remediate_user(\WP_REST_Request $request) {
+        if (is_multisite() && !current_user_can('manage_network')) {
+            return new \WP_Error('rest_forbidden', __('Multisite network administrator privileges required.', 'webcare-pro-security'), ['status' => 403]);
+        }
         global $wpdb;
 
         $params = $request->get_json_params() ?: [];
@@ -10476,6 +10524,9 @@ class ScannerRoutes {
      * 1-Click Restore a deleted or quarantined user account.
      */
     public static function restore_user_account(\WP_REST_Request $request) {
+        if (is_multisite() && !current_user_can('manage_network')) {
+            return new \WP_Error('rest_forbidden', __('Multisite network administrator privileges required.', 'webcare-pro-security'), ['status' => 403]);
+        }
         $params = $request->get_json_params() ?: $request->get_params();
         $backup_file = !empty($params['backup_file']) ? sanitize_text_field($params['backup_file']) : '';
         $user_id = !empty($params['user_id']) ? (int) $params['user_id'] : 0;
@@ -13350,6 +13401,9 @@ class ScannerRoutes {
     }
 
     public static function restore_self_defense_file(\WP_REST_Request $request) {
+        if (is_multisite() && !current_user_can('manage_network')) {
+            return new \WP_Error('rest_forbidden', __('Multisite network administrator privileges required.', 'webcare-pro-security'), ['status' => 403]);
+        }
         if (!class_exists('\WebCareProScanner\Security\PluginSelfDefense')) {
             $file = WEBCAREPROSCAN_PATH . 'includes/Security/PluginSelfDefense.php';
             if (file_exists($file)) {
@@ -14005,6 +14059,9 @@ class ScannerRoutes {
     }
 
     public static function restore_local_snapshot_file(\WP_REST_Request $request) {
+        if (is_multisite() && !current_user_can('manage_network')) {
+            return new \WP_Error('rest_forbidden', __('Multisite network administrator privileges required.', 'webcare-pro-security'), ['status' => 403]);
+        }
         $params = $request->get_json_params() ?: [];
         $snap_id = sanitize_key($params['snapshot_id'] ?? '');
         $rel_path = sanitize_text_field($params['rel_path'] ?? '');
@@ -14018,6 +14075,9 @@ class ScannerRoutes {
     }
 
     public static function delete_local_snapshot(\WP_REST_Request $request) {
+        if (is_multisite() && !current_user_can('manage_network')) {
+            return new \WP_Error('rest_forbidden', __('Multisite network administrator privileges required.', 'webcare-pro-security'), ['status' => 403]);
+        }
         $params = $request->get_json_params() ?: [];
         $snap_id = sanitize_key($params['snapshot_id'] ?? '');
 
