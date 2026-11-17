@@ -2288,12 +2288,19 @@ class ScannerRoutes {
 
         // Stack Profile & Capabilities
         $stack_snapshot = [];
+        $caf_status = [
+            'active_profile'      => 'balanced',
+            'recommended_profile' => 'balanced',
+        ];
         if (class_exists('\\WebCareProScanner\\Firewall\\CAF\\AdaptiveFirewallAdvisor')) {
             $advisor = new \WebCareProScanner\Firewall\CAF\AdaptiveFirewallAdvisor();
             $snapshot_obj = $advisor->get_stack_snapshot();
             if (method_exists($snapshot_obj, 'to_array')) {
                 $stack_snapshot = $snapshot_obj->to_array();
             }
+            $rec_matrix = $advisor->get_recommendations_matrix($snapshot_obj);
+            $caf_status['active_profile']      = $rec_matrix['current_profile'] ?? 'balanced';
+            $caf_status['recommended_profile'] = $rec_matrix['recommended_profile'] ?? 'balanced';
         }
         $capability_profile = [];
         if (class_exists('\\WebCareProScanner\\Advisor\\SiteCapabilityProfiler')) {
@@ -2518,6 +2525,7 @@ class ScannerRoutes {
             'preload_waf'           => $preload_waf_status,
             'egress_status'         => $egress_status,
             'stack_snapshot'        => $stack_snapshot,
+            'caf_status'            => $caf_status,
             'capability_profile'    => $capability_profile,
             'notification_settings' => $notification_settings,
             'php_extension_gate'    => $php_extension_gate,
@@ -2664,8 +2672,25 @@ class ScannerRoutes {
                 }
             }
 
-            // Apply Archetype-specific Smart Rules & CAF Protection Profile
-            if ($archetype === 'ecommerce') {
+            // Apply Archetype & Hosting-specific Smart Rules & CAF Protection Profile
+            $explicit_caf_profile = !empty($params['caf_profile']) ? sanitize_key($params['caf_profile']) : '';
+            if (empty($explicit_caf_profile) && !empty($params['scan_memory_safety_envelope']) && $params['scan_memory_safety_envelope'] === 'strict') {
+                $explicit_caf_profile = \WebCareProScanner\Firewall\CAF\AdaptiveFirewallAdvisor::PROFILE_CPANEL_SHARED;
+            }
+
+            if (!empty($explicit_caf_profile) && class_exists('\\WebCareProScanner\\Firewall\\CAF\\AdaptiveFirewallAdvisor')) {
+                $advisor = new \WebCareProScanner\Firewall\CAF\AdaptiveFirewallAdvisor();
+                $advisor->apply_profile($explicit_caf_profile);
+
+                if (in_array($explicit_caf_profile, [\WebCareProScanner\Firewall\CAF\AdaptiveFirewallAdvisor::PROFILE_ECOMMERCE_HARDENED, \WebCareProScanner\Firewall\CAF\AdaptiveFirewallAdvisor::PROFILE_HYBRID_PORTAL], true)) {
+                    $firewall_payload['waf_ecommerce_safe_mode']         = true;
+                    $firewall_payload['waf_woo_carding_protection']      = true;
+                    $firewall_payload['waf_woo_coupon_protection']       = true;
+                    $firewall_payload['waf_woo_registration_protection'] = true;
+                    $firewall_payload['waf_woo_cart_flood_protection']   = true;
+                    $firewall_payload['waf_woo_scraping_protection']     = true;
+                }
+            } elseif ($archetype === 'ecommerce') {
                 $firewall_payload['waf_ecommerce_safe_mode']         = true;
                 $firewall_payload['waf_woo_carding_protection']      = true;
                 $firewall_payload['waf_woo_coupon_protection']       = true;
