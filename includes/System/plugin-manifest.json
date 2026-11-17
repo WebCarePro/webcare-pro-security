@@ -1,6 +1,6 @@
 {
   "version": "2.18.0",
-  "generated_at": "2026-11-17T22:09:49.541Z",
+  "generated_at": "2026-11-17T22:16:11.244Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -444,8 +444,8 @@
       "size": 40170
     },
     "includes/Firewall/Core/ExploitSignatureEngine.php": {
-      "sha256": "18716fbbfb03108f9e36ccab9c480df5a00b323286a5e7dbdc2ee248bdbb705e",
-      "size": 113748
+      "sha256": "79b35aea32e2a5f70c34b1444f7ae4f7bb4d8e6e3b8799ae1c6b44901e98d14d",
+      "size": 113749
     },
     "includes/Firewall/Core/RaspPrivilegeGuard.php": {
       "sha256": "6cd05a9ca8b1b046311ad6853a061203b879524b57a6d4b9a0957c8878e06225",
