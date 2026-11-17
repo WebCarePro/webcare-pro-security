@@ -57,13 +57,25 @@ class TelemetrySnapshot {
         $has_cf_ray         = !empty($_SERVER['HTTP_CF_RAY']);
         $remote_ip          = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '';
         $is_cf_ip           = class_exists(FirewallEngine::class) && FirewallEngine::is_cloudflare_ip($remote_ip);
+        
+        $cf_settings        = class_exists(SettingsManager::class) ? SettingsManager::get_settings() : [];
         $is_cf_configured   = false;
         if (class_exists(CloudflareService::class) && method_exists(CloudflareService::class, 'is_configured')) {
             $is_cf_configured = CloudflareService::is_configured();
-        } elseif (class_exists(SettingsManager::class)) {
-            $cf_settings = SettingsManager::get_settings();
+        } else {
             $is_cf_configured = !empty($cf_settings['cloudflare_api_token']) && !empty($cf_settings['cloudflare_zone_id']);
         }
+
+        $cf_connected         = !empty($cf_settings['cloudflare_enabled']) && (!empty($cf_settings['has_cloudflare_key']) || !empty($cf_settings['cloudflare_api_token']));
+        $cf_auto_sync_bans    = !empty($cf_settings['cloudflare_enabled']) && !empty($cf_settings['cloudflare_auto_sync_bans']);
+        $cf_zone_id           = (string) ($cf_settings['cloudflare_zone_id'] ?? get_option('webcareproscan_cf_zone_id', ''));
+        $site_host            = wp_parse_url(home_url(), PHP_URL_HOST) ?: '';
+        $zone_name            = class_exists(CloudflareService::class) ? CloudflareService::extract_root_domain($site_host) : $site_host;
+        $edge_rules_count     = ($is_cf_configured && !empty($cf_zone_id) && class_exists(CloudflareService::class)) ? CloudflareService::get_ip_rules_count($cf_zone_id) : 0;
+        $active_edge_bans     = get_option('webcareproscan_cf_active_edge_bans', []);
+        $active_edge_bans_cnt = is_array($active_edge_bans) ? count($active_edge_bans) : 0;
+        $waf_settings         = get_option('webcareproscan_waf_settings', []);
+        $local_blocks_cnt     = count(array_filter(array_map('trim', explode("\n", (string) ($waf_settings['waf_blocked_ips'] ?? '')))));
 
         $powered_by_cf = $has_cf_ip_header || $has_cf_ray || $is_cf_ip || $is_cf_configured;
         $cf_mode_desc  = 'Direct Origin (No Cloudflare Detected)';
@@ -109,10 +121,18 @@ class TelemetrySnapshot {
                 'database_prefix'     => $wpdb->prefix ?? 'wp_',
             ],
             'edge_network' => [
-                'powered_by_cloudflare' => $powered_by_cf,
-                'cloudflare_status'     => $cf_mode_desc,
-                'cf_ray_detected'       => $has_cf_ray,
-                'cf_sync_enabled'       => $is_cf_configured,
+                'powered_by_cloudflare'     => $powered_by_cf,
+                'cloudflare_connected'      => $cf_connected || $is_cf_configured,
+                'cloudflare_status'         => $cf_mode_desc,
+                'cloudflare_zone'           => $zone_name,
+                'cloudflare_zone_id_masked' => !empty($cf_zone_id) ? substr($cf_zone_id, 0, 4) . '...' . substr($cf_zone_id, -4) : '',
+                'cf_ray_detected'           => $has_cf_ray,
+                'cf_proxy_active'           => $has_cf_ray || $has_cf_ip_header || $is_cf_ip,
+                'cf_sync_enabled'           => $cf_auto_sync_bans,
+                'cf_auto_sync_bans_enabled' => $cf_auto_sync_bans,
+                'cf_edge_rules_count'       => $edge_rules_count,
+                'cf_active_edge_bans_count' => $active_edge_bans_cnt,
+                'local_active_blocks_count' => $local_blocks_cnt,
             ],
             'wordpress' => [
                 'core_version'        => $wp_version ?? 'Unknown',

@@ -1078,6 +1078,12 @@ class ScannerRoutes {
             'permission_callback' => $permission,
         ]);
 
+        register_rest_route(self::NAMESPACE, '/cloudflare/sync-all-blocked-ips', [
+            'methods'             => 'POST',
+            'callback'            => [__CLASS__, 'sync_all_blocked_ips_to_cloudflare'],
+            'permission_callback' => $permission,
+        ]);
+
         register_rest_route(self::NAMESPACE, '/cloudflare/banned-ips', [
             'methods'             => 'GET',
             'callback'            => [__CLASS__, 'get_cloudflare_banned_ips'],
@@ -11432,6 +11438,101 @@ class ScannerRoutes {
         }
 
         return rest_ensure_response($result);
+    }
+
+    /**
+     * Batch synchronize all active locally blocked IP addresses and CIDR subnets to Cloudflare Edge.
+     *
+     * @param \WP_REST_Request $request
+     * @return \WP_REST_Response|\WP_Error
+     */
+    public static function sync_all_blocked_ips_to_cloudflare(\WP_REST_Request $request) {
+        if (!self::ensure_cloudflare_service()) {
+            return new \WP_Error('service_unavailable', __('Cloudflare service file is missing.', 'webcare-pro-security'), ['status' => 500]);
+        }
+
+        $settings = \WebCareProScanner\System\SettingsManager::get_settings();
+        $zone_id  = $settings['cloudflare_zone_id'] ?? '';
+        if (empty($zone_id) || empty($settings['cloudflare_api_token'])) {
+            return new \WP_Error('cloudflare_not_configured', __('Cloudflare credentials not configured. Please connect your Cloudflare API Token and Zone ID first.', 'webcare-pro-security'), ['status' => 400]);
+        }
+
+        // 1. Gather all locally blocked IPs and subnets
+        $waf_settings = get_option('webcareproscan_waf_settings', []);
+        $raw_blocked  = is_array($waf_settings) ? (string) ($waf_settings['waf_blocked_ips'] ?? '') : '';
+        $lines        = array_filter(array_map('trim', explode("\n", $raw_blocked)));
+        $unique_ips   = array_values(array_unique($lines));
+
+        // Also check metadata ledger for reasons
+        $all_block_meta = class_exists('\WebCareProScanner\Firewall\FirewallEngine')
+            ? \WebCareProScanner\Firewall\FirewallEngine::get_all_block_meta()
+            : [];
+
+        // 2. Fetch active edge bans ledger
+        $active_edge_bans = get_option('webcareproscan_cf_active_edge_bans', []);
+        if (!is_array($active_edge_bans)) {
+            $active_edge_bans = [];
+        }
+
+        $synced_count         = 0;
+        $already_synced_count = 0;
+        $failed_count         = 0;
+        $errors               = [];
+
+        foreach ($unique_ips as $entry) {
+            if ($entry === '') {
+                continue;
+            }
+
+            // Already synced according to ledger
+            if (isset($active_edge_bans[$entry])) {
+                $already_synced_count++;
+                continue;
+            }
+
+            $reason = !empty($all_block_meta[$entry]['reason'])
+                ? (string) $all_block_meta[$entry]['reason']
+                : __('Local WAF blocked IP synchronized to Cloudflare Edge', 'webcare-pro-security');
+
+            $res = \WebCareProScanner\Cloudflare\CloudflareService::block_ip($entry, $reason);
+            if (!empty($res['success'])) {
+                $synced_count++;
+            } else {
+                $failed_count++;
+                $errors[] = sprintf('%s: %s', $entry, $res['message'] ?? 'Failed');
+            }
+        }
+
+        if ($synced_count > 0 && class_exists('\WebCareProScanner\System\WebCareActivityLogger')) {
+            $current_user = wp_get_current_user();
+            $user_login   = ($current_user && $current_user->exists()) ? $current_user->user_login : 'admin';
+            \WebCareProScanner\System\WebCareActivityLogger::notice(
+                'cloudflare_batch_sync_completed',
+                'firewall',
+                [
+                    'synced_count'         => $synced_count,
+                    'already_synced_count' => $already_synced_count,
+                    'total_blocked'        => count($unique_ips),
+                    'failed_count'         => $failed_count,
+                    'description'          => sprintf('Admin %s batch synchronized %d local blocked IPs to Cloudflare Edge (%d were already active at edge).', $user_login, $synced_count, $already_synced_count),
+                ]
+            );
+        }
+
+        return rest_ensure_response([
+            'success'              => true,
+            'synced_count'         => $synced_count,
+            'already_synced_count' => $already_synced_count,
+            'total_blocked'        => count($unique_ips),
+            'failed_count'         => $failed_count,
+            'errors'               => $errors,
+            'message'              => sprintf(
+                /* translators: 1: synced count, 2: already synced count */
+                __('Successfully pushed %1$d IPs to Cloudflare Edge (%2$d already active at Edge).', 'webcare-pro-security'),
+                $synced_count,
+                $already_synced_count
+            ),
+        ]);
     }
 
     public static function get_cloudflare_banned_ips(\WP_REST_Request $request) {

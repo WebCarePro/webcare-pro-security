@@ -258,6 +258,8 @@ class WafFileLogger {
             'user_role'        => $user_role,
             'is_authenticated' => $is_authenticated,
             'hostname'         => isset($_SERVER['HTTP_HOST']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_HOST'])) : '',
+            'cf_sync_enabled'  => class_exists('\\WebCareProScanner\\System\\SettingsManager') ? (!empty(\WebCareProScanner\System\SettingsManager::get_settings()['cloudflare_enabled']) && !empty(\WebCareProScanner\System\SettingsManager::get_settings()['cloudflare_auto_sync_bans'])) : false,
+            'cf_connected'     => class_exists('\\WebCareProScanner\\System\\SettingsManager') ? (!empty(\WebCareProScanner\System\SettingsManager::get_settings()['cloudflare_enabled']) && !empty(\WebCareProScanner\System\SettingsManager::get_settings()['has_cloudflare_key'])) : false,
         ];
 
         self::append_record_to_file($incident_record);
@@ -518,6 +520,59 @@ class WafFileLogger {
         $sliced_logs = array_slice($all_matched, $offset, $limit);
         $total_pages = max(1, (int) ceil($total / $limit));
         $page        = (int) floor($offset / $limit) + 1;
+
+        // Correlate active blocklist and Cloudflare Edge sync state
+        $all_block_meta  = class_exists(FirewallEngine::class) ? FirewallEngine::get_all_block_meta() : [];
+        $waf_settings    = get_option('webcareproscan_waf_settings', []);
+        $raw_blocked_ips = is_array($waf_settings) ? (string) ($waf_settings['waf_blocked_ips'] ?? '') : '';
+        $blocked_ip_set  = array_flip(array_filter(array_map('trim', explode("\n", $raw_blocked_ips))));
+
+        $active_edge_bans = get_option('webcareproscan_cf_active_edge_bans', []);
+        if (!is_array($active_edge_bans)) {
+            $active_edge_bans = [];
+        }
+
+        $cf_settings = class_exists('\WebCareProScanner\System\SettingsManager')
+            ? \WebCareProScanner\System\SettingsManager::get_settings()
+            : [];
+        $cf_auto_sync_enabled = !empty($cf_settings['cloudflare_enabled']) && !empty($cf_settings['cloudflare_auto_sync_bans']);
+        $cf_connected         = !empty($cf_settings['cloudflare_enabled']) && !empty($cf_settings['has_cloudflare_key']);
+
+        foreach ($sliced_logs as &$log) {
+            $ip        = (string) ($log['ip_address'] ?? '');
+            $is_banned = false;
+            $cf_synced = false;
+            $ban_scope = 'none';
+            $ban_meta  = null;
+
+            if ($ip !== '') {
+                if (isset($blocked_ip_set[$ip]) || isset($all_block_meta[$ip])) {
+                    $is_banned = true;
+                    $ban_meta  = $all_block_meta[$ip] ?? null;
+                }
+                if (isset($active_edge_bans[$ip])) {
+                    $cf_synced = true;
+                }
+                if ($is_banned && $cf_synced) {
+                    $ban_scope = 'edge_synced';
+                } elseif ($cf_synced) {
+                    $is_banned = true;
+                    $ban_scope = 'edge_synced';
+                } elseif ($is_banned) {
+                    $ban_scope = 'local';
+                }
+            }
+
+            $log['is_banned']       = $is_banned;
+            $log['cf_synced']       = $cf_synced;
+            $log['ban_scope']       = $ban_scope;
+            $log['cf_sync_enabled'] = $cf_auto_sync_enabled;
+            $log['cf_connected']    = $cf_connected;
+            if ($ban_meta) {
+                $log['ban_meta'] = $ban_meta;
+            }
+        }
+        unset($log);
 
         return [
             'logs'            => $sliced_logs,

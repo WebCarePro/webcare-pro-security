@@ -274,7 +274,7 @@ export const ScanLogsPage: React.FC<ScanLogsPageProps> = ({
     }, 250);
   };
 
-  const executeHistoryExport = () => {
+  const executeHistoryExport = async () => {
     setIsExportingHistory(true);
     try {
       const filename = generateStandardLogFilename('scan-history', historyExportFormat, historyExportScope === 'date' ? historyExportDate : undefined);
@@ -293,8 +293,18 @@ export const ScanLogsPage: React.FC<ScanLogsPageProps> = ({
         return;
       }
 
+      let envSnapshot: any = null;
+      try {
+        const snapRes = await apiRequest({ path: '/system/telemetry-snapshot', method: 'GET' });
+        if (snapRes && snapRes.success && snapRes.data) {
+          envSnapshot = snapRes.data;
+        }
+      } catch (e) {
+        // Fallback
+      }
+
       if (historyExportFormat === 'json') {
-        const payload = {
+        const payload: any = {
           report_generator: 'WebCare Pro Security & Firewall - Audit Ledger',
           specialist: 'Mir Alamin (WebCare Pro)',
           specialist_role: 'Senior Linux SysAdmin & WordPress Security Engineer',
@@ -305,6 +315,10 @@ export const ScanLogsPage: React.FC<ScanLogsPageProps> = ({
           total_runs: targetRuns.length,
           runs: targetRuns,
         };
+        if (envSnapshot) {
+          payload.environment_snapshot = envSnapshot;
+          payload.edge_telemetry = envSnapshot.edge_network || null;
+        }
         const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8;' });
         triggerDownload(blob, filename);
       } else {
@@ -346,7 +360,26 @@ export const ScanLogsPage: React.FC<ScanLogsPageProps> = ({
           escapeCell(s.duration || s.duration_ms || ''),
         ].join(','));
 
-        const csvContent = '\uFEFF' + [headers.map(escapeCell).join(','), ...rows].join('\r\n');
+        let csvContent = '\uFEFF';
+        if (envSnapshot) {
+          const cfText = envSnapshot?.edge_network?.powered_by_cloudflare
+            ? `YES (${envSnapshot?.edge_network?.cloudflare_status || 'Cloudflare Edge'})`
+            : 'NO (Direct Origin)';
+          const preamble = [
+            '# =============================================================================',
+            '# WebCare Pro Security & Firewall - SCAN AUDIT HISTORY LEDGER',
+            `# Site Domain: ${envSnapshot?.site?.domain || 'Unknown'} | Real Server IP: ${envSnapshot?.server?.real_ip || 'Unknown'}`,
+            `# Cloudflare Edge: ${cfText}`,
+            `# Cloudflare Integration: ${envSnapshot?.edge_network?.cloudflare_connected ? 'CONNECTED' : 'NOT CONNECTED'} | Auto-Ban Sync: ${envSnapshot?.edge_network?.cf_auto_sync_bans_enabled ? 'ENABLED' : 'DISABLED'} | Active Edge Bans: ${envSnapshot?.edge_network?.cf_active_edge_bans_count || 0} | Local Blocks: ${envSnapshot?.edge_network?.local_active_blocks_count || 0}`,
+            `# Server Software: ${envSnapshot?.server?.software || 'Unknown'} | PHP: ${envSnapshot?.server?.php_version || 'Unknown'} | WP Core: ${envSnapshot?.wordpress?.core_version || 'Unknown'}`,
+            `# Active Theme: ${envSnapshot?.theme?.active_theme?.name || 'Unknown'} (v${envSnapshot?.theme?.active_theme?.version || 'Unknown'})`,
+            `# Exported At (UTC): ${envSnapshot?.exported_at_utc || new Date().toISOString()}`,
+            '# ============================================================================='
+          ].join('\r\n');
+          csvContent += preamble + '\r\n';
+        }
+        csvContent += [headers.map(escapeCell).join(','), ...rows].join('\r\n');
+
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
         triggerDownload(blob, filename);
       }

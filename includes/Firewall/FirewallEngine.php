@@ -6099,8 +6099,9 @@ class FirewallEngine {
             $eligible_for_ip_ban = false;
         }
 
-        // Cloudflare sync preference only applies if the rule is eligible for an IP ban; never causes a ban independently
-        $rule_sync_cf = $eligible_for_ip_ban && !empty($rule['sync_cloudflare']);
+        // Cloudflare sync preference: automatically sync if globally enabled in settings (cloudflare_auto_sync_bans) or explicitly requested by rule
+        $cf_auto_sync_active = !empty($settings['cloudflare_enabled']) && !empty($settings['cloudflare_auto_sync_bans']);
+        $rule_sync_cf        = $eligible_for_ip_ban && ($cf_auto_sync_active || !empty($rule['sync_cloudflare']));
 
         if ($eligible_for_ip_ban) {
             $ban_reason        = sprintf('[%s] %s', $rule_id_str ?: $rule_cat, $rule['description'] ?? 'Critical WAF exploit intercepted');

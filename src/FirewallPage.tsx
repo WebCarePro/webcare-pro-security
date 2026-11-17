@@ -575,6 +575,32 @@ export const FirewallPage = ({
   const [bannedIpsTotal, setBannedIpsTotal] = useState<number>(0);
   const [unbanningRuleId, setUnbanningRuleId] = useState<string | null>(null);
   const [bannedIpSearch, setBannedIpSearch] = useState<string>('');
+  const [isBatchSyncingCf, setIsBatchSyncingCf] = useState<boolean>(false);
+
+  const handleSyncAllBlockedToCloudflare = async () => {
+    if (!cfStatus?.configured) {
+      showFirewallNotice('error', 'Cloudflare integration is not configured or connected.');
+      return;
+    }
+    setIsBatchSyncingCf(true);
+    try {
+      const res = await apiRequest({
+        path: '/cloudflare/sync-all-blocked-ips',
+        method: 'POST'
+      });
+      if (res && res.success) {
+        showFirewallNotice('success', res.message || `Successfully pushed ${res.synced_count || 0} IPs to Cloudflare Edge.`);
+        await loadBannedIps();
+        await fetchBlocklistData();
+      } else {
+        showFirewallNotice('error', res?.message || 'Failed to sync blocked IPs to Cloudflare Edge.');
+      }
+    } catch (e: any) {
+      showFirewallNotice('error', `Error syncing to Cloudflare Edge: ${e?.message || 'Network error'}`);
+    } finally {
+      setIsBatchSyncingCf(false);
+    }
+  };
 
   const handleOpenBannedIpsModal = async () => {
     setShowBannedIpsModal(true);
@@ -5853,7 +5879,32 @@ export const FirewallPage = ({
                     {lockedIpsList.length} Active
                   </span>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  {Boolean(cfStatus?.configured && lockedIpsList.length > 0) && (
+                    <button
+                      type="button"
+                      className="webcare-btn"
+                      onClick={handleSyncAllBlockedToCloudflare}
+                      disabled={isBatchSyncingCf}
+                      style={{
+                        fontSize: '11px',
+                        padding: '5px 12px',
+                        background: 'rgba(249, 115, 22, 0.08)',
+                        border: '1px solid rgba(249, 115, 22, 0.35)',
+                        color: '#ea580c',
+                        borderRadius: '5px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '5px',
+                        fontWeight: 700,
+                        cursor: isBatchSyncingCf ? 'not-allowed' : 'pointer'
+                      }}
+                      title="Push all active local blocked IP addresses and subnets to Cloudflare Edge IP Access Rules"
+                    >
+                      {isBatchSyncingCf ? <Loader2 size={12} className="webcare-spin-icon" /> : <Cloud size={12} />}
+                      <span>{isBatchSyncingCf ? 'Pushing to Edge...' : 'Sync All to Cloudflare Edge'}</span>
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="webcare-btn"
@@ -8380,7 +8431,32 @@ export const FirewallPage = ({
                     </span>
                   )}
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  {Boolean(cfStatus?.configured && lockedIpsList.length > 0) && (
+                    <button
+                      type="button"
+                      className="webcare-btn"
+                      onClick={handleSyncAllBlockedToCloudflare}
+                      disabled={isBatchSyncingCf}
+                      style={{
+                        fontSize: '11px',
+                        padding: '5px 12px',
+                        background: 'rgba(249, 115, 22, 0.08)',
+                        border: '1px solid rgba(249, 115, 22, 0.35)',
+                        color: '#ea580c',
+                        borderRadius: '5px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '5px',
+                        fontWeight: 700,
+                        cursor: isBatchSyncingCf ? 'not-allowed' : 'pointer'
+                      }}
+                      title="Push all active local blocked IP addresses and subnets to Cloudflare Edge IP Access Rules"
+                    >
+                      {isBatchSyncingCf ? <Loader2 size={12} className="webcare-spin-icon" /> : <Cloud size={12} />}
+                      <span>{isBatchSyncingCf ? 'Pushing to Edge...' : 'Sync All to Cloudflare Edge'}</span>
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="webcare-btn"

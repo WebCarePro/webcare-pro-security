@@ -1347,10 +1347,24 @@ class CloudflareService {
      * @return int
      */
     public static function get_ip_rules_count(string $zone_id): int {
+        // 1. Query official WebCare rule tag
         $res = self::request("zones/{$zone_id}/firewall/access_rules/rules?notes=" . urlencode(self::WEBCARE_RULE_TAG) . '&per_page=1');
-        if (!empty($res['success']) && isset($res['result_info']['total_count'])) {
+        if (!empty($res['success']) && isset($res['result_info']['total_count']) && (int) $res['result_info']['total_count'] > 0) {
             return (int) $res['result_info']['total_count'];
         }
+
+        // 2. Check active synchronized edge bans ledger
+        $active_edge_bans = get_option('webcareproscan_cf_active_edge_bans', []);
+        if (is_array($active_edge_bans) && count($active_edge_bans) > 0) {
+            return count($active_edge_bans);
+        }
+
+        // 3. Fallback: query total block-mode access rules on zone
+        $res_block = self::request("zones/{$zone_id}/firewall/access_rules/rules?mode=block&per_page=1");
+        if (!empty($res_block['success']) && isset($res_block['result_info']['total_count'])) {
+            return (int) $res_block['result_info']['total_count'];
+        }
+
         return 0;
     }
 
@@ -1456,8 +1470,22 @@ class CloudflareService {
         $res = self::request("zones/{$zone_id}/firewall/access_rules/rules", 'POST', $payload);
 
         if (!empty($res['success'])) {
+            $rule_id = $res['result']['id'] ?? '';
+            // Record in active synchronized edge bans ledger
+            $active_edge_bans = get_option('webcareproscan_cf_active_edge_bans', []);
+            if (!is_array($active_edge_bans)) {
+                $active_edge_bans = [];
+            }
+            $active_edge_bans[$ip] = [
+                'rule_id'    => $rule_id,
+                'reason'     => $clean_note,
+                'created_at' => current_time('mysql'),
+            ];
+            update_option('webcareproscan_cf_active_edge_bans', $active_edge_bans);
+
             return [
                 'success' => true,
+                'rule_id' => $rule_id,
                 // translators: %s: IP address
                 'message' => sprintf(__('IP %s successfully blocked at Cloudflare Edge.', 'webcare-pro-security'), $ip),
             ];
@@ -1515,6 +1543,24 @@ class CloudflareService {
                     'created_on'  => $rule['created_on'] ?? '',
                     'modified_on' => $rule['modified_on'] ?? '',
                 ];
+            }
+
+            // Harmonize active edge bans ledger on first page load
+            if ($page === 1 && !empty($rules)) {
+                $ledger = get_option('webcareproscan_cf_active_edge_bans', []);
+                if (!is_array($ledger)) {
+                    $ledger = [];
+                }
+                foreach ($rules as $r) {
+                    if (!empty($r['ip'])) {
+                        $ledger[$r['ip']] = [
+                            'rule_id'    => $r['id'] ?? '',
+                            'reason'     => $r['reason'] ?? '',
+                            'created_at' => $r['created_on'] ?? current_time('mysql'),
+                        ];
+                    }
+                }
+                update_option('webcareproscan_cf_active_edge_bans', $ledger);
             }
 
             return [
@@ -1618,6 +1664,21 @@ class CloudflareService {
         $res = self::request("zones/{$zone_id}/firewall/access_rules/rules/{$rule_id}", 'DELETE');
 
         if (!empty($res['success'])) {
+            // Clean up from active edge bans ledger
+            $active_edge_bans = get_option('webcareproscan_cf_active_edge_bans', []);
+            if (is_array($active_edge_bans)) {
+                $modified_bans = false;
+                foreach ($active_edge_bans as $b_ip => $b_meta) {
+                    if (isset($b_meta['rule_id']) && $b_meta['rule_id'] === $rule_id) {
+                        unset($active_edge_bans[$b_ip]);
+                        $modified_bans = true;
+                    }
+                }
+                if ($modified_bans) {
+                    update_option('webcareproscan_cf_active_edge_bans', $active_edge_bans);
+                }
+            }
+
             if (class_exists('\\WebCareProScanner\\Notifications\\NotificationDispatcher')) {
                 \WebCareProScanner\Notifications\NotificationDispatcher::trigger('cf_firewall_rule_deleted', [
                     'severity' => 'warning',
@@ -1690,12 +1751,26 @@ class CloudflareService {
             }
 
             if ($deleted_count > 0) {
+                // Ensure target is removed from active edge bans ledger
+                $active_edge_bans = get_option('webcareproscan_cf_active_edge_bans', []);
+                if (is_array($active_edge_bans) && isset($active_edge_bans[$target_val])) {
+                    unset($active_edge_bans[$target_val]);
+                    update_option('webcareproscan_cf_active_edge_bans', $active_edge_bans);
+                }
+
                 return [
                     'success' => true,
                     /* translators: %s: unblocked IP or CIDR */
                     'message' => sprintf(__('IP/Range %s successfully unblocked from Cloudflare Edge.', 'webcare-pro-security'), $target_val),
                 ];
             }
+        }
+
+        // Clean up from active edge bans ledger if still present
+        $active_edge_bans = get_option('webcareproscan_cf_active_edge_bans', []);
+        if (is_array($active_edge_bans) && isset($active_edge_bans[$target_val])) {
+            unset($active_edge_bans[$target_val]);
+            update_option('webcareproscan_cf_active_edge_bans', $active_edge_bans);
         }
 
         // Fallback: If not found in active Cloudflare access rules, report clean notice

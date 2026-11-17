@@ -886,8 +886,9 @@ class CloudflareIpListSynchronizer {
 
         foreach ($targets as $t) {
             $raw_note = (string) ($t['notes'] ?? 'WebCare Local Ban');
-            if (!str_starts_with($raw_note, '[WebCare-WAF]')) {
-                $raw_note = '[WebCare-WAF] ' . $raw_note;
+            $tag = class_exists(CloudflareService::class) ? CloudflareService::WEBCARE_RULE_TAG : '[WebCare Pro Security]';
+            if (!str_starts_with($raw_note, $tag) && !str_starts_with($raw_note, '[WebCare-WAF]')) {
+                $raw_note = $tag . ' ' . $raw_note;
             }
             $payload = [
                 'mode'          => 'block',

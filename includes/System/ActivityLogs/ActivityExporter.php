@@ -70,6 +70,12 @@ class ActivityExporter {
             fwrite($out, "# Site Domain: " . ($telemetry['site']['domain'] ?? 'Unknown') . " | Real Server IP: " . ($telemetry['server']['real_ip'] ?? 'Unknown') . "\r\n");
             // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
             fwrite($out, "# Cloudflare Edge: " . $cf_text . "\r\n");
+            $cf_connected_str = !empty($telemetry['edge_network']['cloudflare_connected']) ? 'CONNECTED' : 'NOT CONNECTED';
+            $cf_sync_str      = !empty($telemetry['edge_network']['cf_auto_sync_bans_enabled']) ? 'ENABLED' : 'DISABLED';
+            $edge_bans_cnt    = (int) ($telemetry['edge_network']['cf_active_edge_bans_count'] ?? 0);
+            $local_bans_cnt   = (int) ($telemetry['edge_network']['local_active_blocks_count'] ?? 0);
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
+            fwrite($out, "# Cloudflare Integration: {$cf_connected_str} | Auto-Ban Sync: {$cf_sync_str} | Active Edge Bans: {$edge_bans_cnt} | Local Blocks: {$local_bans_cnt}\r\n");
             // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
             fwrite($out, "# Server Software: " . ($telemetry['server']['software'] ?? 'Unknown') . " | PHP: " . ($telemetry['server']['php_version'] ?? 'Unknown') . " | WP Core: " . ($telemetry['wordpress']['core_version'] ?? 'Unknown') . "\r\n");
             // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
