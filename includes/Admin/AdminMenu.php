@@ -433,7 +433,17 @@ class AdminMenu {
         elseif ($current_page === 'webcare-pro-backup') $active_tab = 'backup';
         elseif ($current_page === 'webcare-pro-server') $active_tab = 'server';
         elseif ($current_page === 'webcare-pro-forensics') $active_tab = 'forensics';
-        elseif ($current_page === 'webcare-pro-vault') $active_tab = 'vault';
+        elseif ($current_page === 'webcare-pro-vault') {
+            if ($tab_param === 'server') {
+                $active_tab = 'server';
+            } elseif ($tab_param === 'quarantine') {
+                $active_tab = 'quarantine';
+            } elseif ($tab_param === 'backup' || $tab_param === 'database') {
+                $active_tab = 'backup';
+            } else {
+                $active_tab = 'vault';
+            }
+        }
         elseif ($current_page === 'webcare-pro-waf-logs') $active_tab = 'waf_logs';
         elseif (in_array($current_page, ['webcare-pro-firewall', 'webcare-pro-vpatch', 'webcare-pro-caf'], true)) $active_tab = 'firewall';
         elseif ($current_page === 'webcare-pro-notifications') $active_tab = 'notifications';
@@ -492,7 +502,7 @@ class AdminMenu {
             $page_bundle = 'waf-logs';
         } elseif ($active_tab === 'auth' && file_exists(WEBCAREPROSCAN_PATH . 'build/auth.js')) {
             $page_bundle = 'auth';
-        } elseif (in_array($active_tab, ['vault', 'quarantine'], true) && file_exists(WEBCAREPROSCAN_PATH . 'build/vault.js')) {
+        } elseif (in_array($active_tab, ['vault', 'quarantine', 'backup', 'server'], true) && file_exists(WEBCAREPROSCAN_PATH . 'build/vault.js')) {
             $page_bundle = 'vault';
         } elseif ($active_tab === 'fim' && file_exists(WEBCAREPROSCAN_PATH . 'build/fim.js')) {
             $page_bundle = 'fim';
