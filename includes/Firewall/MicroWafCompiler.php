@@ -207,7 +207,7 @@ class MicroWafCompiler {
         // 2. High-confidence zero-false-positive attack signatures for early drop
         $compiled_signatures = [
             'SQLI-CORE' => [
-                'pattern' => '/(?:\b(?:union\s+(?:all\s+)?select|benchmark\s*\(|pg_sleep\s*\(|information_schema)\b)/i',
+                'pattern' => '/(?:(?:^|[^a-z_]|[\d.eE])union\s+(?:all\s+)?select\b|\bselect\b.{1,40}\bfrom\b.{1,40}\b[a-z0-9_]+_users\b|\b(?:benchmark|sleep|pg_sleep|get_lock)\s*\(|\binformation_schema\b)/i',
                 'desc'    => 'High-Confidence SQL Injection Probe',
             ],
             'RCE-EXEC' => [
@@ -215,7 +215,7 @@ class MicroWafCompiler {
                 'desc'    => 'Remote Code Execution / Webshell Ingress',
             ],
             'LFI-PATH' => [
-                'pattern' => '~(?:\.\.[\\\/]){2,}|(?:\/etc\/(?:passwd|shadow|hosts)|\bwindows[\\\/]win\.ini\b)~i',
+                'pattern' => '~(?:\.\.[\\\/]){2,}|(?:\/etc\/(?:passwd|shadow|hosts)|\bwindows[\\\/]win\.ini\b|php:\/\/(?:filter|input)|phar:\/\/|compress\.(?:zlib|bzip2):\/\/)~i',
                 'desc'    => 'Path Traversal / Local File Inclusion Probe',
             ],
             'RECON-DOT' => [

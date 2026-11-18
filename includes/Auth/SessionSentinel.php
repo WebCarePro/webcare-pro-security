@@ -791,6 +791,30 @@ class SessionSentinel {
                 wp_safe_redirect(add_query_arg('webcare_session_invalidated', '1', wp_login_url()));
                 exit;
             }
+
+            // Opt-In Infostealer / Stolen Session Cookie Protection
+            if (!empty($settings['session_bind_device_uuid'])) {
+                $recorded_uuid = $session_info['device_uuid'] ?? ($decoded['device_uuid'] ?? '');
+                $incoming_uuid = isset($_COOKIE['webcareproscan_device_uuid']) ? sanitize_text_field(wp_unslash($_COOKIE['webcareproscan_device_uuid'])) : '';
+                $recorded_country = $session_info['country_code'] ?? ($decoded['country_code'] ?? '');
+                $incoming_country = isset($_SERVER['HTTP_CF_IPCOUNTRY']) ? strtoupper(sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_IPCOUNTRY']))) : '';
+
+                // Compound Risk: Country mismatch + device UUID missing/mismatched + UA mismatch
+                $uuid_mismatch = (!empty($recorded_uuid) && (empty($incoming_uuid) || !hash_equals((string) $recorded_uuid, (string) $incoming_uuid)));
+                $country_mismatch = (!empty($recorded_country) && !empty($incoming_country) && $recorded_country !== 'XX' && $incoming_country !== 'XX' && $recorded_country !== $incoming_country);
+
+                if ($uuid_mismatch && $country_mismatch && $ua_mismatch) {
+                    self::terminate_session($user_id, $current_token, 'Infostealer Session Cookie Theft Detected');
+                    if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                        \WebCareProScanner\System\AuditLogger::log(
+                            'session_theft_deflected',
+                            sprintf('Deflected stolen session cookie for administrator "%s". Baseline Country: %s, Incoming Country: %s, Device UUID Mismatch. Session terminated.', $user->user_login, $recorded_country, $incoming_country)
+                        );
+                    }
+                    wp_safe_redirect(add_query_arg('webcare_session_invalidated', 'theft', wp_login_url()));
+                    exit;
+                }
+            }
         } catch (\Throwable $e) {
             // Failsafe: never disrupt WordPress admin execution
         }

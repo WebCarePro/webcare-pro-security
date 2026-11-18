@@ -61,9 +61,13 @@ class MCPAntiLockoutValidator {
         if (!is_string($raw_cidrs)) {
             return ['allowed' => false, 'reason' => 'invalid_cidr_configuration'];
         }
-        $raw_cidrs = trim($raw_cidrs);
         if ($raw_cidrs !== '') {
-            $cidrs = self::parse_cidr_list($raw_cidrs);
+            $trimmed_cidrs = trim($raw_cidrs);
+            if ($trimmed_cidrs === '') {
+                // Explicitly configured non-empty setting consisting only of whitespace: fail closed
+                return ['allowed' => false, 'reason' => 'cidr_denied'];
+            }
+            $cidrs = self::parse_cidr_list($trimmed_cidrs);
             if (!self::is_valid_cidr_list($cidrs) || !self::ip_matches_cidr_list($client_ip, $cidrs)) {
                 return ['allowed' => false, 'reason' => 'cidr_denied'];
             }
@@ -248,14 +252,22 @@ class MCPAntiLockoutValidator {
             }
 
             $parts = explode('/', $entry);
-            if (count($parts) !== 2 || !filter_var(trim($parts[0]), FILTER_VALIDATE_IP) || !preg_match('/\A[0-9]+\z/D', $parts[1])) {
+            if (count($parts) !== 2 || !filter_var(trim($parts[0]), FILTER_VALIDATE_IP)) {
+                return false;
+            }
+
+            // Strictly require canonical positive integer prefix without leading zeros or non-digits (rejects /000, /033)
+            $prefix_raw = trim($parts[1]);
+            if (!preg_match('/\A(?:0|[1-9][0-9]*)\z/D', $prefix_raw)) {
                 return false;
             }
 
             $address = trim($parts[0]);
             $bits    = filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) ? 32 : 128;
-            $prefix  = filter_var($parts[1], FILTER_VALIDATE_INT, ['options' => ['min_range' => 0, 'max_range' => $bits]]);
-            if ($prefix === false) {
+            // Security Policy: Restrict CIDR prefix to min_range => 1. A prefix of /0 (0.0.0.0/0 or ::/0)
+            // intentionally matches all internet traffic and negates IP allowlisting.
+            $prefix  = filter_var($prefix_raw, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => $bits]]);
+            if ($prefix === false || (string) $prefix !== $prefix_raw) {
                 return false;
             }
         }

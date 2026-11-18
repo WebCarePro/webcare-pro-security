@@ -233,6 +233,7 @@ if ($webcareproscan_delete_data) {
             'webcareproscan_modular_autopilot_cron',
             'webcareproscan_auto_rearm_waf',
             'webcareproscan_ephemeral_admin_expire',
+            'webcareproscan_scan_vault_temp_prune',
             'webcare_cloudflare_ip_sync_cron',
             'webcare_cf_auto_sync_edge_cron',
         ];

@@ -406,7 +406,7 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
             }
             return 'INFORMATION_SCHEMA_PROBE';
         }
-        if (preg_match('/\b(?:SLEEP|BENCHMARK)\s*\(/i', $skeleton)) {
+        if (preg_match('/\b(?:SLEEP|BENCHMARK|PG_SLEEP|GET_LOCK)\s*\(/i', $skeleton)) {
             return 'TIME_BLIND_SQL_FUNCTION';
         }
         if (preg_match('/\bLOAD_FILE\s*\(/i', $skeleton) || preg_match('/\bINTO\s+(?:OUT|DUMP)FILE\b/i', $skeleton)) {

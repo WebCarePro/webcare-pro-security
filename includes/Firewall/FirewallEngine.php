@@ -3920,6 +3920,54 @@ class FirewallEngine {
     }
 
     /**
+     * Clear all expired temporary bans from the firewall blocklist in one operation.
+     *
+     * @return int Number of expired IP bans cleared.
+     */
+    public static function clear_expired_blocked_ips(): int {
+        $settings = SettingsManager::get_settings();
+        $blocked_raw = trim($settings['waf_blocked_ips'] ?? '');
+        if (empty($blocked_raw)) {
+            return 0;
+        }
+
+        $all_meta = self::get_all_block_meta();
+        $now = time();
+        $lines = array_filter(array_map('trim', explode("\n", str_replace("\r", "", $blocked_raw))));
+        $new_lines = [];
+        $cleared_count = 0;
+
+        foreach ($lines as $line) {
+            $entry_ip = trim(preg_split('/[\s#]+/', $line)[0] ?? '');
+            if (empty($entry_ip)) {
+                continue;
+            }
+            $meta = $all_meta[$entry_ip] ?? null;
+            $expires_at = !empty($meta['expires_at']) ? (int) $meta['expires_at'] : 0;
+            // Clear if temporary ban duration has elapsed
+            if ($expires_at > 0 && $now >= $expires_at) {
+                $cleared_count++;
+                self::delete_ip_block_meta($entry_ip);
+                delete_transient('webcareproscan_lockout_ip_' . md5($entry_ip));
+                continue;
+            }
+            $new_lines[] = $line;
+        }
+
+        if ($cleared_count > 0) {
+            $settings['waf_blocked_ips'] = implode("\n", $new_lines);
+            SettingsManager::$suppress_firewall_ruleset_log = true;
+            SettingsManager::save_settings($settings);
+            SettingsManager::$suppress_firewall_ruleset_log = false;
+            if (class_exists(__NAMESPACE__ . '\MicroWafCompiler')) {
+                MicroWafCompiler::compile_script();
+            }
+        }
+
+        return $cleared_count;
+    }
+
+    /**
      * Retrieve aggregated list of all currently locked or custom-blocked IPs across engines with rich forensics.
      *
      * @return array
@@ -3936,7 +3984,13 @@ class FirewallEngine {
 
         if (!empty($blocked_raw)) {
             $lines = array_filter(array_map('trim', explode("\n", str_replace("\r", "", $blocked_raw))));
-            foreach ($lines as $ip) {
+            foreach ($lines as $line) {
+                $parts = preg_split('/[\s#]+/', $line);
+                $ip = trim($parts[0] ?? '');
+                if (empty($ip)) {
+                    continue;
+                }
+                $inline_comment = strpos($line, '#') !== false ? trim(substr($line, strpos($line, '#') + 1)) : '';
                 $seen_ips[$ip] = true;
                 $meta = $all_meta[$ip] ?? null;
 
@@ -3996,7 +4050,7 @@ class FirewallEngine {
                     $reason = !empty($meta['reason']) ? $meta['reason'] : ($detected_desc ?: 'Malicious activity blocked by security firewall policy');
                 } else {
                     $badge = 'Custom Blocklist';
-                    $reason = !empty($meta['reason']) ? $meta['reason'] : 'Permanently blocked by administrator policy';
+                    $reason = !empty($meta['reason']) ? $meta['reason'] : (!empty($inline_comment) ? $inline_comment : 'Permanently blocked by administrator policy');
                 }
 
                 // Timing & Duration Breakdown
@@ -6936,29 +6990,77 @@ class FirewallEngine {
      */
     private static function is_safe_guest_rest_mutation_route(string $route, string $method, array $safe_prefixes): bool {
         foreach ($safe_prefixes as $prefix) {
+            if ($prefix === '/wp/v2/comments') {
+                // Precise boundary matching: only exact /wp/v2/comments or child paths for POST
+                if ($route === '/wp/v2/comments' || str_starts_with($route, '/wp/v2/comments/')) {
+                    return $method === 'POST';
+                }
+                continue;
+            }
             if (str_starts_with($route, $prefix)) {
                 return true;
             }
         }
 
-        // WooCommerce documents these public cart and checkout resources with specific write verbs.
-        if (preg_match('#^/wc/store(?:/v[0-9]+)?/cart(?:/(add-item|remove-item|update-item|apply-coupon|remove-coupon|update-customer|select-shipping-rate))?$#', $route)) {
+        // Controlled active-plugin public mutation route adapter:
+        // Strictly permits the exact documented public submission endpoint only when the plugin is verified active.
+        $adapter_registry = [
+            'koko-analytics'   => ['/koko-analytics/v1/hit' => ['POST']],
+            'burst-statistics' => ['/burst/v1/track' => ['POST']],
+            'ws-form'          => ['/ws-form/v1/submit' => ['POST']],
+            'litespeed-cache'  => [
+                '/litespeed/v1/ping'  => ['POST'],
+                '/litespeed/v1/token' => ['POST'],
+            ],
+            'mailpoet'         => ['/mailpoet/v1/subscription' => ['POST']],
+        ];
+
+        foreach ($adapter_registry as $plugin_slug => $endpoints) {
+            if (isset($endpoints[$route]) && in_array($method, $endpoints[$route], true)) {
+                if (class_exists('\\WebCareProScanner\\Firewall\\CAF\\AdaptiveFirewallAdvisor')
+                    && \WebCareProScanner\Firewall\CAF\AdaptiveFirewallAdvisor::is_plugin_slug_active($plugin_slug)
+                ) {
+                    return true;
+                }
+            }
+        }
+
+        // Documented payment gateway webhook endpoints:
+        // Must carry the provider's signature header to reach the gateway's native HMAC cryptographic verification.
+        if ($method === 'POST') {
+            if ($route === '/wc-stripe/v1/webhook' && !empty($_SERVER['HTTP_STRIPE_SIGNATURE'])) {
+                return true;
+            }
+            if ($route === '/paypal/v1/incoming' && !empty($_SERVER['HTTP_PAYPAL_TRANSMISSION_SIG'])) {
+                return true;
+            }
+            if ($route === '/surecart/v1/webhooks' && (!empty($_SERVER['HTTP_X_SURECART_SIGNATURE']) || !empty($_SERVER['HTTP_WEBHOOK_SIGNATURE']))) {
+                return true;
+            }
+        }
+
+        // WooCommerce Store API: strictly match documented public cart and checkout resources and write verbs.
+        // Base /cart is GET-only; write mutations require an explicit documented cart sub-action.
+        if (preg_match('#^/wc/store(?:/v[0-9]+)?/cart/(add-item|remove-item|update-item|apply-coupon|remove-coupon|update-customer|select-shipping-rate|extensions)$#', $route)) {
             return $method === 'POST';
         }
-        if (preg_match('#^/wc/store(?:/v[0-9]+)?/cart/items(?:/[^/]+)?$#', $route)) {
-            if ($route === '/wc/store/cart/items' || preg_match('#^/wc/store/v[0-9]+/cart/items$#', $route)) {
-                return in_array($method, ['POST', 'DELETE'], true);
-            }
-            return in_array($method, ['POST', 'PUT', 'DELETE'], true);
-        }
-        if (preg_match('#^/wc/store(?:/v[0-9]+)?/cart/coupons$#', $route)) {
+        if (preg_match('#^/wc/store(?:/v[0-9]+)?/cart/items$#', $route)) {
             return in_array($method, ['POST', 'DELETE'], true);
         }
-        if (preg_match('#^/wc/store(?:/v[0-9]+)?/cart/coupon/[^/]+$#', $route)) {
+        if (preg_match('#^/wc/store(?:/v[0-9]+)?/cart/items/[^/]+$#', $route)) {
+            return in_array($method, ['POST', 'PUT', 'DELETE'], true);
+        }
+        if (preg_match('#^/wc/store(?:/v[0-9]+)?/cart/coupons?$#', $route)) {
+            return in_array($method, ['POST', 'DELETE'], true);
+        }
+        if (preg_match('#^/wc/store(?:/v[0-9]+)?/cart/coupons?/[^/]+$#', $route)) {
             return $method === 'DELETE';
         }
-        if (preg_match('#^/wc/store(?:/v[0-9]+)?/checkout(?:/[0-9]+)?$#', $route)) {
+        if (preg_match('#^/wc/store(?:/v[0-9]+)?/checkout$#', $route)) {
             return in_array($method, ['POST', 'PUT'], true);
+        }
+        if (preg_match('#^/wc/store(?:/v[0-9]+)?/checkout/[0-9]+$#', $route)) {
+            return $method === 'POST';
         }
 
         return false;

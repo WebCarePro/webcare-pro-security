@@ -1119,7 +1119,8 @@ class SettingsManager {
         $valid_ttls = [0, 7, 30, 90, 365];
         $ttl_cand   = intval($merged['mcp_token_ttl_days'] ?? ($current['mcp_token_ttl_days'] ?? 0));
         $clean['mcp_token_ttl_days'] = in_array($ttl_cand, $valid_ttls, true) ? $ttl_cand : max(0, min(365, $ttl_cand));
-        $clean['mcp_allowed_cidrs']  = sanitize_textarea_field((string) ($merged['mcp_allowed_cidrs'] ?? ($current['mcp_allowed_cidrs'] ?? '')));
+        $mcp_cidrs_input = (string) ($merged['mcp_allowed_cidrs'] ?? ($current['mcp_allowed_cidrs'] ?? ''));
+        $clean['mcp_allowed_cidrs']  = ($mcp_cidrs_input !== '' && trim($mcp_cidrs_input) === '') ? $mcp_cidrs_input : sanitize_textarea_field($mcp_cidrs_input);
 
         $valid_personas = ['observer', 'guided', 'safe_operator'];
         $clean['mcp_persona_preset'] = in_array($merged['mcp_persona_preset'] ?? '', $valid_personas, true)

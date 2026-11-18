@@ -11,6 +11,7 @@ import {
   Sliders,
   Globe,
   Trash2,
+  RotateCcw,
   Loader2,
   Lock,
   Unlock,
@@ -900,6 +901,33 @@ export const FirewallPage = ({
   const [blocklistSearch, setBlocklistSearch] = useState<string>('');
   const [expandedHistoryIps, setExpandedHistoryIps] = useState<Record<string, boolean>>({});
   const [copiedIncidentId, setCopiedIncidentId] = useState<string | null>(null);
+  const [blockedStatusFilter, setBlockedStatusFilter] = useState<'all' | 'active' | 'expired'>('all');
+  const [clearingExpiredBans, setClearingExpiredBans] = useState<boolean>(false);
+
+  const handleClearExpiredBans = async () => {
+    try {
+      setClearingExpiredBans(true);
+      const res = await apiRequest({
+        path: '/firewall/blocklist/clear-expired',
+        method: 'POST'
+      });
+      if (res && res.success) {
+        if (res.locked_ips) {
+          setLockedIpsList(res.locked_ips);
+        }
+        if (res.waf_blocked_ips !== undefined) {
+          setWafSettings(prev => ({ ...prev, waf_blocked_ips: res.waf_blocked_ips }));
+        }
+        showFirewallNotice('success', res.message || `Cleared ${res.cleared_count || 0} expired bans.`);
+      } else {
+        showFirewallNotice('error', res?.message || 'Failed to clear expired bans.');
+      }
+    } catch (e: any) {
+      showFirewallNotice('error', e?.message || 'Error clearing expired bans.');
+    } finally {
+      setClearingExpiredBans(false);
+    }
+  };
 
   // Manual block form inside modal
   const [showManualBlockForm, setShowManualBlockForm] = useState<boolean>(false);
@@ -5893,19 +5921,65 @@ export const FirewallPage = ({
                   <h3 className="webcare-firewall-section-title" style={{ fontSize: '16px', display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
                     <Ban size={18} color="#dc2626" /> Blocked IP Addresses & Subnets
                   </h3>
-                  <span style={{
-                    fontSize: '11px',
-                    fontWeight: 700,
-                    padding: '2px 8px',
-                    borderRadius: '10px',
-                    background: lockedIpsList.length > 0 ? 'rgba(220, 38, 38, 0.1)' : 'var(--webcare-bg-elevated, #f1f5f9)',
-                    color: lockedIpsList.length > 0 ? '#dc2626' : 'var(--webcare-text-muted, #64748b)',
-                    border: `1px solid ${lockedIpsList.length > 0 ? 'rgba(220, 38, 38, 0.25)' : 'var(--webcare-border, #e2e8f0)'}`
-                  }}>
-                    {lockedIpsList.length} Active
-                  </span>
+                  {(() => {
+                    const activeCount = lockedIpsList.filter(item => !item.is_expired).length;
+                    const expiredCount = lockedIpsList.filter(item => item.is_expired).length;
+                    return (
+                      <>
+                        <span style={{
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          padding: '2px 8px',
+                          borderRadius: '10px',
+                          background: activeCount > 0 ? 'rgba(220, 38, 38, 0.1)' : 'var(--webcare-bg-elevated, #f1f5f9)',
+                          color: activeCount > 0 ? '#dc2626' : 'var(--webcare-text-muted, #64748b)',
+                          border: `1px solid ${activeCount > 0 ? 'rgba(220, 38, 38, 0.25)' : 'var(--webcare-border, #e2e8f0)'}`
+                        }}>
+                          {activeCount} Active
+                        </span>
+                        {expiredCount > 0 && (
+                          <span style={{
+                            fontSize: '11px',
+                            fontWeight: 700,
+                            padding: '2px 8px',
+                            borderRadius: '10px',
+                            background: 'rgba(245, 158, 11, 0.12)',
+                            color: '#d97706',
+                            border: '1px solid rgba(245, 158, 11, 0.3)'
+                          }}>
+                            {expiredCount} Expired
+                          </span>
+                        )}
+                      </>
+                    );
+                  })()}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  {Boolean(lockedIpsList.some(item => item.is_expired)) && (
+                    <button
+                      type="button"
+                      className="webcare-btn"
+                      onClick={handleClearExpiredBans}
+                      disabled={clearingExpiredBans}
+                      style={{
+                        fontSize: '11px',
+                        padding: '5px 12px',
+                        background: 'rgba(239, 68, 68, 0.08)',
+                        border: '1px solid rgba(239, 68, 68, 0.3)',
+                        color: '#dc2626',
+                        borderRadius: '5px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '5px',
+                        fontWeight: 600,
+                        cursor: clearingExpiredBans ? 'not-allowed' : 'pointer'
+                      }}
+                      title="Purge all expired temporary ban records from the database in one click"
+                    >
+                      {clearingExpiredBans ? <Loader2 size={12} className="webcare-spin-icon" /> : <Trash2 size={12} />}
+                      <span>{clearingExpiredBans ? 'Clearing...' : `Clear Expired (${lockedIpsList.filter(item => item.is_expired).length})`}</span>
+                    </button>
+                  )}
                   {Boolean(cfStatus?.configured && lockedIpsList.length > 0) && (
                     <button
                       type="button"
@@ -6047,6 +6121,8 @@ export const FirewallPage = ({
               {/* Blocked IPs Table Header / Filter Bar */}
               {(() => {
                 const filteredBlocked = lockedIpsList.filter(item => {
+                  if (blockedStatusFilter === 'active' && item.is_expired) return false;
+                  if (blockedStatusFilter === 'expired' && !item.is_expired) return false;
                   if (!blockedTableSearch.trim()) return true;
                   const q = blockedTableSearch.toLowerCase();
                   return item.ip.toLowerCase().includes(q) || item.reason?.toLowerCase().includes(q) || item.incident_id?.toLowerCase().includes(q);
@@ -6062,6 +6138,9 @@ export const FirewallPage = ({
                 const startIndex = (currentBlockedPage - 1) * blockedPageSize;
                 const pagedBlocked = sortedBlocked.slice(startIndex, startIndex + blockedPageSize);
 
+                const activeCount = lockedIpsList.filter(item => !item.is_expired).length;
+                const expiredCount = lockedIpsList.filter(item => item.is_expired).length;
+
                 return (
                   <>
                     <div style={{
@@ -6072,46 +6151,100 @@ export const FirewallPage = ({
                       marginBottom: '8px',
                       flexWrap: 'wrap'
                     }}>
-                      <div style={{ position: 'relative', maxWidth: '320px', flex: 1, minWidth: '220px' }}>
-                        <Search size={13} style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', color: 'var(--webcare-text-muted, #94a3b8)' }} />
-                        <input
-                          type="text"
-                          placeholder="Filter blocked IPs, reason, or incident..."
-                          value={blockedTableSearch}
-                          onChange={(e) => {
-                            setBlockedTableSearch(e.target.value);
-                            setBlockedPage(1);
-                          }}
-                          className="webcare-firewall-input"
-                          style={{
-                            width: '100%',
-                            padding: '5px 8px 5px 26px',
-                            fontSize: '11px',
-                            borderRadius: '4px'
-                          }}
-                        />
-                        {blockedTableSearch && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setBlockedTableSearch('');
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: '220px', flexWrap: 'wrap' }}>
+                        <div style={{ position: 'relative', maxWidth: '320px', flex: 1, minWidth: '200px' }}>
+                          <Search size={13} style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', color: 'var(--webcare-text-muted, #94a3b8)' }} />
+                          <input
+                            type="text"
+                            placeholder="Filter blocked IPs, reason, or incident..."
+                            value={blockedTableSearch}
+                            onChange={(e) => {
+                              setBlockedTableSearch(e.target.value);
                               setBlockedPage(1);
                             }}
+                            className="webcare-firewall-input"
                             style={{
-                              position: 'absolute',
-                              right: '6px',
-                              top: '50%',
-                              transform: 'translateY(-50%)',
-                              background: 'none',
-                              border: 'none',
-                              cursor: 'pointer',
-                              color: 'var(--webcare-text-muted, #94a3b8)',
-                              padding: 0
+                              width: '100%',
+                              padding: '5px 8px 5px 26px',
+                              fontSize: '11px',
+                              borderRadius: '4px'
+                            }}
+                          />
+                          {blockedTableSearch && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setBlockedTableSearch('');
+                                setBlockedPage(1);
+                              }}
+                              style={{
+                                position: 'absolute',
+                                right: '6px',
+                                top: '50%',
+                                transform: 'translateY(-50%)',
+                                background: 'none',
+                                border: 'none',
+                                cursor: 'pointer',
+                                color: 'var(--webcare-text-muted, #94a3b8)',
+                                padding: 0
+                              }}
+                            >
+                              <X size={12} />
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Quick Status Filter Pills */}
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                          <button
+                            type="button"
+                            className="webcare-btn-micro"
+                            onClick={() => { setBlockedStatusFilter('all'); setBlockedPage(1); }}
+                            style={{
+                              fontSize: '10.5px',
+                              fontWeight: blockedStatusFilter === 'all' ? 700 : 500,
+                              padding: '3px 8px',
+                              borderRadius: '12px',
+                              background: blockedStatusFilter === 'all' ? 'var(--webcare-primary, #4f46e5)' : 'none',
+                              color: blockedStatusFilter === 'all' ? '#ffffff' : 'var(--webcare-text-muted, #64748b)',
+                              border: `1px solid ${blockedStatusFilter === 'all' ? 'var(--webcare-primary, #4f46e5)' : 'var(--webcare-border, #e2e8f0)'}`
                             }}
                           >
-                            <X size={12} />
+                            All ({lockedIpsList.length})
                           </button>
-                        )}
+                          <button
+                            type="button"
+                            className="webcare-btn-micro"
+                            onClick={() => { setBlockedStatusFilter('active'); setBlockedPage(1); }}
+                            style={{
+                              fontSize: '10.5px',
+                              fontWeight: blockedStatusFilter === 'active' ? 700 : 500,
+                              padding: '3px 8px',
+                              borderRadius: '12px',
+                              background: blockedStatusFilter === 'active' ? '#dc2626' : 'none',
+                              color: blockedStatusFilter === 'active' ? '#ffffff' : 'var(--webcare-text-muted, #64748b)',
+                              border: `1px solid ${blockedStatusFilter === 'active' ? '#dc2626' : 'var(--webcare-border, #e2e8f0)'}`
+                            }}
+                          >
+                            Active ({activeCount})
+                          </button>
+                          <button
+                            type="button"
+                            className="webcare-btn-micro"
+                            onClick={() => { setBlockedStatusFilter('expired'); setBlockedPage(1); }}
+                            style={{
+                              fontSize: '10.5px',
+                              fontWeight: blockedStatusFilter === 'expired' ? 700 : 500,
+                              padding: '3px 8px',
+                              borderRadius: '12px',
+                              background: blockedStatusFilter === 'expired' ? '#d97706' : 'none',
+                              color: blockedStatusFilter === 'expired' ? '#ffffff' : 'var(--webcare-text-muted, #64748b)',
+                              border: `1px solid ${blockedStatusFilter === 'expired' ? '#d97706' : 'var(--webcare-border, #e2e8f0)'}`
+                            }}
+                          >
+                            Expired ({expiredCount})
+                          </button>
+                        </div>
                       </div>
 
                       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -6347,30 +6480,80 @@ export const FirewallPage = ({
                                         Edit
                                       </button>
 
-                                      {/* Local Origin Firewall Unblock Button */}
-                                      <button
-                                        type="button"
-                                        className="webcare-btn"
-                                        onClick={() => handleUnblockIpFromModal(item.ip)}
-                                        disabled={unblockingIp === item.ip}
-                                        style={{
-                                          fontSize: '10.5px',
-                                          padding: '4px 8px',
-                                          borderRadius: '4px',
-                                          background: '#0284c7',
-                                          color: '#ffffff',
-                                          border: 'none',
-                                          cursor: unblockingIp === item.ip ? 'not-allowed' : 'pointer',
-                                          display: 'inline-flex',
-                                          alignItems: 'center',
-                                          gap: '4px',
-                                          fontWeight: 600
-                                        }}
-                                        title="Unblock this IP locally from WordPress"
-                                      >
-                                        {unblockingIp === item.ip ? <Loader2 size={10} className="webcare-spin" /> : <Unlock size={10} />}
-                                        Unblock
-                                      </button>
+                                      {/* Local Origin Firewall Action: Unblock for Active, Remove + Re-block for Expired */}
+                                      {item.is_expired ? (
+                                        <>
+                                          <button
+                                            type="button"
+                                            className="webcare-btn"
+                                            onClick={() => handleOpenEditBlocklistModal(item)}
+                                            style={{
+                                              fontSize: '10.5px',
+                                              padding: '4px 8px',
+                                              borderRadius: '4px',
+                                              background: 'rgba(249, 115, 22, 0.1)',
+                                              color: '#ea580c',
+                                              border: '1px solid rgba(249, 115, 22, 0.3)',
+                                              cursor: 'pointer',
+                                              display: 'inline-flex',
+                                              alignItems: 'center',
+                                              gap: '4px',
+                                              fontWeight: 600
+                                            }}
+                                            title="Re-ban this IP with a fresh duration"
+                                          >
+                                            <RotateCcw size={10} />
+                                            Re-block
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="webcare-btn"
+                                            onClick={() => handleUnblockIpFromModal(item.ip)}
+                                            disabled={unblockingIp === item.ip}
+                                            style={{
+                                              fontSize: '10.5px',
+                                              padding: '4px 8px',
+                                              borderRadius: '4px',
+                                              background: 'rgba(239, 68, 68, 0.08)',
+                                              color: '#dc2626',
+                                              border: '1px solid rgba(239, 68, 68, 0.25)',
+                                              cursor: unblockingIp === item.ip ? 'not-allowed' : 'pointer',
+                                              display: 'inline-flex',
+                                              alignItems: 'center',
+                                              gap: '4px',
+                                              fontWeight: 600
+                                            }}
+                                            title="Remove this expired record from the blocklist"
+                                          >
+                                            {unblockingIp === item.ip ? <Loader2 size={10} className="webcare-spin" /> : <Trash2 size={10} />}
+                                            Remove
+                                          </button>
+                                        </>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          className="webcare-btn"
+                                          onClick={() => handleUnblockIpFromModal(item.ip)}
+                                          disabled={unblockingIp === item.ip}
+                                          style={{
+                                            fontSize: '10.5px',
+                                            padding: '4px 8px',
+                                            borderRadius: '4px',
+                                            background: '#0284c7',
+                                            color: '#ffffff',
+                                            border: 'none',
+                                            cursor: unblockingIp === item.ip ? 'not-allowed' : 'pointer',
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '4px',
+                                            fontWeight: 600
+                                          }}
+                                          title="Unblock this IP locally from WordPress"
+                                        >
+                                          {unblockingIp === item.ip ? <Loader2 size={10} className="webcare-spin" /> : <Unlock size={10} />}
+                                          Unblock
+                                        </button>
+                                      )}
                                     </div>
                                   </td>
                                 </tr>
@@ -10270,33 +10453,87 @@ export const FirewallPage = ({
                                 </button>
                               )}
 
-                              <button
-                                type="button"
-                                className="webcare-btn"
-                                onClick={() => handleUnblockIpFromModal(item.ip)}
-                                disabled={unblockingIp === item.ip}
-                                style={{
-                                  fontSize: '11px',
-                                  padding: '5px 10px',
-                                  borderRadius: '4px',
-                                  background: '#0284c7',
-                                  color: '#ffffff',
-                                  border: 'none',
-                                  cursor: unblockingIp === item.ip ? 'not-allowed' : 'pointer',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: '4px',
-                                  fontWeight: 600
-                                }}
-                                title="Unblock this IP locally"
-                              >
-                                {unblockingIp === item.ip ? (
-                                  <Loader2 size={11} className="webcare-spin" />
-                                ) : (
-                                  <Unlock size={11} />
-                                )}
-                                Unblock IP
-                              </button>
+                              {item.is_expired ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    className="webcare-btn"
+                                    onClick={() => handleOpenEditBlocklistModal(item)}
+                                    style={{
+                                      fontSize: '11px',
+                                      padding: '5px 10px',
+                                      borderRadius: '4px',
+                                      background: 'rgba(249, 115, 22, 0.1)',
+                                      color: '#ea580c',
+                                      border: '1px solid rgba(249, 115, 22, 0.3)',
+                                      cursor: 'pointer',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '4px',
+                                      fontWeight: 600
+                                    }}
+                                    title="Re-ban this IP with a fresh duration"
+                                  >
+                                    <RotateCcw size={11} />
+                                    Re-block IP
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="webcare-btn"
+                                    onClick={() => handleUnblockIpFromModal(item.ip)}
+                                    disabled={unblockingIp === item.ip}
+                                    style={{
+                                      fontSize: '11px',
+                                      padding: '5px 10px',
+                                      borderRadius: '4px',
+                                      background: 'rgba(239, 68, 68, 0.08)',
+                                      color: '#dc2626',
+                                      border: '1px solid rgba(239, 68, 68, 0.25)',
+                                      cursor: unblockingIp === item.ip ? 'not-allowed' : 'pointer',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '4px',
+                                      fontWeight: 600
+                                    }}
+                                    title="Remove this expired record from the blocklist"
+                                  >
+                                    {unblockingIp === item.ip ? (
+                                      <Loader2 size={11} className="webcare-spin" />
+                                    ) : (
+                                      <Trash2 size={11} />
+                                    )}
+                                    Remove Record
+                                  </button>
+                                </>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="webcare-btn"
+                                  onClick={() => handleUnblockIpFromModal(item.ip)}
+                                  disabled={unblockingIp === item.ip}
+                                  style={{
+                                    fontSize: '11px',
+                                    padding: '5px 10px',
+                                    borderRadius: '4px',
+                                    background: '#0284c7',
+                                    color: '#ffffff',
+                                    border: 'none',
+                                    cursor: unblockingIp === item.ip ? 'not-allowed' : 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                    fontWeight: 600
+                                  }}
+                                  title="Unblock this IP locally"
+                                >
+                                  {unblockingIp === item.ip ? (
+                                    <Loader2 size={11} className="webcare-spin" />
+                                  ) : (
+                                    <Unlock size={11} />
+                                  )}
+                                  Unblock IP
+                                </button>
+                              )}
                             </div>
                           </div>
 

@@ -371,6 +371,7 @@ class CronRegistry {
                     [
                         'webcareproscan_scheduled_scan_cron',
                         'webcareproscan_modular_scan_cron_step',
+                        'webcareproscan_scan_vault_temp_prune',
                     ]
                 )
             )

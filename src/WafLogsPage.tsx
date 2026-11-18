@@ -49,6 +49,7 @@ import {
   X,
   Cloud,
   Loader2,
+  Plus,
   HelpCircle,
   Lightbulb,
   AlertCircle
@@ -1015,6 +1016,30 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
       setActionMessage({ type: 'error', text: err?.message || 'Failed to delete log entry.' });
     }
     setTimeout(() => setActionMessage(null), 3000);
+  };
+
+  // State & Action: 1-Click Allow Action / Route in Rule #36 / Rule #37
+  const [allowingTarget, setAllowingTarget] = useState<string | null>(null);
+
+  const handleAllowlistRuleTarget = async (rule: 36 | 37, target: string) => {
+    try {
+      setAllowingTarget(target);
+      const res = await apiRequest({
+        path: '/firewall/allowlist-rule-target',
+        method: 'POST',
+        data: { rule, target }
+      });
+      if (res && res.success) {
+        setActionMessage({ type: 'success', text: res.message || 'Allowlist successfully updated.' });
+      } else {
+        setActionMessage({ type: 'error', text: res?.message || 'Failed to update allowlist.' });
+      }
+    } catch (err: any) {
+      setActionMessage({ type: 'error', text: err?.message || 'Error updating allowlist.' });
+    } finally {
+      setAllowingTarget(null);
+      setTimeout(() => setActionMessage(null), 4000);
+    }
   };
 
   // Action: Block IP at local WAF
@@ -3338,6 +3363,69 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
                                       Rule ID: <code style={{ fontSize: '11px', color: '#4f46e5' }}>{log.rule_id}</code>
                                     </div>
                                   )}
+                                  {log.rule_id === 'WAF-GUEST-AJAX-PROBE' && (() => {
+                                    const action = log.matching_entry || (log.payload_sample?.match(/Action:\s*([^\s]+)/)?.[1]) || '';
+                                    if (!action) return null;
+                                    return (
+                                      <div style={{ marginTop: '6px' }}>
+                                        <button
+                                          type="button"
+                                          className="webcare-btn-micro"
+                                          onClick={() => handleAllowlistRuleTarget(36, action)}
+                                          disabled={allowingTarget === action}
+                                          style={{
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '4px',
+                                            fontSize: '11px',
+                                            fontWeight: 600,
+                                            padding: '3px 8px',
+                                            borderRadius: '4px',
+                                            background: 'rgba(16, 185, 129, 0.1)',
+                                            color: '#059669',
+                                            border: '1px solid rgba(16, 185, 129, 0.3)',
+                                            cursor: allowingTarget === action ? 'not-allowed' : 'pointer'
+                                          }}
+                                          title={`Permit unauthenticated guest visitors to invoke AJAX action "${action}" in Rule #36`}
+                                        >
+                                          {allowingTarget === action ? <Loader2 size={10} className="webcare-spin" /> : <Plus size={10} />}
+                                          Allow in Rule #36 ({action})
+                                        </button>
+                                      </div>
+                                    );
+                                  })()}
+                                  {(log.rule_id === 'WAF-GUEST-REST-MUTATION' || log.rule_id === 'WAF-GUEST-REST-BATCH-MUTATION') && (() => {
+                                    const rawTarget = log.matching_entry || log.request_uri || '';
+                                    const route = rawTarget.replace(/^\/wp-json/, '').split('?')[0] || '';
+                                    if (!route) return null;
+                                    return (
+                                      <div style={{ marginTop: '6px' }}>
+                                        <button
+                                          type="button"
+                                          className="webcare-btn-micro"
+                                          onClick={() => handleAllowlistRuleTarget(37, route)}
+                                          disabled={allowingTarget === route}
+                                          style={{
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '4px',
+                                            fontSize: '11px',
+                                            fontWeight: 600,
+                                            padding: '3px 8px',
+                                            borderRadius: '4px',
+                                            background: 'rgba(16, 185, 129, 0.1)',
+                                            color: '#059669',
+                                            border: '1px solid rgba(16, 185, 129, 0.3)',
+                                            cursor: allowingTarget === route ? 'not-allowed' : 'pointer'
+                                          }}
+                                          title={`Permit unauthenticated guest visitors to invoke REST route "${route}" in Rule #37`}
+                                        >
+                                          {allowingTarget === route ? <Loader2 size={10} className="webcare-spin" /> : <Plus size={10} />}
+                                          Allow in Rule #37 ({route})
+                                        </button>
+                                      </div>
+                                    );
+                                  })()}
                                   {(log.ban_reason || log.matching_entry) && (
                                     <div style={{ marginTop: '6px', display: 'flex', flexDirection: 'column', gap: '3px' }}>
                                       {log.ban_reason && (

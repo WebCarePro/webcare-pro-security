@@ -66,6 +66,7 @@ register_deactivation_hook(__FILE__, static function (): void {
         wp_clear_scheduled_hook('webcareproscan_auto_rearm_waf');
         wp_clear_scheduled_hook('webcare_cloudflare_ip_sync_cron');
         wp_clear_scheduled_hook('webcare_cf_auto_sync_edge_cron');
+        wp_clear_scheduled_hook('webcareproscan_scan_vault_temp_prune');
     }
 
     // Clean up Micro-WAF preloads and server security rules on deactivation to prevent site breakage

@@ -98,7 +98,7 @@ class ScanVaultManager {
         self::enforce_iis_vault_policy($web_config);
 
         $index = rtrim($dir, '/\\') . '/index.php';
-        if (!file_exists($index)) {
+        if (!file_exists($index) || (string) @file_get_contents($index) !== $expected_index) {
             // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
             if (@file_put_contents($index, $expected_index, LOCK_EX) === false) {
                 throw new \RuntimeException('Unable to create the Scan Vault index guard.');
@@ -922,6 +922,7 @@ class ScanVaultManager {
                     continue;
                 }
 
+                $sid = 0;
                 // Extract scan_id from filename (e.g. site_scan12_2026-11-18.json or scan_12.temp.jsonl)
                 if (preg_match('/scan_?([0-9]+)/i', basename($f), $m)) {
                     $sid = (int) $m[1];
@@ -932,6 +933,10 @@ class ScanVaultManager {
 
                 if (@unlink($f)) {
                     $count++;
+                    if ($sid > 0) {
+                        delete_option(self::OPTION_MANIFEST_PREFIX . $sid);
+                        delete_option(self::OPTION_TEMP_PREFIX . $sid);
+                    }
                 }
             }
 
@@ -952,8 +957,16 @@ class ScanVaultManager {
                 if (basename($f) === 'index.php') {
                     continue;
                 }
+                $sid = 0;
+                if (preg_match('/scan_?([0-9]+)/i', basename($f), $m)) {
+                    $sid = (int) $m[1];
+                }
                 if (@unlink($f)) {
                     $count++;
+                    if ($sid > 0) {
+                        delete_option(self::OPTION_MANIFEST_PREFIX . $sid);
+                        delete_option(self::OPTION_TEMP_PREFIX . $sid);
+                    }
                 }
             }
             return $count;
@@ -982,13 +995,33 @@ class ScanVaultManager {
         $removed = 0;
         $available_by_scan = [];
 
-        foreach (glob(rtrim($dir, '/\\') . '/scan_*_*.temp.jsonl') ?: [] as $temp_file) {
+        $locked_scan_id = class_exists('\\WebCareProScanner\\Scan\\ScanLock') ? \WebCareProScanner\Scan\ScanLock::get_locked_scan_id() : 0;
+
+        $temp_patterns = [
+            rtrim($dir, '/\\') . '/scan_*_*.temp.jsonl',
+            rtrim($dir, '/\\') . '/scan_*.temp.jsonl',
+        ];
+        $matched_files = [];
+        foreach ($temp_patterns as $pattern) {
+            foreach (glob($pattern) ?: [] as $matched_path) {
+                $matched_files[$matched_path] = true;
+            }
+        }
+
+        foreach (array_keys($matched_files) as $temp_file) {
             $filename = basename($temp_file);
-            if (!preg_match('/\Ascan_([1-9][0-9]*)_([a-f0-9]{24})\.temp\.jsonl\z/i', $filename, $matches)) {
+            if (!preg_match('/\Ascan_([1-9][0-9]*)(?:_([a-f0-9]{24}))?\.temp\.jsonl\z/i', $filename, $matches)) {
                 continue;
             }
 
             $scan_id = (int) $matches[1];
+
+            // Active Scan Guard: Never delete buffers belonging to an in-progress scan
+            if ($locked_scan_id > 0 && $scan_id === $locked_scan_id) {
+                $available_by_scan[$scan_id][] = $temp_file;
+                continue;
+            }
+
             $mtime = @filemtime($temp_file);
             if ($mtime !== false && $mtime > 0 && $mtime < $cutoff) {
                 wp_delete_file($temp_file);
@@ -1019,6 +1052,12 @@ class ScanVaultManager {
             }
 
             $scan_id = (int) $matches[1];
+
+            // Never delete or overwrite option for an active scan
+            if ($locked_scan_id > 0 && $scan_id === $locked_scan_id) {
+                continue;
+            }
+
             $saved_value = maybe_unserialize($option_row['option_value'] ?? '');
             $saved_name = is_string($saved_value) ? basename(sanitize_file_name($saved_value)) : '';
             $available = $available_by_scan[$scan_id] ?? [];
@@ -1075,6 +1114,10 @@ class ScanVaultManager {
                 if ($idx >= $keep_count || ($mtime > 0 && $mtime < $cutoff)) {
                     if (@unlink($f)) {
                         $pruned++;
+                        if (preg_match('/_scan([1-9][0-9]*)_/i', basename($f), $m)) {
+                            $sid = (int) $m[1];
+                            delete_option(self::OPTION_MANIFEST_PREFIX . $sid);
+                        }
                     }
                 }
             }

@@ -450,6 +450,18 @@ class ScannerRoutes {
             'permission_callback' => $permission,
         ]);
 
+        register_rest_route(self::NAMESPACE, '/firewall/blocklist/clear-expired', [
+            'methods'             => 'POST',
+            'callback'            => [__CLASS__, 'clear_expired_firewall_blocklist'],
+            'permission_callback' => $permission,
+        ]);
+
+        register_rest_route(self::NAMESPACE, '/firewall/allowlist-rule-target', [
+            'methods'             => 'POST',
+            'callback'            => [__CLASS__, 'allowlist_firewall_rule_target'],
+            'permission_callback' => $permission,
+        ]);
+
         register_rest_route(self::NAMESPACE, '/firewall/logs/whitelist-ip', [
             'methods'             => 'POST',
             'callback'            => [__CLASS__, 'add_firewall_whitelisted_ip'],
@@ -9533,6 +9545,130 @@ class ScannerRoutes {
             'total_locked'     => count($locked_ips),
             'waf_blocked_ips'  => $settings['waf_blocked_ips'] ?? '',
         ]);
+    }
+
+    public static function clear_expired_firewall_blocklist(\WP_REST_Request $request) {
+        $cleared = \WebCareProScanner\Firewall\FirewallEngine::clear_expired_blocked_ips();
+        $locked_ips = \WebCareProScanner\Firewall\FirewallEngine::get_all_locked_ips();
+        $settings = \WebCareProScanner\System\SettingsManager::get_settings();
+
+        if ($cleared > 0 && class_exists('\\WebCareProScanner\\System\\WebCareActivityLogger')) {
+            $current_user = wp_get_current_user();
+            $user_login = ($current_user && $current_user->exists()) ? $current_user->user_login : 'admin';
+            \WebCareProScanner\System\WebCareActivityLogger::notice(
+                'firewall_expired_bans_cleared',
+                'firewall',
+                [
+                    /* translators: %1$d: number of expired bans cleared, %2$s: admin user login */
+                    'description' => sprintf(__('Cleared %1$d expired temporary ban records from firewall blocklist by %2$s.', 'webcare-pro-security'), $cleared, $user_login),
+                ]
+            );
+        }
+
+        return rest_ensure_response([
+            'success'         => true,
+            'cleared_count'   => $cleared,
+            'locked_ips'      => $locked_ips,
+            'total_locked'    => count($locked_ips),
+            'waf_blocked_ips' => $settings['waf_blocked_ips'] ?? '',
+            /* translators: %d: number of expired bans cleared */
+            'message'         => sprintf(_n('Cleared %d expired ban record.', 'Cleared %d expired ban records.', $cleared, 'webcare-pro-security'), $cleared),
+        ]);
+    }
+
+    public static function allowlist_firewall_rule_target(\WP_REST_Request $request) {
+        $params = $request->get_json_params() ?: [];
+        $rule = (int) ($params['rule'] ?? 0);
+        $target = trim((string) ($params['target'] ?? ''));
+
+        if ($rule !== 36 && $rule !== 37) {
+            return new \WP_Error('invalid_rule', __('Rule must be either 36 (AJAX Action) or 37 (REST Route).', 'webcare-pro-security'), ['status' => 400]);
+        }
+
+        if (empty($target)) {
+            return new \WP_Error('empty_target', __('Allowlist target value is required.', 'webcare-pro-security'), ['status' => 400]);
+        }
+
+        $settings = \WebCareProScanner\System\SettingsManager::get_settings();
+        $current_user = wp_get_current_user();
+        $user_login = ($current_user && $current_user->exists()) ? $current_user->user_login : 'admin';
+
+        if ($rule === 36) {
+            $action = sanitize_key($target);
+            if (empty($action) || strlen($action) > 100) {
+                return new \WP_Error('invalid_action', __('Invalid AJAX action name format.', 'webcare-pro-security'), ['status' => 400]);
+            }
+
+            $current_raw = (string) ($settings['waf_guest_ajax_custom_allowlist'] ?? '');
+            $lines = array_filter(array_map('trim', explode("\n", str_replace("\r", '', $current_raw))));
+            if (!in_array($action, $lines, true)) {
+                if (count($lines) >= 500) {
+                    return new \WP_Error('allowlist_limit', __('Custom allowlist has reached maximum capacity (500 items).', 'webcare-pro-security'), ['status' => 400]);
+                }
+                $lines[] = $action;
+                $settings['waf_guest_ajax_custom_allowlist'] = implode("\n", array_unique($lines));
+                \WebCareProScanner\System\SettingsManager::save_settings($settings);
+
+                if (class_exists('\\WebCareProScanner\\System\\WebCareActivityLogger')) {
+                    \WebCareProScanner\System\WebCareActivityLogger::notice(
+                        'firewall_rule36_allowlist_added',
+                        'firewall',
+                        [
+                            /* translators: %1$s: action name, %2$s: admin user login */
+                            'description' => sprintf(__('Added AJAX action "%1$s" to Rule #36 custom allowlist by %2$s.', 'webcare-pro-security'), $action, $user_login),
+                        ]
+                    );
+                }
+            }
+
+            return rest_ensure_response([
+                'success' => true,
+                /* translators: %s: AJAX action name */
+                'message' => sprintf(__('AJAX action "%s" successfully allowed in Rule #36.', 'webcare-pro-security'), $action),
+            ]);
+        }
+
+        if ($rule === 37) {
+            $route = strtolower(sanitize_text_field(wp_unslash($target)));
+            if (!str_starts_with($route, '/')) {
+                $route = '/' . $route;
+            }
+
+            // Security Guards: prohibit wildcards and dangerous administrative/system paths
+            if (str_contains($route, '*') || preg_match('#/(?:wp/v2/users|wp/v2/settings|webcare-pro-security/v1/auth)#i', $route)) {
+                return new \WP_Error('dangerous_route', __('This REST route cannot be added to guest allowlist for security reasons.', 'webcare-pro-security'), ['status' => 400]);
+            }
+
+            $current_raw = (string) ($settings['waf_guest_rest_custom_allowlist'] ?? '');
+            $lines = array_filter(array_map('trim', explode("\n", str_replace("\r", '', $current_raw))));
+            if (!in_array($route, $lines, true)) {
+                if (count($lines) >= 500) {
+                    return new \WP_Error('allowlist_limit', __('Custom allowlist has reached maximum capacity (500 items).', 'webcare-pro-security'), ['status' => 400]);
+                }
+                $lines[] = $route;
+                $settings['waf_guest_rest_custom_allowlist'] = implode("\n", array_unique($lines));
+                \WebCareProScanner\System\SettingsManager::save_settings($settings);
+
+                if (class_exists('\\WebCareProScanner\\System\\WebCareActivityLogger')) {
+                    \WebCareProScanner\System\WebCareActivityLogger::notice(
+                        'firewall_rule37_allowlist_added',
+                        'firewall',
+                        [
+                            /* translators: %1$s: REST route, %2$s: admin user login */
+                            'description' => sprintf(__('Added REST route "%1$s" to Rule #37 custom allowlist by %2$s.', 'webcare-pro-security'), $route, $user_login),
+                        ]
+                    );
+                }
+            }
+
+            return rest_ensure_response([
+                'success' => true,
+                /* translators: %s: REST route */
+                'message' => sprintf(__('REST route "%s" successfully allowed in Rule #37.', 'webcare-pro-security'), $route),
+            ]);
+        }
+
+        return new \WP_Error('invalid_request', __('Invalid allowlist request.', 'webcare-pro-security'), ['status' => 400]);
     }
 
     public static function add_firewall_whitelisted_ip(\WP_REST_Request $request) {
