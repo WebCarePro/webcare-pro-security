@@ -1526,6 +1526,7 @@ export const FirewallPage = ({
     form_flood_window_minutes: number;
     form_content_filtering: boolean;
     waf_block_empty_post_ua_referer: boolean;
+    waf_block_empty_user_agent: boolean;
     waf_whitelisted_urls: string;
     waf_targeted_allowlist_rules: string;
     waf_block_forbidden_usernames: boolean;
@@ -1616,6 +1617,7 @@ export const FirewallPage = ({
     waf_allow_central_management: false,
     waf_allow_page_builders: false,
     waf_block_empty_post_ua_referer: true,
+    waf_block_empty_user_agent: true,
     waf_whitelisted_urls: '',
     waf_targeted_allowlist_rules: '[]',
     waf_block_forbidden_usernames: true,
@@ -1730,6 +1732,7 @@ export const FirewallPage = ({
           form_flood_window_minutes: s.form_flood_window_minutes !== undefined ? Number(s.form_flood_window_minutes) : 10,
           form_content_filtering: s.form_content_filtering !== false,
           waf_block_empty_post_ua_referer: s.waf_block_empty_post_ua_referer !== false,
+          waf_block_empty_user_agent: s.waf_block_empty_user_agent !== false,
           waf_whitelisted_urls: s.waf_whitelisted_urls || '',
           waf_targeted_allowlist_rules: typeof s.waf_targeted_allowlist_rules === 'string' ? s.waf_targeted_allowlist_rules : JSON.stringify(s.waf_targeted_allowlist_rules || []),
           waf_block_forbidden_usernames: s.waf_block_forbidden_usernames !== false,
@@ -4498,6 +4501,7 @@ export const FirewallPage = ({
                     { num: 17, key: 'waf_disallow_filemanager_plugins', label: 'Disallow File Manager Plugins', desc: 'Prohibits installing or activating any File Manager or explorer plugins (e.g. WP File Manager, Filester, FileOrganizer).' },
                     { num: 18, key: 'waf_disallow_phpmyadmin_uploads', label: 'Block phpMyAdmin & DB Script Uploads', desc: 'Blocks uploads of standalone database scripts (pma.php, adminer.php, SQL dumpers) in media, themes, or archives.' },
                     { num: 19, key: 'waf_disallow_filemanager_uploads', label: 'Block File Manager & Web Shell Uploads', desc: 'Blocks uploads of standalone file managers and webshells (tinyfilemanager.php, elFinder, c99, WSO, Alfa).' },
+                    { num: 20, key: 'waf_block_empty_user_agent', label: 'Block Blank / Missing User-Agent', desc: 'Immediately drops unauthenticated guest requests (GET, POST, HEAD) missing a User-Agent header (neutralizes automated vulnerability scanners, raw socket probes, and headless scripts on hit #1).' },
                   ].map((rule) => {
                     const isChecked = !!(wafSettings as any)[rule.key];
                     const isSaving = savingSingleRuleKey === rule.key;

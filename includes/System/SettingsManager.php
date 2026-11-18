@@ -158,6 +158,7 @@ class SettingsManager {
             'waf_woo_scraping_lockout_duration' => 15,    // Lockout duration in minutes (15 mins)
             'waf_allow_page_builders'           => false, // Visual Page Builder & Editor Smart Pass (off by default, recommended when Elementor/Divi active)
             'waf_block_empty_post_ua_referer'   => true, // Block IPs who send POST requests with blank User-Agent and Referer
+            'waf_block_empty_user_agent'        => true, // Block unauthenticated requests with blank or missing User-Agent (Rule WAF-EMPTY-USER-AGENT)
             'waf_whitelisted_urls'              => '',   // Allowlisted URLs / URI paths (one per line)
             'waf_targeted_allowlist_rules'      => '[]', // Granular User-Agent, Endpoint & IP allowlist rules (JSON string)
             'waf_block_forbidden_usernames'     => true, // Immediately block IP trying to sign in as forbidden honeypot usernames
@@ -831,6 +832,7 @@ class SettingsManager {
         $clean['waf_woo_scraping_max_requests']    = max(10, min(300, (int) ($merged['waf_woo_scraping_max_requests'] ?? 60)));
         $clean['waf_woo_scraping_lockout_duration'] = max(5, min(1440, (int) ($merged['waf_woo_scraping_lockout_duration'] ?? 15)));
         $clean['waf_block_empty_post_ua_referer'] = !empty($merged['waf_block_empty_post_ua_referer']);
+        $clean['waf_block_empty_user_agent']        = !empty($merged['waf_block_empty_user_agent']);
         $clean['waf_whitelisted_urls']            = sanitize_textarea_field($merged['waf_whitelisted_urls'] ?? '');
 
         // Targeted User-Agent, Endpoint & IP Allowlist Rules
@@ -1373,6 +1375,7 @@ class SettingsManager {
             'waf_block_ai_scrapers'            => 'AI Scrapers & LLM Crawler Blocker',
             'waf_block_404_scanners'           => 'Aggressive 404 Scanner Protection',
             'waf_block_empty_post_ua_referer'  => 'Empty User-Agent / Referer POST Protection',
+            'waf_block_empty_user_agent'       => 'Empty / Missing User-Agent Shield',
             'waf_block_forbidden_usernames'    => 'Forbidden Default Admin Usernames Shield',
             'waf_block_malicious_uploads'      => 'Malicious File Upload Inspection',
             'waf_block_unsafe_http_methods'    => 'Unsafe HTTP Methods Filter',

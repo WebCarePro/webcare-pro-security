@@ -2598,8 +2598,8 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
                                 </button>
                               </div>
 
-                              {/* Active Enforcement / Cloudflare Ban Indicator */}
-                              {log.is_banned && (
+                              {/* Active Enforcement / Cloudflare Ban Indicator (Terminal Hit Only) */}
+                              {log.is_last_hit_for_ip && log.is_banned && (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                                   {(log.ban_scope === 'edge_synced' || log.cf_synced) ? (
                                     <span
@@ -2615,7 +2615,7 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
                                         alignItems: 'center',
                                         gap: '3px'
                                       }}
-                                      title="IP is actively banned at Cloudflare Anycast Edge & Local Origin WAF"
+                                      title="Terminal recorded hit: IP is actively banned at Cloudflare Anycast Edge & Local Origin WAF"
                                     >
                                       <Cloud size={9} /> BANNED • CF EDGE
                                     </span>
@@ -2630,7 +2630,7 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
                                         alignItems: 'center',
                                         gap: '3px'
                                       }}
-                                      title="IP is actively banned locally on Origin Server WAF"
+                                      title="Terminal recorded hit: IP is actively banned locally on Origin Server WAF"
                                     >
                                       <ShieldAlert size={9} /> BANNED
                                     </span>

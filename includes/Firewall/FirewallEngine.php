@@ -1726,6 +1726,32 @@ class FirewallEngine {
             }
         }
 
+        // Rule: Blank or Missing User-Agent Shield (All Request Methods)
+        // Instantly drops automated vulnerability scanners, raw socket probes, and headless scripts that omit the User-Agent header entirely.
+        if (!$skip_operational_heuristics && !empty($settings['waf_block_empty_user_agent'])) {
+            $raw_ua = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';
+            if (trim($raw_ua) === '') {
+                $is_loopback = ($client_ip === '127.0.0.1' || $client_ip === '::1' || (isset($_SERVER['SERVER_ADDR']) && $client_ip === $_SERVER['SERVER_ADDR']));
+                $is_cli_or_cron = (php_sapi_name() === 'cli' || (defined('DOING_CRON') && DOING_CRON));
+                $is_commerce_safe = !empty($settings['waf_ecommerce_safe_mode']) && self::is_commerce_or_membership_request($request_uri);
+                $is_form_safe = !empty($settings['waf_forms_safe_mode']) && self::is_form_submission_request($request_uri);
+
+                if (!$is_loopback && !$is_cli_or_cron && !$is_commerce_safe && !$is_form_safe) {
+                    $rule_triggered = [
+                        'id'          => 'WAF-EMPTY-USER-AGENT',
+                        'name'        => 'Blank or Missing User-Agent Block',
+                        'category'    => 'Bot Defense',
+                        'description' => 'Automated request rejected: The HTTP User-Agent header was missing or blank (malicious vulnerability scanner or headless probe signature).',
+                        'match_type'  => 'Missing Headers',
+                        'match_value' => 'Empty / Missing User-Agent',
+                        'payload'     => "IP: {$client_ip} URI: {$request_uri}",
+                    ];
+
+                    self::handle_rule_violation($rule_triggered, $settings, $client_ip, 403);
+                }
+            }
+        }
+
         // Rule 18 / Smart Rule #53: Sensitive Log, .env.* & Byte-Range Exfiltration Instant Ban
         if (!empty($settings['waf_block_sensitive_file_probes'])) {
             $sensitive_violation = self::check_sensitive_file_probe($request_uri, $settings, $skip_operational_heuristics);
@@ -4405,6 +4431,7 @@ class FirewallEngine {
 
             // Bot & Scraping Defense
             ['id' => 'WAF-EMPTY-POST-UA-REFERER', 'name' => 'Blank User-Agent & Referer POST Block', 'category' => 'Bot Defense', 'description' => 'Automated bot POST with empty User-Agent and Referer headers dropped.'],
+            ['id' => 'WAF-EMPTY-USER-AGENT', 'name' => 'Blank or Missing User-Agent Block', 'category' => 'Bot Defense', 'description' => 'Automated guest request rejected: The HTTP User-Agent header was missing or blank (malicious vulnerability scanner or headless probe signature).'],
 
             // File Reconnaissance & Path Traversal
             ['id' => 'WAF-SENSITIVE-FILE-PROBE', 'name' => 'Sensitive File & Backup Probe Block', 'category' => 'File Reconnaissance', 'description' => 'Probing for .git, .env, wp-config backups, or SQL dumps blocked.'],

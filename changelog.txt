@@ -1,4 +1,11 @@
 ﻿v:2.18.0 - 2026-11-18
+- WAF Logs Terminal Hit Attribution & Cloudflare Edge Ban Indicator De-duplication:
+  * Scoped the `☁ BANNED • CF EDGE` and `BANNED` badges under the IP column strictly to the terminal (most recent) hit from each IP (`log.is_last_hit_for_ip && log.is_banned`), eliminating repetitive ban badges across previous attack incursion rows.
+  * Enhanced `WafFileLogger::query_logs()` with stream arrival sequence index tracking (`_stream_idx`) to provide deterministic tie-breaking for requests recorded in the same second, ensuring descending sort order accurately designates the topmost log entry as the terminal hit (`is_last_hit_for_ip = true`) and positions `Blocked (CF Ban)` at the head of the attacker timeline.
+- Blank or Missing User-Agent Shield (`WAF-EMPTY-USER-AGENT`):
+  * Added core Firewall Rule 20 (`waf_block_empty_user_agent`) to immediately terminate unauthenticated guest requests (GET, POST, HEAD, etc.) missing an HTTP User-Agent header with HTTP 403 Forbidden, neutralizing raw vulnerability scanners and headless probes on Request #1 before reaching WordPress or 404 routing.
+  * Built-in safe exclusions for localhost / server loopback (`127.0.0.1`, `::1`, `SERVER_ADDR`), CLI / WP-Cron environments, pre-auth whitelisted IPs, and payment gateway webhooks.
+  * Integrated toggle into SettingsManager, FirewallEngine rules catalog, Firewall UI, and Activity Logs dictionary.
 - Rule #37 rejects root wildcard grants, narrows equivalent legacy route-only entries to the observed method on one-click approvals, and warns administrators that remaining route-only entries allow all mutation verbs.
 - Rule #37 one-click approvals now return HTTP 400 for invalid methods instead of silently defaulting to POST.
 - Strict Rule #37 method validation now rejects malformed tokens and explicit null values; POST is used only when the method field is absent.
