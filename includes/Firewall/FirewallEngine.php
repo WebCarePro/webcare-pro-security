@@ -138,9 +138,12 @@ class FirewallEngine {
             add_action('template_redirect', [__CLASS__, 'inspect_woo_catalog_scraping'], 1);
         }
 
-        // Rule #43: Affiliate Ecosystem Shield & Anti-Fraud Armor (Only loaded if affiliate ecosystem is detected)
-        if (class_exists(AffiliateSecurityEngine::class) && !empty(AffiliateSecurityEngine::get_detected_ecosystem()['is_active'])) {
-            AffiliateSecurityEngine::init();
+        // Always register affiliate cache invalidation hooks so newly activated affiliate plugins are detected immediately
+        if (class_exists(AffiliateSecurityEngine::class)) {
+            AffiliateSecurityEngine::register_cache_invalidation_hooks();
+            if (!empty(AffiliateSecurityEngine::get_detected_ecosystem()['is_active'])) {
+                AffiliateSecurityEngine::init();
+            }
         }
 
         // Rule #44: Runtime Privilege Escalation Guard (In-Memory RASP Hook Firewall)
@@ -1033,8 +1036,9 @@ class FirewallEngine {
                                 self::log_incident($rule_triggered, 'detected');
                             } else {
                                 self::log_incident($rule_triggered, 'blocked');
-                                self::render_block_page($rule_triggered, $client_ip);
-                                exit;
+                                if (!self::render_block_page($rule_triggered, $client_ip)) {
+                                    exit;
+                                }
                             }
                         }
                     }
@@ -1052,9 +1056,7 @@ class FirewallEngine {
 
         // Automatic safe-pass for configured Contact / Support URL (exact path boundary match)
         if (!$url_whitelisted && !empty($settings['waf_contact_support_url'])) {
-            $contact_path = rtrim(strtolower((string) wp_parse_url($settings['waf_contact_support_url'], PHP_URL_PATH)), '/');
-            $req_path     = rtrim(strtolower((string) (wp_parse_url($request_uri, PHP_URL_PATH) ?? '')), '/');
-            if ($contact_path !== '' && $contact_path !== '/' && $req_path === $contact_path) {
+            if (self::is_configured_support_path($request_uri, (string) $settings['waf_contact_support_url'])) {
                 $url_whitelisted = true;
             }
         }
@@ -1778,34 +1780,53 @@ class FirewallEngine {
         if (!$skip_operational_heuristics && !empty($settings['waf_block_empty_user_agent'])) {
             $raw_ua = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';
             if (trim($raw_ua) === '') {
-                $is_loopback = ($client_ip === '127.0.0.1' || $client_ip === '::1' || (isset($_SERVER['SERVER_ADDR']) && $client_ip === $_SERVER['SERVER_ADDR']));
-                // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-                $is_cli_or_cron = (php_sapi_name() === 'cli' || (defined('DOING_CRON') && DOING_CRON) || isset($_GET['doing_wp_cron']));
-                // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-                $is_wc_api = isset($_GET['wc-api']);
-                $is_commerce_safe = !empty($settings['waf_ecommerce_safe_mode']) && self::is_commerce_or_membership_request($request_uri);
-                $is_form_safe = !empty($settings['waf_forms_safe_mode']) && self::is_form_submission_request($request_uri);
+                $req_method = strtoupper(isset($_SERVER['REQUEST_METHOD']) ? sanitize_key(wp_unslash($_SERVER['REQUEST_METHOD'])) : 'GET');
+                // Never break CORS preflight OPTIONS requests
+                if ($req_method === 'OPTIONS') {
+                    // Allow CORS preflight to proceed to REST/server headers
+                } else {
+                    $is_loopback = ($client_ip === '127.0.0.1' || $client_ip === '::1' || (isset($_SERVER['SERVER_ADDR']) && $client_ip === $_SERVER['SERVER_ADDR']));
+                    // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+                    $is_cli_or_cron = (php_sapi_name() === 'cli' || (defined('DOING_CRON') && DOING_CRON) || isset($_GET['doing_wp_cron']));
+                    // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+                    $is_wc_api = isset($_GET['wc-api']);
+                    $is_commerce_safe = !empty($settings['waf_ecommerce_safe_mode']) && self::is_commerce_or_membership_request($request_uri);
+                    $is_form_safe = !empty($settings['waf_forms_safe_mode']) && self::is_form_submission_request($request_uri);
 
-                if (!$is_loopback && !$is_cli_or_cron && !$is_wc_api && !$is_commerce_safe && !$is_form_safe) {
-                    $req_method = strtoupper(isset($_SERVER['REQUEST_METHOD']) ? sanitize_key(wp_unslash($_SERVER['REQUEST_METHOD'])) : 'GET');
-                    $rule_triggered = [
-                        'id'          => 'WAF-EMPTY-USER-AGENT',
-                        'name'        => 'Blank or Missing User-Agent Block',
-                        'category'    => 'Bot Defense',
-                        'description' => 'Automated request rejected: The HTTP User-Agent header was missing or blank (malicious vulnerability scanner or headless probe signature).',
-                        'match_type'  => 'Missing Headers',
-                        'match_value' => 'Empty / Missing User-Agent',
-                        'payload'     => "Method: {$req_method} IP: {$client_ip} URI: {$request_uri}",
-                    ];
+                    if (!$is_loopback && !$is_cli_or_cron && !$is_wc_api && !$is_commerce_safe && !$is_form_safe) {
+                        $rule_triggered = [
+                            'id'          => 'WAF-EMPTY-USER-AGENT',
+                            'name'        => 'Blank or Missing User-Agent Block',
+                            'category'    => 'Bot Defense',
+                            'description' => 'Automated request rejected: The HTTP User-Agent header was missing or blank (malicious vulnerability scanner or headless probe signature).',
+                            'match_type'  => 'Missing Headers',
+                            'match_value' => 'Empty / Missing User-Agent',
+                            'payload'     => "Method: {$req_method} IP: {$client_ip} URI: {$request_uri}",
+                        ];
 
-                    if (in_array($req_method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
-                        self::handle_rule_violation($rule_triggered, $settings, $client_ip, 403);
-                    } else {
-                        // For GET/HEAD empty-UA probes, serve transparent WebCrypto PoW or warning rather than breaking health monitors
-                        self::log_incident($rule_triggered, 'challenged');
-                        $rule_triggered['is_warning'] = true;
-                        self::render_block_page($rule_triggered, $client_ip);
-                        exit;
+                        // phpcs:ignore WordPress.Security.NonceVerification.Missing -- PoW form is a cryptographic proof, not an authenticated state-changing action.
+                        $has_pow_submission = isset($_POST['webcare_pow_challenge'], $_POST['webcare_pow_nonce']);
+                        if ($req_method === 'POST' && $has_pow_submission && class_exists(BotReconDefense::class)) {
+                            BotReconDefense::verify_or_challenge_client();
+                        } elseif (in_array($req_method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
+                            self::handle_rule_violation($rule_triggered, $settings, $client_ip, 403);
+                        } elseif ($req_method === 'HEAD') {
+                            // HEAD requests cannot execute JS PoW challenges; return header-only 403
+                            self::log_incident($rule_triggered, 'blocked');
+                            status_header(403);
+                            header('Content-Length: 0');
+                            exit;
+                        } else {
+                            // GET: Check PoW clearance first so solved challenges genuinely release the request
+                            if (class_exists(BotReconDefense::class) && BotReconDefense::has_valid_clearance_cookie($client_ip, '')) {
+                                // Valid PoW clearance cookie present; allow request to continue
+                            } else {
+                                self::log_incident($rule_triggered, 'challenged');
+                                $rule_triggered['is_warning'] = true;
+                                self::render_block_page($rule_triggered, $client_ip);
+                                exit;
+                            }
+                        }
                     }
                 }
             }
@@ -1923,10 +1944,9 @@ class FirewallEngine {
                     if (wp_doing_ajax() || (defined('REST_REQUEST') && REST_REQUEST)) {
                         status_header(403);
                         wp_send_json_error(['message' => 'Security Policy Violation: Installation of database managers (phpMyAdmin/Adminer/DBManager) is disallowed by WebCare Pro Security Firewall.']);
-                    } else {
-                        self::render_block_page($rule_triggered, $client_ip);
+                    } elseif (!self::render_block_page($rule_triggered, $client_ip)) {
+                        exit;
                     }
-                    exit;
                 }
             }
         }
@@ -1974,10 +1994,9 @@ class FirewallEngine {
                     if (wp_doing_ajax() || (defined('REST_REQUEST') && REST_REQUEST)) {
                         status_header(403);
                         wp_send_json_error(['message' => 'Security Policy Violation: Installation of File Manager plugins is disallowed by WebCare Pro Security Firewall.']);
-                    } else {
-                        self::render_block_page($rule_triggered, $client_ip);
+                    } elseif (!self::render_block_page($rule_triggered, $client_ip)) {
+                        exit;
                     }
-                    exit;
                 }
             }
         }
@@ -2028,8 +2047,9 @@ class FirewallEngine {
                             self::log_incident($rule_triggered, 'detected');
                         } else {
                             self::log_incident($rule_triggered, 'blocked');
-                            self::render_block_page($rule_triggered, $client_ip);
-                            exit;
+                            if (!self::render_block_page($rule_triggered, $client_ip)) {
+                                exit;
+                            }
                         }
                     }
                 }
@@ -2126,8 +2146,9 @@ class FirewallEngine {
                                 self::log_incident($rule_triggered, 'detected');
                             } else {
                                 self::log_incident($rule_triggered, 'blocked');
-                                self::render_block_page($rule_triggered, $client_ip);
-                                exit;
+                                if (!self::render_block_page($rule_triggered, $client_ip)) {
+                                    exit;
+                                }
                             }
                         }
                     }
@@ -2160,8 +2181,9 @@ class FirewallEngine {
             } else {
                 $incident_id = 'WEBCARE-' . strtoupper(substr(md5($client_ip . microtime(true) . wp_rand()), 0, 8));
                 self::log_incident($rule_triggered, 'blocked', $incident_id);
-                self::render_block_page($rule_triggered, $client_ip, $incident_id);
-                exit;
+                if (!self::render_block_page($rule_triggered, $client_ip, $incident_id)) {
+                    exit;
+                }
             }
         }
 
@@ -2948,6 +2970,10 @@ class FirewallEngine {
             exit;
         }
 
+        $settings   = class_exists(SettingsManager::class) ? SettingsManager::get_settings() : [];
+        $is_warning = self::is_progressive_warning_rule($rule, $settings);
+        $req_method = strtoupper(isset($_SERVER['REQUEST_METHOD']) ? sanitize_key(wp_unslash($_SERVER['REQUEST_METHOD'])) : 'GET');
+
         if (empty($incident_id)) {
             $incident_id = self::$last_incident_id ?: ('WEBCARE-' . strtoupper(substr(md5($client_ip . microtime(true) . wp_rand()), 0, 8)));
         }
@@ -2979,36 +3005,6 @@ class FirewallEngine {
         set_transient('webcareproscan_lockout_ip_' . md5($client_ip), $transient_data, 2 * DAY_IN_SECONDS);
 
         $raw_uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '/';
-
-        // Resolve Progressive Warning vs. Hard Exploit Lockdown
-        $settings            = class_exists(SettingsManager::class) ? SettingsManager::get_settings() : [];
-        $progressive_enabled = !empty($settings['waf_enable_progressive_warnings']);
-
-        $critical_exploit_categories = [
-            'SQL Injection',
-            'PHP Code Injection',
-            'Path Traversal',
-            'Cross-Site Scripting (XSS)',
-            'Execution Armor',
-            'AI & Agent Defense',
-            'Virtual Patch',
-            'Next-Gen SQL RASP Defense',
-            'Next-Gen Response DLP',
-            'Modern API & GraphQL Shield',
-            'AI Agent Kill-Chain Defense',
-            'Forbidden Default Admin Usernames Shield',
-        ];
-
-        $rule_cat_raw = (string) ($rule['category'] ?? '');
-        $rule_id_raw  = (string) ($rule['id'] ?? '');
-
-        $is_warning = !empty($rule['is_warning']) || (
-            $progressive_enabled &&
-            !in_array($rule_cat_raw, $critical_exploit_categories, true) &&
-            !str_starts_with($rule_id_raw, 'MOD-CUSTOM-') &&
-            !str_starts_with($rule_id_raw, 'WAF-SQL-RASP-') &&
-            empty($rule['is_hard_block'])
-        );
 
         // Resolve Contact Support Destination (Configured URL or mailto fallback)
         $configured_contact = trim((string) ($settings['waf_contact_support_url'] ?? ''));
@@ -3093,13 +3089,11 @@ class FirewallEngine {
             $req_method = strtoupper(isset($_SERVER['REQUEST_METHOD']) ? sanitize_key(wp_unslash($_SERVER['REQUEST_METHOD'])) : 'GET');
             if ($req_method === 'GET' && !wp_doing_ajax() && class_exists(BotReconDefense::class)) {
                 $raw_ua = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';
-                // If browser has already computed a valid clearance cookie, permit request smoothly
-                if (BotReconDefense::has_valid_clearance_cookie($client_ip, $raw_ua)) {
-                    return;
+                if (!BotReconDefense::has_valid_clearance_cookie($client_ip, $raw_ua)) {
+                    // Challenge legitimate browser with invisible WebCrypto PoW (<150ms solve time)
+                    BotReconDefense::render_webcrypto_challenge($client_ip, $raw_ua);
+                    exit;
                 }
-                // Challenge legitimate browser with invisible WebCrypto PoW (<150ms solve time)
-                BotReconDefense::render_webcrypto_challenge($client_ip, $raw_ua);
-                exit;
             }
         }
 
@@ -3201,6 +3195,8 @@ class FirewallEngine {
             'code'      => 'webcareproscan_access_denied',
             'back_link' => false,
         ]);
+
+        return false;
     }
 
     /**
@@ -4922,6 +4918,86 @@ class FirewallEngine {
     }
 
     /**
+     * Compare the request path with the configured support URL using an exact path boundary.
+     *
+     * @param string $request_uri
+     * @param string $configured_contact_url
+     * @return bool
+     */
+    public static function is_configured_support_path(string $request_uri, string $configured_contact_url): bool {
+        $contact_path = rtrim(strtolower((string) wp_parse_url($configured_contact_url, PHP_URL_PATH)), '/');
+        $request_path = rtrim(strtolower((string) (wp_parse_url($request_uri, PHP_URL_PATH) ?? '')), '/');
+
+        return $contact_path !== '' && $contact_path !== '/' && $request_path === $contact_path;
+    }
+
+    /**
+     * Resolve the handling path for a request rejected only for its missing User-Agent.
+     * OPTIONS is non-mutating and must remain available for browser preflight; HEAD cannot
+     * complete a browser challenge because the protocol does not return a response body.
+     *
+     * @param string $method
+     * @param bool $has_clearance
+     * @param bool $has_pow_submission
+     * @return string One of allow, challenge, proof, head_block, or block.
+     */
+    public static function get_empty_user_agent_action(string $method, bool $has_clearance, bool $has_pow_submission = false): string {
+        $method = strtoupper(trim($method));
+
+        if ($has_clearance || $method === 'OPTIONS') {
+            return 'allow';
+        }
+        if ($method === 'GET') {
+            return 'challenge';
+        }
+        if ($method === 'HEAD') {
+            return 'head_block';
+        }
+        if ($method === 'POST' && $has_pow_submission) {
+            return 'proof';
+        }
+
+        return 'block';
+    }
+
+    /**
+     * Determine whether a rule is eligible for the progressive warning and PoW clearance flow.
+     *
+     * @param array $rule
+     * @param array $settings
+     * @return bool
+     */
+    private static function is_progressive_warning_rule(array $rule, array $settings): bool {
+        if (!empty($rule['is_warning'])) {
+            return true;
+        }
+
+        $critical_categories = [
+            'SQL Injection',
+            'PHP Code Injection',
+            'Path Traversal',
+            'Cross-Site Scripting (XSS)',
+            'Execution Armor',
+            'AI & Agent Defense',
+            'Virtual Patch',
+            'Next-Gen SQL RASP Defense',
+            'Next-Gen Response DLP',
+            'Modern API & GraphQL Shield',
+            'AI Agent Kill-Chain Defense',
+            'Forbidden Default Admin Usernames Shield',
+        ];
+
+        $category = (string) ($rule['category'] ?? '');
+        $rule_id  = (string) ($rule['id'] ?? '');
+
+        return !empty($settings['waf_enable_progressive_warnings'])
+            && !in_array($category, $critical_categories, true)
+            && !str_starts_with($rule_id, 'MOD-CUSTOM-')
+            && !str_starts_with($rule_id, 'WAF-SQL-RASP-')
+            && empty($rule['is_hard_block']);
+    }
+
+    /**
      * Check if an incoming request matches any Targeted Allowlist Rules (User-Agent, Endpoint, and optional IP)
      * If matched, returns the matching rule definition array, or null if no match.
      */
@@ -6602,6 +6678,32 @@ class FirewallEngine {
             status_header($status_code);
         }
 
+        // If progressive warning mode applies to this low-tier GET rule and visitor already solved PoW, let request proceed
+        $progressive_enabled = !empty($settings['waf_enable_progressive_warnings']);
+        $req_method_upper    = strtoupper(isset($_SERVER['REQUEST_METHOD']) ? sanitize_key(wp_unslash($_SERVER['REQUEST_METHOD'])) : 'GET');
+        if ($progressive_enabled && $req_method_upper === 'GET' && !wp_doing_ajax() && class_exists(BotReconDefense::class)) {
+            $critical_cats = [
+                'SQL Injection', 'PHP Code Injection', 'Path Traversal', 'Cross-Site Scripting (XSS)',
+                'Execution Armor', 'AI & Agent Defense', 'Virtual Patch', 'Next-Gen SQL RASP Defense',
+                'Next-Gen Response DLP', 'Modern API & GraphQL Shield', 'AI Agent Kill-Chain Defense',
+                'Forbidden Default Admin Usernames Shield',
+            ];
+            $r_cat = (string) ($rule['category'] ?? '');
+            $r_id  = (string) ($rule['id'] ?? '');
+            $qualifies_for_warning = !empty($rule['is_warning']) || (
+                !in_array($r_cat, $critical_cats, true)
+                && !str_starts_with($r_id, 'MOD-CUSTOM-')
+                && !str_starts_with($r_id, 'WAF-SQL-RASP-')
+                && empty($rule['is_hard_block'])
+            );
+            if ($qualifies_for_warning) {
+                $raw_ua = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';
+                if (BotReconDefense::has_valid_clearance_cookie($client_ip, $raw_ua)) {
+                    return;
+                }
+            }
+        }
+
         self::render_block_page($rule, $client_ip, $incident_id);
         exit;
     }
@@ -7328,9 +7430,9 @@ class FirewallEngine {
         // Affiliate Ecosystem Public REST Mutations (Only loaded if affiliate ecosystem is detected):
         if (class_exists(AffiliateSecurityEngine::class)
             && !empty(AffiliateSecurityEngine::get_detected_ecosystem()['is_active'])
-            && AffiliateSecurityEngine::is_public_affiliate_rest_route($route)
+            && AffiliateSecurityEngine::is_public_affiliate_rest_route($route, $method)
         ) {
-            return in_array($method, ['POST', 'PUT'], true);
+            return true;
         }
 
         return false;

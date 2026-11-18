@@ -66,16 +66,22 @@ class AffiliateSecurityEngine {
     ];
 
     /**
-     * Documented legitimate public guest REST API prefixes for affiliate suites.
+     * Documented legitimate public guest REST API routes for affiliate suites mapped to allowed HTTP methods.
      */
     public const PUBLIC_REST_ROUTES = [
-        'affwp/v1/visits',
-        'affwp-portal/v1/creatives/generate',
-        'affwp-portal/v1/urls/generate',
-        'affwp-portal/v1/payouts/request',
-        'slicewp/v1/visits',
-        'solid-affiliate/v1/track',
+        'affwp/v1/visits'                    => ['POST'],
+        'affwp-portal/v1/creatives/generate' => ['POST'],
+        'affwp-portal/v1/urls/generate'      => ['POST'],
+        'affwp-portal/v1/payouts/request'    => ['POST'],
+        'slicewp/v1/visits'                  => ['POST'],
+        'solid-affiliate/v1/track'           => ['POST'],
     ];
+
+    /**
+     * Allowed guest mutation methods for each documented affiliate REST route.
+     * Maintained for backward compatibility.
+     */
+    public const PUBLIC_REST_ROUTE_METHODS = self::PUBLIC_REST_ROUTES;
 
     /**
      * Documented legitimate guest AJAX actions for affiliate suites.
@@ -99,13 +105,24 @@ class AffiliateSecurityEngine {
     private static ?array $detected_ecosystem = null;
 
     /**
-     * Initialize Affiliate Security Engine hooks if an affiliate ecosystem is detected.
+     * Whether early firewall inspection has already processed the raw JSON request body.
      */
-    public static function init(): void {
-        // Invalidate ecosystem cache when plugins or themes change so activation is detected instantly
+    private static bool $early_json_inspected = false;
+
+    /**
+     * Invalidate ecosystem cache when plugins or themes change so activation is detected instantly.
+     */
+    public static function register_cache_invalidation_hooks(): void {
         add_action('activated_plugin', [__CLASS__, 'invalidate_detection_cache']);
         add_action('deactivated_plugin', [__CLASS__, 'invalidate_detection_cache']);
         add_action('switch_theme', [__CLASS__, 'invalidate_detection_cache']);
+    }
+
+    /**
+     * Always register detection invalidation hooks, then attach affiliate runtime hooks when enabled and detected.
+     */
+    public static function init(): void {
+        self::register_cache_invalidation_hooks();
 
         $settings = SettingsManager::get_settings();
         if (empty($settings['waf_affiliate_shield_enabled'])) {
@@ -116,6 +133,10 @@ class AffiliateSecurityEngine {
         if (empty($ecosystem['is_active'])) {
             return;
         }
+
+        // REST JSON bodies are parsed by WordPress after the early firewall inspection.
+        // Inspect affiliate payloads immediately before the endpoint callback runs.
+        add_filter('rest_pre_dispatch', [__CLASS__, 'inspect_rest_dispatch'], 9, 3);
 
         // Hook into AffiliateWP visit validation filter to silently suppress click floods and database bloat
         add_filter('affwp_tracking_is_valid_visit', [__CLASS__, 'filter_affwp_is_valid_visit'], 10, 2);
@@ -278,62 +299,179 @@ class AffiliateSecurityEngine {
             return;
         }
 
-        $found_params = [];
-        foreach (self::REFERRAL_PARAM_KEYS as $key) {
-            // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-            if (isset($_GET[$key]) && $_GET[$key] !== '') {
-                // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-                $found_params['GET:' . $key] = wp_unslash($_GET[$key]);
-            }
-            // phpcs:ignore WordPress.Security.NonceVerification.Missing
-            if (isset($_POST[$key]) && $_POST[$key] !== '') {
-                // phpcs:ignore WordPress.Security.NonceVerification.Missing
-                $found_params['POST:' . $key] = wp_unslash($_POST[$key]);
+        $content_type = isset($_SERVER['CONTENT_TYPE']) ? strtolower((string) $_SERVER['CONTENT_TYPE']) : '';
+        $json_values  = [];
+        if (str_contains($content_type, 'application/json') && (str_contains($request_uri, 'affwp') || str_contains($request_uri, 'slicewp') || str_contains($request_uri, 'solid-affiliate'))) {
+            $raw_json = @file_get_contents('php://input');
+            if (is_string($raw_json) && $raw_json !== '' && strlen($raw_json) <= 131072) {
+                $decoded = json_decode($raw_json, true);
+                if (is_array($decoded)) {
+                    $json_values = $decoded;
+                }
             }
         }
+
+        // phpcs:ignore WordPress.Security.NonceVerification.Recommended, WordPress.Security.NonceVerification.Missing -- Low-level firewall inspection before authentication.
+        $found_params = self::collect_referral_parameters((array) $_GET, (array) $_POST, $json_values);
 
         if (empty($found_params)) {
             return;
         }
 
-        // 1. Inspect EVERY present referral parameter (never break on first match)
-        if (!empty($settings['waf_affiliate_anti_injection'])) {
-            foreach ($found_params as $param_source => $raw_val) {
-                $param_key = explode(':', $param_source, 2)[1] ?? $param_source;
-                if (is_array($raw_val)) {
-                    $array_violation = [
-                        'id'          => 'WAF-AFFILIATE-INJECTION',
-                        'name'        => 'Affiliate Referral Array Injection Shield (Rule #43)',
-                        'category'    => 'Affiliate Defense',
-                        'description' => sprintf('Unexpected array payload supplied for scalar affiliate parameter "%s".', $param_key),
-                        'match_type'  => 'Type Confusion / Array Injection',
-                        'match_value' => $param_key,
-                        'payload'     => "Param: {$param_source} (array) IP: {$client_ip}",
-                    ];
-                    FirewallEngine::handle_rule_violation($array_violation, $settings, $client_ip, 403);
-                    return;
-                }
-                if (!is_scalar($raw_val)) {
+        self::$early_json_inspected = !empty($json_values);
+        self::inspect_referral_values($found_params, $client_ip, $request_uri, $settings);
+    }
+
+    /**
+     * Collect configured referral values from parsed request sources.
+     * GET and POST values are unslashed here; REST JSON values have already been decoded by WordPress.
+     *
+     * @param array $get_values
+     * @param array $post_values
+     * @param array $json_values
+     * @return array<string, mixed>
+     */
+    public static function collect_referral_parameters(array $get_values, array $post_values, array $json_values = []): array {
+        $found_params = [];
+        foreach (['GET' => $get_values, 'POST' => $post_values] as $source => $values) {
+            foreach (self::REFERRAL_PARAM_KEYS as $key) {
+                if (!isset($values[$key]) || $values[$key] === '') {
                     continue;
                 }
-                $injection_violation = self::inspect_referral_parameter_value($param_key, (string) $raw_val, $client_ip, $request_uri);
-                if ($injection_violation !== null) {
-                    FirewallEngine::handle_rule_violation($injection_violation, $settings, $client_ip, 403);
-                    return;
+
+                $found_params[$source . ':' . $key] = wp_unslash($values[$key]);
+            }
+        }
+
+        if (!empty($json_values)) {
+            $json_params = self::collect_json_referral_parameters($json_values);
+            $found_params = array_merge($found_params, $json_params);
+        }
+
+        return $found_params;
+    }
+
+    /**
+     * Walk a parsed JSON body for configured referral keys with bounded depth and node count.
+     *
+     * @param array $json_values
+     * @return array<string, mixed>
+     */
+    private static function collect_json_referral_parameters(array $json_values): array {
+        $found_params = [];
+        $remaining    = 500;
+        $known_keys   = array_fill_keys(self::REFERRAL_PARAM_KEYS, true);
+        $walk         = static function (array $values, string $prefix, int $depth) use (&$walk, &$found_params, &$remaining, $known_keys): void {
+            if ($depth > 8 || $remaining <= 0) {
+                return;
+            }
+
+            foreach ($values as $key => $value) {
+                if ($remaining <= 0) {
+                    break;
                 }
+                --$remaining;
+                $key_string = (string) $key;
+                $path       = $prefix === '' ? $key_string : $prefix . '.' . $key_string;
+
+                if (isset($known_keys[$key_string])) {
+                    if ($value !== '') {
+                        $found_params['JSON:' . $path] = $value;
+                    }
+                    continue;
+                }
+
+                if (is_array($value)) {
+                    $walk($value, $path, $depth + 1);
+                }
+            }
+        };
+
+        $walk($json_values, '', 0);
+
+        return $found_params;
+    }
+
+    /**
+     * Inspect parsed affiliate REST JSON before a public endpoint can persist referral data.
+     *
+     * @param mixed $result
+     * @param \WP_REST_Server $server
+     * @param \WP_REST_Request $request
+     * @return mixed
+     */
+    public static function inspect_rest_dispatch($result, $server, $request) {
+        $settings = SettingsManager::get_settings();
+        if (empty($settings['waf_affiliate_shield_enabled']) || empty(self::get_detected_ecosystem()['is_active'])) {
+            return $result;
+        }
+
+        if (self::$early_json_inspected) {
+            return $result;
+        }
+
+        if (!self::is_public_affiliate_rest_request((string) $request->get_route(), (string) $request->get_method())) {
+            return $result;
+        }
+
+        $json_values = $request->get_json_params();
+        if (!is_array($json_values)) {
+            return $result;
+        }
+
+        // phpcs:ignore WordPress.Security.NonceVerification.Recommended, WordPress.Security.NonceVerification.Missing -- Low-level firewall inspection before endpoint callbacks.
+        $found_params = self::collect_referral_parameters((array) $_GET, (array) $_POST, $json_values);
+        $json_params = array_filter(
+            $found_params,
+            static function ($key): bool {
+                return str_starts_with((string) $key, 'JSON:');
+            },
+            ARRAY_FILTER_USE_KEY
+        );
+        if (empty($json_params)) {
+            return $result;
+        }
+
+        $request_uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '/';
+        $client_ip   = FirewallEngine::get_client_ip();
+        // Early request inspection already counts query/form referral values. Count JSON-only visits here.
+        $has_non_json_params = count($found_params) > count($json_params);
+        self::inspect_referral_values($json_params, $client_ip, $request_uri, $settings, !$has_non_json_params);
+
+        return $result;
+    }
+
+    /**
+     * Inspect collected referral parameters and apply click-flood suppression when requested.
+     *
+     * @param array<string, mixed> $found_params
+     * @param string $client_ip
+     * @param string $request_uri
+     * @param array $settings
+     * @param bool $track_click_velocity
+     * @return void
+     */
+    private static function inspect_referral_values(array $found_params, string $client_ip, string $request_uri, array $settings, bool $track_click_velocity = true): void {
+
+        // 1. Inspect EVERY present referral parameter (never break on first match)
+        if (!empty($settings['waf_affiliate_anti_injection'])) {
+            $injection_violation = self::find_referral_injection($found_params, $client_ip, $request_uri);
+            if ($injection_violation !== null) {
+                FirewallEngine::handle_rule_violation($injection_violation, $settings, $client_ip, 403);
+                return;
             }
         }
 
         // 2. Click-Fraud & High-Velocity Visit Rate Limiter (Default: 10 referral clicks/min per IP)
         // Gated on waf_affiliate_shield_enabled (active whenever Rule #43 is enabled)
+        if (!$track_click_velocity) {
+            return;
+        }
+
         $max_clicks  = max(3, min(300, (int) ($settings['waf_affiliate_max_clicks_min'] ?? 10)));
         $is_flooding = self::track_referral_click_velocity($client_ip, $max_clicks);
 
-        if ($is_flooding) {
-            if (!defined('WEBCAREPROSCAN_SUPPRESS_AFFILIATE_VISIT')) {
-                define('WEBCAREPROSCAN_SUPPRESS_AFFILIATE_VISIT', true);
-            }
-
+        if (self::suppress_visit_recording_if_flooding($is_flooding)) {
             $first_key = array_key_first($found_params);
             $rule_triggered = [
                 'id'          => 'WAF-AFFILIATE-CLICK-FLOOD',
@@ -352,6 +490,61 @@ class AffiliateSecurityEngine {
 
             FirewallEngine::log_incident($rule_triggered, 'throttled');
         }
+    }
+
+    /**
+     * Return the first hostile value in a collected set of referral parameters.
+     *
+     * @param array<string, mixed> $found_params
+     * @param string $client_ip
+     * @param string $request_uri
+     * @return array|null
+     */
+    public static function find_referral_injection(array $found_params, string $client_ip, string $request_uri): ?array {
+        foreach ($found_params as $param_source => $raw_val) {
+            $param_path = explode(':', (string) $param_source, 2)[1] ?? (string) $param_source;
+            $last_dot   = strrpos($param_path, '.');
+            $param_key  = $last_dot === false ? $param_path : substr($param_path, $last_dot + 1);
+            if (is_array($raw_val)) {
+                return [
+                    'id'          => 'WAF-AFFILIATE-INJECTION',
+                    'name'        => 'Affiliate Referral Array Injection Shield (Rule #43)',
+                    'category'    => 'Affiliate Defense',
+                    'description' => sprintf('Unexpected array payload supplied for scalar affiliate parameter "%s".', $param_key),
+                    'match_type'  => 'Type Confusion / Array Injection',
+                    'match_value' => $param_key,
+                    'payload'     => "Param: {$param_source} (array) IP: {$client_ip}",
+                ];
+            }
+            if (!is_scalar($raw_val)) {
+                continue;
+            }
+
+            $violation = self::inspect_referral_parameter_value($param_key, (string) $raw_val, $client_ip, $request_uri);
+            if ($violation !== null) {
+                return $violation;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Set the request-scoped flag consumed by AffiliateWP and SliceWP visit filters.
+     *
+     * @param bool $is_flooding
+     * @return bool True when visit logging is suppressed.
+     */
+    public static function suppress_visit_recording_if_flooding(bool $is_flooding): bool {
+        if (!$is_flooding) {
+            return false;
+        }
+
+        if (!defined('WEBCAREPROSCAN_SUPPRESS_AFFILIATE_VISIT')) {
+            define('WEBCAREPROSCAN_SUPPRESS_AFFILIATE_VISIT', true);
+        }
+
+        return defined('WEBCAREPROSCAN_SUPPRESS_AFFILIATE_VISIT') && WEBCAREPROSCAN_SUPPRESS_AFFILIATE_VISIT;
     }
 
     /**
@@ -656,17 +849,33 @@ class AffiliateSecurityEngine {
     }
 
     /**
-     * Check if a given REST route is a documented legitimate affiliate route.
+     * Check if a given REST route and HTTP method is a documented legitimate affiliate route.
      *
      * @param string $route Normalized REST route path.
+     * @param string $method HTTP method (defaults to POST).
      * @return bool
      */
-    public static function is_public_affiliate_rest_route(string $route): bool {
+    public static function is_public_affiliate_rest_route(string $route, string $method = 'POST'): bool {
         $clean = trim(strtolower(ltrim($route, '/')), '/');
         if (str_starts_with($clean, 'wp-json/')) {
             $clean = substr($clean, 8);
         }
-        return in_array($clean, self::PUBLIC_REST_ROUTES, true);
+        $clean_method = strtoupper(trim($method));
+        if (!isset(self::PUBLIC_REST_ROUTES[$clean])) {
+            return false;
+        }
+        return in_array($clean_method, self::PUBLIC_REST_ROUTES[$clean], true);
+    }
+
+    /**
+     * Check whether a REST route and HTTP method are explicitly public for an affiliate integration.
+     *
+     * @param string $route Normalized REST route path.
+     * @param string $method HTTP method.
+     * @return bool
+     */
+    public static function is_public_affiliate_rest_request(string $route, string $method): bool {
+        return self::is_public_affiliate_rest_route($route, $method);
     }
 
     /**

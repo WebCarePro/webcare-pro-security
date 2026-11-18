@@ -71,6 +71,21 @@ class ScanVaultManager {
     }
 
     /**
+     * Delete a file owned by the isolated Scan Vault using WordPress filesystem handling.
+     *
+     * @param string $path Absolute path inside the Scan Vault.
+     * @return bool True when the file was removed.
+     */
+    private static function delete_vault_file(string $path): bool {
+        if (!file_exists($path)) {
+            return false;
+        }
+
+        wp_delete_file($path);
+        return !file_exists($path);
+    }
+
+    /**
      * Generate a deterministic, unguessable 24-character HMAC token for a scan ID
      * so vault files on Nginx/IIS/Caddy cannot be enumerated over HTTP.
      */
@@ -604,14 +619,30 @@ class ScanVaultManager {
             // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
             @fclose($out_fp);
 
-            // Atomic rename into final file
-            if (@rename($tmp_final, $final_file)) {
+            // Move the completed manifest into place through WordPress filesystem handling.
+            global $wp_filesystem;
+            if (empty($wp_filesystem) && file_exists(ABSPATH . 'wp-admin/includes/file.php')) {
+                require_once ABSPATH . 'wp-admin/includes/file.php';
+                WP_Filesystem();
+            }
+
+            $moved = false;
+            if ($wp_filesystem instanceof \WP_Filesystem_Base && ($wp_filesystem->method ?? '') === 'direct') {
+                $moved = (bool) $wp_filesystem->move($tmp_final, $final_file, true);
+            }
+
+            if (!$moved) {
+                // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename -- Atomic same-directory finalization fallback when WP_Filesystem direct transport is unavailable.
+                $moved = @rename($tmp_final, $final_file);
+            }
+
+            if ($moved) {
                 // Remove temp buffer(s) across any salt rotation
                 if (file_exists($temp_file)) {
-                    @unlink($temp_file);
+                    self::delete_vault_file($temp_file);
                 }
                 foreach (glob(rtrim($dir, '/\\') . "/scan_{$scan_id}_*.temp.jsonl") ?: [] as $stale_tmp) {
-                    @unlink($stale_tmp);
+                    self::delete_vault_file($stale_tmp);
                 }
                 delete_option(self::OPTION_TEMP_PREFIX . $scan_id);
 
@@ -883,21 +914,20 @@ class ScanVaultManager {
             // Delete matching JSON files
             $pattern = rtrim($dir, '/\\') . "/*_scan{$scan_id}_*.json";
             foreach (glob($pattern) ?: [] as $f) {
-                if (@unlink($f)) {
+                if (self::delete_vault_file($f)) {
                     $deleted = true;
                 }
             }
 
             // Delete matching temp buffer(s) (current, salt-rotated, and legacy)
             foreach (glob(rtrim($dir, '/\\') . "/scan_{$scan_id}_*.temp.jsonl") ?: [] as $tf) {
-                if (@unlink($tf)) {
+                if (self::delete_vault_file($tf)) {
                     $deleted = true;
                 }
             }
             $legacy_temp = rtrim($dir, '/\\') . "/scan_{$scan_id}.temp.jsonl";
             if (file_exists($legacy_temp)) {
-                @unlink($legacy_temp);
-                $deleted = true;
+                $deleted = self::delete_vault_file($legacy_temp) || $deleted;
             }
 
             delete_option(self::OPTION_TEMP_PREFIX . $scan_id);
@@ -931,7 +961,7 @@ class ScanVaultManager {
                     }
                 }
 
-                if (@unlink($f)) {
+                if (self::delete_vault_file($f)) {
                     $count++;
                     if ($sid > 0) {
                         delete_option(self::OPTION_MANIFEST_PREFIX . $sid);
@@ -961,7 +991,7 @@ class ScanVaultManager {
                 if (preg_match('/scan_?([0-9]+)/i', basename($f), $m)) {
                     $sid = (int) $m[1];
                 }
-                if (@unlink($f)) {
+                if (self::delete_vault_file($f)) {
                     $count++;
                     if ($sid > 0) {
                         delete_option(self::OPTION_MANIFEST_PREFIX . $sid);
@@ -1112,7 +1142,7 @@ class ScanVaultManager {
                 $mtime = @filemtime($f) ?: 0;
                 // Prune if exceeds keep count or older than cutoff
                 if ($idx >= $keep_count || ($mtime > 0 && $mtime < $cutoff)) {
-                    if (@unlink($f)) {
+                    if (self::delete_vault_file($f)) {
                         $pruned++;
                         if (preg_match('/_scan([1-9][0-9]*)_/i', basename($f), $m)) {
                             $sid = (int) $m[1];

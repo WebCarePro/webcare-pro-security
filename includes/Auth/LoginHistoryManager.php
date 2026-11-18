@@ -20,6 +20,7 @@ class LoginHistoryManager {
 
     const TABLE_NAME = 'webcareproscan_login_history';
     const COOKIE_DEVICE_UUID = 'webcareproscan_device_uuid';
+    const LOGIN_TELEMETRY_NONCE = 'webcareproscan_login_telemetry';
 
     private static $last_auth_token = '';
 
@@ -75,9 +76,10 @@ class LoginHistoryManager {
             }
         }
 
-        // 2. From POST hidden field during form submission
-        if (empty($device_uuid) && !empty($_POST[$cookie_name])) {
-            // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Device telemetry input on login
+        // 2. From the nonce-protected hidden field in the standard login form
+        // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Submitted telemetry is read only after has_valid_login_telemetry_nonce() verifies the same request's nonce.
+        if (empty($device_uuid) && !empty($_POST[$cookie_name]) && self::has_valid_login_telemetry_nonce()) {
+            // phpcs:ignore WordPress.Security.NonceVerification.Missing -- The same request's login telemetry nonce was verified in the condition above.
             $raw_post = sanitize_text_field(wp_unslash($_POST[$cookie_name]));
             if (preg_match('/^[a-zA-Z0-9_-]{16,64}$/', $raw_post)) {
                 $device_uuid = $raw_post;
@@ -151,6 +153,21 @@ class LoginHistoryManager {
         echo '<input type="hidden" name="webcareproscan_screen_res" id="webcareproscan_screen_res" value="">' . "\n";
         echo '<input type="hidden" name="webcareproscan_client_tz" id="webcareproscan_client_tz" value="">' . "\n";
         echo '<input type="hidden" name="webcareproscan_device_uuid" id="webcareproscan_device_uuid" value="">' . "\n";
+        wp_nonce_field(self::LOGIN_TELEMETRY_NONCE, 'webcareproscan_login_nonce', false);
+    }
+
+    /**
+     * Verify the login form nonce before reading submitted device telemetry.
+     *
+     * @return bool
+     */
+    private static function has_valid_login_telemetry_nonce(): bool {
+        if (!isset($_POST['webcareproscan_login_nonce']) || !function_exists('wp_verify_nonce')) {
+            return false;
+        }
+
+        $nonce = sanitize_text_field(wp_unslash($_POST['webcareproscan_login_nonce']));
+        return wp_verify_nonce($nonce, self::LOGIN_TELEMETRY_NONCE) !== false;
     }
 
     /**
@@ -186,10 +203,11 @@ class LoginHistoryManager {
         $token_hash    = $session_token ? substr(hash('sha256', $session_token), 0, 64) : '';
         $ip            = FirewallEngine::get_client_ip();
         $ua            = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : 'Unknown';
-        // phpcs:ignore WordPress.Security.NonceVerification.Missing
-        $screen_raw    = isset($_POST['webcareproscan_screen_res']) ? sanitize_text_field(wp_unslash($_POST['webcareproscan_screen_res'])) : '';
-        // phpcs:ignore WordPress.Security.NonceVerification.Missing
-        $tz_raw        = isset($_POST['webcareproscan_client_tz']) ? sanitize_text_field(wp_unslash($_POST['webcareproscan_client_tz'])) : '';
+        $has_telemetry_nonce = self::has_valid_login_telemetry_nonce();
+        // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Both telemetry values are read only after verifying the login form nonce above.
+        $screen_raw    = $has_telemetry_nonce && isset($_POST['webcareproscan_screen_res']) ? sanitize_text_field(wp_unslash($_POST['webcareproscan_screen_res'])) : '';
+        // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Both telemetry values are read only after verifying the login form nonce above.
+        $tz_raw        = $has_telemetry_nonce && isset($_POST['webcareproscan_client_tz']) ? sanitize_text_field(wp_unslash($_POST['webcareproscan_client_tz'])) : '';
 
         $device_uuid   = self::get_or_create_device_uuid();
         $device_fp     = self::get_device_fingerprint($ua, $screen_raw, $tz_raw);

@@ -309,38 +309,66 @@ class Plugin {
         }
         $checks['vault_iis_tamper_repaired'] = $vault_iis_check;
 
-        // 4. Affiliate Shield & Path Boundary Regression Checks (v2.18.0)
-        $aff_injection_violation = \WebCareProScanner\Firewall\Core\AffiliateSecurityEngine::inspect_referral_parameter_value(
-            'affwp_campaign',
-            '<script>alert(1)</script>',
-            '198.51.100.1',
-            '/?ref=1&affwp_campaign=%3Cscript%3Ealert(1)%3C/script%3E'
+        // 4. Affiliate Shield & Path Boundary Regression Checks (v2.19.0)
+        $affiliate_class = \WebCareProScanner\Firewall\Core\AffiliateSecurityEngine::class;
+        $affiliate_class::register_cache_invalidation_hooks();
+        $checks['affiliate_detection_cache_hooks'] = has_action('activated_plugin', [$affiliate_class, 'invalidate_detection_cache']) !== false
+            && has_action('deactivated_plugin', [$affiliate_class, 'invalidate_detection_cache']) !== false
+            && has_action('switch_theme', [$affiliate_class, 'invalidate_detection_cache']) !== false;
+
+        $aff_params = $affiliate_class::collect_referral_parameters(
+            ['ref' => 'clean-referral', 'aff' => '<script>alert(1)</script>'],
+            ['affwp_campaign' => '../wp-config.php'],
+            ['referral' => ['sld' => '1e0union select 1,2,3']]
         );
-        $aff_sqli_violation = \WebCareProScanner\Firewall\Core\AffiliateSecurityEngine::inspect_referral_parameter_value(
-            'aff',
-            '1e0union select 1,2,3',
-            '198.51.100.1',
-            '/'
-        );
-        $checks['affiliate_multi_param_injection'] = (($aff_injection_violation['id'] ?? '') === 'WAF-AFFILIATE-INJECTION')
-            && (($aff_sqli_violation['id'] ?? '') === 'WAF-AFFILIATE-INJECTION');
+        $aff_multi_violation = $affiliate_class::find_referral_injection($aff_params, '198.51.100.1', '/wp-json/affwp/v1/visits');
+        $checks['affiliate_multi_param_injection'] = count($aff_params) === 4
+            && isset($aff_params['JSON:referral.sld'])
+            && (($aff_multi_violation['id'] ?? '') === 'WAF-AFFILIATE-INJECTION');
 
         $checks['affiliate_rest_route_anchored'] = !\WebCareProScanner\Firewall\Core\AffiliateSecurityEngine::is_public_affiliate_rest_route('affwp/v1/visits/123/delete')
             && !\WebCareProScanner\Firewall\Core\AffiliateSecurityEngine::is_public_affiliate_rest_route('affwp/v1/visits-export')
-            && \WebCareProScanner\Firewall\Core\AffiliateSecurityEngine::is_public_affiliate_rest_route('affwp/v1/visits')
+            && \WebCareProScanner\Firewall\Core\AffiliateSecurityEngine::is_public_affiliate_rest_route('affwp/v1/visits', 'POST')
+            && !\WebCareProScanner\Firewall\Core\AffiliateSecurityEngine::is_public_affiliate_rest_route('affwp/v1/visits', 'PUT')
             && \WebCareProScanner\Firewall\Core\AffiliateSecurityEngine::is_public_affiliate_rest_route('/wp-json/slicewp/v1/visits');
 
+        $checks['affiliate_rest_method_scope'] = $affiliate_class::is_public_affiliate_rest_request('affwp/v1/visits', 'POST')
+            && $affiliate_class::is_public_affiliate_rest_request('/wp-json/slicewp/v1/visits', 'POST')
+            && !$affiliate_class::is_public_affiliate_rest_request('affwp/v1/visits', 'PUT')
+            && !$affiliate_class::is_public_affiliate_rest_request('affwp/v1/visits', 'DELETE');
+
         $contact_setting = '/contact';
-        $contact_path    = rtrim(strtolower((string) wp_parse_url($contact_setting, PHP_URL_PATH)), '/');
-        $probed_admin    = rtrim(strtolower((string) wp_parse_url('/contact-admin', PHP_URL_PATH)), '/');
-        $probed_legit    = rtrim(strtolower((string) wp_parse_url('/contact', PHP_URL_PATH)), '/');
-        $checks['contact_support_url_boundary'] = ($probed_admin !== $contact_path) && ($probed_legit === $contact_path);
+        $checks['contact_support_url_boundary'] = !\WebCareProScanner\Firewall\FirewallEngine::is_configured_support_path('/contact-admin', $contact_setting)
+            && !\WebCareProScanner\Firewall\FirewallEngine::is_configured_support_path('/contact/child', $contact_setting)
+            && \WebCareProScanner\Firewall\FirewallEngine::is_configured_support_path('/contact?source=warning', $contact_setting);
+
+        $checks['empty_ua_clearance_and_methods'] = \WebCareProScanner\Firewall\FirewallEngine::get_empty_user_agent_action('GET', true) === 'allow'
+            && \WebCareProScanner\Firewall\FirewallEngine::get_empty_user_agent_action('POST', true) === 'allow'
+            && \WebCareProScanner\Firewall\FirewallEngine::get_empty_user_agent_action('GET', false) === 'challenge'
+            && \WebCareProScanner\Firewall\FirewallEngine::get_empty_user_agent_action('POST', false, true) === 'proof'
+            && \WebCareProScanner\Firewall\FirewallEngine::get_empty_user_agent_action('HEAD', false) === 'head_block'
+            && \WebCareProScanner\Firewall\FirewallEngine::get_empty_user_agent_action('OPTIONS', false) === 'allow'
+            && \WebCareProScanner\Firewall\FirewallEngine::get_empty_user_agent_action('POST', false) === 'block';
 
         $test_bot_ip = '198.51.100.' . wp_rand(10, 250);
         $hit1 = \WebCareProScanner\Firewall\Core\AffiliateSecurityEngine::track_referral_click_velocity($test_bot_ip, 2);
         $hit2 = \WebCareProScanner\Firewall\Core\AffiliateSecurityEngine::track_referral_click_velocity($test_bot_ip, 2);
         $hit3 = \WebCareProScanner\Firewall\Core\AffiliateSecurityEngine::track_referral_click_velocity($test_bot_ip, 2);
-        $checks['affiliate_click_velocity_throttling'] = (!$hit1 && $hit3);
+        $suppression_applied = $affiliate_class::suppress_visit_recording_if_flooding($hit3);
+        $previous_doctor_ua = isset($_SERVER['HTTP_USER_AGENT'])
+            ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT']))
+            : null;
+        $_SERVER['HTTP_USER_AGENT'] = 'WebCareDoctor/1.0';
+        $affwp_visit_allowed = $affiliate_class::filter_affwp_is_valid_visit(true);
+        $slicewp_visit_allowed = $affiliate_class::filter_slicewp_is_valid_visit(true);
+        if ($previous_doctor_ua === null) {
+            unset($_SERVER['HTTP_USER_AGENT']);
+        } else {
+            $_SERVER['HTTP_USER_AGENT'] = $previous_doctor_ua;
+        }
+        $checks['affiliate_click_velocity_throttling'] = (!$hit1 && !$hit2 && $hit3 && $suppression_applied)
+            && !$affwp_visit_allowed
+            && !$slicewp_visit_allowed;
 
         // 5. REST API Authz Audit: ensure no admin route under webcare-pro-security/v1 uses __return_true
         $server = rest_get_server();
@@ -374,9 +402,12 @@ class Plugin {
             empty($checks['guest_rest_one_click_narrows_legacy']) ||
             empty($checks['vault_apache_tamper_repaired']) ||
             empty($checks['vault_iis_tamper_repaired']) ||
+            empty($checks['affiliate_detection_cache_hooks']) ||
             empty($checks['affiliate_multi_param_injection']) ||
             empty($checks['affiliate_rest_route_anchored']) ||
+            empty($checks['affiliate_rest_method_scope']) ||
             empty($checks['contact_support_url_boundary']) ||
+            empty($checks['empty_ua_clearance_and_methods']) ||
             empty($checks['affiliate_click_velocity_throttling']) ||
             empty($checks['rest_no_open_admin'])
         ) {

@@ -5690,7 +5690,7 @@ class ScannerRoutes {
             global $wpdb;
             $table_scans = $wpdb->prefix . 'webcareproscan_scans';
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
-            $scan_id = (int) $wpdb->get_var("SELECT id FROM `{$table_scans}` ORDER BY id DESC LIMIT 1");
+            $scan_id = (int) $wpdb->get_var($wpdb->prepare('SELECT id FROM %i ORDER BY id DESC LIMIT 1', $table_scans));
         }
 
         if ($scan_id <= 0) {
@@ -5727,15 +5727,15 @@ class ScannerRoutes {
             $where_sql = implode(' AND ', $where);
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
             $total_legacy = (int) $wpdb->get_var(
-                // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
-                $wpdb->prepare("SELECT COUNT(*) FROM `{$table_files}` WHERE {$where_sql}", $params)
+                // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare -- $where_sql is assembled from fixed clauses and placeholders above; all request values are passed as prepared arguments.
+                $wpdb->prepare("SELECT COUNT(*) FROM %i WHERE {$where_sql}", ...array_merge([$table_files], $params))
             );
             $offset = ($page - 1) * $per_page;
             $params_page = array_merge($params, [$per_page, $offset]);
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
             $legacy_files = $wpdb->get_results(
-                // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
-                $wpdb->prepare("SELECT * FROM `{$table_files}` WHERE {$where_sql} ORDER BY id ASC LIMIT %d OFFSET %d", $params_page),
+                // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare, WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber -- $where_sql is assembled from fixed clauses and placeholders above; table name and all request values are supplied as prepared arguments.
+                $wpdb->prepare("SELECT * FROM %i WHERE {$where_sql} ORDER BY id ASC LIMIT %d OFFSET %d", ...array_merge([$table_files], $params_page)),
                 ARRAY_A
             ) ?: [];
 
@@ -5773,7 +5773,7 @@ class ScannerRoutes {
             global $wpdb;
             $table_scans = $wpdb->prefix . 'webcareproscan_scans';
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
-            $scan_id = (int) $wpdb->get_var("SELECT id FROM `{$table_scans}` ORDER BY id DESC LIMIT 1");
+            $scan_id = (int) $wpdb->get_var($wpdb->prepare('SELECT id FROM %i ORDER BY id DESC LIMIT 1', $table_scans));
         }
 
         if ($scan_id <= 0) {
@@ -5803,8 +5803,7 @@ class ScannerRoutes {
             $table_files = $wpdb->prefix . 'webcareproscan_scan_files';
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
             $legacy_files = $wpdb->get_results(
-                // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
-                $wpdb->prepare("SELECT * FROM `{$table_files}` WHERE scan_id = %d ORDER BY id ASC", $scan_id),
+                $wpdb->prepare('SELECT * FROM %i WHERE scan_id = %d ORDER BY id ASC', $table_files, $scan_id),
                 ARRAY_A
             );
 
