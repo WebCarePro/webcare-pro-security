@@ -416,6 +416,8 @@ class Plugin {
         $logs_table = $wpdb->prefix . 'webcareproscan_firewall_logs';
         $table_exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $logs_table)) === $logs_table;
         $log_count_before = $table_exists ? (int) $wpdb->get_var("SELECT COUNT(*) FROM {$logs_table}") : -1;
+        $log_max_id_before = $table_exists ? (int) $wpdb->get_var("SELECT COALESCE(MAX(id), 0) FROM {$logs_table}") : -1;
+        $log_checksum_before = $table_exists ? (string) $wpdb->get_var("SELECT MD5(CONCAT_WS(':', COUNT(*), COALESCE(MAX(id), 0))) FROM {$logs_table}") : '';
         $obs_snapshot_before = md5((string) serialize(get_option(\WebCareProScanner\Firewall\CAF\LearningModeEngine::OPTION_OBSERVATIONS, [])));
 
         $violation_cleared_cleanly = false;
@@ -431,11 +433,15 @@ class Plugin {
         }
 
         $log_count_after = $table_exists ? (int) $wpdb->get_var("SELECT COUNT(*) FROM {$logs_table}") : -2;
+        $log_max_id_after = $table_exists ? (int) $wpdb->get_var("SELECT COALESCE(MAX(id), 0) FROM {$logs_table}") : -2;
+        $log_checksum_after = $table_exists ? (string) $wpdb->get_var("SELECT MD5(CONCAT_WS(':', COUNT(*), COALESCE(MAX(id), 0))) FROM {$logs_table}") : '';
         $obs_snapshot_after = md5((string) serialize(get_option(\WebCareProScanner\Firewall\CAF\LearningModeEngine::OPTION_OBSERVATIONS, [])));
         $zero_incident_verified = ($table_exists === true)
             && empty($wpdb->last_error)
             && ($log_count_before >= 0)
             && ($log_count_before === $log_count_after)
+            && ($log_max_id_before === $log_max_id_after)
+            && ($log_checksum_before === $log_checksum_after)
             && ($obs_snapshot_before === $obs_snapshot_after);
 
         unset($_COOKIE[\WebCareProScanner\Firewall\BotReconDefense::POW_COOKIE_NAME]);
@@ -461,10 +467,40 @@ class Plugin {
             $test_whitelist_settings,
             ['id' => 'WAF-SQLI-INJECTION']
         );
-        $preauth_bypass_allowed = $whitelist_ctx_exploit['is_admin']
-            ? true
-            : (!$canonical_tier_verified && ($whitelist_ctx_exploit['full_bypass'] || $whitelist_ctx_exploit['rule_bypass']));
-        $preauth_exploit_strictly_blocked = ($preauth_bypass_allowed === false);
+
+        $live_whitelist_flags_correct = ($whitelist_ctx_exploit['is_whitelisted'] === true)
+            && ($whitelist_ctx_exploit['full_bypass'] === true)
+            && ($whitelist_ctx_exploit['is_admin'] === false);
+
+        // Pure truth-table test matrix for can_ip_whitelist_bypass_rule:
+        // 1. Pre-auth, global full bypass + critical exploit -> false (Strictly Block)
+        $case1_preauth_full_critical = \WebCareProScanner\Firewall\FirewallEngine::can_ip_whitelist_bypass_rule(false, true, false, true);
+        // 2. Pre-auth, scoped rule bypass + critical exploit -> false (Strictly Block)
+        $case2_preauth_scoped_critical = \WebCareProScanner\Firewall\FirewallEngine::can_ip_whitelist_bypass_rule(false, false, true, true);
+        // 3. Pre-auth, scoped rule bypass + non-critical -> true (Allow)
+        $case3_preauth_scoped_noncritical = \WebCareProScanner\Firewall\FirewallEngine::can_ip_whitelist_bypass_rule(false, false, true, false);
+        // 4. Pre-auth, global full bypass + non-critical -> true (Allow)
+        $case4_preauth_full_noncritical = \WebCareProScanner\Firewall\FirewallEngine::can_ip_whitelist_bypass_rule(false, true, false, false);
+        // 5. Authenticated admin, full bypass + critical exploit -> true (Allow)
+        $case5_admin_full_critical = \WebCareProScanner\Firewall\FirewallEngine::can_ip_whitelist_bypass_rule(true, true, false, true);
+        // 6. Authenticated admin, no bypass + critical exploit -> false (Strictly Block)
+        $case6_admin_nobypass_critical = \WebCareProScanner\Firewall\FirewallEngine::can_ip_whitelist_bypass_rule(true, false, false, true);
+
+        // Combined live context decision on critical exploit:
+        $live_preauth_exploit_decision = \WebCareProScanner\Firewall\FirewallEngine::can_ip_whitelist_bypass_rule(
+            $whitelist_ctx_exploit['is_admin'],
+            $whitelist_ctx_exploit['full_bypass'],
+            $whitelist_ctx_exploit['rule_bypass'],
+            true // is_critical_exploit
+        );
+        $preauth_exploit_strictly_blocked = ($live_preauth_exploit_decision === false)
+            && ($case1_preauth_full_critical === false)
+            && ($case2_preauth_scoped_critical === false)
+            && ($case3_preauth_scoped_noncritical === true)
+            && ($case4_preauth_full_noncritical === true)
+            && ($case5_admin_full_critical === true)
+            && ($case6_admin_nobypass_critical === false)
+            && ($live_whitelist_flags_correct === true);
 
         $checks['empty_ua_clearance_and_methods'] = \WebCareProScanner\Firewall\FirewallEngine::get_empty_user_agent_action('GET', true) === 'allow'
             && \WebCareProScanner\Firewall\FirewallEngine::get_empty_user_agent_action('POST', true) === 'allow'

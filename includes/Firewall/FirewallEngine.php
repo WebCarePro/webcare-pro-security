@@ -6055,7 +6055,7 @@ class FirewallEngine {
         if ($meta && !empty($meta['expires_at']) && time() > (int) $meta['expires_at']) {
             return [
                 'is_whitelisted' => false,
-                'is_admin'       => false,
+                'is_admin'       => $is_admin,
                 'full_bypass'    => false,
                 'rule_bypass'    => false,
             ];
@@ -6085,7 +6085,7 @@ class FirewallEngine {
             // Scoped rule allowlist: only bypasses if matched!
             return [
                 'is_whitelisted' => true,
-                'is_admin'       => false,
+                'is_admin'       => $is_admin,
                 'full_bypass'    => false,
                 'rule_bypass'    => $rule_bypass,
             ];
@@ -6104,6 +6104,25 @@ class FirewallEngine {
             'full_bypass'    => $full_bypass,
             'rule_bypass'    => false,
         ];
+    }
+
+    /**
+     * Authoritatively determines if an IP allowlist context permits bypassing a firewall rule violation.
+     * Enforces the invariant that pre-authenticated traffic can NEVER bypass confirmed exploits or critical categories.
+     *
+     * @param bool $is_admin             Whether the session is a verified authenticated administrator.
+     * @param bool $full_bypass          Whether global full bypass is granted.
+     * @param bool $rule_bypass          Whether scoped rule/category bypass matched.
+     * @param bool $is_critical_exploit  Whether the rule is a confirmed exploit or critical attack category.
+     * @return bool True if bypass is permitted, false otherwise.
+     */
+    public static function can_ip_whitelist_bypass_rule(bool $is_admin, bool $full_bypass, bool $rule_bypass, bool $is_critical_exploit): bool {
+        if ($is_admin) {
+            return $full_bypass || $rule_bypass || !$is_critical_exploit;
+        }
+
+        // Pre-authenticated / unauthenticated traffic: strictly prohibited from bypassing critical exploits or confirmed exploit signatures
+        return !$is_critical_exploit && ($full_bypass || $rule_bypass);
     }
 
     public const TIER_HEURISTIC         = 'heuristic';
@@ -6546,13 +6565,7 @@ class FirewallEngine {
 
             // Pre-authenticated / unauthenticated traffic must NEVER bypass confirmed exploits or critical categories.
             // Authenticated administrator sessions are the ONLY traffic that may bypass critical exploits via IP allowlist.
-            $can_bypass = false;
-            if ($is_admin) {
-                $can_bypass = ($full_bypass || $rule_bypass || !$is_critical_exploit);
-            } else {
-                // Pre-auth allowlist: strictly prohibited from bypassing critical exploits or confirmed exploit signatures
-                $can_bypass = !$is_critical_exploit && ($full_bypass || $rule_bypass);
-            }
+            $can_bypass = self::can_ip_whitelist_bypass_rule($is_admin, $full_bypass, $rule_bypass, $is_critical_exploit);
 
             if ($can_bypass) {
                 // Log incident telemetry as 'bypassed' if telemetry logging is enabled
