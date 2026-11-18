@@ -5790,18 +5790,18 @@ export const FirewallPage = ({
                       {wafSettings.waf_guest_rest_policy !== 'off' && (
                         <div>
                           <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--webcare-text-primary, #0f172a)', display: 'block', marginBottom: '4px' }}>
-                            Custom Allowed Guest REST Route Prefixes (One per line):
+                            Custom Allowed Guest REST Routes & Methods (One per line):
                           </label>
                           <textarea
                             value={wafSettings.waf_guest_rest_custom_allowlist}
                             onChange={(e) => setWafSettings({ ...wafSettings, waf_guest_rest_custom_allowlist: e.target.value })}
-                            placeholder="e.g.&#10;/my-plugin/v1/public-submit&#10;/custom-api/v1/lead"
+                            placeholder="e.g.&#10;POST /my-plugin/v1/public-submit&#10;POST,PUT /custom-api/v1/lead&#10;/contact/v1/*"
                             rows={3}
                             className="webcare-input"
                             style={{ width: '100%', fontSize: '11px', fontFamily: 'monospace', resize: 'vertical' }}
                           />
                           <span style={{ fontSize: '10px', color: 'var(--webcare-text-muted, #64748b)', marginTop: '2px', display: 'block' }}>
-                            Permits unauthenticated visitor POST/PUT/PATCH mutations targeting bespoke public plugin or theme REST routes without triggering Rule #37 drops.
+                            Permits unauthenticated visitor mutations targeting bespoke public plugin or theme REST routes without triggering Rule #37 drops. Supports optional HTTP method prefix (e.g. <code>POST /route</code>) and trailing wildcard (<code>/*</code>) for subpaths.
                           </span>
                         </div>
                       )}

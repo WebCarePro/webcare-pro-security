@@ -9629,6 +9629,10 @@ class ScannerRoutes {
         }
 
         if ($rule === 37) {
+            $raw_method = strtoupper(sanitize_key((string) ($params['method'] ?? 'POST')));
+            $valid_methods = ['POST', 'PUT', 'PATCH', 'DELETE', 'GET'];
+            $method = in_array($raw_method, $valid_methods, true) ? $raw_method : 'POST';
+
             $route = strtolower(sanitize_text_field(wp_unslash($target)));
             if (!str_starts_with($route, '/')) {
                 $route = '/' . $route;
@@ -9639,13 +9643,24 @@ class ScannerRoutes {
                 return new \WP_Error('dangerous_route', __('This REST route cannot be added to guest allowlist for security reasons.', 'webcare-pro-security'), ['status' => 400]);
             }
 
+            $entry = "{$method} {$route}";
             $current_raw = (string) ($settings['waf_guest_rest_custom_allowlist'] ?? '');
             $lines = array_filter(array_map('trim', explode("\n", str_replace("\r", '', $current_raw))));
-            if (!in_array($route, $lines, true)) {
+
+            // Check if exact entry or route-only entry already exists
+            $already_exists = false;
+            foreach ($lines as $line) {
+                if (strcasecmp($line, $entry) === 0 || strcasecmp($line, $route) === 0) {
+                    $already_exists = true;
+                    break;
+                }
+            }
+
+            if (!$already_exists) {
                 if (count($lines) >= 500) {
                     return new \WP_Error('allowlist_limit', __('Custom allowlist has reached maximum capacity (500 items).', 'webcare-pro-security'), ['status' => 400]);
                 }
-                $lines[] = $route;
+                $lines[] = $entry;
                 $settings['waf_guest_rest_custom_allowlist'] = implode("\n", array_unique($lines));
                 \WebCareProScanner\System\SettingsManager::save_settings($settings);
 
@@ -9654,8 +9669,8 @@ class ScannerRoutes {
                         'firewall_rule37_allowlist_added',
                         'firewall',
                         [
-                            /* translators: %1$s: REST route, %2$s: admin user login */
-                            'description' => sprintf(__('Added REST route "%1$s" to Rule #37 custom allowlist by %2$s.', 'webcare-pro-security'), $route, $user_login),
+                            /* translators: %1$s: HTTP method, %2$s: REST route, %3$s: admin user login */
+                            'description' => sprintf(__('Added REST route "%1$s %2$s" to Rule #37 custom allowlist by %3$s.', 'webcare-pro-security'), $method, $route, $user_login),
                         ]
                     );
                 }
@@ -9663,8 +9678,8 @@ class ScannerRoutes {
 
             return rest_ensure_response([
                 'success' => true,
-                /* translators: %s: REST route */
-                'message' => sprintf(__('REST route "%s" successfully allowed in Rule #37.', 'webcare-pro-security'), $route),
+                /* translators: %1$s: HTTP method, %2$s: REST route */
+                'message' => sprintf(__('REST route "%1$s %2$s" successfully allowed in Rule #37.', 'webcare-pro-security'), $method, $route),
             ]);
         }
 

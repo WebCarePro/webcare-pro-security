@@ -206,7 +206,8 @@ class MCPAntiLockoutValidator {
             }
             $bits      = strlen($ip_bin) * 8;
             $prefix_i  = (int) $prefix;
-            if ($prefix_i < 0 || $prefix_i > $bits) {
+            // Enforce strict prefix bounds: reject /0, out-of-bounds prefixes, and non-canonical representations (/000, /033)
+            if ($prefix_i < 1 || $prefix_i > $bits || (string) $prefix_i !== $prefix) {
                 continue;
             }
             $full_bytes = intdiv($prefix_i, 8);

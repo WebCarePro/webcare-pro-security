@@ -1021,13 +1021,14 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
   // State & Action: 1-Click Allow Action / Route in Rule #36 / Rule #37
   const [allowingTarget, setAllowingTarget] = useState<string | null>(null);
 
-  const handleAllowlistRuleTarget = async (rule: 36 | 37, target: string) => {
+  const handleAllowlistRuleTarget = async (rule: 36 | 37, target: string, method?: string) => {
+    const key = method ? `${method} ${target}` : target;
     try {
-      setAllowingTarget(target);
+      setAllowingTarget(key);
       const res = await apiRequest({
         path: '/firewall/allowlist-rule-target',
         method: 'POST',
-        data: { rule, target }
+        data: { rule, target, method }
       });
       if (res && res.success) {
         setActionMessage({ type: 'success', text: res.message || 'Allowlist successfully updated.' });
@@ -3397,14 +3398,16 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
                                   {(log.rule_id === 'WAF-GUEST-REST-MUTATION' || log.rule_id === 'WAF-GUEST-REST-BATCH-MUTATION') && (() => {
                                     const rawTarget = log.matching_entry || log.request_uri || '';
                                     const route = rawTarget.replace(/^\/wp-json/, '').split('?')[0] || '';
+                                    const method = (log.request_method || 'POST').toUpperCase();
                                     if (!route) return null;
+                                    const targetKey = `${method} ${route}`;
                                     return (
                                       <div style={{ marginTop: '6px' }}>
                                         <button
                                           type="button"
                                           className="webcare-btn-micro"
-                                          onClick={() => handleAllowlistRuleTarget(37, route)}
-                                          disabled={allowingTarget === route}
+                                          onClick={() => handleAllowlistRuleTarget(37, route, method)}
+                                          disabled={allowingTarget === targetKey}
                                           style={{
                                             display: 'inline-flex',
                                             alignItems: 'center',
@@ -3416,12 +3419,12 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
                                             background: 'rgba(16, 185, 129, 0.1)',
                                             color: '#059669',
                                             border: '1px solid rgba(16, 185, 129, 0.3)',
-                                            cursor: allowingTarget === route ? 'not-allowed' : 'pointer'
+                                            cursor: allowingTarget === targetKey ? 'not-allowed' : 'pointer'
                                           }}
-                                          title={`Permit unauthenticated guest visitors to invoke REST route "${route}" in Rule #37`}
+                                          title={`Permit unauthenticated guest visitors to invoke "${method} ${route}" in Rule #37`}
                                         >
-                                          {allowingTarget === route ? <Loader2 size={10} className="webcare-spin" /> : <Plus size={10} />}
-                                          Allow in Rule #37 ({route})
+                                          {allowingTarget === targetKey ? <Loader2 size={10} className="webcare-spin" /> : <Plus size={10} />}
+                                          Allow in Rule #37 ({method} {route})
                                         </button>
                                       </div>
                                     );

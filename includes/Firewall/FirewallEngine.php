@@ -3936,6 +3936,7 @@ class FirewallEngine {
         $lines = array_filter(array_map('trim', explode("\n", str_replace("\r", "", $blocked_raw))));
         $new_lines = [];
         $cleared_count = 0;
+        $cleared_ips = [];
 
         foreach ($lines as $line) {
             $entry_ip = trim(preg_split('/[\s#]+/', $line)[0] ?? '');
@@ -3947,6 +3948,7 @@ class FirewallEngine {
             // Clear if temporary ban duration has elapsed
             if ($expires_at > 0 && $now >= $expires_at) {
                 $cleared_count++;
+                $cleared_ips[] = $entry_ip;
                 self::delete_ip_block_meta($entry_ip);
                 delete_transient('webcareproscan_lockout_ip_' . md5($entry_ip));
                 continue;
@@ -3961,6 +3963,20 @@ class FirewallEngine {
             SettingsManager::$suppress_firewall_ruleset_log = false;
             if (class_exists(__NAMESPACE__ . '\MicroWafCompiler')) {
                 MicroWafCompiler::compile_script();
+            }
+
+            // Bi-Directional Cloudflare Edge Reconciliation:
+            // Prune expired edge items in bulk and purge local ledgers for cleared IPs
+            if (class_exists('\\WebCareProScanner\\Firewall\\CAF\\CloudflareIpListSynchronizer')) {
+                try {
+                    $cf_sync = new \WebCareProScanner\Firewall\CAF\CloudflareIpListSynchronizer();
+                    $cf_sync->prune_expired_bans();
+                    foreach ($cleared_ips as $cip) {
+                        \WebCareProScanner\Firewall\CAF\CloudflareIpListSynchronizer::unban_ip_immediately($cip);
+                    }
+                } catch (\Throwable $e) {
+                    // Fail-safe: prevent Cloudflare API or connectivity exceptions from failing local unban
+                }
             }
         }
 
@@ -7005,14 +7021,26 @@ class FirewallEngine {
         // Controlled active-plugin public mutation route adapter:
         // Strictly permits the exact documented public submission endpoint only when the plugin is verified active.
         $adapter_registry = [
-            'koko-analytics'   => ['/koko-analytics/v1/hit' => ['POST']],
-            'burst-statistics' => ['/burst/v1/track' => ['POST']],
-            'ws-form'          => ['/ws-form/v1/submit' => ['POST']],
-            'litespeed-cache'  => [
-                '/litespeed/v1/ping'  => ['POST'],
-                '/litespeed/v1/token' => ['POST'],
+            'koko-analytics'   => [
+                '/koko-analytics/v1/hit'      => ['POST'],
+                '/koko-analytics/v1/pageview' => ['POST'],
             ],
-            'mailpoet'         => ['/mailpoet/v1/subscription' => ['POST']],
+            'burst-statistics' => [
+                '/burst/v1/track' => ['POST'],
+                '/burst/v1/hit'   => ['POST'],
+            ],
+            'ws-form'          => [
+                '/ws-form/v1/submit' => ['POST'],
+            ],
+            'litespeed-cache'  => [
+                '/litespeed/v1/ping'   => ['POST'],
+                '/litespeed/v1/token'  => ['POST'],
+                '/litespeed/v1/action' => ['POST'],
+            ],
+            'mailpoet'         => [
+                '/mailpoet/v1/subscription'  => ['POST'],
+                '/mailpoet/v1/subscriptions' => ['POST'],
+            ],
         ];
 
         foreach ($adapter_registry as $plugin_slug => $endpoints) {
@@ -7061,6 +7089,65 @@ class FirewallEngine {
         }
         if (preg_match('#^/wc/store(?:/v[0-9]+)?/checkout/[0-9]+$#', $route)) {
             return $method === 'POST';
+        }
+
+        return false;
+    }
+
+    /**
+     * Determine if a target REST route and HTTP method match the custom allowed REST routes list.
+     * Supports exact canonical route matching, method restriction (e.g. "POST /my-route" or "POST,PUT /my-route"),
+     * and explicit wildcard segment suffixes (e.g. "/my-route/*").
+     *
+     * @param string $route Clean REST route (e.g. "/wp-json/..." stripped).
+     * @param string $method HTTP method (e.g. "POST", "PUT").
+     * @param array<int, string> $custom_lines Raw lines from waf_guest_rest_custom_allowlist.
+     * @return bool
+     */
+    public static function is_custom_rest_route_allowed(string $route, string $method, array $custom_lines): bool {
+        if (empty($custom_lines)) {
+            return false;
+        }
+
+        $clean_route = '/' . ltrim(strtolower(trim($route)), '/');
+        $clean_method = strtoupper(trim($method));
+
+        foreach ($custom_lines as $line) {
+            $line = trim($line);
+            if ($line === '' || str_starts_with($line, '#')) {
+                continue;
+            }
+
+            $allowed_methods = [];
+            $target_route = $line;
+
+            // Check for leading HTTP method restriction: e.g. "POST /my-route" or "POST,PUT /my-route" or "POST|PUT /my-route"
+            if (preg_match('/^([A-Za-z]+(?:[,\|][A-Za-z]+)*)\s+(.+)$/', $line, $matches)) {
+                $raw_verbs = preg_split('/[,\|]+/', strtoupper($matches[1])) ?: [];
+                $allowed_methods = array_filter(array_map('trim', $raw_verbs));
+                $target_route = trim($matches[2]);
+            }
+
+            // If methods are specified, check if the incoming method is allowed
+            if (!empty($allowed_methods) && !in_array($clean_method, $allowed_methods, true)) {
+                continue;
+            }
+
+            $target_route = '/' . ltrim(strtolower($target_route), '/');
+
+            // Explicit wildcard segment suffix: e.g. "/my-plugin/v1/*" matches "/my-plugin/v1" and "/my-plugin/v1/anything"
+            if (str_ends_with($target_route, '/*')) {
+                $base = rtrim(substr($target_route, 0, -2), '/');
+                if ($clean_route === $base || str_starts_with($clean_route, $base . '/')) {
+                    return true;
+                }
+                continue;
+            }
+
+            // Exact canonical route match (prevents /wp/v2/posts from matching /wp/v2/posts/123 or /wp/v2/posts-admin)
+            if (rtrim($clean_route, '/') === rtrim($target_route, '/')) {
+                return true;
+            }
         }
 
         return false;
@@ -7156,7 +7243,7 @@ class FirewallEngine {
         }
 
         $custom_rest_raw = $settings['waf_guest_rest_custom_allowlist'] ?? '';
-        $custom_routes = !empty($custom_rest_raw) ? array_map('strtolower', array_filter(array_map('trim', explode("\n", $custom_rest_raw)))) : [];
+        $custom_routes = !empty($custom_rest_raw) ? array_filter(array_map('trim', explode("\n", str_replace("\r", "", $custom_rest_raw)))) : [];
 
         // Public guest mutation prefixes. Payment providers use signed WC-API callbacks outside
         // the REST dispatcher; unknown third-party REST routes must be configured explicitly.
@@ -7222,15 +7309,8 @@ class FirewallEngine {
                 }
 
                 if (in_array($sub_method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
-                    $is_sub_safe = self::is_safe_guest_rest_mutation_route($sub_path, $sub_method, $safe_prefixes);
-                    if (!$is_sub_safe && !empty($custom_routes)) {
-                        foreach ($custom_routes as $c_rt) {
-                            if ($c_rt !== '' && str_starts_with($sub_path, '/' . ltrim($c_rt, '/'))) {
-                                $is_sub_safe = true;
-                                break;
-                            }
-                        }
-                    }
+                    $is_sub_safe = self::is_safe_guest_rest_mutation_route($sub_path, $sub_method, $safe_prefixes)
+                        || self::is_custom_rest_route_allowed($sub_path, $sub_method, $custom_routes);
                     if (!$is_sub_safe) {
                         $rule_triggered = [
                             'id'          => 'WAF-GUEST-REST-BATCH-MUTATION',
@@ -7253,16 +7333,10 @@ class FirewallEngine {
             return $result;
         }
 
-        if (self::is_safe_guest_rest_mutation_route($route, $method, $safe_prefixes)) {
+        if (self::is_safe_guest_rest_mutation_route($route, $method, $safe_prefixes)
+            || self::is_custom_rest_route_allowed($route, $method, $custom_routes)
+        ) {
             return $result;
-        }
-
-        if (!empty($custom_routes)) {
-            foreach ($custom_routes as $c_rt) {
-                if ($c_rt !== '' && str_starts_with($route, '/' . ltrim($c_rt, '/'))) {
-                    return $result;
-                }
-            }
         }
 
         // Flag or block unregistered guest REST write mutation

@@ -406,7 +406,15 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
             }
             return 'INFORMATION_SCHEMA_PROBE';
         }
-        if (preg_match('/\b(?:SLEEP|BENCHMARK|PG_SLEEP|GET_LOCK)\s*\(/i', $skeleton)) {
+        if (preg_match('/\b(?:SLEEP|BENCHMARK|PG_SLEEP)\s*\(/i', $skeleton)) {
+            return 'TIME_BLIND_SQL_FUNCTION';
+        }
+        // Context-sensitive GET_LOCK detection:
+        // MySQL advisory locks (e.g. "SELECT GET_LOCK('lock_name', 10)") are legitimately used by plugins for concurrency.
+        // Only flag GET_LOCK when chained into injection logic (WHERE/AND/OR/UNION/CASE/WHEN/IF/HAVING) or boolean comparisons.
+        if (preg_match('/\b(?:AND|OR|UNION|CASE|WHEN|IF|HAVING)\b[\s\S]*?\bGET_LOCK\s*\(/i', $skeleton)
+            || preg_match('/\bGET_LOCK\s*\([\s\S]*?\)\s*(?:AND|OR|=|!=|<|>|IS|LIKE)/i', $skeleton)
+        ) {
             return 'TIME_BLIND_SQL_FUNCTION';
         }
         if (preg_match('/\bLOAD_FILE\s*\(/i', $skeleton) || preg_match('/\bINTO\s+(?:OUT|DUMP)FILE\b/i', $skeleton)) {
