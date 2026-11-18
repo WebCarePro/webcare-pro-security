@@ -430,9 +430,13 @@ class Plugin {
         // Verify handle_rule_violation() production path returns cleanly and produces ZERO incident log rows or observations
         global $wpdb;
         $logs_table = $wpdb->prefix . 'webcareproscan_firewall_logs';
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
         $table_exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $logs_table)) === $logs_table;
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
         $log_count_before = $table_exists ? (int) $wpdb->get_var("SELECT COUNT(*) FROM {$logs_table}") : -1;
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
         $log_max_id_before = $table_exists ? (int) $wpdb->get_var("SELECT COALESCE(MAX(id), 0) FROM {$logs_table}") : -1;
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
         $log_checksum_before = $table_exists ? (string) $wpdb->get_var("SELECT MD5(CONCAT_WS(':', COUNT(*), COALESCE(MAX(id), 0))) FROM {$logs_table}") : '';
         $obs_snapshot_before = md5((string) serialize(get_option(\WebCareProScanner\Firewall\CAF\LearningModeEngine::OPTION_OBSERVATIONS, [])));
 
@@ -448,8 +452,11 @@ class Plugin {
             $violation_cleared_cleanly = false;
         }
 
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
         $log_count_after = $table_exists ? (int) $wpdb->get_var("SELECT COUNT(*) FROM {$logs_table}") : -2;
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
         $log_max_id_after = $table_exists ? (int) $wpdb->get_var("SELECT COALESCE(MAX(id), 0) FROM {$logs_table}") : -2;
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
         $log_checksum_after = $table_exists ? (string) $wpdb->get_var("SELECT MD5(CONCAT_WS(':', COUNT(*), COALESCE(MAX(id), 0))) FROM {$logs_table}") : '';
         $obs_snapshot_after = md5((string) serialize(get_option(\WebCareProScanner\Firewall\CAF\LearningModeEngine::OPTION_OBSERVATIONS, [])));
         $zero_incident_verified = ($table_exists === true)

@@ -1,6 +1,6 @@
 {
   "version": "2.19.0",
-  "generated_at": "2026-11-18T22:02:15.707Z",
+  "generated_at": "2026-11-18T22:26:29.644Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -392,7 +392,7 @@
       "size": 26968
     },
     "includes/Firewall/BotReconDefense.php": {
-      "sha256": "798c47403f5438e919e71484a95d50d1b72f87d53b540b03abfda9dfbf5bc8f2",
+      "sha256": "37c1c293bdf031897fdb69daa3a613935a6ac3c8fff5ece43a25719741778715",
       "size": 41291
     },
     "includes/Firewall/CAF/AdaptiveFirewallAdvisor.php": {
@@ -432,8 +432,8 @@
       "size": 13336
     },
     "includes/Firewall/Core/AffiliateSecurityEngine.php": {
-      "sha256": "942e8b8f7e603754efd6f0bfe40274287d6481398d3368eded8b52b66d3d2e40",
-      "size": 38381
+      "sha256": "5f46a331916603afa46022cfd0d6021aefae7dc1a9912e10a6c0cebcc7647959",
+      "size": 38405
     },
     "includes/Firewall/Core/ClientIpResolver.php": {
       "sha256": "95d371ee733306878a5f86fa1919b878fe3672c352da119d09d6f21a82d39649",
@@ -696,8 +696,8 @@
       "size": 32218
     },
     "includes/Plugin.php": {
-      "sha256": "71b348d6dd2fc241cfb84376d4ae0009c82fa101e2bc972c03c9a1f8bd250ff0",
-      "size": 42166
+      "sha256": "fa888904a30128d9f66ba05d53f3925bd28598d1802c12b7ca2b32c79b3a9b18",
+      "size": 43621
     },
     "includes/Quarantine/CoreRepairManager.php": {
       "sha256": "e4b6a6438e72eefdfcc59fe1b4db45caf4cf269c62a1143b0f61ba998a90e3b9",

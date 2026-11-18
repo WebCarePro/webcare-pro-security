@@ -313,7 +313,7 @@ class AffiliateSecurityEngine {
             return;
         }
 
-        $content_type = isset($_SERVER['CONTENT_TYPE']) ? strtolower((string) $_SERVER['CONTENT_TYPE']) : '';
+        $content_type = isset($_SERVER['CONTENT_TYPE']) ? strtolower(sanitize_text_field(wp_unslash($_SERVER['CONTENT_TYPE']))) : '';
         $json_values  = [];
         if (str_contains($content_type, 'application/json') && (str_contains($request_uri, 'affwp') || str_contains($request_uri, 'slicewp') || str_contains($request_uri, 'solid-affiliate'))) {
             $raw_json = @file_get_contents('php://input');
