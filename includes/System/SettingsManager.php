@@ -156,7 +156,7 @@ class SettingsManager {
             'waf_woo_scraping_protection'       => true,  // WooCommerce Catalog & Price Scraping Mitigation (Rule #42)
             'waf_woo_scraping_max_requests'     => 60,    // Max catalog/product requests per minute per IP
             'waf_woo_scraping_lockout_duration' => 15,    // Lockout duration in minutes (15 mins)
-            'waf_affiliate_shield_enabled'      => true,  // Affiliate Ecosystem Shield & Anti-Fraud Armor (Rule #43)
+            'waf_affiliate_shield_enabled'      => false, // Affiliate Ecosystem Shield & Anti-Fraud Armor (Rule #43, off by default, smart-activated when affiliate suite detected)
             'waf_affiliate_max_clicks_min'      => 10,    // Max referral clicks per minute per IP before suppression (default 10)
             'waf_affiliate_anti_injection'      => true,  // Referral Parameter Anti-Injection & Sanitization Armor
             'waf_affiliate_reg_spam_protection' => true,  // Affiliate Registration Anti-Spam Gate & Disposable Email Shield

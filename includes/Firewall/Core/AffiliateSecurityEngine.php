@@ -102,6 +102,16 @@ class AffiliateSecurityEngine {
      * Initialize Affiliate Security Engine hooks if an affiliate ecosystem is detected.
      */
     public static function init(): void {
+        // Invalidate ecosystem cache when plugins or themes change so activation is detected instantly
+        add_action('activated_plugin', [__CLASS__, 'invalidate_detection_cache']);
+        add_action('deactivated_plugin', [__CLASS__, 'invalidate_detection_cache']);
+        add_action('switch_theme', [__CLASS__, 'invalidate_detection_cache']);
+
+        $settings = SettingsManager::get_settings();
+        if (empty($settings['waf_affiliate_shield_enabled'])) {
+            return;
+        }
+
         $ecosystem = self::get_detected_ecosystem();
         if (empty($ecosystem['is_active'])) {
             return;
@@ -118,11 +128,6 @@ class AffiliateSecurityEngine {
 
         // Hook into AffiliateWP registration anti-spam validation
         add_action('affwp_process_register_form', [__CLASS__, 'validate_affwp_registration'], 5);
-
-        // Invalidate ecosystem cache when plugins or themes change
-        add_action('activated_plugin', [__CLASS__, 'invalidate_detection_cache']);
-        add_action('deactivated_plugin', [__CLASS__, 'invalidate_detection_cache']);
-        add_action('switch_theme', [__CLASS__, 'invalidate_detection_cache']);
     }
 
     /**

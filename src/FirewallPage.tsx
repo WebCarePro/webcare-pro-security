@@ -1599,7 +1599,7 @@ export const FirewallPage = ({
     waf_woo_scraping_protection: true,
     waf_woo_scraping_max_requests: 60,
     waf_woo_scraping_lockout_duration: 15,
-    waf_affiliate_shield_enabled: true,
+    waf_affiliate_shield_enabled: false,
     waf_affiliate_max_clicks_min: 10,
     waf_affiliate_anti_injection: true,
     waf_affiliate_reg_spam_protection: true,
@@ -1743,7 +1743,7 @@ export const FirewallPage = ({
           waf_woo_scraping_protection: s.waf_woo_scraping_protection !== false,
           waf_woo_scraping_max_requests: s.waf_woo_scraping_max_requests !== undefined ? Number(s.waf_woo_scraping_max_requests) : 60,
           waf_woo_scraping_lockout_duration: s.waf_woo_scraping_lockout_duration !== undefined ? Number(s.waf_woo_scraping_lockout_duration) : 15,
-          waf_affiliate_shield_enabled: s.waf_affiliate_shield_enabled !== false,
+          waf_affiliate_shield_enabled: !!s.waf_affiliate_shield_enabled,
           waf_affiliate_max_clicks_min: s.waf_affiliate_max_clicks_min !== undefined ? Number(s.waf_affiliate_max_clicks_min) : 10,
           waf_affiliate_anti_injection: s.waf_affiliate_anti_injection !== false,
           waf_affiliate_reg_spam_protection: s.waf_affiliate_reg_spam_protection !== false,
@@ -4199,13 +4199,14 @@ export const FirewallPage = ({
                     )}
                   </div>
 
-                  {/* Smart Rule #43: Affiliate Ecosystem Shield & Click-Fraud Armor */}
-                  <div className="webcare-firewall-rule-card" style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '10px',
-                    padding: '10px 14px'
-                  }}>
+                  {/* Smart Rule #43: Affiliate Ecosystem Shield & Click-Fraud Armor (Only loaded if affiliate ecosystem is detected) */}
+                  {Boolean(status?.affiliate_telemetry?.is_active) && (
+                    <div className="webcare-firewall-rule-card" style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '10px',
+                      padding: '10px 14px'
+                    }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
                       <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer', flex: 1, margin: 0 }}>
                         <input
@@ -4362,6 +4363,7 @@ export const FirewallPage = ({
                       </div>
                     )}
                   </div>
+                  )}
 
                   {/* Smart Rule 2: Visual Page Builders & In-Admin Editors */}
                   <div className="webcare-firewall-rule-card" style={{

@@ -138,8 +138,10 @@ class FirewallEngine {
             add_action('template_redirect', [__CLASS__, 'inspect_woo_catalog_scraping'], 1);
         }
 
-        // Rule #43: Affiliate Ecosystem Shield & Anti-Fraud Armor (AffiliateWP, SliceWP, Solid Affiliate, etc.)
-        AffiliateSecurityEngine::init();
+        // Rule #43: Affiliate Ecosystem Shield & Anti-Fraud Armor (Only loaded if affiliate ecosystem is detected)
+        if (class_exists(AffiliateSecurityEngine::class) && AffiliateSecurityEngine::get_detected_ecosystem()['is_active']) {
+            AffiliateSecurityEngine::init();
+        }
 
         // Rule #44: Runtime Privilege Escalation Guard (In-Memory RASP Hook Firewall)
         add_filter('pre_update_option', [__CLASS__, 'rasp_guard_critical_options'], 1, 3);
@@ -2154,8 +2156,8 @@ class FirewallEngine {
             }
         }
 
-        // Rule #43: Affiliate Ecosystem Shield & Click-Fraud Armor (AffiliateWP, SliceWP, Solid Affiliate, etc.)
-        if (class_exists(AffiliateSecurityEngine::class)) {
+        // Rule #43: Affiliate Ecosystem Shield & Click-Fraud Armor (Only loaded if enabled & affiliate suite detected)
+        if (!empty($settings['waf_affiliate_shield_enabled']) && class_exists(AffiliateSecurityEngine::class)) {
             $request_uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '/';
             AffiliateSecurityEngine::inspect_request($client_ip, $request_uri, $settings);
         }
@@ -4533,7 +4535,7 @@ class FirewallEngine {
      * @return array
      */
     public static function get_firewall_rules_catalog(): array {
-        return [
+        $catalog = [
             // Incident Containment & Upgrades
             ['id' => 'WAF-CONTAINMENT-LOCKDOWN', 'name' => 'Emergency Containment Write Lockdown', 'category' => 'Incident Containment', 'description' => 'Write operations are strictly prohibited while site is in Emergency Containment Mode.'],
             ['id' => 'WAF-CONTAINMENT-SURFACE-LOCK', 'name' => 'Emergency Containment Attack Surface Lock', 'category' => 'Incident Containment', 'description' => 'Endpoint locked down by Emergency Containment Mode.'],
@@ -4610,13 +4612,20 @@ class FirewallEngine {
             ['id' => 'WAF-RASP-ROLE-ESCALATION', 'name' => 'Runtime Privilege Escalation Guard', 'category' => 'Runtime RASP Hook Defense', 'description' => 'Unauthorized promotion of user capabilities intercepted.'],
             ['id' => 'WAF-RASP-ADMIN-REG-BLOCKED', 'name' => 'Runtime Administrator Registration Guard', 'category' => 'Runtime RASP Hook Defense', 'description' => 'Unauthorized account creation with administrator privileges blocked.'],
             ['id' => 'WAF-RASP-META-INJECTION', 'name' => 'Runtime User Meta Injection Guard', 'category' => 'Runtime RASP Hook Defense', 'description' => 'Hostile user meta manipulation targeting wp_capabilities blocked.'],
-
-            // Affiliate Ecosystem Shield & Click-Fraud Armor (Rule #43)
-            ['id' => 'WAF-AFFILIATE-INJECTION', 'name' => 'Affiliate Referral Parameter Anti-Injection Armor', 'category' => 'Affiliate Defense', 'description' => 'SQL injection, XSS, or directory traversal exploit payload in affiliate referral parameter blocked.'],
-            ['id' => 'WAF-AFFILIATE-CLICK-FLOOD', 'name' => 'Affiliate Referral Click-Flood & Database Bloat Shield', 'category' => 'Affiliate Defense', 'description' => 'High-velocity referral click flood from IP exceeded safety threshold. Suppressed database visit logging to prevent table bloat and click-fraud.'],
-            ['id' => 'WAF-AFFILIATE-SPAM-REG', 'name' => 'Affiliate Registration Anti-Spam Gate', 'category' => 'Affiliate Defense', 'description' => 'Automated bot registration or disposable email rejected for affiliate account.'],
-            ['id' => 'WAF-AFFILIATE-SPOOF', 'name' => 'Affiliate Direct Link Tracking Referer Integrity Armor', 'category' => 'Affiliate Defense', 'description' => 'Automated crawler or headless request attempting fake direct link attribution blocked.'],
         ];
+
+        // Affiliate Ecosystem Shield & Click-Fraud Armor (Rule #43: Only loaded if affiliate plugins detected)
+        if (class_exists(AffiliateSecurityEngine::class)) {
+            $ecosystem = AffiliateSecurityEngine::get_detected_ecosystem();
+            if (!empty($ecosystem['is_active'])) {
+                $catalog[] = ['id' => 'WAF-AFFILIATE-INJECTION', 'name' => 'Affiliate Referral Parameter Anti-Injection Armor', 'category' => 'Affiliate Defense', 'description' => 'SQL injection, XSS, or directory traversal exploit payload in affiliate referral parameter blocked.'];
+                $catalog[] = ['id' => 'WAF-AFFILIATE-CLICK-FLOOD', 'name' => 'Affiliate Referral Click-Flood & Database Bloat Shield', 'category' => 'Affiliate Defense', 'description' => 'High-velocity referral click flood from IP exceeded safety threshold. Suppressed database visit logging to prevent table bloat and click-fraud.'];
+                $catalog[] = ['id' => 'WAF-AFFILIATE-SPAM-REG', 'name' => 'Affiliate Registration Anti-Spam Gate', 'category' => 'Affiliate Defense', 'description' => 'Automated bot registration or disposable email rejected for affiliate account.'];
+                $catalog[] = ['id' => 'WAF-AFFILIATE-SPOOF', 'name' => 'Affiliate Direct Link Tracking Referer Integrity Armor', 'category' => 'Affiliate Defense', 'description' => 'Automated crawler or headless request attempting fake direct link attribution blocked.'];
+            }
+        }
+
+        return $catalog;
     }
 
     /**
@@ -7075,8 +7084,9 @@ class FirewallEngine {
             return; // Legitimate Tier 1 guest action permitted
         }
 
-        // Affiliate Ecosystem Public Guest AJAX Handlers (AffiliateWP, SliceWP, Solid Affiliate, etc.)
+        // Affiliate Ecosystem Public Guest AJAX Handlers (Only loaded if affiliate ecosystem is detected)
         if (class_exists(AffiliateSecurityEngine::class)
+            && AffiliateSecurityEngine::get_detected_ecosystem()['is_active']
             && AffiliateSecurityEngine::is_public_affiliate_ajax_action($action)
         ) {
             return;
@@ -7258,8 +7268,9 @@ class FirewallEngine {
             return $method === 'POST';
         }
 
-        // Affiliate Ecosystem Public REST Mutations (AffiliateWP, SliceWP, Solid Affiliate):
+        // Affiliate Ecosystem Public REST Mutations (Only loaded if affiliate ecosystem is detected):
         if (class_exists(AffiliateSecurityEngine::class)
+            && AffiliateSecurityEngine::get_detected_ecosystem()['is_active']
             && AffiliateSecurityEngine::is_public_affiliate_rest_route($route)
         ) {
             return in_array($method, ['POST', 'PUT'], true);
