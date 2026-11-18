@@ -6544,18 +6544,25 @@ class FirewallEngine {
                 || strpos($rule_id_check, 'WAF-GRAPHQL-') === 0
                 || $rule_id_check === 'WAF-AI-AGENT-KILLCHAIN';
 
-            // If granted specific rule/category exemption, OR
-            // if full bypass is permitted (verified authenticated admin session), OR
-            // if this is an operational / rate limit / scan probe rule (NOT a critical exploit payload):
-            if ($rule_bypass || $full_bypass || !$is_critical_exploit) {
+            // Pre-authenticated / unauthenticated traffic must NEVER bypass confirmed exploits or critical categories.
+            // Authenticated administrator sessions are the ONLY traffic that may bypass critical exploits via IP allowlist.
+            $can_bypass = false;
+            if ($is_admin) {
+                $can_bypass = ($full_bypass || $rule_bypass || !$is_critical_exploit);
+            } else {
+                // Pre-auth allowlist: strictly prohibited from bypassing critical exploits or confirmed exploit signatures
+                $can_bypass = !$is_critical_exploit && ($full_bypass || $rule_bypass);
+            }
+
+            if ($can_bypass) {
                 // Log incident telemetry as 'bypassed' if telemetry logging is enabled
                 $log_telemetry = isset($settings['waf_whitelist_log_telemetry']) ? !empty($settings['waf_whitelist_log_telemetry']) : true;
                 if ($log_telemetry) {
                     $bypass_rule = $rule;
-                    if ($rule_bypass) {
-                        $bypass_context = 'Rule-Scoped Allowlist Exemption';
-                    } elseif ($is_admin) {
+                    if ($is_admin) {
                         $bypass_context = 'Authenticated Administrator Session';
+                    } elseif ($rule_bypass) {
+                        $bypass_context = 'Rule-Scoped Allowlist Exemption';
                     } else {
                         $bypass_context = 'Pre-Auth Whitelisted IP';
                     }

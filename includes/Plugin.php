@@ -415,8 +415,8 @@ class Plugin {
         global $wpdb;
         $logs_table = $wpdb->prefix . 'webcareproscan_firewall_logs';
         $table_exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $logs_table)) === $logs_table;
-        $log_count_before = $table_exists ? (int) $wpdb->get_var("SELECT COUNT(*) FROM {$logs_table}") : 0;
-        $obs_count_before = count((array) get_option(\WebCareProScanner\Firewall\CAF\LearningModeEngine::OPTION_OBSERVATIONS, []));
+        $log_count_before = $table_exists ? (int) $wpdb->get_var("SELECT COUNT(*) FROM {$logs_table}") : -1;
+        $obs_snapshot_before = md5((string) serialize(get_option(\WebCareProScanner\Firewall\CAF\LearningModeEngine::OPTION_OBSERVATIONS, [])));
 
         $violation_cleared_cleanly = false;
         try {
@@ -430,9 +430,13 @@ class Plugin {
             $violation_cleared_cleanly = false;
         }
 
-        $log_count_after = $table_exists ? (int) $wpdb->get_var("SELECT COUNT(*) FROM {$logs_table}") : 0;
-        $obs_count_after = count((array) get_option(\WebCareProScanner\Firewall\CAF\LearningModeEngine::OPTION_OBSERVATIONS, []));
-        $zero_incident_verified = ($log_count_before === $log_count_after) && ($obs_count_before === $obs_count_after);
+        $log_count_after = $table_exists ? (int) $wpdb->get_var("SELECT COUNT(*) FROM {$logs_table}") : -2;
+        $obs_snapshot_after = md5((string) serialize(get_option(\WebCareProScanner\Firewall\CAF\LearningModeEngine::OPTION_OBSERVATIONS, [])));
+        $zero_incident_verified = ($table_exists === true)
+            && empty($wpdb->last_error)
+            && ($log_count_before >= 0)
+            && ($log_count_before === $log_count_after)
+            && ($obs_snapshot_before === $obs_snapshot_after);
 
         unset($_COOKIE[\WebCareProScanner\Firewall\BotReconDefense::POW_COOKIE_NAME]);
 
@@ -445,6 +449,22 @@ class Plugin {
 
         $canonical_bound_exploit = \WebCareProScanner\Firewall\FirewallEngine::get_confirmed_exploit_definition('WAF-SQLI-INJECTION');
         $canonical_tier_verified = ($canonical_bound_exploit !== null) && ($canonical_bound_exploit['category'] === 'SQL Injection');
+
+        // Regression check: Pre-auth IP allowlist can NEVER bypass confirmed exploits or critical categories
+        $test_whitelist_settings = [
+            'waf_whitelisted_ips'             => $test_clear_ip,
+            'waf_whitelist_require_admin'     => 0, // Unauthenticated full bypass enabled for whitelisted IP
+            'waf_enable_progressive_warnings' => 0,
+        ];
+        $whitelist_ctx_exploit = \WebCareProScanner\Firewall\FirewallEngine::check_ip_whitelist_context(
+            $test_clear_ip,
+            $test_whitelist_settings,
+            ['id' => 'WAF-SQLI-INJECTION']
+        );
+        $preauth_bypass_allowed = $whitelist_ctx_exploit['is_admin']
+            ? true
+            : (!$canonical_tier_verified && ($whitelist_ctx_exploit['full_bypass'] || $whitelist_ctx_exploit['rule_bypass']));
+        $preauth_exploit_strictly_blocked = ($preauth_bypass_allowed === false);
 
         $checks['empty_ua_clearance_and_methods'] = \WebCareProScanner\Firewall\FirewallEngine::get_empty_user_agent_action('GET', true) === 'allow'
             && \WebCareProScanner\Firewall\FirewallEngine::get_empty_user_agent_action('POST', true) === 'allow'
@@ -459,6 +479,7 @@ class Plugin {
             && $violation_cleared_cleanly === true
             && $zero_incident_verified === true
             && $canonical_tier_verified === true
+            && $preauth_exploit_strictly_blocked === true
             && $blocked_sqli === false
             && $blocked_sqli_with_warning === false
             && $blocked_confirmed_exploit_with_warning === false
