@@ -1,4 +1,8 @@
 ﻿v:2.18.0 - 2026-11-18
+- Progressive Enforcement Warnings & Safety Checkpoints (Soft Block Mode):
+  * Integrated tiered defense distinguishing critical exploit payloads (SQLi, RCE, Webshells, Traversal) from low-tier operational violations and rate limits (coupon errors, login failures, 404 scanning, blank user-agent, form floods).
+  * Upgraded `render_block_page()` in `FirewallEngine.php` to display an amber cautionary warning screen ("⚠️ Security Notice: Action Warning") notifying visitors that repeated unauthorized attempts will result in an IP ban, featuring a 1-click "Contact Site Support" button and Support Reference Code.
+  * Added configurable "Support / Contact Page URL" (`waf_contact_support_url`) and "Progressive Enforcement Warnings" toggle (`waf_enable_progressive_warnings`) in SettingsManager and Firewall UI, with automatic low-level firewall exemption for the contact page so visitors appealing warnings are never blocked.
 - WAF Logs Terminal Hit Attribution & Cloudflare Edge Ban Indicator De-duplication:
   * Scoped the `☁ BANNED • CF EDGE` and `BANNED` badges under the IP column strictly to the terminal (most recent) hit from each IP (`log.is_last_hit_for_ip && log.is_banned`), eliminating repetitive ban badges across previous attack incursion rows.
   * Enhanced `WafFileLogger::query_logs()` with stream arrival sequence index tracking (`_stream_idx`) to provide deterministic tie-breaking for requests recorded in the same second, ensuring descending sort order accurately designates the topmost log entry as the terminal hit (`is_last_hit_for_ip = true`) and positions `Blocked (CF Ban)` at the head of the attacker timeline.

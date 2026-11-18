@@ -1011,6 +1011,14 @@ class FirewallEngine {
             $url_whitelisted = true;
         }
 
+        // Automatic safe-pass for configured Contact / Support URL (ensures visitors appealing warnings can reach support)
+        if (!$url_whitelisted && !empty($settings['waf_contact_support_url'])) {
+            $contact_path = wp_parse_url($settings['waf_contact_support_url'], PHP_URL_PATH);
+            if (!empty($contact_path) && $contact_path !== '/' && str_starts_with(strtolower($request_uri), strtolower($contact_path))) {
+                $url_whitelisted = true;
+            }
+        }
+
         // Check Targeted User-Agent, Endpoint & IP Allowlist Rules (Zero-Trust granular bypass)
         $targeted_rules_raw = $settings['waf_targeted_allowlist_rules'] ?? '[]';
         $targeted_rules = is_array($targeted_rules_raw) ? $targeted_rules_raw : json_decode((string) $targeted_rules_raw, true);
@@ -2915,6 +2923,52 @@ class FirewallEngine {
 
         $raw_uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '/';
 
+        // Resolve Progressive Warning vs. Hard Exploit Lockdown
+        $settings            = class_exists(SettingsManager::class) ? SettingsManager::get_settings() : [];
+        $progressive_enabled = !empty($settings['waf_enable_progressive_warnings']);
+
+        $critical_exploit_categories = [
+            'SQL Injection',
+            'PHP Code Injection',
+            'Path Traversal',
+            'Cross-Site Scripting (XSS)',
+            'Execution Armor',
+            'AI & Agent Defense',
+            'Virtual Patch',
+            'Next-Gen SQL RASP Defense',
+            'Next-Gen Response DLP',
+            'Modern API & GraphQL Shield',
+            'AI Agent Kill-Chain Defense',
+            'Forbidden Default Admin Usernames Shield',
+        ];
+
+        $rule_cat_raw = (string) ($rule['category'] ?? '');
+        $rule_id_raw  = (string) ($rule['id'] ?? '');
+
+        $is_warning = !empty($rule['is_warning']) || (
+            $progressive_enabled &&
+            !in_array($rule_cat_raw, $critical_exploit_categories, true) &&
+            !str_starts_with($rule_id_raw, 'MOD-CUSTOM-') &&
+            !str_starts_with($rule_id_raw, 'WAF-SQL-RASP-') &&
+            empty($rule['is_hard_block'])
+        );
+
+        // Resolve Contact Support Destination (Configured URL or mailto fallback)
+        $configured_contact = trim((string) ($settings['waf_contact_support_url'] ?? ''));
+        if (!empty($configured_contact)) {
+            $contact_url = str_starts_with($configured_contact, '/') ? site_url($configured_contact) : $configured_contact;
+        } else {
+            $admin_email = get_option('admin_email');
+            if (!empty($admin_email)) {
+                /* translators: 1: Site name, 2: Support reference code */
+                $mail_subject = rawurlencode(sprintf('[%1$s] Security Checkpoint Ref: %2$s', get_bloginfo('name'), $ref_code));
+                $mail_body    = rawurlencode(sprintf("Hello Support,\n\nI encountered an automated security checkpoint on your website.\nSupport Reference Code: %s\nIncident ID: %s\nClient IP: %s\nTime: %s UTC\n\nPlease verify and assist me with access.\n\nThank you.", $ref_code, $incident_id, $client_ip, gmdate('Y-m-d H:i:s')));
+                $contact_url  = 'mailto:' . esc_attr($admin_email) . '?subject=' . $mail_subject . '&body=' . $mail_body;
+            } else {
+                $contact_url = home_url('/');
+            }
+        }
+
         // 1. E-Commerce & Checkout AJAX handler (WooCommerce, SureCart, EDD)
         // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Low-level firewall intercept inspects query parameters to determine structured JSON error formatting
         $is_wc_ajax = !empty($_GET['wc-ajax']) || !empty($_GET['wc-api']);
@@ -2923,11 +2977,14 @@ class FirewallEngine {
             header('Content-Type: application/json; charset=utf-8');
             /* translators: 1: Security notice label, 2: Security explanation, 3: Support reference code label, 4: Support reference code */
             $ajax_msg = sprintf(
-                '<div class="woocommerce-error" role="alert"><strong>%1$s</strong> %2$s<br/><span style="font-size:12px;opacity:0.9;">%3$s <strong>%4$s</strong></span></div>',
-                esc_html__('Security Notice:', 'webcare-pro-security'),
-                esc_html__('Your connection was temporarily held to protect this site.', 'webcare-pro-security'),
+                '<div class="woocommerce-error" role="alert"><strong>%1$s</strong> %2$s<br/><span style="font-size:12px;opacity:0.9;">%3$s <strong>%4$s</strong></span>%5$s</div>',
+                $is_warning ? esc_html__('Security Warning:', 'webcare-pro-security') : esc_html__('Security Notice:', 'webcare-pro-security'),
+                $is_warning
+                    ? esc_html__('Unusual activity detected. If you continue sending repeated invalid requests, your session may be temporarily held.', 'webcare-pro-security')
+                    : esc_html__('Your connection was temporarily held to protect this site.', 'webcare-pro-security'),
                 esc_html__('Customer Support Reference Code:', 'webcare-pro-security'),
-                esc_html($ref_code)
+                esc_html($ref_code),
+                !empty($contact_url) ? sprintf('<br/><a href="%s" target="_blank" style="display:inline-block;margin-top:6px;font-weight:700;text-decoration:underline;">%s &rarr;</a>', esc_url($contact_url), esc_html__('Contact Store Support', 'webcare-pro-security')) : ''
             );
             echo wp_json_encode([
                 'result'        => 'failure',
@@ -2936,7 +2993,11 @@ class FirewallEngine {
                 'refresh'       => false,
                 'incident_id'   => $incident_id,
                 'ref_code'      => $ref_code,
-                'error'         => esc_html__('Security checkpoint active. Please quote reference code to support.', 'webcare-pro-security'),
+                'is_warning'    => $is_warning,
+                'contact_url'   => $contact_url,
+                'error'         => $is_warning
+                    ? esc_html__('Security warning active. Continued unauthorized attempts will result in an IP ban.', 'webcare-pro-security')
+                    : esc_html__('Security checkpoint active. Please quote reference code to support.', 'webcare-pro-security'),
             ]);
             exit;
         }
@@ -2953,14 +3014,18 @@ class FirewallEngine {
             status_header(403);
             header('Content-Type: application/json; charset=utf-8');
             echo wp_json_encode([
-                'code'          => 'webcareproscan_access_denied',
-                'message'       => esc_html__('Your connection was temporarily held to protect this website against automated abusive traffic or invalid requests.', 'webcare-pro-security'),
+                'code'          => $is_warning ? 'webcareproscan_warning_checkpoint' : 'webcareproscan_access_denied',
+                'message'       => $is_warning
+                    ? esc_html__('Security Warning: Unusual activity detected. Continued unauthorized requests will result in an automated IP lockout.', 'webcare-pro-security')
+                    : esc_html__('Your connection was temporarily held to protect this website against automated abusive traffic or invalid requests.', 'webcare-pro-security'),
                 'data'          => [
                     'status'      => 403,
+                    'is_warning'  => $is_warning,
                     'incident_id' => $incident_id,
                     'ref_code'    => $ref_code,
                     'rule_id'     => $rule['id'] ?? 'WAF-BLOCK',
                     'category'    => $rule['category'] ?? 'Security Shield',
+                    'contact_url' => $contact_url,
                 ],
             ]);
             exit;
@@ -2969,43 +3034,79 @@ class FirewallEngine {
         $site_name   = get_bloginfo('name');
         $rule_cat    = esc_html($rule['category'] ?? 'Security Shield');
 
+        // Color and visual theme attributes
+        $badge_icon  = $is_warning ? '⚠️' : '🛡️';
+        $badge_bg    = $is_warning ? '#fef3c7' : '#fee2e2';
+        $badge_border= $is_warning ? '1px solid #fde68a' : '1px solid #fecaca';
+        $title_color = $is_warning ? '#92400e' : '#0f172a';
+        $card_accent = $is_warning ? 'border-top: 4px solid #f59e0b;' : 'border-top: 4px solid #dc2626;';
+        $ref_border  = $is_warning ? '#f59e0b' : '#3b82f6';
+        $ref_color   = $is_warning ? '#b45309' : '#1e40af';
+        $btn_bg      = $is_warning ? '#d97706' : '#4f46e5';
+
+        $headline = $is_warning
+            ? esc_html__('Security Notice: Action Warning', 'webcare-pro-security')
+            : esc_html__('Protected by WebCare Pro Security', 'webcare-pro-security');
+
+        /* translators: %s: Site name */
+        $subheadline = sprintf(esc_html__('Automated safety checkpoint on %s', 'webcare-pro-security'), esc_html($site_name));
+
+        $primary_desc = $is_warning
+            ? esc_html__('Unusual or unauthorized activity was detected from your connection. If you continue sending repeated invalid or unauthorized requests, your IP address will be temporarily banned from this site.', 'webcare-pro-security')
+            : esc_html__('Your connection was temporarily held to protect this website against automated abusive traffic or repeated invalid requests.', 'webcare-pro-security');
+
+        $appeal_text = $is_warning
+            ? esc_html__('Are you a legitimate visitor or customer experiencing an issue? You can reach out directly with this code and we will resolve it immediately.', 'webcare-pro-security')
+            : esc_html__('Are you a legitimate customer having trouble checking out or logging in? Share this code with the site owner or support team to restore access in 1 click.', 'webcare-pro-security');
+
         $message = sprintf(
-            '<div style="font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, Oxygen-Sans, Ubuntu, Cantarell, \"Helvetica Neue\", sans-serif; max-width: 620px; margin: 40px auto; line-height: 1.6; color: #1e293b; background: #ffffff; padding: 36px; border-radius: 14px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.06), 0 8px 10px -6px rgba(0,0,0,0.04); border: 1px solid #e2e8f0;">' .
+            '<div style="font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, Oxygen-Sans, Ubuntu, Cantarell, \"Helvetica Neue\", sans-serif; max-width: 620px; margin: 40px auto; line-height: 1.6; color: #1e293b; background: #ffffff; padding: 36px; border-radius: 14px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.06), 0 8px 10px -6px rgba(0,0,0,0.04); border: 1px solid #e2e8f0; %1$s">' .
             '<div style="display: flex; align-items: center; margin-bottom: 20px;">' .
-            '<div style="width: 44px; height: 44px; border-radius: 10px; background: #fee2e2; display: flex; align-items: center; justify-content: center; font-size: 22px; margin-right: 14px; text-align: center; line-height: 44px;">🛡️</div>' .
+            '<div style="width: 44px; height: 44px; border-radius: 10px; background: %2$s; border: %3$s; display: flex; align-items: center; justify-content: center; font-size: 22px; margin-right: 14px; text-align: center; line-height: 44px;">%4$s</div>' .
             '<div>' .
-            '<h2 style="color: #0f172a; margin: 0; font-size: 22px; font-weight: 700;">%s</h2>' .
-            '<p style="margin: 3px 0 0; color: #64748b; font-size: 13px;">%s</p>' .
+            '<h2 style="color: %5$s; margin: 0; font-size: 21px; font-weight: 700;">%6$s</h2>' .
+            '<p style="margin: 3px 0 0; color: #64748b; font-size: 13px;">%7$s</p>' .
             '</div>' .
             '</div>' .
-            '<p style="font-size: 14px; color: #334155; margin-bottom: 20px;">%s</p>' .
-            '<div style="background: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #3b82f6; padding: 16px 20px; border-radius: 8px; margin: 20px 0;">' .
-            '<p style="margin: 0 0 6px; font-size: 11px; text-transform: uppercase; font-weight: 700; letter-spacing: 0.05em; color: #64748b;">%s</p>' .
+            '<p style="font-size: 14px; color: #334155; margin-bottom: 20px;">%8$s</p>' .
+            '<div style="background: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid %9$s; padding: 16px 20px; border-radius: 8px; margin: 20px 0;">' .
+            '<p style="margin: 0 0 6px; font-size: 11px; text-transform: uppercase; font-weight: 700; letter-spacing: 0.05em; color: #64748b;">%10$s</p>' .
             '<div style="display: flex; align-items: baseline; gap: 10px;">' .
-            '<span style="font-family: SFMono-Regular, Consolas, monospace; font-size: 24px; font-weight: 800; color: #1e40af; letter-spacing: 1px;">%s</span>' .
-            '<span style="font-size: 12px; color: #64748b;">(%s)</span>' .
+            '<span style="font-family: SFMono-Regular, Consolas, monospace; font-size: 24px; font-weight: 800; color: %11$s; letter-spacing: 1px;">%12$s</span>' .
+            '<span style="font-size: 12px; color: #64748b;">(%13$s)</span>' .
             '</div>' .
-            '<p style="margin: 8px 0 0; font-size: 12px; color: #475569;">%s</p>' .
+            '<p style="margin: 8px 0 0; font-size: 12px; color: #475569;">%14$s</p>' .
             '</div>' .
             '<div style="background: #f1f5f9; border: 1px solid #cbd5e1; padding: 12px 16px; border-radius: 8px; margin: 18px 0; font-size: 12px; color: #475569;">' .
-            '<p style="margin: 3px 0;"><strong>%s:</strong> <code>%s</code></p>' .
-            '<p style="margin: 3px 0;"><strong>%s:</strong> <code>%s</code></p>' .
-            '<p style="margin: 3px 0;"><strong>%s:</strong> <span>%s</span></p>' .
-            '<p style="margin: 3px 0;"><strong>%s:</strong> <span>%s</span></p>' .
+            '<p style="margin: 3px 0;"><strong>%15$s:</strong> <code>%16$s</code></p>' .
+            '<p style="margin: 3px 0;"><strong>%17$s:</strong> <code>%18$s</code></p>' .
+            '<p style="margin: 3px 0;"><strong>%19$s:</strong> <span>%20$s</span></p>' .
+            '<p style="margin: 3px 0;"><strong>%21$s:</strong> <span>%22$s</span></p>' .
             '</div>' .
-            '<p style="font-size: 12px; color: #94a3b8; text-align: center; margin-top: 24px;">%s</p>' .
+            '<div style="margin-top: 24px; display: flex; flex-wrap: wrap; gap: 10px; justify-content: center;">' .
+            '<a href="%23$s" style="display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: %24$s; color: #ffffff; padding: 11px 22px; border-radius: 8px; text-decoration: none; font-weight: 700; font-size: 13.5px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">' .
+            '<span>📩</span> %25$s' .
+            '</a>' .
+            '<a href="%26$s" style="display: inline-flex; align-items: center; justify-content: center; gap: 6px; background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; padding: 11px 18px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 13px;">' .
+            '<span>🏠</span> %27$s' .
+            '</a>' .
+            '</div>' .
+            '<p style="font-size: 12px; color: #94a3b8; text-align: center; margin-top: 24px;">%28$s</p>' .
             '</div>',
-            esc_html__('Protected by WebCare Pro Security', 'webcare-pro-security'),
-            sprintf(
-                /* translators: %s: site name */
-                esc_html__('Automated safety checkpoint on %s', 'webcare-pro-security'),
-                esc_html($site_name)
-            ),
-            esc_html__('Your connection was temporarily held to protect this website against automated abusive traffic or repeated invalid requests.', 'webcare-pro-security'),
+            $card_accent,
+            $badge_bg,
+            $badge_border,
+            $badge_icon,
+            $title_color,
+            $headline,
+            $subheadline,
+            $primary_desc,
+            $ref_border,
             esc_html__('Customer Support Reference Code', 'webcare-pro-security'),
+            $ref_color,
             esc_html($ref_code),
-            esc_html__('Share with Store Owner', 'webcare-pro-security'),
-            esc_html__('Are you a legitimate customer having trouble checking out or logging in? Share this code with the site owner or support team to restore access in 1 click.', 'webcare-pro-security'),
+            esc_html__('Quote to Support', 'webcare-pro-security'),
+            $appeal_text,
             esc_html__('Incident ID', 'webcare-pro-security'),
             esc_html($incident_id),
             esc_html__('Client IP', 'webcare-pro-security'),
@@ -3014,6 +3115,11 @@ class FirewallEngine {
             $rule_cat,
             esc_html__('Timestamp', 'webcare-pro-security'),
             esc_html(gmdate('Y-m-d H:i:s \U\T\C')),
+            esc_url($contact_url),
+            $btn_bg,
+            esc_html__('Contact Site Support', 'webcare-pro-security'),
+            esc_url(home_url('/')),
+            esc_html__('Return to Home', 'webcare-pro-security'),
             esc_html__('WebCare Pro Security Suite • Zero-Trust Perimeter Defense', 'webcare-pro-security')
         );
 

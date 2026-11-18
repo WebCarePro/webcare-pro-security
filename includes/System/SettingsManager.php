@@ -159,6 +159,8 @@ class SettingsManager {
             'waf_allow_page_builders'           => false, // Visual Page Builder & Editor Smart Pass (off by default, recommended when Elementor/Divi active)
             'waf_block_empty_post_ua_referer'   => true, // Block IPs who send POST requests with blank User-Agent and Referer
             'waf_block_empty_user_agent'        => true, // Block unauthenticated requests with blank or missing User-Agent (Rule WAF-EMPTY-USER-AGENT)
+            'waf_enable_progressive_warnings'   => true, // Progressive Warning Mode: Display amber warning checkpoint with support redirect for low-tier violations
+            'waf_contact_support_url'           => '',   // Dedicated Support / Contact Page URL (e.g. /contact/ or https://example.com/support)
             'waf_whitelisted_urls'              => '',   // Allowlisted URLs / URI paths (one per line)
             'waf_targeted_allowlist_rules'      => '[]', // Granular User-Agent, Endpoint & IP allowlist rules (JSON string)
             'waf_block_forbidden_usernames'     => true, // Immediately block IP trying to sign in as forbidden honeypot usernames
@@ -833,6 +835,8 @@ class SettingsManager {
         $clean['waf_woo_scraping_lockout_duration'] = max(5, min(1440, (int) ($merged['waf_woo_scraping_lockout_duration'] ?? 15)));
         $clean['waf_block_empty_post_ua_referer'] = !empty($merged['waf_block_empty_post_ua_referer']);
         $clean['waf_block_empty_user_agent']        = !empty($merged['waf_block_empty_user_agent']);
+        $clean['waf_enable_progressive_warnings']   = !empty($merged['waf_enable_progressive_warnings']);
+        $clean['waf_contact_support_url']           = esc_url_raw(trim((string) ($merged['waf_contact_support_url'] ?? '')));
         $clean['waf_whitelisted_urls']            = sanitize_textarea_field($merged['waf_whitelisted_urls'] ?? '');
 
         // Targeted User-Agent, Endpoint & IP Allowlist Rules
@@ -1376,6 +1380,8 @@ class SettingsManager {
             'waf_block_404_scanners'           => 'Aggressive 404 Scanner Protection',
             'waf_block_empty_post_ua_referer'  => 'Empty User-Agent / Referer POST Protection',
             'waf_block_empty_user_agent'       => 'Empty / Missing User-Agent Shield',
+            'waf_enable_progressive_warnings'  => 'Progressive Enforcement Warnings (Soft Block)',
+            'waf_contact_support_url'          => 'Support / Contact Page URL',
             'waf_block_forbidden_usernames'    => 'Forbidden Default Admin Usernames Shield',
             'waf_block_malicious_uploads'      => 'Malicious File Upload Inspection',
             'waf_block_unsafe_http_methods'    => 'Unsafe HTTP Methods Filter',

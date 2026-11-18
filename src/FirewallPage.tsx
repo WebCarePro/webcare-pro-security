@@ -1527,6 +1527,8 @@ export const FirewallPage = ({
     form_content_filtering: boolean;
     waf_block_empty_post_ua_referer: boolean;
     waf_block_empty_user_agent: boolean;
+    waf_enable_progressive_warnings: boolean;
+    waf_contact_support_url: string;
     waf_whitelisted_urls: string;
     waf_targeted_allowlist_rules: string;
     waf_block_forbidden_usernames: boolean;
@@ -1618,6 +1620,8 @@ export const FirewallPage = ({
     waf_allow_page_builders: false,
     waf_block_empty_post_ua_referer: true,
     waf_block_empty_user_agent: true,
+    waf_enable_progressive_warnings: true,
+    waf_contact_support_url: '',
     waf_whitelisted_urls: '',
     waf_targeted_allowlist_rules: '[]',
     waf_block_forbidden_usernames: true,
@@ -1733,6 +1737,8 @@ export const FirewallPage = ({
           form_content_filtering: s.form_content_filtering !== false,
           waf_block_empty_post_ua_referer: s.waf_block_empty_post_ua_referer !== false,
           waf_block_empty_user_agent: s.waf_block_empty_user_agent !== false,
+          waf_enable_progressive_warnings: s.waf_enable_progressive_warnings !== false,
+          waf_contact_support_url: s.waf_contact_support_url || '',
           waf_whitelisted_urls: s.waf_whitelisted_urls || '',
           waf_targeted_allowlist_rules: typeof s.waf_targeted_allowlist_rules === 'string' ? s.waf_targeted_allowlist_rules : JSON.stringify(s.waf_targeted_allowlist_rules || []),
           waf_block_forbidden_usernames: s.waf_block_forbidden_usernames !== false,
@@ -7466,6 +7472,69 @@ export const FirewallPage = ({
               <div className="webcare-firewall-callout" style={{ fontSize: '11px', padding: '10px 12px' }}>
                 <strong style={{ display: 'block', marginBottom: '2px', color: 'var(--webcare-text-primary, #0f172a)' }}>Security Note:</strong>
                 URLs listed here bypass SQLi, XSS, and Traversal filtering. Only allowlist trusted external callback paths.
+              </div>
+            </div>
+
+            {/* Progressive Enforcement & Safety Checkpoints */}
+            <div className="webcare-firewall-card" style={{ padding: '20px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+                <h3 className="webcare-firewall-section-title" style={{ fontSize: '16px', display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
+                  <AlertCircle size={18} color="#d97706" /> Progressive Enforcement &amp; Safety Checkpoints
+                </h3>
+                <button
+                  type="button"
+                  className={`webcare-btn webcare-firewall-rule-save-btn ${savedSingleRuleSuccess['waf_enable_progressive_warnings'] || savedSingleRuleSuccess['waf_contact_support_url'] ? 'is-saved' : ''}`}
+                  onClick={() => {
+                    handleSaveSingleRule('waf_enable_progressive_warnings', wafSettings.waf_enable_progressive_warnings);
+                    handleSaveSingleRule('waf_contact_support_url', wafSettings.waf_contact_support_url);
+                  }}
+                  disabled={savingSingleRuleKey === 'waf_enable_progressive_warnings' || savingSingleRuleKey === 'waf_contact_support_url'}
+                >
+                  {savingSingleRuleKey === 'waf_enable_progressive_warnings' || savingSingleRuleKey === 'waf_contact_support_url' ? <Loader2 size={11} className="webcare-spin-icon" /> : (savedSingleRuleSuccess['waf_enable_progressive_warnings'] ? <Check size={11} /> : <Save size={11} />)}
+                  {savedSingleRuleSuccess['waf_enable_progressive_warnings'] ? 'Saved' : 'Save Settings'}
+                </button>
+              </div>
+
+              <p className="webcare-firewall-section-desc" style={{ marginBottom: '16px', fontSize: '12px', lineHeight: 1.5 }}>
+                Instead of immediately locking out paying customers or accidental visitors on low-tier violations (such as coupon errors, rate limits, blank user-agent, or 404 scanning), display an amber warning screen informing them that continued unauthorized actions will result in an IP ban, with a 1-click appeal button.
+              </p>
+
+              {/* Toggle: Enable Progressive Warnings */}
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', marginBottom: '16px', padding: '12px 14px', background: 'var(--webcare-bg-surface, #f8fafc)', borderRadius: '8px', border: '1px solid var(--webcare-border-standard, #e2e8f0)' }}>
+                <input
+                  type="checkbox"
+                  id="waf_enable_progressive_warnings"
+                  checked={wafSettings.waf_enable_progressive_warnings}
+                  onChange={(e) => setWafSettings({ ...wafSettings, waf_enable_progressive_warnings: e.target.checked })}
+                  style={{ accentColor: '#4f46e5', marginTop: '3px', cursor: 'pointer' }}
+                />
+                <label htmlFor="waf_enable_progressive_warnings" style={{ cursor: 'pointer', flex: 1 }}>
+                  <strong style={{ fontSize: '13px', display: 'block', color: 'var(--webcare-text-primary, #0f172a)' }}>
+                    Enable Progressive Warning Screen (Soft Block Mode)
+                  </strong>
+                  <span style={{ fontSize: '12px', color: 'var(--webcare-text-muted, #64748b)', lineHeight: 1.4, display: 'block', marginTop: '2px' }}>
+                    Displays an amber warning screen with the visitor&apos;s unique Support Reference Code and Contact Administrator button. Critical exploits (SQLi, Webshells, RCE, Path Traversal) always remain strictly hard-blocked.
+                  </span>
+                </label>
+              </div>
+
+              {/* Input: Dedicated Support / Contact URL */}
+              <div style={{ marginTop: '14px' }}>
+                <label htmlFor="waf_contact_support_url" style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: 'var(--webcare-text-primary, #0f172a)', marginBottom: '4px' }}>
+                  Support / Contact Page URL
+                </label>
+                <input
+                  id="waf_contact_support_url"
+                  type="text"
+                  value={wafSettings.waf_contact_support_url}
+                  onChange={(e) => setWafSettings({ ...wafSettings, waf_contact_support_url: e.target.value })}
+                  placeholder="e.g. /contact/ or https://example.com/support/ (Leave blank for admin email)"
+                  className="webcare-firewall-input"
+                  style={{ width: '100%', padding: '8px 12px', fontSize: '12px', borderRadius: '6px' }}
+                />
+                <span style={{ fontSize: '11px', color: 'var(--webcare-text-muted, #64748b)', marginTop: '4px', display: 'block' }}>
+                  The URL where visitors are redirected when clicking &ldquo;Contact Site Administrator&rdquo;. This path is automatically exempt from low-level firewall filtering.
+                </span>
               </div>
             </div>
 
