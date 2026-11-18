@@ -579,8 +579,8 @@ class BotReconDefense {
     }
 
     public const POW_COOKIE_NAME = 'webcare_pow_clearance';
-    private const POW_DIFFICULTY  = 4; // 4 hex zeros = 16 leading zero bits (~65,536 hashes max)
-    private const CLEARANCE_TTL   = 3600;
+    public const POW_DIFFICULTY  = 4; // 4 hex zeros = 16 leading zero bits (~65,536 hashes max)
+    public const CLEARANCE_TTL   = 3600;
 
     /**
      * Verify if the client holds a valid PoW clearance cookie or just submitted a valid PoW solution.
@@ -760,9 +760,44 @@ class BotReconDefense {
         self::render_webcrypto_challenge($ip, $ua);
     }
 
+    /**
+     * Retrieve a persistent, cryptographically secure salt for Proof-of-Work challenge and cookie signing.
+     * Prevents static fallback strings if NONCE_KEY or AUTH_KEY constants are undefined.
+     *
+     * @param string $type 'nonce' | 'auth'
+     * @return string
+     */
+    public static function get_secure_pow_salt(string $type = 'nonce'): string {
+        if ($type === 'auth') {
+            if (function_exists('wp_salt')) {
+                return wp_salt('auth');
+            }
+            if (defined('AUTH_KEY') && AUTH_KEY !== '') {
+                return AUTH_KEY;
+            }
+        } else {
+            if (function_exists('wp_salt')) {
+                return wp_salt('nonce');
+            }
+            if (defined('NONCE_KEY') && NONCE_KEY !== '') {
+                return NONCE_KEY;
+            }
+        }
+
+        $opt_key = 'webcareproscan_pow_salt_' . $type;
+        $salt = get_option($opt_key);
+        if (empty($salt) || !is_string($salt)) {
+            $salt = function_exists('wp_generate_password')
+                ? wp_generate_password(64, true, true)
+                : hash('sha256', uniqid((string) mt_rand(), true) . microtime());
+            update_option($opt_key, $salt, false);
+        }
+        return $salt;
+    }
+
     public static function generate_challenge(string $ip, string $ua): string {
         $window = (string) floor(time() / 300); // Valid for 5-minute window
-        $salt   = defined('NONCE_KEY') ? NONCE_KEY : 'webcare_pow_salt';
+        $salt   = self::get_secure_pow_salt('nonce');
         $mac    = hash_hmac('sha256', $ip . '|' . $ua . '|' . $window, $salt);
         return $window . '.' . substr($mac, 0, 32);
     }
@@ -779,9 +814,11 @@ class BotReconDefense {
 
     public static function issue_clearance_cookie(string $ip, string $ua): void {
         $expires = time() + self::CLEARANCE_TTL;
-        $salt    = defined('AUTH_KEY') ? AUTH_KEY : 'webcare_pow_auth_salt';
+        $salt    = self::get_secure_pow_salt('auth');
         $sig     = hash_hmac('sha256', $ip . '|' . $ua . '|' . $expires, $salt);
         $value   = $expires . '.' . $sig;
+
+        $_COOKIE[self::POW_COOKIE_NAME] = $value;
 
         setcookie(self::POW_COOKIE_NAME, $value, [
             'expires'  => $expires,
@@ -808,13 +845,20 @@ class BotReconDefense {
             return false;
         }
 
-        $salt         = defined('AUTH_KEY') ? AUTH_KEY : 'webcare_pow_auth_salt';
+        $salt         = self::get_secure_pow_salt('auth');
         $expected_sig = hash_hmac('sha256', $ip . '|' . $ua . '|' . $expires, $salt);
         return hash_equals($expected_sig, $parts[1]);
     }
 
-    public static function render_webcrypto_challenge(string $ip, string $ua): void {
-        // Allow headless/REST/AJAX clients to present a solved PoW token via X-WebCare-PoW-Solution: challenge:nonce
+    /**
+     * Inspect and verify an incoming X-WebCare-PoW-Solution header for headless / REST / API clients.
+     * If valid, issues a clearance cookie and returns true so the request can proceed without a 429 block.
+     *
+     * @param string $ip
+     * @param string $ua
+     * @return bool
+     */
+    public static function verify_and_clear_pow_header(string $ip, string $ua): bool {
         $pow_hdr = isset($_SERVER['HTTP_X_WEBCARE_POW_SOLUTION'])
             ? sanitize_text_field(wp_unslash($_SERVER['HTTP_X_WEBCARE_POW_SOLUTION']))
             : '';
@@ -822,8 +866,16 @@ class BotReconDefense {
             [$ch, $no] = explode(':', $pow_hdr, 2);
             if (self::verify_pow_solution($ch, $no, $ip, $ua)) {
                 self::issue_clearance_cookie($ip, $ua);
-                return;
+                return true;
             }
+        }
+        return false;
+    }
+
+    public static function render_webcrypto_challenge(string $ip, string $ua): void {
+        // Allow headless/REST/AJAX clients to present a solved PoW token via X-WebCare-PoW-Solution: challenge:nonce
+        if (self::verify_and_clear_pow_header($ip, $ua)) {
+            return;
         }
 
         $challenge = self::generate_challenge($ip, $ua);

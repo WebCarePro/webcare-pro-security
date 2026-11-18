@@ -538,6 +538,10 @@ class MicroWafCompiler {
         $out .= "                            \$cand = \$mapped_c;\n";
         $out .= "                        }\n";
         $out .= "                    }\n";
+        $out .= "                    \$is_cand_local = (\$cand === '127.0.0.1' || \$cand === '::1' || !filter_var(\$cand, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE));\n";
+        $out .= "                    if (\$is_local_proxy && \$is_cand_local) {\n";
+        $out .= "                        continue;\n";
+        $out .= "                    }\n";
         $out .= "                    if (filter_var(\$cand, FILTER_VALIDATE_IP) && !\$webcare_match_ip_list(\$cand, \$cf_cidrs) && !\$webcare_match_ip_list(\$cand, \$trusted_proxies)) {\n";
         $out .= "                        \$resolved_proxy_client = \$cand;\n";
         $out .= "                        break;\n";

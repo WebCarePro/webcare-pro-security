@@ -359,7 +359,7 @@ class Plugin {
 
         $test_clear_ip = '198.51.100.99';
         $test_clear_ua = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';
-        $test_salt = defined('AUTH_KEY') ? AUTH_KEY : 'webcare_pow_auth_salt';
+        $test_salt = \WebCareProScanner\Firewall\BotReconDefense::get_secure_pow_salt('auth');
         $test_exp = time() + 3600;
         $test_sig = hash_hmac('sha256', $test_clear_ip . '|' . $test_clear_ua . '|' . $test_exp, $test_salt);
         $_COOKIE[\WebCareProScanner\Firewall\BotReconDefense::POW_COOKIE_NAME] = $test_exp . '.' . $test_sig;
@@ -407,6 +407,22 @@ class Plugin {
         // Regression check: admin custom rules must NEVER be cleared even with is_warning => true
         $blocked_custom_with_warning = \WebCareProScanner\Firewall\FirewallEngine::is_cleared_by_pow(
             ['id' => 'MOD-CUSTOM-1', 'is_warning' => true],
+            ['waf_enable_progressive_warnings' => 1],
+            $test_clear_ip
+        );
+        // Fail-closed allow-list regression check: Attack rules outside traditional SQLi must NEVER qualify for progressive warning or PoW clearance
+        $blocked_affiliate_injection = \WebCareProScanner\Firewall\FirewallEngine::is_cleared_by_pow(
+            ['id' => 'WAF-AFFILIATE-INJECTION', 'category' => 'Affiliate Defense', 'is_warning' => true],
+            ['waf_enable_progressive_warnings' => 1],
+            $test_clear_ip
+        );
+        $blocked_sensitive_probe = \WebCareProScanner\Firewall\FirewallEngine::is_cleared_by_pow(
+            ['id' => 'WAF-SENSITIVE-FILE-PROBE', 'category' => 'File Reconnaissance', 'is_warning' => true],
+            ['waf_enable_progressive_warnings' => 1],
+            $test_clear_ip
+        );
+        $blocked_xmlrpc = \WebCareProScanner\Firewall\FirewallEngine::is_cleared_by_pow(
+            ['id' => 'WAF-XMLRPC-BLOCK', 'category' => 'Protocol Defense', 'is_warning' => true],
             ['waf_enable_progressive_warnings' => 1],
             $test_clear_ip
         );
@@ -502,6 +518,42 @@ class Plugin {
             && ($case6_admin_nobypass_critical === false)
             && ($live_whitelist_flags_correct === true);
 
+        // Headless X-WebCare-PoW-Solution verification check
+        $test_headless_challenge = \WebCareProScanner\Firewall\BotReconDefense::generate_challenge($test_clear_ip, 'HeadlessDoctor/1.0');
+        $test_headless_nonce = '';
+        $target_zeros = str_repeat('0', \WebCareProScanner\Firewall\BotReconDefense::POW_DIFFICULTY);
+        for ($n = 0; $n < 500000; $n++) {
+            if (strpos(hash('sha256', $test_headless_challenge . ':' . $n), $target_zeros) === 0) {
+                $test_headless_nonce = (string) $n;
+                break;
+            }
+        }
+        $_SERVER['HTTP_X_WEBCARE_POW_SOLUTION'] = $test_headless_challenge . ':' . $test_headless_nonce;
+        $headless_pow_verified = \WebCareProScanner\Firewall\BotReconDefense::verify_and_clear_pow_header($test_clear_ip, 'HeadlessDoctor/1.0');
+        $headless_pow_cookie_active = \WebCareProScanner\Firewall\BotReconDefense::has_valid_clearance_cookie($test_clear_ip, 'HeadlessDoctor/1.0');
+        unset($_SERVER['HTTP_X_WEBCARE_POW_SOLUTION'], $_COOKIE[\WebCareProScanner\Firewall\BotReconDefense::POW_COOKIE_NAME]);
+
+        // Dynamic cryptographic salt fallback check (never hardcoded strings)
+        $dynamic_salt_nonce = \WebCareProScanner\Firewall\BotReconDefense::get_secure_pow_salt('nonce');
+        $dynamic_salt_auth  = \WebCareProScanner\Firewall\BotReconDefense::get_secure_pow_salt('auth');
+        $dynamic_salts_valid = !empty($dynamic_salt_nonce) && ($dynamic_salt_nonce !== 'webcare_pow_salt')
+            && !empty($dynamic_salt_auth) && ($dynamic_salt_auth !== 'webcare_pow_auth_salt');
+
+        // REST /batch smuggling defense check (exact recognized endpoint & _method override canonicalization)
+        $route_test_custom = '/my-plugin/v1/batch-delete';
+        $norm_custom = '/' . ltrim(rtrim($route_test_custom, '/'), '/');
+        $custom_batch_recognized = ($norm_custom === '/batch/v1')
+            || ($norm_custom === '/wp/v2/batch')
+            || (bool) preg_match('#^/(?:wp/v2|batch/v1|wc/store(?:/v\d+)?|wc/v\d+)/batch$#i', $norm_custom);
+        $core_batch_recognized = (bool) preg_match('#^/(?:wp/v2|batch/v1|wc/store(?:/v\d+)?|wc/v\d+)/batch$#i', '/wp/v2/batch');
+        $sub_query_test = 'path=/wp/v2/posts/1?_method=DELETE';
+        $parsed_query_test = [];
+        wp_parse_str((string) wp_parse_url($sub_query_test, PHP_URL_QUERY), $parsed_query_test);
+        $sub_override_parsed = strtoupper((string) ($parsed_query_test['_method'] ?? ''));
+        $batch_security_verified = ($custom_batch_recognized === false)
+            && ($core_batch_recognized === true)
+            && ($sub_override_parsed === 'DELETE');
+
         $checks['empty_ua_clearance_and_methods'] = \WebCareProScanner\Firewall\FirewallEngine::get_empty_user_agent_action('GET', true) === 'allow'
             && \WebCareProScanner\Firewall\FirewallEngine::get_empty_user_agent_action('POST', true) === 'allow'
             && \WebCareProScanner\Firewall\FirewallEngine::get_empty_user_agent_action('GET', false) === 'challenge'
@@ -521,6 +573,13 @@ class Plugin {
             && $blocked_confirmed_exploit_with_warning === false
             && $blocked_hard_block_with_warning === false
             && $blocked_custom_with_warning === false
+            && $blocked_affiliate_injection === false
+            && $blocked_sensitive_probe === false
+            && $blocked_xmlrpc === false
+            && $headless_pow_verified === true
+            && $headless_pow_cookie_active === true
+            && $dynamic_salts_valid === true
+            && $batch_security_verified === true
             && $empty_ua_cookie_valid === true
             && $empty_ua_post_action === 'allow';
 

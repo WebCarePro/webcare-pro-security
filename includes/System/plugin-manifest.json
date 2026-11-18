@@ -1,6 +1,6 @@
 {
   "version": "2.19.0",
-  "generated_at": "2026-11-18T21:27:24.090Z",
+  "generated_at": "2026-11-18T22:02:15.707Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -392,8 +392,8 @@
       "size": 26968
     },
     "includes/Firewall/BotReconDefense.php": {
-      "sha256": "9a52558157c54ad4d02a79e3f6f120842854316e4cb226a78a8689bc9ae47265",
-      "size": 39522
+      "sha256": "798c47403f5438e919e71484a95d50d1b72f87d53b540b03abfda9dfbf5bc8f2",
+      "size": 41291
     },
     "includes/Firewall/CAF/AdaptiveFirewallAdvisor.php": {
       "sha256": "a284dabd1a08e8dbf8015cc022855823fee4757a760629910908a726b1377bbd",
@@ -468,8 +468,8 @@
       "size": 16339
     },
     "includes/Firewall/FirewallEngine.php": {
-      "sha256": "936adc262aadbcc2b09ab47bf7c41042ef585ccad9c14a41c4d8b81aaf72b7ad",
-      "size": 450297
+      "sha256": "a6961fa30e1b95680cf49ca331df5e77340824b7f0dde517162cdff56e57c74c",
+      "size": 454349
     },
     "includes/Firewall/FormSpamProtectionEngine.php": {
       "sha256": "d450cf8289cddf53554c6a084cd4776f6a6333f7c7afdad8d65c39e9fc79bfb6",
@@ -496,8 +496,8 @@
       "size": 15983
     },
     "includes/Firewall/MicroWafCompiler.php": {
-      "sha256": "b53a58ed7c970f21c23677043071ed4e70ea7cdfc8ac5ffa22cf9e04b2539f85",
-      "size": 100116
+      "sha256": "a6129bd07fa783d9d4e5f81ea657b1d0b08a52727998dc022333413f2cf76260",
+      "size": 100500
     },
     "includes/Firewall/Modular/BehavioralVaultManager.php": {
       "sha256": "a085c30ab44032dc5979d30e85acd3bff42b919dd08c3e51b0fced877fcf4f5a",
@@ -696,8 +696,8 @@
       "size": 32218
     },
     "includes/Plugin.php": {
-      "sha256": "140f285db13a8be21f7a9239292b27d44bc2fd7137d988a8ff6b21816e7dc52d",
-      "size": 38132
+      "sha256": "71b348d6dd2fc241cfb84376d4ae0009c82fa101e2bc972c03c9a1f8bd250ff0",
+      "size": 42166
     },
     "includes/Quarantine/CoreRepairManager.php": {
       "sha256": "e4b6a6438e72eefdfcc59fe1b4db45caf4cf269c62a1143b0f61ba998a90e3b9",
@@ -908,8 +908,8 @@
       "size": 7323
     },
     "includes/WordPress/CronScanner.php": {
-      "sha256": "6378664122ed82ca6e90852ed5ecd47ef21bcbe7f24c1de6cf750e5864bc098c",
-      "size": 9393
+      "sha256": "3e02b59ed4fdead8791f21d3dad4645d2c44c35b926f9b05f6ab6e270502fbc0",
+      "size": 9591
     },
     "includes/WordPress/HookInfiltrationSentinel.php": {
       "sha256": "e29d62057a6ff5132491411df7860300d0131f957b1b854de6d7d54a564aba13",

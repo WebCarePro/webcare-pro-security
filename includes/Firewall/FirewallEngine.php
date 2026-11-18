@@ -1786,40 +1786,41 @@ class FirewallEngine {
                     $is_commerce_safe = !empty($settings['waf_ecommerce_safe_mode']) && self::is_commerce_or_membership_request($request_uri);
                     $is_form_safe = !empty($settings['waf_forms_safe_mode']) && self::is_form_submission_request($request_uri);
 
-                    $req_method = strtoupper(isset($_SERVER['REQUEST_METHOD']) ? sanitize_key(wp_unslash($_SERVER['REQUEST_METHOD'])) : 'GET');
-                    // phpcs:ignore WordPress.Security.NonceVerification.Missing -- PoW form is a cryptographic proof, not an authenticated state-changing action.
-                    $has_pow_submission = isset($_POST['webcare_pow_challenge'], $_POST['webcare_pow_nonce']);
-                    $has_clearance = class_exists(BotReconDefense::class)
-                        && BotReconDefense::has_valid_clearance_cookie($client_ip, '');
-                    $empty_ua_action = self::get_empty_user_agent_action($req_method, $has_clearance, $has_pow_submission);
+                    if (!$is_loopback && !$is_cli_or_cron && !$is_wc_api && !$is_commerce_safe && !$is_form_safe) {
+                        // phpcs:ignore WordPress.Security.NonceVerification.Missing -- PoW form is a cryptographic proof, not an authenticated state-changing action.
+                        $has_pow_submission = isset($_POST['webcare_pow_challenge'], $_POST['webcare_pow_nonce']);
+                        $has_clearance = class_exists(BotReconDefense::class)
+                            && (BotReconDefense::has_valid_clearance_cookie($client_ip, '') || BotReconDefense::verify_and_clear_pow_header($client_ip, ''));
+                        $empty_ua_action = self::get_empty_user_agent_action($req_method, $has_clearance, $has_pow_submission);
 
-                    if ($empty_ua_action === 'allow') {
-                        // Clearance or OPTIONS permits the request (GET, POST, etc.) past empty-UA shield
-                    } elseif ($empty_ua_action === 'proof') {
-                        BotReconDefense::verify_or_challenge_client();
-                    } else {
-                        $rule_triggered = [
-                            'id'          => 'WAF-EMPTY-USER-AGENT',
-                            'name'        => 'Blank or Missing User-Agent Block',
-                            'category'    => 'Bot Defense',
-                            'description' => 'Automated request rejected: The HTTP User-Agent header was missing or blank (malicious vulnerability scanner or headless probe signature).',
-                            'match_type'  => 'Missing Headers',
-                            'match_value' => 'Empty / Missing User-Agent',
-                            'payload'     => "Method: {$req_method} IP: {$client_ip} URI: {$request_uri}",
-                        ];
-
-                        if ($empty_ua_action === 'head_block') {
-                            self::log_incident($rule_triggered, 'blocked');
-                            status_header(403);
-                            header('Content-Length: 0');
-                            exit;
-                        } elseif ($empty_ua_action === 'challenge') {
-                            self::log_incident($rule_triggered, 'challenged');
-                            $rule_triggered['is_warning'] = true;
-                            self::render_block_page($rule_triggered, $client_ip);
-                            exit;
+                        if ($empty_ua_action === 'allow') {
+                            // Clearance, loopback, or OPTIONS permits the request (GET, POST, etc.) past empty-UA shield
+                        } elseif ($empty_ua_action === 'proof') {
+                            BotReconDefense::verify_or_challenge_client();
                         } else {
-                            self::handle_rule_violation($rule_triggered, $settings, $client_ip, 403);
+                            $rule_triggered = [
+                                'id'          => 'WAF-EMPTY-USER-AGENT',
+                                'name'        => 'Blank or Missing User-Agent Block',
+                                'category'    => 'Bot Defense',
+                                'description' => 'Automated request rejected: The HTTP User-Agent header was missing or blank (malicious vulnerability scanner or headless probe signature).',
+                                'match_type'  => 'Missing Headers',
+                                'match_value' => 'Empty / Missing User-Agent',
+                                'payload'     => "Method: {$req_method} IP: {$client_ip} URI: {$request_uri}",
+                            ];
+
+                            if ($empty_ua_action === 'head_block') {
+                                self::log_incident($rule_triggered, 'blocked');
+                                status_header(403);
+                                header('Content-Length: 0');
+                                exit;
+                            } elseif ($empty_ua_action === 'challenge') {
+                                self::log_incident($rule_triggered, 'challenged');
+                                $rule_triggered['is_warning'] = true;
+                                self::render_block_page($rule_triggered, $client_ip);
+                                exit;
+                            } else {
+                                self::handle_rule_violation($rule_triggered, $settings, $client_ip, 403);
+                            }
                         }
                     }
                 }
@@ -3062,6 +3063,9 @@ class FirewallEngine {
             $req_method = strtoupper(isset($_SERVER['REQUEST_METHOD']) ? sanitize_key(wp_unslash($_SERVER['REQUEST_METHOD'])) : 'GET');
             if ($req_method === 'GET' && !wp_doing_ajax() && class_exists(BotReconDefense::class)) {
                 $raw_ua = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';
+                if (BotReconDefense::verify_and_clear_pow_header($client_ip, $raw_ua)) {
+                    return; // Headless client solved challenge via X-WebCare-PoW-Solution header -- allow request to proceed cleanly!
+                }
                 if (!BotReconDefense::has_valid_clearance_cookie($client_ip, $raw_ua)) {
                     // Challenge legitimate browser with invisible WebCrypto PoW (<150ms solve time)
                     BotReconDefense::render_webcrypto_challenge($client_ip, $raw_ua);
@@ -4954,10 +4958,11 @@ class FirewallEngine {
             return false;
         }
 
-        $category = (string) ($rule['category'] ?? '');
-        $rule_id  = (string) ($rule['id'] ?? '');
+        $category      = (string) ($rule['category'] ?? '');
+        $rule_id       = (string) ($rule['id'] ?? '');
+        $rule_id_upper = strtoupper($rule_id);
 
-        // Critical categories are strictly excluded under all circumstances
+        // Critical and exploit categories are strictly excluded under all circumstances
         $critical_categories = [
             'SQL Injection',
             'PHP Code Injection',
@@ -4971,18 +4976,35 @@ class FirewallEngine {
             'Modern API & GraphQL Shield',
             'AI Agent Kill-Chain Defense',
             'Forbidden Default Admin Usernames Shield',
+            'Affiliate Defense',
+            'File Reconnaissance',
+            'Protocol Defense',
+            'Server-Side Request Forgery (SSRF)',
+            'Arbitrary File Upload',
+            'Credential Defense',
+            'Authentication Defense',
         ];
 
         if (in_array($category, $critical_categories, true)) {
             return false;
         }
 
-        if (str_starts_with($rule_id, 'MOD-CUSTOM-') || str_starts_with($rule_id, 'WAF-SQL-RASP-')) {
+        // Dedicated exploit, injection, or probe prefix exclusions
+        if (str_starts_with($rule_id_upper, 'MOD-CUSTOM-')
+            || str_starts_with($rule_id_upper, 'WAF-SQL-RASP-')
+            || str_starts_with($rule_id_upper, 'WAF-DLP-')
+            || str_starts_with($rule_id_upper, 'WAF-GRAPHQL-')
+            || str_starts_with($rule_id_upper, 'WAF-AFFILIATE-')
+            || str_starts_with($rule_id_upper, 'WAF-SENSITIVE-')
+            || str_starts_with($rule_id_upper, 'WAF-XMLRPC-')
+            || str_starts_with($rule_id_upper, 'WAF-SSRF-')
+            || $rule_id_upper === 'WAF-AI-AGENT-KILLCHAIN'
+        ) {
             return false;
         }
 
         // Confirmed exploit signatures and admin policies can never be downgraded to warnings
-        if (self::get_confirmed_exploit_definition(strtoupper($rule_id)) !== null) {
+        if (self::get_confirmed_exploit_definition($rule_id_upper) !== null) {
             return false;
         }
 
@@ -4995,17 +5017,39 @@ class FirewallEngine {
             return false;
         }
 
-        // Only after all critical/hard-block exclusions pass: check warning flag or progressive warning mode
+        // STRICT FAIL-CLOSED ALLOW-LIST:
+        // Only explicitly designated soft rate-limit, bot-recon, or warning rules may qualify.
+
+        // Allow-list Condition A: Explicitly flagged warning rules that passed all security exclusions
         if (!empty($rule['is_warning'])) {
             return true;
         }
 
-        return !empty($settings['waf_enable_progressive_warnings']);
+        // Allow-list Condition B: Dedicated soft rate-limit, bot-recon, or empty-UA rule IDs
+        if (str_starts_with($rule_id_upper, 'RATE-LIMIT-')
+            || str_starts_with($rule_id_upper, 'BOT-')
+            || $rule_id_upper === 'WAF-EMPTY-USER-AGENT'
+        ) {
+            return true;
+        }
+
+        // Allow-list Condition C: Dedicated soft operational categories
+        $soft_warning_categories = [
+            '404 Scanner Rate Limit',
+            'Rate Limiting',
+            'Traffic Velocity',
+        ];
+        if (in_array($category, $soft_warning_categories, true)) {
+            return true;
+        }
+
+        // Fail-closed default: general exploit, access-control, or unrecognized rules NEVER qualify
+        return false;
     }
 
     /**
      * Determine whether an incoming request qualifies for progressive warning / PoW clearance,
-     * and whether the visitor holds a valid clearance cookie to bypass the block.
+     * and whether the visitor holds a valid clearance cookie or solution header to bypass the block.
      *
      * @param array $rule
      * @param array $settings
@@ -5022,7 +5066,8 @@ class FirewallEngine {
         }
 
         $raw_ua = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';
-        return BotReconDefense::has_valid_clearance_cookie($client_ip, $raw_ua);
+        return BotReconDefense::has_valid_clearance_cookie($client_ip, $raw_ua)
+            || BotReconDefense::verify_and_clear_pow_header($client_ip, $raw_ua);
     }
 
     /**
@@ -7638,11 +7683,18 @@ class FirewallEngine {
             '/jetpack/',
             '/webcare-pro-security/v1/auth/webauthn/login-options',
             '/webcare-pro-security/v1/auth/webauthn/login-verify',
+            '/complianz/v1/banner',
+            '/cookieyes/v1/',
         ];
 
-        // Special handling for REST batch requests (/wp/v2/batch or /batch/v1):
-        // Walk nested requests[] inside the batch payload to ensure unauthorized guest mutations aren't smuggled
-        if (str_contains($route, '/batch')) {
+        // Special handling for REST batch requests (/wp/v2/batch, /batch/v1, or /wc/store/v1/batch):
+        // Strictly restricted to recognized core and WooCommerce batch endpoints to prevent smuggling via custom routes.
+        $norm_batch_route = '/' . ltrim(rtrim($route, '/'), '/');
+        $is_recognized_batch_endpoint = ($norm_batch_route === '/batch/v1')
+            || ($norm_batch_route === '/wp/v2/batch')
+            || (bool) preg_match('#^/(?:wp/v2|batch/v1|wc/store(?:/v\d+)?|wc/v\d+)/batch$#i', $norm_batch_route);
+
+        if ($is_recognized_batch_endpoint) {
             $body_params = $request->get_json_params();
             if (!is_array($body_params) || empty($body_params['requests']) || !is_array($body_params['requests'])) {
                 // Reject or flag empty/malformed unauthenticated batch mutation requests
@@ -7664,8 +7716,35 @@ class FirewallEngine {
             }
 
             foreach ($body_params['requests'] as $sub_req) {
-                $sub_method = strtoupper($sub_req['method'] ?? 'GET');
-                $sub_path   = strtolower((string) wp_parse_url((string) ($sub_req['path'] ?? ''), PHP_URL_PATH));
+                if (!is_array($sub_req)) {
+                    continue;
+                }
+                $raw_sub_path = (string) ($sub_req['path'] ?? '');
+                $sub_path     = strtolower((string) wp_parse_url($raw_sub_path, PHP_URL_PATH));
+                $sub_method   = strtoupper((string) ($sub_req['method'] ?? 'POST'));
+
+                // Canonicalize method override from sub-request query parameters (?_method=DELETE)
+                $sub_query = (string) wp_parse_url($raw_sub_path, PHP_URL_QUERY);
+                if ($sub_query !== '') {
+                    $parsed_sub_query = [];
+                    wp_parse_str($sub_query, $parsed_sub_query);
+                    if (!empty($parsed_sub_query['_method'])) {
+                        $sub_method = strtoupper((string) $parsed_sub_query['_method']);
+                    }
+                }
+
+                // Canonicalize method override from sub-request headers (X-HTTP-Method-Override)
+                if (!empty($sub_req['headers']) && is_array($sub_req['headers'])) {
+                    foreach ($sub_req['headers'] as $hdr_name => $hdr_val) {
+                        if (strcasecmp((string) $hdr_name, 'X-HTTP-Method-Override') === 0) {
+                            $override_val = is_array($hdr_val) ? reset($hdr_val) : (string) $hdr_val;
+                            if (!empty($override_val)) {
+                                $sub_method = strtoupper(trim($override_val));
+                            }
+                            break;
+                        }
+                    }
+                }
 
                 // Inspect sub-requests targeting WooCommerce Store API Products, Checkout, or Coupons
                 if (preg_match('#^/wc/store(?:/v\d+)?/products#i', $sub_path)) {
@@ -7674,13 +7753,13 @@ class FirewallEngine {
                         return $scrape_lock_error;
                     }
                 }
-                if (preg_match('#^/wc/store(?:/v\d+)?/checkout#i', $sub_path) && in_array($sub_method, ['POST', 'PUT', 'PATCH'], true)) {
+                if (preg_match('#^/wc/store(?:/v\d+)?/checkout#i', $sub_path) && in_array($sub_method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
                     $block_error = self::check_woo_carding_lockout();
                     if ($block_error) {
                         return $block_error;
                     }
                 }
-                if (preg_match('#^/wc/store(?:/v\d+)?/cart/(?:coupons|apply-coupon)#i', $sub_path) && in_array($sub_method, ['POST', 'PUT', 'PATCH'], true)) {
+                if (preg_match('#^/wc/store(?:/v\d+)?/cart/(?:coupons|apply-coupon)#i', $sub_path) && in_array($sub_method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
                     $coupon_lock_error = self::check_woo_coupon_lockout();
                     if ($coupon_lock_error) {
                         return $coupon_lock_error;
