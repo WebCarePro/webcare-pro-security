@@ -54,7 +54,8 @@ import {
   ChevronRight,
   MoreHorizontal,
   Edit2,
-  Radar
+  Radar,
+  Share2
 } from 'lucide-react';
 import { VirtualPatchCard } from './components/VirtualPatchCard';
 import { CustomerLockoutCard } from './components/CustomerLockoutCard';
@@ -196,6 +197,12 @@ interface FirewallStatus {
   forms_telemetry?: {
     is_active: boolean;
     detected_names?: string[];
+  };
+  affiliate_telemetry?: {
+    is_active: boolean;
+    plugins?: string[];
+    themes?: string[];
+    summary?: string;
   };
   integrations_telemetry?: {
     has_builders: boolean;
@@ -1516,6 +1523,11 @@ export const FirewallPage = ({
     waf_woo_scraping_protection: boolean;
     waf_woo_scraping_max_requests: number;
     waf_woo_scraping_lockout_duration: number;
+    waf_affiliate_shield_enabled: boolean;
+    waf_affiliate_max_clicks_min: number;
+    waf_affiliate_anti_injection: boolean;
+    waf_affiliate_reg_spam_protection: boolean;
+    waf_affiliate_direct_link_armor: boolean;
     waf_forms_safe_mode: boolean;
     form_spam_protection_enabled: boolean;
     form_block_headless_browsers: boolean;
@@ -1587,6 +1599,11 @@ export const FirewallPage = ({
     waf_woo_scraping_protection: true,
     waf_woo_scraping_max_requests: 60,
     waf_woo_scraping_lockout_duration: 15,
+    waf_affiliate_shield_enabled: true,
+    waf_affiliate_max_clicks_min: 10,
+    waf_affiliate_anti_injection: true,
+    waf_affiliate_reg_spam_protection: true,
+    waf_affiliate_direct_link_armor: true,
     waf_forms_safe_mode: true,
     form_spam_protection_enabled: true,
     form_block_headless_browsers: true,
@@ -1726,6 +1743,11 @@ export const FirewallPage = ({
           waf_woo_scraping_protection: s.waf_woo_scraping_protection !== false,
           waf_woo_scraping_max_requests: s.waf_woo_scraping_max_requests !== undefined ? Number(s.waf_woo_scraping_max_requests) : 60,
           waf_woo_scraping_lockout_duration: s.waf_woo_scraping_lockout_duration !== undefined ? Number(s.waf_woo_scraping_lockout_duration) : 15,
+          waf_affiliate_shield_enabled: s.waf_affiliate_shield_enabled !== false,
+          waf_affiliate_max_clicks_min: s.waf_affiliate_max_clicks_min !== undefined ? Number(s.waf_affiliate_max_clicks_min) : 10,
+          waf_affiliate_anti_injection: s.waf_affiliate_anti_injection !== false,
+          waf_affiliate_reg_spam_protection: s.waf_affiliate_reg_spam_protection !== false,
+          waf_affiliate_direct_link_armor: s.waf_affiliate_direct_link_armor !== false,
           waf_forms_safe_mode: s.waf_forms_safe_mode !== false,
           form_spam_protection_enabled: s.form_spam_protection_enabled !== false,
           form_block_headless_browsers: s.form_block_headless_browsers !== false,
@@ -4170,6 +4192,170 @@ export const FirewallPage = ({
                             <div>
                               <strong style={{ color: 'var(--webcare-text-primary, #0f172a)' }}>Link & Cloaking Heuristics</strong>
                               <div style={{ color: 'var(--webcare-text-muted, #64748b)', fontSize: '10px', marginTop: '1px' }}>Drops spam messages with &gt; 2 links or recognized promotional crypto/pharma keywords.</div>
+                            </div>
+                          </label>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Smart Rule #43: Affiliate Ecosystem Shield & Click-Fraud Armor */}
+                  <div className="webcare-firewall-rule-card" style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '10px',
+                    padding: '10px 14px'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                      <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer', flex: 1, margin: 0 }}>
+                        <input
+                          type="checkbox"
+                          checked={wafSettings.waf_affiliate_shield_enabled}
+                          onChange={(e) => setWafSettings({ ...wafSettings, waf_affiliate_shield_enabled: e.target.checked })}
+                          style={{ marginTop: '2px', accentColor: '#10b981' }}
+                        />
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                            <span style={{
+                              fontSize: '10px',
+                              fontWeight: 700,
+                              textTransform: 'uppercase',
+                              padding: '2px 7px',
+                              borderRadius: '4px',
+                              letterSpacing: '0.5px',
+                              background: '#ecfdf5',
+                              color: '#059669',
+                              border: '1px solid #a7f3d0'
+                            }}>
+                              RULE #43
+                            </span>
+                            <strong style={{ fontSize: '13px', color: 'var(--webcare-text-primary, #0f172a)' }}>
+                              Affiliate Ecosystem Shield &amp; Click-Fraud Armor
+                            </strong>
+                            {status?.affiliate_telemetry?.is_active ? (
+                              <span className="webcare-smart-shield-pill-detected-emerald">
+                                Detected: {status?.affiliate_telemetry?.plugins?.slice(0, 3).join(', ') || status?.affiliate_telemetry?.themes?.slice(0, 2).join(', ') || 'Active Affiliate Suite'}
+                                {((status?.affiliate_telemetry?.plugins?.length || 0) + (status?.affiliate_telemetry?.themes?.length || 0)) > 3 ? ` +${((status?.affiliate_telemetry?.plugins?.length || 0) + (status?.affiliate_telemetry?.themes?.length || 0)) - 3} more` : ''}
+                              </span>
+                            ) : (
+                              <span className="webcare-smart-shield-pill-empty">
+                                Zero Affiliate Plugins Detected (Dormant - 0 CPU Overhead)
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: '11px', color: 'var(--webcare-text-muted, #64748b)', marginTop: '3px', lineHeight: 1.45 }}>
+                            Super-smart, zero-overhead defense engineered specifically for AffiliateWP (and all official add-ons), SliceWP, Solid Affiliate, Easy Affiliate, Ultimate Affiliate Pro, and YITH WooCommerce Affiliates. Automatically intercepts SQLi, XSS, and directory traversal in referral parameters (<code style={{ color: '#059669', fontSize: '10px' }}>?ref=</code>, <code style={{ color: '#059669', fontSize: '10px' }}>?aff=</code>, <code style={{ color: '#059669', fontSize: '10px' }}>?sld=</code>), rate-limits referral click-floods to prevent database bloat, drops fake crawler direct links, and blocks disposable emails on registration.
+                          </div>
+                        </div>
+                      </label>
+
+                      <button
+                        type="button"
+                        className={`webcare-btn webcare-firewall-rule-save-btn ${savedSingleRuleSuccess['waf_affiliate_shield_enabled'] ? 'is-saved' : ''}`}
+                        onClick={() => {
+                          handleSaveSingleRule('waf_affiliate_shield_enabled', wafSettings.waf_affiliate_shield_enabled);
+                          handleSaveSingleRule('waf_affiliate_max_clicks_min', wafSettings.waf_affiliate_max_clicks_min);
+                          handleSaveSingleRule('waf_affiliate_anti_injection', wafSettings.waf_affiliate_anti_injection);
+                          handleSaveSingleRule('waf_affiliate_reg_spam_protection', wafSettings.waf_affiliate_reg_spam_protection);
+                          handleSaveSingleRule('waf_affiliate_direct_link_armor', wafSettings.waf_affiliate_direct_link_armor);
+                        }}
+                        disabled={savingSingleRuleKey === 'waf_affiliate_shield_enabled'}
+                        title="Save settings for Affiliate Ecosystem Shield"
+                      >
+                        {savingSingleRuleKey === 'waf_affiliate_shield_enabled' ? <Loader2 size={11} className="webcare-spin-icon" /> : (savedSingleRuleSuccess['waf_affiliate_shield_enabled'] ? <Check size={11} /> : <Save size={11} />)}
+                        {savedSingleRuleSuccess['waf_affiliate_shield_enabled'] ? 'Saved' : 'Save'}
+                      </button>
+                    </div>
+
+                    {wafSettings.waf_affiliate_shield_enabled && (
+                      <div style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '10px',
+                        padding: '10px 14px',
+                        background: 'var(--webcare-bg-surface, #f8fafc)',
+                        border: '1px solid var(--webcare-border, #e2e8f0)',
+                        borderRadius: '6px',
+                        fontSize: '11px',
+                        color: 'var(--webcare-text-secondary, #475569)',
+                        marginTop: '2px'
+                      }}>
+                        {/* Velocity Rate Limit */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ fontWeight: 600, color: 'var(--webcare-text-primary, #0f172a)' }}>Max Referral Clicks:</span>
+                            <input
+                              type="number"
+                              min={3}
+                              max={300}
+                              value={wafSettings.waf_affiliate_max_clicks_min}
+                              onChange={(e) => setWafSettings({ ...wafSettings, waf_affiliate_max_clicks_min: Math.max(3, Math.min(300, parseInt(e.target.value) || 10)) })}
+                              className="webcare-input"
+                              style={{ width: '56px', padding: '3px 6px', fontSize: '11px', height: '26px' }}
+                            />
+                            <span style={{ color: 'var(--webcare-text-muted, #94a3b8)' }}>clicks / min per IP (Default: 10)</span>
+                          </div>
+                          <span style={{ fontSize: '10px', color: 'var(--webcare-text-muted, #64748b)' }}>
+                            Silently suppresses visit database writes (stops millions of spam rows in <code style={{ color: '#059669', fontSize: '10px' }}>affwp_visits</code>) while visitor browses site.
+                          </span>
+                        </div>
+
+                        {/* Sub-toggles Grid */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '10px', paddingTop: '4px', borderTop: '1px solid var(--webcare-border, #e2e8f0)' }}>
+                          <label style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer', margin: 0 }}>
+                            <input
+                              type="checkbox"
+                              checked={wafSettings.waf_affiliate_anti_injection}
+                              onChange={(e) => {
+                                const val = e.target.checked;
+                                setWafSettings({ ...wafSettings, waf_affiliate_anti_injection: val });
+                                handleSaveSingleRule('waf_affiliate_anti_injection', val);
+                              }}
+                              style={{ marginTop: '2px', accentColor: '#10b981' }}
+                            />
+                            <div>
+                              <strong style={{ color: 'var(--webcare-text-primary, #0f172a)' }}>Referral Parameter Anti-Injection Armor</strong>
+                              <div style={{ color: 'var(--webcare-text-muted, #64748b)', fontSize: '10px', marginTop: '1px' }}>
+                                Inspects and drops SQL injection, XSS, null bytes, and traversal inside referral parameters before plugins store them in MySQL.
+                              </div>
+                            </div>
+                          </label>
+
+                          <label style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer', margin: 0 }}>
+                            <input
+                              type="checkbox"
+                              checked={wafSettings.waf_affiliate_reg_spam_protection}
+                              onChange={(e) => {
+                                const val = e.target.checked;
+                                setWafSettings({ ...wafSettings, waf_affiliate_reg_spam_protection: val });
+                                handleSaveSingleRule('waf_affiliate_reg_spam_protection', val);
+                              }}
+                              style={{ marginTop: '2px', accentColor: '#10b981' }}
+                            />
+                            <div>
+                              <strong style={{ color: 'var(--webcare-text-primary, #0f172a)' }}>Affiliate Registration Anti-Spam Gate</strong>
+                              <div style={{ color: 'var(--webcare-text-muted, #64748b)', fontSize: '10px', marginTop: '1px' }}>
+                                Rejects disposable throwaway email providers (mailinator, guerrillamail, tempmail) and automated bot accounts on affiliate registration.
+                              </div>
+                            </div>
+                          </label>
+
+                          <label style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer', margin: 0 }}>
+                            <input
+                              type="checkbox"
+                              checked={wafSettings.waf_affiliate_direct_link_armor}
+                              onChange={(e) => {
+                                const val = e.target.checked;
+                                setWafSettings({ ...wafSettings, waf_affiliate_direct_link_armor: val });
+                                handleSaveSingleRule('waf_affiliate_direct_link_armor', val);
+                              }}
+                              style={{ marginTop: '2px', accentColor: '#10b981' }}
+                            />
+                            <div>
+                              <strong style={{ color: 'var(--webcare-text-primary, #0f172a)' }}>Direct Link Tracking Referer Integrity</strong>
+                              <div style={{ color: 'var(--webcare-text-muted, #64748b)', fontSize: '10px', marginTop: '1px' }}>
+                                Drops fake commission credit when Direct Link Tracking visits arrive via automated curl probes or missing browser User-Agents.
+                              </div>
                             </div>
                           </label>
                         </div>

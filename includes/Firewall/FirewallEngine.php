@@ -7,6 +7,7 @@ use WebCareProScanner\Firewall\Core\CommerceSessionGuard;
 use WebCareProScanner\Firewall\Core\ExploitSignatureEngine;
 use WebCareProScanner\Firewall\Core\RaspPrivilegeGuard;
 use WebCareProScanner\Firewall\Core\CommerceVelocityGuard;
+use WebCareProScanner\Firewall\Core\AffiliateSecurityEngine;
 
 if (!defined('ABSPATH')) {
     exit;
@@ -136,6 +137,9 @@ class FirewallEngine {
             // Rule #42: WooCommerce Catalog & Price Scraping Mitigation
             add_action('template_redirect', [__CLASS__, 'inspect_woo_catalog_scraping'], 1);
         }
+
+        // Rule #43: Affiliate Ecosystem Shield & Anti-Fraud Armor (AffiliateWP, SliceWP, Solid Affiliate, etc.)
+        AffiliateSecurityEngine::init();
 
         // Rule #44: Runtime Privilege Escalation Guard (In-Memory RASP Hook Firewall)
         add_filter('pre_update_option', [__CLASS__, 'rasp_guard_critical_options'], 1, 3);
@@ -2147,7 +2151,13 @@ class FirewallEngine {
                     ThreatIntelNetwork::record_consensus_beacon($client_ip, $vpatch_rule['name'] ?? 'Virtual Patch Violation', ['category' => 'Virtual Patch']);
                 }
                 self::handle_rule_violation($vpatch_rule, $settings, $client_ip, 403);
-                            }
+            }
+        }
+
+        // Rule #43: Affiliate Ecosystem Shield & Click-Fraud Armor (AffiliateWP, SliceWP, Solid Affiliate, etc.)
+        if (class_exists(AffiliateSecurityEngine::class)) {
+            $request_uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '/';
+            AffiliateSecurityEngine::inspect_request($client_ip, $request_uri, $settings);
         }
 
         $env = self::detect_environment();
@@ -3313,6 +3323,17 @@ class FirewallEngine {
                 ])),
                 'stats' => class_exists('WebCareProScanner\\Firewall\\FormSpamProtectionEngine') ? \WebCareProScanner\Firewall\FormSpamProtectionEngine::get_stats() : ['total_blocked' => 0],
             ],
+            'affiliate_telemetry' => (function () {
+                if (class_exists(AffiliateSecurityEngine::class)) {
+                    return AffiliateSecurityEngine::get_detected_ecosystem();
+                }
+                return [
+                    'is_active' => false,
+                    'plugins'   => [],
+                    'themes'    => [],
+                    'summary'   => 'No affiliate ecosystem detected',
+                ];
+            })(),
             'integrations_telemetry' => [
                 'has_builders' => (
                     defined('ELEMENTOR_VERSION') ||
@@ -4589,6 +4610,12 @@ class FirewallEngine {
             ['id' => 'WAF-RASP-ROLE-ESCALATION', 'name' => 'Runtime Privilege Escalation Guard', 'category' => 'Runtime RASP Hook Defense', 'description' => 'Unauthorized promotion of user capabilities intercepted.'],
             ['id' => 'WAF-RASP-ADMIN-REG-BLOCKED', 'name' => 'Runtime Administrator Registration Guard', 'category' => 'Runtime RASP Hook Defense', 'description' => 'Unauthorized account creation with administrator privileges blocked.'],
             ['id' => 'WAF-RASP-META-INJECTION', 'name' => 'Runtime User Meta Injection Guard', 'category' => 'Runtime RASP Hook Defense', 'description' => 'Hostile user meta manipulation targeting wp_capabilities blocked.'],
+
+            // Affiliate Ecosystem Shield & Click-Fraud Armor (Rule #43)
+            ['id' => 'WAF-AFFILIATE-INJECTION', 'name' => 'Affiliate Referral Parameter Anti-Injection Armor', 'category' => 'Affiliate Defense', 'description' => 'SQL injection, XSS, or directory traversal exploit payload in affiliate referral parameter blocked.'],
+            ['id' => 'WAF-AFFILIATE-CLICK-FLOOD', 'name' => 'Affiliate Referral Click-Flood & Database Bloat Shield', 'category' => 'Affiliate Defense', 'description' => 'High-velocity referral click flood from IP exceeded safety threshold. Suppressed database visit logging to prevent table bloat and click-fraud.'],
+            ['id' => 'WAF-AFFILIATE-SPAM-REG', 'name' => 'Affiliate Registration Anti-Spam Gate', 'category' => 'Affiliate Defense', 'description' => 'Automated bot registration or disposable email rejected for affiliate account.'],
+            ['id' => 'WAF-AFFILIATE-SPOOF', 'name' => 'Affiliate Direct Link Tracking Referer Integrity Armor', 'category' => 'Affiliate Defense', 'description' => 'Automated crawler or headless request attempting fake direct link attribution blocked.'],
         ];
     }
 
@@ -7048,6 +7075,13 @@ class FirewallEngine {
             return; // Legitimate Tier 1 guest action permitted
         }
 
+        // Affiliate Ecosystem Public Guest AJAX Handlers (AffiliateWP, SliceWP, Solid Affiliate, etc.)
+        if (class_exists(AffiliateSecurityEngine::class)
+            && AffiliateSecurityEngine::is_public_affiliate_ajax_action($action)
+        ) {
+            return;
+        }
+
         // Smart E-Commerce & Checkout Context Heuristic:
         // If the request originates from an active WooCommerce checkout/cart session or referer
         // and uses a known storefront prefix (e.g. eascompliance_, wc_, woocommerce_), permit smoothly
@@ -7222,6 +7256,13 @@ class FirewallEngine {
         }
         if (preg_match('#^/wc/store(?:/v[0-9]+)?/checkout/[0-9]+$#', $route)) {
             return $method === 'POST';
+        }
+
+        // Affiliate Ecosystem Public REST Mutations (AffiliateWP, SliceWP, Solid Affiliate):
+        if (class_exists(AffiliateSecurityEngine::class)
+            && AffiliateSecurityEngine::is_public_affiliate_rest_route($route)
+        ) {
+            return in_array($method, ['POST', 'PUT'], true);
         }
 
         return false;

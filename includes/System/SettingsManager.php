@@ -156,6 +156,11 @@ class SettingsManager {
             'waf_woo_scraping_protection'       => true,  // WooCommerce Catalog & Price Scraping Mitigation (Rule #42)
             'waf_woo_scraping_max_requests'     => 60,    // Max catalog/product requests per minute per IP
             'waf_woo_scraping_lockout_duration' => 15,    // Lockout duration in minutes (15 mins)
+            'waf_affiliate_shield_enabled'      => true,  // Affiliate Ecosystem Shield & Anti-Fraud Armor (Rule #43)
+            'waf_affiliate_max_clicks_min'      => 10,    // Max referral clicks per minute per IP before suppression (default 10)
+            'waf_affiliate_anti_injection'      => true,  // Referral Parameter Anti-Injection & Sanitization Armor
+            'waf_affiliate_reg_spam_protection' => true,  // Affiliate Registration Anti-Spam Gate & Disposable Email Shield
+            'waf_affiliate_direct_link_armor'   => true,  // Direct Link Tracking & Referer Integrity Verification
             'waf_allow_page_builders'           => false, // Visual Page Builder & Editor Smart Pass (off by default, recommended when Elementor/Divi active)
             'waf_block_empty_post_ua_referer'   => true, // Block IPs who send POST requests with blank User-Agent and Referer
             'waf_block_empty_user_agent'        => true, // Block unauthenticated requests with blank or missing User-Agent (Rule WAF-EMPTY-USER-AGENT)
@@ -833,6 +838,11 @@ class SettingsManager {
         $clean['waf_woo_scraping_protection']      = !empty($merged['waf_woo_scraping_protection']);
         $clean['waf_woo_scraping_max_requests']    = max(10, min(300, (int) ($merged['waf_woo_scraping_max_requests'] ?? 60)));
         $clean['waf_woo_scraping_lockout_duration'] = max(5, min(1440, (int) ($merged['waf_woo_scraping_lockout_duration'] ?? 15)));
+        $clean['waf_affiliate_shield_enabled']      = !empty($merged['waf_affiliate_shield_enabled']);
+        $clean['waf_affiliate_max_clicks_min']      = max(3, min(300, (int) ($merged['waf_affiliate_max_clicks_min'] ?? 10)));
+        $clean['waf_affiliate_anti_injection']      = !empty($merged['waf_affiliate_anti_injection']);
+        $clean['waf_affiliate_reg_spam_protection'] = !empty($merged['waf_affiliate_reg_spam_protection']);
+        $clean['waf_affiliate_direct_link_armor']   = !empty($merged['waf_affiliate_direct_link_armor']);
         $clean['waf_block_empty_post_ua_referer'] = !empty($merged['waf_block_empty_post_ua_referer']);
         $clean['waf_block_empty_user_agent']        = !empty($merged['waf_block_empty_user_agent']);
         $clean['waf_enable_progressive_warnings']   = !empty($merged['waf_enable_progressive_warnings']);
@@ -1401,6 +1411,11 @@ class SettingsManager {
             'waf_woo_registration_protection'   => 'WooCommerce Fake Customer Registration & Bot Shield',
             'waf_woo_cart_flood_protection'     => 'WooCommerce Cart Flooding & Denial of Inventory Defense',
             'waf_woo_scraping_protection'       => 'WooCommerce Catalog & Price Scraping Mitigation',
+            'waf_affiliate_shield_enabled'      => 'Affiliate Ecosystem Shield & Click-Fraud Armor (Rule #43)',
+            'waf_affiliate_max_clicks_min'      => 'Affiliate Referral Max Clicks Per Minute',
+            'waf_affiliate_anti_injection'      => 'Affiliate Referral Parameter Anti-Injection Armor',
+            'waf_affiliate_reg_spam_protection' => 'Affiliate Registration Anti-Spam Shield',
+            'waf_affiliate_direct_link_armor'   => 'Affiliate Direct Link Tracking Armor',
             'waf_guest_ajax_policy'            => 'Guest admin-ajax.php / admin-post.php Action Matrix',
             'waf_guest_ajax_custom_allowlist'  => 'Guest AJAX Custom Allowlist',
             'waf_guest_rest_policy'            => 'Guest REST API Mutation Guard',
