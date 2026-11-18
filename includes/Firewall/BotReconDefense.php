@@ -578,7 +578,7 @@ class BotReconDefense {
         return $output . $ai_rules;
     }
 
-    private const POW_COOKIE_NAME = 'webcare_pow_clearance';
+    public const POW_COOKIE_NAME = 'webcare_pow_clearance';
     private const POW_DIFFICULTY  = 4; // 4 hex zeros = 16 leading zero bits (~65,536 hashes max)
     private const CLEARANCE_TTL   = 3600;
 

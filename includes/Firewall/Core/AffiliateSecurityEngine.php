@@ -110,6 +110,20 @@ class AffiliateSecurityEngine {
     private static bool $early_json_inspected = false;
 
     /**
+     * Check whether early firewall inspection has processed a JSON body on the current request.
+     */
+    public static function is_early_json_inspected(): bool {
+        return self::$early_json_inspected;
+    }
+
+    /**
+     * Set early JSON inspection state (used by integration tests).
+     */
+    public static function set_early_json_inspected(bool $state): void {
+        self::$early_json_inspected = $state;
+    }
+
+    /**
      * Invalidate ecosystem cache when plugins or themes change so activation is detected instantly.
      */
     public static function register_cache_invalidation_hooks(): void {

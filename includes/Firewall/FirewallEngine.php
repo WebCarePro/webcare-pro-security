@@ -1031,15 +1031,8 @@ class FirewallEngine {
                                 'expires_at'     => $expires_at,
                             ];
 
-                            $mode = $settings['waf_mode'] ?? 'enabled';
-                            if ($mode === 'learning') {
-                                self::log_incident($rule_triggered, 'detected');
-                            } else {
-                                self::log_incident($rule_triggered, 'blocked');
-                                if (!self::render_block_page($rule_triggered, $client_ip)) {
-                                    exit;
-                                }
-                            }
+                            $rule_triggered['is_hard_block'] = true;
+                            self::handle_rule_violation($rule_triggered, $settings, $client_ip, 403);
                         }
                     }
                 }
@@ -1793,7 +1786,18 @@ class FirewallEngine {
                     $is_commerce_safe = !empty($settings['waf_ecommerce_safe_mode']) && self::is_commerce_or_membership_request($request_uri);
                     $is_form_safe = !empty($settings['waf_forms_safe_mode']) && self::is_form_submission_request($request_uri);
 
-                    if (!$is_loopback && !$is_cli_or_cron && !$is_wc_api && !$is_commerce_safe && !$is_form_safe) {
+                    $req_method = strtoupper(isset($_SERVER['REQUEST_METHOD']) ? sanitize_key(wp_unslash($_SERVER['REQUEST_METHOD'])) : 'GET');
+                    // phpcs:ignore WordPress.Security.NonceVerification.Missing -- PoW form is a cryptographic proof, not an authenticated state-changing action.
+                    $has_pow_submission = isset($_POST['webcare_pow_challenge'], $_POST['webcare_pow_nonce']);
+                    $has_clearance = class_exists(BotReconDefense::class)
+                        && BotReconDefense::has_valid_clearance_cookie($client_ip, '');
+                    $empty_ua_action = self::get_empty_user_agent_action($req_method, $has_clearance, $has_pow_submission);
+
+                    if ($empty_ua_action === 'allow') {
+                        // Clearance or OPTIONS permits the request (GET, POST, etc.) past empty-UA shield
+                    } elseif ($empty_ua_action === 'proof') {
+                        BotReconDefense::verify_or_challenge_client();
+                    } else {
                         $rule_triggered = [
                             'id'          => 'WAF-EMPTY-USER-AGENT',
                             'name'        => 'Blank or Missing User-Agent Block',
@@ -1804,28 +1808,18 @@ class FirewallEngine {
                             'payload'     => "Method: {$req_method} IP: {$client_ip} URI: {$request_uri}",
                         ];
 
-                        // phpcs:ignore WordPress.Security.NonceVerification.Missing -- PoW form is a cryptographic proof, not an authenticated state-changing action.
-                        $has_pow_submission = isset($_POST['webcare_pow_challenge'], $_POST['webcare_pow_nonce']);
-                        if ($req_method === 'POST' && $has_pow_submission && class_exists(BotReconDefense::class)) {
-                            BotReconDefense::verify_or_challenge_client();
-                        } elseif (in_array($req_method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
-                            self::handle_rule_violation($rule_triggered, $settings, $client_ip, 403);
-                        } elseif ($req_method === 'HEAD') {
-                            // HEAD requests cannot execute JS PoW challenges; return header-only 403
+                        if ($empty_ua_action === 'head_block') {
                             self::log_incident($rule_triggered, 'blocked');
                             status_header(403);
                             header('Content-Length: 0');
                             exit;
+                        } elseif ($empty_ua_action === 'challenge') {
+                            self::log_incident($rule_triggered, 'challenged');
+                            $rule_triggered['is_warning'] = true;
+                            self::render_block_page($rule_triggered, $client_ip);
+                            exit;
                         } else {
-                            // GET: Check PoW clearance first so solved challenges genuinely release the request
-                            if (class_exists(BotReconDefense::class) && BotReconDefense::has_valid_clearance_cookie($client_ip, '')) {
-                                // Valid PoW clearance cookie present; allow request to continue
-                            } else {
-                                self::log_incident($rule_triggered, 'challenged');
-                                $rule_triggered['is_warning'] = true;
-                                self::render_block_page($rule_triggered, $client_ip);
-                                exit;
-                            }
+                            self::handle_rule_violation($rule_triggered, $settings, $client_ip, 403);
                         }
                     }
                 }
@@ -1944,8 +1938,9 @@ class FirewallEngine {
                     if (wp_doing_ajax() || (defined('REST_REQUEST') && REST_REQUEST)) {
                         status_header(403);
                         wp_send_json_error(['message' => 'Security Policy Violation: Installation of database managers (phpMyAdmin/Adminer/DBManager) is disallowed by WebCare Pro Security Firewall.']);
-                    } elseif (!self::render_block_page($rule_triggered, $client_ip)) {
-                        exit;
+                    } else {
+                        $rule_triggered['is_hard_block'] = true;
+                        self::handle_rule_violation($rule_triggered, $settings, $client_ip, 403);
                     }
                 }
             }
@@ -1994,8 +1989,9 @@ class FirewallEngine {
                     if (wp_doing_ajax() || (defined('REST_REQUEST') && REST_REQUEST)) {
                         status_header(403);
                         wp_send_json_error(['message' => 'Security Policy Violation: Installation of File Manager plugins is disallowed by WebCare Pro Security Firewall.']);
-                    } elseif (!self::render_block_page($rule_triggered, $client_ip)) {
-                        exit;
+                    } else {
+                        $rule_triggered['is_hard_block'] = true;
+                        self::handle_rule_violation($rule_triggered, $settings, $client_ip, 403);
                     }
                 }
             }
@@ -2042,15 +2038,8 @@ class FirewallEngine {
                             'payload'     => "Endpoint: {$clean_path} IP: {$client_ip}",
                         ];
 
-                        $mode = $settings['waf_mode'] ?? 'enabled';
-                        if ($mode === 'learning') {
-                            self::log_incident($rule_triggered, 'detected');
-                        } else {
-                            self::log_incident($rule_triggered, 'blocked');
-                            if (!self::render_block_page($rule_triggered, $client_ip)) {
-                                exit;
-                            }
-                        }
+                        $rule_triggered['is_hard_block'] = true;
+                        self::handle_rule_violation($rule_triggered, $settings, $client_ip, 403);
                     }
                 }
             }
@@ -2141,15 +2130,8 @@ class FirewallEngine {
                                 'expires_at'     => $expires_at,
                             ];
 
-                            $mode = $settings['waf_mode'] ?? 'enabled';
-                            if ($mode === 'learning') {
-                                self::log_incident($rule_triggered, 'detected');
-                            } else {
-                                self::log_incident($rule_triggered, 'blocked');
-                                if (!self::render_block_page($rule_triggered, $client_ip)) {
-                                    exit;
-                                }
-                            }
+                            $rule_triggered['is_hard_block'] = true;
+                            self::handle_rule_violation($rule_triggered, $settings, $client_ip, 403);
                         }
                     }
                 }
@@ -2175,16 +2157,7 @@ class FirewallEngine {
                 'payload'     => 'Recent 404 endpoint: ' . ($lockout_data['last_uri'] ?? 'N/A'),
             ];
 
-            $mode = $settings['waf_mode'] ?? 'enabled';
-            if ($mode === 'learning') {
-                self::log_incident($rule_triggered, 'detected');
-            } else {
-                $incident_id = 'WEBCARE-' . strtoupper(substr(md5($client_ip . microtime(true) . wp_rand()), 0, 8));
-                self::log_incident($rule_triggered, 'blocked', $incident_id);
-                if (!self::render_block_page($rule_triggered, $client_ip, $incident_id)) {
-                    exit;
-                }
-            }
+            self::handle_rule_violation($rule_triggered, $settings, $client_ip, 403);
         }
 
         // Check Cloud Threat Intelligence Botnet / Malicious IP Blacklist
@@ -4998,6 +4971,28 @@ class FirewallEngine {
     }
 
     /**
+     * Determine whether an incoming request qualifies for progressive warning / PoW clearance,
+     * and whether the visitor holds a valid clearance cookie to bypass the block.
+     *
+     * @param array $rule
+     * @param array $settings
+     * @param string $client_ip
+     * @return bool True if the request is cleared to proceed.
+     */
+    public static function is_cleared_by_pow(array $rule, array $settings, string $client_ip): bool {
+        if (empty($settings['waf_enable_progressive_warnings']) || wp_doing_ajax() || !class_exists(BotReconDefense::class)) {
+            return false;
+        }
+
+        if (!self::is_progressive_warning_rule($rule, $settings)) {
+            return false;
+        }
+
+        $raw_ua = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';
+        return BotReconDefense::has_valid_clearance_cookie($client_ip, $raw_ua);
+    }
+
+    /**
      * Check if an incoming request matches any Targeted Allowlist Rules (User-Agent, Endpoint, and optional IP)
      * If matched, returns the matching rule definition array, or null if no match.
      */
@@ -6560,6 +6555,13 @@ class FirewallEngine {
             }
         }
 
+        // Common clearance-aware decision point: If the rule qualifies for progressive warning
+        // and visitor holds a valid PoW clearance cookie, allow the request to proceed immediately.
+        // Bypasses ahead of incident logging, threat score accumulation, and surge alerts.
+        if (self::is_cleared_by_pow($rule, $settings, $client_ip)) {
+            return;
+        }
+
         $incident_id = 'WEBCARE-' . strtoupper(substr(md5($client_ip . microtime(true) . wp_rand()), 0, 8));
         self::log_incident($rule, 'blocked', $incident_id);
 
@@ -6676,32 +6678,6 @@ class FirewallEngine {
 
         if ($status_code !== 403) {
             status_header($status_code);
-        }
-
-        // If progressive warning mode applies to this low-tier GET rule and visitor already solved PoW, let request proceed
-        $progressive_enabled = !empty($settings['waf_enable_progressive_warnings']);
-        $req_method_upper    = strtoupper(isset($_SERVER['REQUEST_METHOD']) ? sanitize_key(wp_unslash($_SERVER['REQUEST_METHOD'])) : 'GET');
-        if ($progressive_enabled && $req_method_upper === 'GET' && !wp_doing_ajax() && class_exists(BotReconDefense::class)) {
-            $critical_cats = [
-                'SQL Injection', 'PHP Code Injection', 'Path Traversal', 'Cross-Site Scripting (XSS)',
-                'Execution Armor', 'AI & Agent Defense', 'Virtual Patch', 'Next-Gen SQL RASP Defense',
-                'Next-Gen Response DLP', 'Modern API & GraphQL Shield', 'AI Agent Kill-Chain Defense',
-                'Forbidden Default Admin Usernames Shield',
-            ];
-            $r_cat = (string) ($rule['category'] ?? '');
-            $r_id  = (string) ($rule['id'] ?? '');
-            $qualifies_for_warning = !empty($rule['is_warning']) || (
-                !in_array($r_cat, $critical_cats, true)
-                && !str_starts_with($r_id, 'MOD-CUSTOM-')
-                && !str_starts_with($r_id, 'WAF-SQL-RASP-')
-                && empty($rule['is_hard_block'])
-            );
-            if ($qualifies_for_warning) {
-                $raw_ua = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';
-                if (BotReconDefense::has_valid_clearance_cookie($client_ip, $raw_ua)) {
-                    return;
-                }
-            }
         }
 
         self::render_block_page($rule, $client_ip, $incident_id);

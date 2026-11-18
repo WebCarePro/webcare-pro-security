@@ -311,7 +311,7 @@ class Plugin {
 
         // 4. Affiliate Shield & Path Boundary Regression Checks (v2.19.0)
         $affiliate_class = \WebCareProScanner\Firewall\Core\AffiliateSecurityEngine::class;
-        $affiliate_class::register_cache_invalidation_hooks();
+        \WebCareProScanner\Firewall\FirewallEngine::init();
         $checks['affiliate_detection_cache_hooks'] = has_action('activated_plugin', [$affiliate_class, 'invalidate_detection_cache']) !== false
             && has_action('deactivated_plugin', [$affiliate_class, 'invalidate_detection_cache']) !== false
             && has_action('switch_theme', [$affiliate_class, 'invalidate_detection_cache']) !== false;
@@ -322,9 +322,21 @@ class Plugin {
             ['referral' => ['sld' => '1e0union select 1,2,3']]
         );
         $aff_multi_violation = $affiliate_class::find_referral_injection($aff_params, '198.51.100.1', '/wp-json/affwp/v1/visits');
+
+        // REST request lifecycle integration check:
+        $rest_req = new \WP_REST_Request('POST', '/affwp/v1/visits');
+        $rest_req->set_header('content-type', 'application/json');
+        $rest_req->set_body(wp_json_encode(['referral' => ['sld' => '<script>alert(1)</script>']]));
+        $rest_req->set_param('referral', ['sld' => '<script>alert(1)</script>']);
+
+        $affiliate_class::set_early_json_inspected(true);
+        $skipped_when_early = ($affiliate_class::inspect_rest_dispatch('early_pass', rest_get_server(), $rest_req) === 'early_pass');
+        $affiliate_class::set_early_json_inspected(false);
+
         $checks['affiliate_multi_param_injection'] = count($aff_params) === 4
             && isset($aff_params['JSON:referral.sld'])
-            && (($aff_multi_violation['id'] ?? '') === 'WAF-AFFILIATE-INJECTION');
+            && (($aff_multi_violation['id'] ?? '') === 'WAF-AFFILIATE-INJECTION')
+            && $skipped_when_early;
 
         $checks['affiliate_rest_route_anchored'] = !\WebCareProScanner\Firewall\Core\AffiliateSecurityEngine::is_public_affiliate_rest_route('affwp/v1/visits/123/delete')
             && !\WebCareProScanner\Firewall\Core\AffiliateSecurityEngine::is_public_affiliate_rest_route('affwp/v1/visits-export')
@@ -342,13 +354,34 @@ class Plugin {
             && !\WebCareProScanner\Firewall\FirewallEngine::is_configured_support_path('/contact/child', $contact_setting)
             && \WebCareProScanner\Firewall\FirewallEngine::is_configured_support_path('/contact?source=warning', $contact_setting);
 
+        $test_clear_ip = '198.51.100.99';
+        $test_clear_ua = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';
+        $test_salt = defined('AUTH_KEY') ? AUTH_KEY : 'webcare_pow_auth_salt';
+        $test_exp = time() + 3600;
+        $test_sig = hash_hmac('sha256', $test_clear_ip . '|' . $test_clear_ua . '|' . $test_exp, $test_salt);
+        $_COOKIE[\WebCareProScanner\Firewall\BotReconDefense::POW_COOKIE_NAME] = $test_exp . '.' . $test_sig;
+
+        $cleared_rate_limit = \WebCareProScanner\Firewall\FirewallEngine::is_cleared_by_pow(
+            ['id' => 'RATE-LIMIT-404-LOCKOUT', 'category' => '404 Scanner Rate Limit'],
+            ['waf_enable_progressive_warnings' => 1],
+            $test_clear_ip
+        );
+        $blocked_sqli = \WebCareProScanner\Firewall\FirewallEngine::is_cleared_by_pow(
+            ['id' => 'WAF-SQLI-UNION', 'category' => 'SQL Injection'],
+            ['waf_enable_progressive_warnings' => 1],
+            $test_clear_ip
+        );
+        unset($_COOKIE[\WebCareProScanner\Firewall\BotReconDefense::POW_COOKIE_NAME]);
+
         $checks['empty_ua_clearance_and_methods'] = \WebCareProScanner\Firewall\FirewallEngine::get_empty_user_agent_action('GET', true) === 'allow'
             && \WebCareProScanner\Firewall\FirewallEngine::get_empty_user_agent_action('POST', true) === 'allow'
             && \WebCareProScanner\Firewall\FirewallEngine::get_empty_user_agent_action('GET', false) === 'challenge'
             && \WebCareProScanner\Firewall\FirewallEngine::get_empty_user_agent_action('POST', false, true) === 'proof'
             && \WebCareProScanner\Firewall\FirewallEngine::get_empty_user_agent_action('HEAD', false) === 'head_block'
             && \WebCareProScanner\Firewall\FirewallEngine::get_empty_user_agent_action('OPTIONS', false) === 'allow'
-            && \WebCareProScanner\Firewall\FirewallEngine::get_empty_user_agent_action('POST', false) === 'block';
+            && \WebCareProScanner\Firewall\FirewallEngine::get_empty_user_agent_action('POST', false) === 'block'
+            && $cleared_rate_limit === true
+            && $blocked_sqli === false;
 
         $test_bot_ip = '198.51.100.' . wp_rand(10, 250);
         $hit1 = \WebCareProScanner\Firewall\Core\AffiliateSecurityEngine::track_referral_click_velocity($test_bot_ip, 2);

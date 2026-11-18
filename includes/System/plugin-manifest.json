@@ -1,6 +1,6 @@
 {
   "version": "2.19.0",
-  "generated_at": "2026-11-18T20:12:32.113Z",
+  "generated_at": "2026-11-18T20:29:12.026Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -392,8 +392,8 @@
       "size": 26968
     },
     "includes/Firewall/BotReconDefense.php": {
-      "sha256": "669edf76d58624c5d359847792c617a3ee07cde636d69ccafc08aa6a36a501f6",
-      "size": 39523
+      "sha256": "9a52558157c54ad4d02a79e3f6f120842854316e4cb226a78a8689bc9ae47265",
+      "size": 39522
     },
     "includes/Firewall/CAF/AdaptiveFirewallAdvisor.php": {
       "sha256": "a284dabd1a08e8dbf8015cc022855823fee4757a760629910908a726b1377bbd",
@@ -432,8 +432,8 @@
       "size": 13336
     },
     "includes/Firewall/Core/AffiliateSecurityEngine.php": {
-      "sha256": "15a5465998efa153e154b6bad04f699a144a47c8a2b745363dad4f2042f60d1e",
-      "size": 37946
+      "sha256": "942e8b8f7e603754efd6f0bfe40274287d6481398d3368eded8b52b66d3d2e40",
+      "size": 38381
     },
     "includes/Firewall/Core/ClientIpResolver.php": {
       "sha256": "95d371ee733306878a5f86fa1919b878fe3672c352da119d09d6f21a82d39649",
@@ -468,8 +468,8 @@
       "size": 16339
     },
     "includes/Firewall/FirewallEngine.php": {
-      "sha256": "30781335543c00c514b6fcdfe7f0778a97ff823b0111ba7b13a65b71745d721f",
-      "size": 449106
+      "sha256": "835c47fb4ef5ec2ce9de60e23e17fcd746ec25f9150a7a1081b864bfa705eccf",
+      "size": 447349
     },
     "includes/Firewall/FormSpamProtectionEngine.php": {
       "sha256": "d450cf8289cddf53554c6a084cd4776f6a6333f7c7afdad8d65c39e9fc79bfb6",
@@ -696,8 +696,8 @@
       "size": 32218
     },
     "includes/Plugin.php": {
-      "sha256": "77b5ed636942c64cdd693457712e3c8114245dadacc92eeeef2ae4bff7d883e9",
-      "size": 26556
+      "sha256": "f796331738fe6a0b897a728f78ce12234fa4791a8de7c3d396f56c24416fa8bb",
+      "size": 28415
     },
     "includes/Quarantine/CoreRepairManager.php": {
       "sha256": "e4b6a6438e72eefdfcc59fe1b4db45caf4cf269c62a1143b0f61ba998a90e3b9",
