@@ -9683,12 +9683,12 @@ class ScannerRoutes {
         }
 
         if ($rule === 37) {
-            $method_input = $params['method'] ?? 'POST';
+            $method_input = array_key_exists('method', $params) ? $params['method'] : 'POST';
             if (!is_string($method_input)) {
                 return new \WP_Error('invalid_method', __('Invalid HTTP method. Supported methods are POST, PUT, PATCH, DELETE, and GET.', 'webcare-pro-security'), ['status' => 400]);
             }
 
-            $raw_method = strtoupper(sanitize_key(wp_unslash($method_input)));
+            $raw_method = strtoupper(trim(wp_unslash($method_input)));
             $valid_methods = ['POST', 'PUT', 'PATCH', 'DELETE', 'GET'];
             if (!in_array($raw_method, $valid_methods, true)) {
                 return new \WP_Error('invalid_method', __('Invalid HTTP method. Supported methods are POST, PUT, PATCH, DELETE, and GET.', 'webcare-pro-security'), ['status' => 400]);

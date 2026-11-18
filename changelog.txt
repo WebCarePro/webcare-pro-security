@@ -1,6 +1,7 @@
 ﻿v:2.18.0 - 2026-11-18
 - Rule #37 rejects root wildcard grants, narrows equivalent legacy route-only entries to the observed method on one-click approvals, and warns administrators that remaining route-only entries allow all mutation verbs.
 - Rule #37 one-click approvals now return HTTP 400 for invalid methods instead of silently defaulting to POST.
+- Strict Rule #37 method validation now rejects malformed tokens and explicit null values; POST is used only when the method field is absent.
 - Security Audit Hardening, Multisite Network Parity & Administrator Self-Lockout Remediation:
   * MCP Bearer exemptions now share strict fail-closed token, TTL, timestamp, and CIDR validation across WAF inspection and REST route permissions; malformed prefixes such as non-numeric CIDR masks cannot broaden access.
   * Scan Vault access rules now repair Apache authorization structure and IIS deny rules while preserving unrelated configuration within the dedicated vault directory; parent uploads rules are left untouched. Added daily retention cleanup for abandoned temp files and stale option references, plus tampering regression checks in the WP-CLI doctor.

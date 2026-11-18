@@ -1,6 +1,6 @@
 {
   "version": "2.18.0",
-  "generated_at": "2026-11-18T00:58:52.347Z",
+  "generated_at": "2026-11-18T01:01:30.687Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -196,8 +196,8 @@
       "size": 11237
     },
     "includes/Api/ScannerRoutes.php": {
-      "sha256": "af1eb8ca3d3a6a8d15525e80576d50ccfa1b219498af851b51e736b4505ac99a",
-      "size": 767967
+      "sha256": "8297a4ca69ca31cb8147594cf08c7333013209a3bbcda5e842295c37fce6a6fe",
+      "size": 767996
     },
     "includes/Auth/ApplicationPasswordSentinel.php": {
       "sha256": "942165dd09813d8b9b94ecd8b6434a099a30bfeb429f5a7913e39c9b1088fb3e",
