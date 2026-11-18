@@ -156,7 +156,8 @@ class AdaptiveRateLimiter {
         $elapsed_in_window = max(0, $now - $window_start);
 
         $data = null;
-        if (function_exists('apcu_fetch') && ini_get('apc.enabled')) {
+        $is_apcu = function_exists('apcu_fetch') && ini_get('apc.enabled') && (php_sapi_name() !== 'cli' || ini_get('apc.enable_cli'));
+        if ($is_apcu) {
             $data = apcu_fetch($cache_key);
         } elseif (wp_using_ext_object_cache()) {
             $data = wp_cache_get($cache_key, 'webcareproscan_rl');
@@ -191,7 +192,7 @@ class AdaptiveRateLimiter {
         // Store back
         $ttl = $window * 2;
         $has_fast_cache = false;
-        if (function_exists('apcu_store') && ini_get('apc.enabled')) {
+        if ($is_apcu && function_exists('apcu_store')) {
             apcu_store($cache_key, $data, $ttl);
             $has_fast_cache = true;
         }

@@ -309,7 +309,40 @@ class Plugin {
         }
         $checks['vault_iis_tamper_repaired'] = $vault_iis_check;
 
-        // 4. REST API Authz Audit: ensure no admin route under webcare-pro-security/v1 uses __return_true
+        // 4. Affiliate Shield & Path Boundary Regression Checks (v2.18.0)
+        $aff_injection_violation = \WebCareProScanner\Firewall\Core\AffiliateSecurityEngine::inspect_referral_parameter_value(
+            'affwp_campaign',
+            '<script>alert(1)</script>',
+            '198.51.100.1',
+            '/?ref=1&affwp_campaign=%3Cscript%3Ealert(1)%3C/script%3E'
+        );
+        $aff_sqli_violation = \WebCareProScanner\Firewall\Core\AffiliateSecurityEngine::inspect_referral_parameter_value(
+            'aff',
+            '1e0union select 1,2,3',
+            '198.51.100.1',
+            '/'
+        );
+        $checks['affiliate_multi_param_injection'] = (($aff_injection_violation['id'] ?? '') === 'WAF-AFFILIATE-INJECTION')
+            && (($aff_sqli_violation['id'] ?? '') === 'WAF-AFFILIATE-INJECTION');
+
+        $checks['affiliate_rest_route_anchored'] = !\WebCareProScanner\Firewall\Core\AffiliateSecurityEngine::is_public_affiliate_rest_route('affwp/v1/visits/123/delete')
+            && !\WebCareProScanner\Firewall\Core\AffiliateSecurityEngine::is_public_affiliate_rest_route('affwp/v1/visits-export')
+            && \WebCareProScanner\Firewall\Core\AffiliateSecurityEngine::is_public_affiliate_rest_route('affwp/v1/visits')
+            && \WebCareProScanner\Firewall\Core\AffiliateSecurityEngine::is_public_affiliate_rest_route('/wp-json/slicewp/v1/visits');
+
+        $contact_setting = '/contact';
+        $contact_path    = rtrim(strtolower((string) wp_parse_url($contact_setting, PHP_URL_PATH)), '/');
+        $probed_admin    = rtrim(strtolower((string) wp_parse_url('/contact-admin', PHP_URL_PATH)), '/');
+        $probed_legit    = rtrim(strtolower((string) wp_parse_url('/contact', PHP_URL_PATH)), '/');
+        $checks['contact_support_url_boundary'] = ($probed_admin !== $contact_path) && ($probed_legit === $contact_path);
+
+        $test_bot_ip = '198.51.100.' . wp_rand(10, 250);
+        $hit1 = \WebCareProScanner\Firewall\Core\AffiliateSecurityEngine::track_referral_click_velocity($test_bot_ip, 2);
+        $hit2 = \WebCareProScanner\Firewall\Core\AffiliateSecurityEngine::track_referral_click_velocity($test_bot_ip, 2);
+        $hit3 = \WebCareProScanner\Firewall\Core\AffiliateSecurityEngine::track_referral_click_velocity($test_bot_ip, 2);
+        $checks['affiliate_click_velocity_throttling'] = (!$hit1 && $hit3);
+
+        // 5. REST API Authz Audit: ensure no admin route under webcare-pro-security/v1 uses __return_true
         $server = rest_get_server();
         $routes = $server->get_routes('webcare-pro-security/v1');
         $public_unexpected = [];
@@ -341,6 +374,10 @@ class Plugin {
             empty($checks['guest_rest_one_click_narrows_legacy']) ||
             empty($checks['vault_apache_tamper_repaired']) ||
             empty($checks['vault_iis_tamper_repaired']) ||
+            empty($checks['affiliate_multi_param_injection']) ||
+            empty($checks['affiliate_rest_route_anchored']) ||
+            empty($checks['contact_support_url_boundary']) ||
+            empty($checks['affiliate_click_velocity_throttling']) ||
             empty($checks['rest_no_open_admin'])
         ) {
             \WP_CLI::error('WebCare Doctor detected a failed security self-check.');

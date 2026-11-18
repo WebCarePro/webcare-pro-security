@@ -2539,6 +2539,9 @@ class ScannerRoutes {
             'preload_waf'           => $preload_waf_status,
             'egress_status'         => $egress_status,
             'stack_snapshot'        => $stack_snapshot,
+            'affiliate_telemetry'   => class_exists('\\WebCareProScanner\\Firewall\\Core\\AffiliateSecurityEngine')
+                ? \WebCareProScanner\Firewall\Core\AffiliateSecurityEngine::get_detected_ecosystem()
+                : ['is_active' => false, 'plugins' => [], 'themes' => [], 'summary' => ''],
             'caf_status'            => $caf_status,
             'capability_profile'    => $capability_profile,
             'notification_settings' => $notification_settings,

@@ -139,7 +139,7 @@ class FirewallEngine {
         }
 
         // Rule #43: Affiliate Ecosystem Shield & Anti-Fraud Armor (Only loaded if affiliate ecosystem is detected)
-        if (class_exists(AffiliateSecurityEngine::class) && AffiliateSecurityEngine::get_detected_ecosystem()['is_active']) {
+        if (class_exists(AffiliateSecurityEngine::class) && !empty(AffiliateSecurityEngine::get_detected_ecosystem()['is_active'])) {
             AffiliateSecurityEngine::init();
         }
 
@@ -243,6 +243,39 @@ class FirewallEngine {
      */
     public static function get_configured_trusted_proxies(): array {
         return ClientIpResolver::get_configured_trusted_proxies();
+    }
+
+    /**
+     * Canonical multi-pass normalization helper for inspection engines.
+     * Strips control characters (NUL/CR/LF), decodes URL encoding up to 3 passes,
+     * and decodes HTML entities (e.g. &#x27; / &#39;) to prevent evasion.
+     *
+     * @param string $val
+     * @return string
+     */
+    public static function normalize_inspect_value(string $val): string {
+        if ($val === '') {
+            return '';
+        }
+
+        $norm = str_replace(["\0", "\r", "\n"], '', $val);
+        for ($d = 0; $d < 3; $d++) {
+            $decoded = rawurldecode($norm);
+            if ($decoded === $norm) {
+                break;
+            }
+            $norm = str_replace(["\0", "\r", "\n"], '', $decoded);
+        }
+
+        // HTML entity decode for hex/numeric/named entities (e.g., &#x27;, &#39;, &quot;)
+        if (str_contains($norm, '&') && str_contains($norm, ';')) {
+            $html_decoded = html_entity_decode($norm, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            if ($html_decoded !== $norm) {
+                $norm = str_replace(["\0", "\r", "\n"], '', $html_decoded);
+            }
+        }
+
+        return $norm;
     }
 
     /**
@@ -1017,10 +1050,11 @@ class FirewallEngine {
             $url_whitelisted = true;
         }
 
-        // Automatic safe-pass for configured Contact / Support URL (ensures visitors appealing warnings can reach support)
+        // Automatic safe-pass for configured Contact / Support URL (exact path boundary match)
         if (!$url_whitelisted && !empty($settings['waf_contact_support_url'])) {
-            $contact_path = wp_parse_url($settings['waf_contact_support_url'], PHP_URL_PATH);
-            if (!empty($contact_path) && $contact_path !== '/' && str_starts_with(strtolower($request_uri), strtolower($contact_path))) {
+            $contact_path = rtrim(strtolower((string) wp_parse_url($settings['waf_contact_support_url'], PHP_URL_PATH)), '/');
+            $req_path     = rtrim(strtolower((string) (wp_parse_url($request_uri, PHP_URL_PATH) ?? '')), '/');
+            if ($contact_path !== '' && $contact_path !== '/' && $req_path === $contact_path) {
                 $url_whitelisted = true;
             }
         }
@@ -1740,17 +1774,20 @@ class FirewallEngine {
             }
         }
 
-        // Rule: Blank or Missing User-Agent Shield (All Request Methods)
-        // Instantly drops automated vulnerability scanners, raw socket probes, and headless scripts that omit the User-Agent header entirely.
+        // Rule: Blank or Missing User-Agent Shield
         if (!$skip_operational_heuristics && !empty($settings['waf_block_empty_user_agent'])) {
             $raw_ua = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';
             if (trim($raw_ua) === '') {
                 $is_loopback = ($client_ip === '127.0.0.1' || $client_ip === '::1' || (isset($_SERVER['SERVER_ADDR']) && $client_ip === $_SERVER['SERVER_ADDR']));
-                $is_cli_or_cron = (php_sapi_name() === 'cli' || (defined('DOING_CRON') && DOING_CRON));
+                // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+                $is_cli_or_cron = (php_sapi_name() === 'cli' || (defined('DOING_CRON') && DOING_CRON) || isset($_GET['doing_wp_cron']));
+                // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+                $is_wc_api = isset($_GET['wc-api']);
                 $is_commerce_safe = !empty($settings['waf_ecommerce_safe_mode']) && self::is_commerce_or_membership_request($request_uri);
                 $is_form_safe = !empty($settings['waf_forms_safe_mode']) && self::is_form_submission_request($request_uri);
 
-                if (!$is_loopback && !$is_cli_or_cron && !$is_commerce_safe && !$is_form_safe) {
+                if (!$is_loopback && !$is_cli_or_cron && !$is_wc_api && !$is_commerce_safe && !$is_form_safe) {
+                    $req_method = strtoupper(isset($_SERVER['REQUEST_METHOD']) ? sanitize_key(wp_unslash($_SERVER['REQUEST_METHOD'])) : 'GET');
                     $rule_triggered = [
                         'id'          => 'WAF-EMPTY-USER-AGENT',
                         'name'        => 'Blank or Missing User-Agent Block',
@@ -1758,10 +1795,18 @@ class FirewallEngine {
                         'description' => 'Automated request rejected: The HTTP User-Agent header was missing or blank (malicious vulnerability scanner or headless probe signature).',
                         'match_type'  => 'Missing Headers',
                         'match_value' => 'Empty / Missing User-Agent',
-                        'payload'     => "IP: {$client_ip} URI: {$request_uri}",
+                        'payload'     => "Method: {$req_method} IP: {$client_ip} URI: {$request_uri}",
                     ];
 
-                    self::handle_rule_violation($rule_triggered, $settings, $client_ip, 403);
+                    if (in_array($req_method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
+                        self::handle_rule_violation($rule_triggered, $settings, $client_ip, 403);
+                    } else {
+                        // For GET/HEAD empty-UA probes, serve transparent WebCrypto PoW or warning rather than breaking health monitors
+                        self::log_incident($rule_triggered, 'challenged');
+                        $rule_triggered['is_warning'] = true;
+                        self::render_block_page($rule_triggered, $client_ip);
+                        exit;
+                    }
                 }
             }
         }
@@ -3041,6 +3086,21 @@ class FirewallEngine {
                 ],
             ]);
             exit;
+        }
+
+        // Transparent WebCrypto PoW challenge before displaying amber warning screen on browser GET requests
+        if ($is_warning) {
+            $req_method = strtoupper(isset($_SERVER['REQUEST_METHOD']) ? sanitize_key(wp_unslash($_SERVER['REQUEST_METHOD'])) : 'GET');
+            if ($req_method === 'GET' && !wp_doing_ajax() && class_exists(BotReconDefense::class)) {
+                $raw_ua = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';
+                // If browser has already computed a valid clearance cookie, permit request smoothly
+                if (BotReconDefense::has_valid_clearance_cookie($client_ip, $raw_ua)) {
+                    return;
+                }
+                // Challenge legitimate browser with invisible WebCrypto PoW (<150ms solve time)
+                BotReconDefense::render_webcrypto_challenge($client_ip, $raw_ua);
+                exit;
+            }
         }
 
         $site_name   = get_bloginfo('name');
@@ -7045,9 +7105,6 @@ class FirewallEngine {
                 // Gravity Forms Personal Data & Upload Handlers
                 'wp_gf_personal_data',
                 'gf_ajax_upload',
-                // AffiliateWP Guest Referral Tracking & Nonces
-                'affwp_track_visit',
-                'affwp_get_affiliate_id',
                 // Ninja Forms Guest File Upload Nonce Fetcher
                 'nf_fu_get_new_nonce',
                 // WooCommerce Payment Gateway Handshakes (PayPal Payments & Stripe Checkout AJAX)
@@ -7086,7 +7143,7 @@ class FirewallEngine {
 
         // Affiliate Ecosystem Public Guest AJAX Handlers (Only loaded if affiliate ecosystem is detected)
         if (class_exists(AffiliateSecurityEngine::class)
-            && AffiliateSecurityEngine::get_detected_ecosystem()['is_active']
+            && !empty(AffiliateSecurityEngine::get_detected_ecosystem()['is_active'])
             && AffiliateSecurityEngine::is_public_affiliate_ajax_action($action)
         ) {
             return;
@@ -7270,7 +7327,7 @@ class FirewallEngine {
 
         // Affiliate Ecosystem Public REST Mutations (Only loaded if affiliate ecosystem is detected):
         if (class_exists(AffiliateSecurityEngine::class)
-            && AffiliateSecurityEngine::get_detected_ecosystem()['is_active']
+            && !empty(AffiliateSecurityEngine::get_detected_ecosystem()['is_active'])
             && AffiliateSecurityEngine::is_public_affiliate_rest_route($route)
         ) {
             return in_array($method, ['POST', 'PUT'], true);

@@ -195,6 +195,12 @@ final class AdaptiveFirewallAdvisor {
 					$namespaces[] = 'buddypress/v1';
 					$namespaces[] = 'bbp-api/v1';
 					break;
+				case 'affiliate':
+					$namespaces[] = 'affwp/v1';
+					$namespaces[] = 'affwp-portal/v1';
+					$namespaces[] = 'slicewp/v1';
+					$namespaces[] = 'solid-affiliate/v1';
+					break;
 				case 'fluent-crm':
 					$namespaces[] = 'fluent-crm/v1';
 					break;
@@ -381,6 +387,14 @@ final class AdaptiveFirewallAdvisor {
 			$cached = get_option( self::OPTION_STACK_SNAPSHOT );
 			if ( is_array( $cached ) && ! empty( $cached['rest_namespaces'] ) && is_array( $cached['rest_namespaces'] ) ) {
 				$rest_namespaces = (array) $cached['rest_namespaces'];
+			}
+		}
+
+		// Detect affiliate ecosystem stack
+		if ( class_exists( '\\WebCareProScanner\\Firewall\\Core\\AffiliateSecurityEngine' ) ) {
+			$aff_eco = \WebCareProScanner\Firewall\Core\AffiliateSecurityEngine::get_detected_ecosystem();
+			if ( ! empty( $aff_eco['is_active'] ) ) {
+				$detected_ecosystems[] = 'affiliate';
 			}
 		}
 

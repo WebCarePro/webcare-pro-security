@@ -314,14 +314,7 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
 
         $normalized_paths = array_map(static function (string $path): string {
             $path = strtolower((string) (wp_parse_url($path, PHP_URL_PATH) ?? $path));
-            for ($decode_pass = 0; $decode_pass < 3; $decode_pass++) {
-                $decoded_path = rawurldecode($path);
-                if ($decoded_path === $path) {
-                    break;
-                }
-                $path = $decoded_path;
-            }
-            $path = str_replace(["\0", "\r", "\n"], '', $path);
+            $path = FirewallEngine::normalize_inspect_value($path);
             return (string) preg_replace('#/+#', '/', $path);
         }, $path_candidates);
         $has_ajax_surface = false;

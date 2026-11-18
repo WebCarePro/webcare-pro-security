@@ -278,63 +278,79 @@ class AffiliateSecurityEngine {
             return;
         }
 
-        // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Early low-level firewall inspection of referral query parameters
-        $has_referral_query = false;
-        $active_param_key   = '';
-        $raw_param_value    = '';
-
+        $found_params = [];
         foreach (self::REFERRAL_PARAM_KEYS as $key) {
             // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-            if (isset($_GET[$key]) && is_scalar($_GET[$key]) && (string) $_GET[$key] !== '') {
-                $has_referral_query = true;
-                $active_param_key   = $key;
+            if (isset($_GET[$key]) && $_GET[$key] !== '') {
                 // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-                $raw_param_value    = (string) $_GET[$key];
-                break;
+                $found_params['GET:' . $key] = wp_unslash($_GET[$key]);
+            }
+            // phpcs:ignore WordPress.Security.NonceVerification.Missing
+            if (isset($_POST[$key]) && $_POST[$key] !== '') {
+                // phpcs:ignore WordPress.Security.NonceVerification.Missing
+                $found_params['POST:' . $key] = wp_unslash($_POST[$key]);
             }
         }
 
-        if (!$has_referral_query) {
+        if (empty($found_params)) {
             return;
         }
 
-        // 1. Referral Parameter Anti-Injection & Sanitization Guard (SQLi, XSS, Path Traversal)
+        // 1. Inspect EVERY present referral parameter (never break on first match)
         if (!empty($settings['waf_affiliate_anti_injection'])) {
-            $injection_violation = self::inspect_referral_parameter_value($active_param_key, $raw_param_value, $client_ip, $request_uri);
-            if ($injection_violation !== null) {
-                FirewallEngine::handle_rule_violation($injection_violation, $settings, $client_ip, 403);
-                return;
+            foreach ($found_params as $param_source => $raw_val) {
+                $param_key = explode(':', $param_source, 2)[1] ?? $param_source;
+                if (is_array($raw_val)) {
+                    $array_violation = [
+                        'id'          => 'WAF-AFFILIATE-INJECTION',
+                        'name'        => 'Affiliate Referral Array Injection Shield (Rule #43)',
+                        'category'    => 'Affiliate Defense',
+                        'description' => sprintf('Unexpected array payload supplied for scalar affiliate parameter "%s".', $param_key),
+                        'match_type'  => 'Type Confusion / Array Injection',
+                        'match_value' => $param_key,
+                        'payload'     => "Param: {$param_source} (array) IP: {$client_ip}",
+                    ];
+                    FirewallEngine::handle_rule_violation($array_violation, $settings, $client_ip, 403);
+                    return;
+                }
+                if (!is_scalar($raw_val)) {
+                    continue;
+                }
+                $injection_violation = self::inspect_referral_parameter_value($param_key, (string) $raw_val, $client_ip, $request_uri);
+                if ($injection_violation !== null) {
+                    FirewallEngine::handle_rule_violation($injection_violation, $settings, $client_ip, 403);
+                    return;
+                }
             }
         }
 
         // 2. Click-Fraud & High-Velocity Visit Rate Limiter (Default: 10 referral clicks/min per IP)
-        if (!empty($settings['waf_affiliate_anti_fraud'])) {
-            $max_clicks = max(3, min(300, (int) ($settings['waf_affiliate_max_clicks_min'] ?? 10)));
-            $is_flooding = self::track_referral_click_velocity($client_ip, $max_clicks);
+        // Gated on waf_affiliate_shield_enabled (active whenever Rule #43 is enabled)
+        $max_clicks  = max(3, min(300, (int) ($settings['waf_affiliate_max_clicks_min'] ?? 10)));
+        $is_flooding = self::track_referral_click_velocity($client_ip, $max_clicks);
 
-            if ($is_flooding) {
-                // Mark connection so database visit recording is silently suppressed
-                if (!defined('WEBCAREPROSCAN_SUPPRESS_AFFILIATE_VISIT')) {
-                    define('WEBCAREPROSCAN_SUPPRESS_AFFILIATE_VISIT', true);
-                }
-
-                $rule_triggered = [
-                    'id'          => 'WAF-AFFILIATE-CLICK-FLOOD',
-                    'name'        => 'Affiliate Referral Click-Flood & Database Bloat Shield (Rule #43)',
-                    'category'    => 'Affiliate Defense',
-                    'description' => sprintf(
-                        /* translators: 1: client IP address, 2: max clicks per minute */
-                        __('High-velocity referral click flood from IP %1$s exceeded safety threshold (%2$d clicks/min). Suppressed database visit logging to prevent table bloat and click-fraud.', 'webcare-pro-security'),
-                        $client_ip,
-                        $max_clicks
-                    ),
-                    'match_type'  => 'Referral Velocity Limit',
-                    'match_value' => $client_ip,
-                    'payload'     => "IP: {$client_ip} Param: {$active_param_key} Clicks: >{$max_clicks}/min",
-                ];
-
-                FirewallEngine::log_incident($rule_triggered, 'throttled');
+        if ($is_flooding) {
+            if (!defined('WEBCAREPROSCAN_SUPPRESS_AFFILIATE_VISIT')) {
+                define('WEBCAREPROSCAN_SUPPRESS_AFFILIATE_VISIT', true);
             }
+
+            $first_key = array_key_first($found_params);
+            $rule_triggered = [
+                'id'          => 'WAF-AFFILIATE-CLICK-FLOOD',
+                'name'        => 'Affiliate Referral Click-Flood & Database Bloat Shield (Rule #43)',
+                'category'    => 'Affiliate Defense',
+                'description' => sprintf(
+                    /* translators: 1: client IP address, 2: max clicks per minute */
+                    __('High-velocity referral click flood from IP %1$s exceeded safety threshold (%2$d clicks/min). Suppressed database visit logging to prevent table bloat and click-fraud.', 'webcare-pro-security'),
+                    $client_ip,
+                    $max_clicks
+                ),
+                'match_type'  => 'Referral Velocity Limit',
+                'match_value' => $client_ip,
+                'payload'     => "IP: {$client_ip} Param: {$first_key} Clicks: >{$max_clicks}/min",
+            ];
+
+            FirewallEngine::log_incident($rule_triggered, 'throttled');
         }
     }
 
@@ -361,7 +377,7 @@ class AffiliateSecurityEngine {
             ];
         }
 
-        // Check for control characters and null bytes
+        // Check for control characters and null bytes in raw value
         if (preg_match('/[\0\r\n\t]/', $val)) {
             return [
                 'id'          => 'WAF-AFFILIATE-INJECTION',
@@ -374,24 +390,46 @@ class AffiliateSecurityEngine {
             ];
         }
 
+        // Multi-pass canonical decode before inspection (blocks %2527%2520UNION and null-byte smuggling)
+        if (method_exists(FirewallEngine::class, 'normalize_inspect_value')) {
+            $norm_val = FirewallEngine::normalize_inspect_value($val);
+        } else {
+            $norm_val = str_replace(["\0", "\r", "\n"], '', $val);
+            for ($d = 0; $d < 3; $d++) {
+                $decoded = rawurldecode($norm_val);
+                if ($decoded === $norm_val) {
+                    break;
+                }
+                $norm_val = str_replace(["\0", "\r", "\n"], '', $decoded);
+            }
+            if (str_contains($norm_val, '&') && str_contains($norm_val, ';')) {
+                $html_decoded = html_entity_decode($norm_val, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+                if ($html_decoded !== $norm_val) {
+                    $norm_val = str_replace(["\0", "\r", "\n"], '', $html_decoded);
+                }
+            }
+        }
+
         // Check for SQL Injection signatures
         $sqli_patterns = [
+            '/(?:^|[^a-z_]|[\d.eE])union(?:\s+|\/\*.*?\*\/|\()+(?:all\s+)?select(?:\b|\()/i',
             '/\b(union(\s+all)?\s+select|select\s+.*\s+from)\b/i',
             '/\b(benchmark\s*\(|sleep\s*\(|pg_sleep\s*\()/i',
             '/\b(drop|truncate|alter)\s+(table|database)\b/i',
             '/(--|\#|\/\*)/', // SQL comment delimiters
             '/(\'|\")\s*(or|and)\s*(\'|\"|\d|\w)/i', // SQL boolean evasion: ' or '1'='1
+            '/\/\*![0-9]*\s*(?:select|union|sleep|benchmark)/i',
         ];
 
         foreach ($sqli_patterns as $pattern) {
-            if (preg_match($pattern, $val)) {
+            if (preg_match($pattern, $val) || preg_match($pattern, $norm_val)) {
                 return [
                     'id'          => 'WAF-AFFILIATE-INJECTION',
                     'name'        => 'Affiliate Referral Parameter SQLi Armor (Rule #43)',
                     'category'    => 'Affiliate Defense',
                     'description' => sprintf('SQL injection exploit detected inside affiliate parameter "%s".', $key),
                     'match_type'  => 'SQL Injection',
-                    'match_value' => substr($val, 0, 60),
+                    'match_value' => substr($norm_val !== '' ? $norm_val : $val, 0, 60),
                     'payload'     => "Param: {$key} Value: {$val} IP: {$client_ip}",
                 ];
             }
@@ -407,30 +445,33 @@ class AffiliateSecurityEngine {
         ];
 
         foreach ($xss_patterns as $pattern) {
-            if (preg_match($pattern, $val)) {
+            if (preg_match($pattern, $val) || preg_match($pattern, $norm_val)) {
                 return [
                     'id'          => 'WAF-AFFILIATE-INJECTION',
                     'name'        => 'Affiliate Referral Parameter XSS Armor (Rule #43)',
                     'category'    => 'Affiliate Defense',
                     'description' => sprintf('Cross-Site Scripting (XSS) payload intercepted inside affiliate parameter "%s".', $key),
                     'match_type'  => 'Cross-Site Scripting (XSS)',
-                    'match_value' => substr($val, 0, 60),
+                    'match_value' => substr($norm_val !== '' ? $norm_val : $val, 0, 60),
                     'payload'     => "Param: {$key} Value: {$val} IP: {$client_ip}",
                 ];
             }
         }
 
         // Check for Path Traversal / File Inclusion
-        if (str_contains($val, '../') || str_contains($val, '..\\') || str_starts_with($val, 'php://') || str_starts_with($val, 'phar://')) {
-            return [
-                'id'          => 'WAF-AFFILIATE-INJECTION',
-                'name'        => 'Affiliate Referral Parameter Path Traversal Shield (Rule #43)',
-                'category'    => 'Affiliate Defense',
-                'description' => sprintf('Directory traversal payload detected inside affiliate parameter "%s".', $key),
-                'match_type'  => 'Path Traversal',
-                'match_value' => substr($val, 0, 60),
-                'payload'     => "Param: {$key} Value: {$val} IP: {$client_ip}",
-            ];
+        $traversal_targets = [$val, $norm_val];
+        foreach ($traversal_targets as $t_val) {
+            if (str_contains($t_val, '../') || str_contains($t_val, '..\\') || str_starts_with($t_val, 'php://') || str_starts_with($t_val, 'phar://')) {
+                return [
+                    'id'          => 'WAF-AFFILIATE-INJECTION',
+                    'name'        => 'Affiliate Referral Parameter Path Traversal Shield (Rule #43)',
+                    'category'    => 'Affiliate Defense',
+                    'description' => sprintf('Directory traversal payload detected inside affiliate parameter "%s".', $key),
+                    'match_type'  => 'Path Traversal',
+                    'match_value' => substr($norm_val !== '' ? $norm_val : $val, 0, 60),
+                    'payload'     => "Param: {$key} Value: {$val} IP: {$client_ip}",
+                ];
+            }
         }
 
         return null;
@@ -448,6 +489,16 @@ class AffiliateSecurityEngine {
             return false;
         }
 
+        if (class_exists('\\WebCareProScanner\\Firewall\\AdaptiveRateLimiter')) {
+            $bucket = \WebCareProScanner\Firewall\AdaptiveRateLimiter::check_bucket_velocity(
+                'affiliate_click',
+                $client_ip,
+                $max_clicks,
+                60
+            );
+            return empty($bucket['allowed']);
+        }
+
         $transient_key = self::TRANSIENT_CLICK_PREFIX . md5($client_ip);
         $current_hits  = (int) get_transient($transient_key);
 
@@ -456,6 +507,48 @@ class AffiliateSecurityEngine {
         }
 
         set_transient($transient_key, $current_hits + 1, 60);
+        return false;
+    }
+
+    /**
+     * Check if client User-Agent matches known headless browser or CLI HTTP client signatures.
+     *
+     * @param string $ua
+     * @return bool
+     */
+    public static function is_headless_or_scraping_agent(string $ua): bool {
+        if ($ua === '') {
+            return true;
+        }
+        $ua_lower = strtolower($ua);
+        $headless_signatures = [
+            'curl/',
+            'python-requests',
+            'python-urllib',
+            'headlesschrome',
+            'go-http-client',
+            'phantomjs',
+            'postmanruntime',
+            'wget/',
+            'aiohttp',
+            'httpx/',
+            'node-fetch',
+            'axios/',
+            'scrapy',
+            'libwww-perl',
+            'httpclient',
+            'zgrab',
+            'sqlmap',
+            'nikto',
+            'nmap',
+        ];
+
+        foreach ($headless_signatures as $sig) {
+            if (str_contains($ua_lower, $sig)) {
+                return true;
+            }
+        }
+
         return false;
     }
 
@@ -473,6 +566,12 @@ class AffiliateSecurityEngine {
         if (defined('WEBCAREPROSCAN_SUPPRESS_AFFILIATE_VISIT') && WEBCAREPROSCAN_SUPPRESS_AFFILIATE_VISIT) {
             return false;
         }
+
+        $ua = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';
+        if (self::is_headless_or_scraping_agent($ua)) {
+            return false;
+        }
+
         return (bool) $is_valid;
     }
 
@@ -487,6 +586,12 @@ class AffiliateSecurityEngine {
         if (defined('WEBCAREPROSCAN_SUPPRESS_AFFILIATE_VISIT') && WEBCAREPROSCAN_SUPPRESS_AFFILIATE_VISIT) {
             return false;
         }
+
+        $ua = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';
+        if (self::is_headless_or_scraping_agent($ua)) {
+            return false;
+        }
+
         return (bool) $is_valid;
     }
 
@@ -538,9 +643,13 @@ class AffiliateSecurityEngine {
         $email = isset($_POST['affwp_user_email']) ? sanitize_email(wp_unslash($_POST['affwp_user_email'])) : '';
         if (!empty($email) && str_contains($email, '@')) {
             $domain = strtolower(substr(strrchr($email, '@'), 1));
-            if (in_array($domain, FirewallEngine::DISPOSABLE_EMAIL_DOMAINS, true)) {
-                if (function_exists('affiliate_wp')) {
-                    affiliate_wp()->login->errors->add('webcare_disposable_email', __('Disposable or temporary email addresses are not permitted for affiliate registration.', 'webcare-pro-security'));
+            if (in_array($domain, FirewallEngine::DISPOSABLE_EMAIL_DOMAINS, true) && function_exists('affiliate_wp')) {
+                $affwp = affiliate_wp();
+                $err_msg = __('Disposable or temporary email addresses are not permitted for affiliate registration.', 'webcare-pro-security');
+                if (isset($affwp->register->errors) && is_object($affwp->register->errors) && method_exists($affwp->register->errors, 'add')) {
+                    $affwp->register->errors->add('webcare_disposable_email', $err_msg);
+                } elseif (isset($affwp->login->errors) && is_object($affwp->login->errors) && method_exists($affwp->login->errors, 'add')) {
+                    $affwp->login->errors->add('webcare_disposable_email', $err_msg);
                 }
             }
         }
@@ -553,16 +662,11 @@ class AffiliateSecurityEngine {
      * @return bool
      */
     public static function is_public_affiliate_rest_route(string $route): bool {
-        $clean = ltrim($route, '/');
+        $clean = trim(strtolower(ltrim($route, '/')), '/');
         if (str_starts_with($clean, 'wp-json/')) {
             $clean = substr($clean, 8);
         }
-        foreach (self::PUBLIC_REST_ROUTES as $public_prefix) {
-            if (str_starts_with($clean, $public_prefix)) {
-                return true;
-            }
-        }
-        return false;
+        return in_array($clean, self::PUBLIC_REST_ROUTES, true);
     }
 
     /**

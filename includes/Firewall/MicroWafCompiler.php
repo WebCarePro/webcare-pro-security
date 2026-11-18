@@ -623,6 +623,7 @@ class MicroWafCompiler {
         $out .= "            \$path = @parse_url(\$clean_val, PHP_URL_PATH);\n";
         $out .= "            if (!is_string(\$path) || \$path === '') { \$path = \$clean_val; }\n";
         $out .= "            for (\$i = 0; \$i < 3; \$i++) { \$decoded = rawurldecode(\$path); if (\$decoded === \$path) { break; } \$path = \$decoded; }\n";
+        $out .= "            if (strpos(\$path, '&') !== false && strpos(\$path, ';') !== false) { \$path = html_entity_decode(\$path, ENT_QUOTES | ENT_HTML5, 'UTF-8'); }\n";
         $out .= "            \$path = str_replace([\"\\0\", \"\\r\", \"\\n\"], '', \$path);\n";
         $out .= "            \$path = strtolower((string) preg_replace('#/+#', '/', \$path));\n";
         $out .= "            \$stack = []; foreach (explode('/', \$path) as \$segment) { if (\$segment === '' || \$segment === '.') { continue; } if (\$segment === '..') { array_pop(\$stack); } else { \$stack[] = \$segment; } }\n";
@@ -632,6 +633,7 @@ class MicroWafCompiler {
         $out .= "        \$normalize_preload_rest_route = static function (\$value): string {\n";
         $out .= "            \$route = str_replace([\"\\0\", \"\\r\", \"\\n\"], '', (string) \$value);\n";
         $out .= "            for (\$i = 0; \$i < 3; \$i++) { \$decoded = rawurldecode(\$route); if (\$decoded === \$route) { break; } \$route = \$decoded; }\n";
+        $out .= "            if (strpos(\$route, '&') !== false && strpos(\$route, ';') !== false) { \$route = html_entity_decode(\$route, ENT_QUOTES | ENT_HTML5, 'UTF-8'); }\n";
         $out .= "            \$route = str_replace([\"\\0\", \"\\r\", \"\\n\"], '', \$route);\n";
         $out .= "            \$route = (string) preg_replace('#/+#', '/', \$route);\n";
         $out .= "            return '/' . trim(\$route, '/');\n";
