@@ -369,9 +369,16 @@ class Plugin {
             ['waf_enable_progressive_warnings' => 1],
             $test_clear_ip
         );
-        $cleared_warning_rule = \WebCareProScanner\Firewall\FirewallEngine::is_cleared_by_pow(
+        // Master switch test: when progressive warnings is globally disabled (0), even an is_warning rule is NOT cleared
+        $disabled_by_master_switch = \WebCareProScanner\Firewall\FirewallEngine::is_cleared_by_pow(
             ['id' => 'RATE-LIMIT-404-LOCKOUT', 'category' => '404 Scanner Rate Limit', 'is_warning' => true],
             ['waf_enable_progressive_warnings' => 0],
+            $test_clear_ip
+        );
+        // When progressive warnings is globally enabled (1), an is_warning rule IS cleared by valid cookie
+        $cleared_when_master_switch_on = \WebCareProScanner\Firewall\FirewallEngine::is_cleared_by_pow(
+            ['id' => 'RATE-LIMIT-404-LOCKOUT', 'category' => '404 Scanner Rate Limit', 'is_warning' => true],
+            ['waf_enable_progressive_warnings' => 1],
             $test_clear_ip
         );
         $blocked_sqli = \WebCareProScanner\Firewall\FirewallEngine::is_cleared_by_pow(
@@ -385,9 +392,9 @@ class Plugin {
             ['waf_enable_progressive_warnings' => 1],
             $test_clear_ip
         );
-        // Regression check: confirmed exploit signatures must NEVER be cleared even with is_warning => true
+        // Regression check: confirmed exploit signatures must NEVER be cleared even with is_warning => true or bogus category
         $blocked_confirmed_exploit_with_warning = \WebCareProScanner\Firewall\FirewallEngine::is_cleared_by_pow(
-            ['id' => 'WAF-SQLI-INJECTION', 'is_warning' => true],
+            ['id' => 'WAF-SQLI-INJECTION', 'category' => 'Harmless Probe', 'is_warning' => true],
             ['waf_enable_progressive_warnings' => 1],
             $test_clear_ip
         );
@@ -403,7 +410,14 @@ class Plugin {
             ['waf_enable_progressive_warnings' => 1],
             $test_clear_ip
         );
-        // Verify handle_rule_violation() production path returns cleanly without terminal exit or logging when cleared by PoW
+
+        // Verify handle_rule_violation() production path returns cleanly and produces ZERO incident log rows or observations
+        global $wpdb;
+        $logs_table = $wpdb->prefix . 'webcareproscan_firewall_logs';
+        $table_exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $logs_table)) === $logs_table;
+        $log_count_before = $table_exists ? (int) $wpdb->get_var("SELECT COUNT(*) FROM {$logs_table}") : 0;
+        $obs_count_before = count((array) get_option(\WebCareProScanner\Firewall\CAF\LearningModeEngine::OPTION_OBSERVATIONS, []));
+
         $violation_cleared_cleanly = false;
         try {
             \WebCareProScanner\Firewall\FirewallEngine::handle_rule_violation(
@@ -415,6 +429,11 @@ class Plugin {
         } catch (\Throwable $e) {
             $violation_cleared_cleanly = false;
         }
+
+        $log_count_after = $table_exists ? (int) $wpdb->get_var("SELECT COUNT(*) FROM {$logs_table}") : 0;
+        $obs_count_after = count((array) get_option(\WebCareProScanner\Firewall\CAF\LearningModeEngine::OPTION_OBSERVATIONS, []));
+        $zero_incident_verified = ($log_count_before === $log_count_after) && ($obs_count_before === $obs_count_after);
+
         unset($_COOKIE[\WebCareProScanner\Firewall\BotReconDefense::POW_COOKIE_NAME]);
 
         // Production empty-UA clearance cookie simulation (empty UA HMAC)
@@ -424,6 +443,9 @@ class Plugin {
         $empty_ua_post_action = \WebCareProScanner\Firewall\FirewallEngine::get_empty_user_agent_action('POST', $empty_ua_cookie_valid);
         unset($_COOKIE[\WebCareProScanner\Firewall\BotReconDefense::POW_COOKIE_NAME]);
 
+        $canonical_bound_exploit = \WebCareProScanner\Firewall\FirewallEngine::get_confirmed_exploit_definition('WAF-SQLI-INJECTION');
+        $canonical_tier_verified = ($canonical_bound_exploit !== null) && ($canonical_bound_exploit['category'] === 'SQL Injection');
+
         $checks['empty_ua_clearance_and_methods'] = \WebCareProScanner\Firewall\FirewallEngine::get_empty_user_agent_action('GET', true) === 'allow'
             && \WebCareProScanner\Firewall\FirewallEngine::get_empty_user_agent_action('POST', true) === 'allow'
             && \WebCareProScanner\Firewall\FirewallEngine::get_empty_user_agent_action('GET', false) === 'challenge'
@@ -432,8 +454,11 @@ class Plugin {
             && \WebCareProScanner\Firewall\FirewallEngine::get_empty_user_agent_action('OPTIONS', false) === 'allow'
             && \WebCareProScanner\Firewall\FirewallEngine::get_empty_user_agent_action('POST', false) === 'block'
             && $cleared_rate_limit === true
-            && $cleared_warning_rule === true
+            && $disabled_by_master_switch === false
+            && $cleared_when_master_switch_on === true
             && $violation_cleared_cleanly === true
+            && $zero_incident_verified === true
+            && $canonical_tier_verified === true
             && $blocked_sqli === false
             && $blocked_sqli_with_warning === false
             && $blocked_confirmed_exploit_with_warning === false

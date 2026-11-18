@@ -4944,6 +4944,11 @@ class FirewallEngine {
      * @return bool
      */
     private static function is_progressive_warning_rule(array $rule, array $settings): bool {
+        // Master toggle check: If progressive warnings are globally disabled in settings, no rule qualifies
+        if (empty($settings['waf_enable_progressive_warnings'])) {
+            return false;
+        }
+
         // Absolute invariants: Hard blocks and custom admin blocks never qualify
         if (!empty($rule['is_hard_block'])) {
             return false;
@@ -5008,7 +5013,7 @@ class FirewallEngine {
      * @return bool True if the request is cleared to proceed.
      */
     public static function is_cleared_by_pow(array $rule, array $settings, string $client_ip): bool {
-        if (wp_doing_ajax() || !class_exists(BotReconDefense::class)) {
+        if (empty($settings['waf_enable_progressive_warnings']) || wp_doing_ajax() || !class_exists(BotReconDefense::class)) {
             return false;
         }
 
@@ -6369,7 +6374,7 @@ class FirewallEngine {
      * @param string $rule_id_str
      * @return array|null Canonical metadata array or null if not registered.
      */
-    private static function get_confirmed_exploit_definition(string $rule_id_str): ?array {
+    public static function get_confirmed_exploit_definition(string $rule_id_str): ?array {
         $registry = self::get_confirmed_exploit_registry();
         if (isset($registry[$rule_id_str])) {
             return array_merge([
@@ -6441,6 +6446,26 @@ class FirewallEngine {
      * @return void
      */
     public static function handle_rule_violation(array $rule, array $settings, string $client_ip, int $status_code = 403): void {
+        $rule_id_str = strtoupper((string) ($rule['id'] ?? ''));
+
+        // 1. Authoritative Rule Binding: Immediately resolve the canonical exploit definition or verified administrator rule
+        // at the absolute entry of violation handling before evaluating any exemptions, warnings, or bypass paths.
+        // Operates strictly on verified internal catalogs/DB, overriding any caller-supplied preliminary metadata.
+        $stored_custom_rule = self::get_verified_admin_custom_rule($rule);
+        if ($stored_custom_rule !== null) {
+            $rule = array_merge($rule, $stored_custom_rule);
+        } else {
+            $canonical_exploit = self::get_confirmed_exploit_definition($rule_id_str);
+            if ($canonical_exploit !== null) {
+                $rule = array_merge($rule, $canonical_exploit);
+            }
+        }
+
+        // Authoritative enforcement tier resolution (governed by get_rule_enforcement_tier)
+        // Must be resolved before progressive warning / PoW clearance and IP whitelist evaluation to prevent
+        // caller-supplied definitions or preliminary metadata from bypassing exploit classification.
+        $tier = self::get_rule_enforcement_tier($rule);
+
         // Honor ModularFirewallSynthesizer runtime exempt rule IDs (WCP-14)
         if (class_exists('\\WebCareProScanner\\Firewall\\Modular\\ModularFirewallSynthesizer')) {
             $modular_exempt_ids = \WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer::get_runtime_exempt_rule_ids();
@@ -6511,7 +6536,8 @@ class FirewallEngine {
             ];
             $rule_id_check = (string) ($rule['id'] ?? '');
             $rule_cat      = (string) ($rule['category'] ?? '');
-            $is_critical_exploit = in_array($rule_cat, $critical_exploit_categories, true)
+            $is_critical_exploit = ($tier === self::TIER_CONFIRMED_EXPLOIT)
+                || in_array($rule_cat, $critical_exploit_categories, true)
                 || strpos($rule_id_check, 'MOD-CUSTOM-') === 0
                 || strpos($rule_id_check, 'WAF-SQL-RASP-') === 0
                 || strpos($rule_id_check, 'WAF-DLP-') === 0
@@ -6539,25 +6565,6 @@ class FirewallEngine {
                 return; // Traffic allowed without dropping connection
             }
         }
-
-        $rule_id_str = strtoupper((string) ($rule['id'] ?? ''));
-
-        // Bind authentic stored custom rule definition or canonical exploit definition
-        // Operates strictly on the authoritative database/catalog record rather than caller-supplied definitions
-        $stored_custom_rule = self::get_verified_admin_custom_rule($rule);
-        if ($stored_custom_rule !== null) {
-            $rule = array_merge($rule, $stored_custom_rule);
-        } else {
-            $canonical_exploit = self::get_confirmed_exploit_definition($rule_id_str);
-            if ($canonical_exploit !== null) {
-                $rule = array_merge($rule, $canonical_exploit);
-            }
-        }
-
-        // Authoritative enforcement tier resolution (governed by get_rule_enforcement_tier)
-        // Must be resolved before progressive warning / PoW clearance evaluation to prevent
-        // caller-supplied definitions or preliminary metadata from bypassing exploit classification.
-        $tier = self::get_rule_enforcement_tier($rule);
 
         // Common clearance-aware decision point: If the authoritatively resolved rule qualifies
         // for progressive warning and visitor holds a valid PoW clearance cookie, allow the request to proceed immediately.
