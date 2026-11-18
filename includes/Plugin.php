@@ -624,6 +624,21 @@ class Plugin {
         $checks['rest_routes_audited'] = count($routes);
         $checks['rest_no_open_admin']  = empty($public_unexpected);
 
+        // 6. Micro-WAF Storage Protection: ensure .htaccess & index.php are present in compiled dir
+        \WebCareProScanner\Firewall\MicroWafCompiler::compile();
+        $waf_dir = \WebCareProScanner\Firewall\MicroWafCompiler::get_compiled_dir();
+        $checks['micro_waf_storage_protection'] = file_exists(trailingslashit($waf_dir) . '.htaccess')
+            && file_exists(trailingslashit($waf_dir) . 'index.php')
+            && str_contains((string) @file_get_contents(trailingslashit($waf_dir) . '.htaccess'), 'Require all denied');
+
+        // 7. Atomic Concurrency Lock: verify MySQL advisory mutex and option state isolation
+        $lock_acquired = \WebCareProScanner\Scan\ScanLock::acquire(999991);
+        $lock_conflict = \WebCareProScanner\Scan\ScanLock::acquire(999992);
+        $lock_id_active = \WebCareProScanner\Scan\ScanLock::get_locked_scan_id() === 999991;
+        \WebCareProScanner\Scan\ScanLock::release(999991);
+        $lock_released = !\WebCareProScanner\Scan\ScanLock::is_locked();
+        $checks['scan_lock_advisory_mutex'] = $lock_acquired && !$lock_conflict && $lock_id_active && $lock_released;
+
         foreach ($checks as $name => $val) {
             \WP_CLI::line(sprintf('%-26s : %s', $name, is_bool($val) ? ($val ? 'PASS' : 'FAIL') : (string) $val));
         }
@@ -649,7 +664,9 @@ class Plugin {
             empty($checks['contact_support_url_boundary']) ||
             empty($checks['empty_ua_clearance_and_methods']) ||
             empty($checks['affiliate_click_velocity_throttling']) ||
-            empty($checks['rest_no_open_admin'])
+            empty($checks['rest_no_open_admin']) ||
+            empty($checks['micro_waf_storage_protection']) ||
+            empty($checks['scan_lock_advisory_mutex'])
         ) {
             \WP_CLI::error('WebCare Doctor detected a failed security self-check.');
         }

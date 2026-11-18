@@ -99,6 +99,11 @@ class Scheduler {
              return;
          }
 
+         // 0. Concurrency Gate: Prevent duplicate cron workers or overlapping scheduled scans
+         if (ScanLock::is_locked()) {
+             return;
+         }
+
          // Prevent execution timeouts and memory exhaustion during cron execution
          if (function_exists('set_time_limit')) {
              // phpcs:ignore Squiz.PHP.DiscouragedFunctions.Discouraged
@@ -154,7 +159,12 @@ class Scheduler {
          $scan_id = (int) $wpdb->insert_id;
 
          // Acquire exclusive scan lock so dashboard doesn't mark it interrupted
-         ScanLock::acquire($scan_id);
+         if (!ScanLock::acquire($scan_id)) {
+             // Another worker acquired the lock concurrently; cancel this orphaned record gracefully
+             // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+             $wpdb->update($table_scans, ['status' => 'cancelled'], ['id' => $scan_id]);
+             return;
+         }
          set_transient("webcareproscan_scan_start_micro_{$scan_id}", $start_time, HOUR_IN_SECONDS);
 
          // Audit Trail: Log scheduled scan started (Attributed to System WP-Cron)

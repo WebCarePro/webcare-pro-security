@@ -44,6 +44,8 @@ package-lock.json
 # IDE & Editor configs
 .vscode/
 .idea/
+.agents/
+.agent/
 
 how_to_unlock.md
 new-future-plan.md

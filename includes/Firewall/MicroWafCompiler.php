@@ -176,9 +176,25 @@ class MicroWafCompiler {
         $dir = self::get_compiled_dir();
         if (!file_exists($dir)) {
             wp_mkdir_p($dir);
-            // Place silent index.php and hardened .htaccess
-            file_put_contents(trailingslashit($dir) . 'index.php', "<?php\n// Silence is golden.\n");
-            file_put_contents(trailingslashit($dir) . '.htaccess', "Order Deny,Allow\nDeny from all\n<IfModule mod_authz_core.c>\nRequire all denied\n</IfModule>\n");
+        }
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod
+        @chmod($dir, 0755);
+
+        // Place silent index.php and hardened .htaccess on every compilation run to prevent direct HTTP execution
+        $index_file = trailingslashit($dir) . 'index.php';
+        if (!file_exists($index_file)) {
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+            @file_put_contents($index_file, "<?php\n// Silence is golden.\n");
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod
+            @chmod($index_file, 0644);
+        }
+
+        $htaccess_file = trailingslashit($dir) . '.htaccess';
+        if (!file_exists($htaccess_file)) {
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+            @file_put_contents($htaccess_file, "# WebCare Pro - Restrict Direct HTTP Access\nOrder Deny,Allow\nDeny from all\n<IfModule mod_authz_core.c>\nRequire all denied\n</IfModule>\n");
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod
+            @chmod($htaccess_file, 0644);
         }
 
         $compiled_file = self::get_compiled_file_path();
@@ -326,6 +342,9 @@ class MicroWafCompiler {
                 'message' => __('Failed to atomically deploy compiled Micro-WAF script.', 'webcare-pro-security'),
             ];
         }
+
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod
+        @chmod($compiled_file, 0644);
 
         // Reset OPcache if available for the compiled file
         if (function_exists('opcache_invalidate')) {
@@ -1469,11 +1488,17 @@ class MicroWafCompiler {
             return false;
         }
 
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod
+        @chmod($caf_file, 0644);
+
         // Detached HMAC-SHA256 signature
         $salt = function_exists('wp_salt') ? wp_salt('auth') : 'webcare-caf-fallback-salt';
         $hmac = hash_hmac('sha256', $php_code, $salt);
         update_option(self::OPTION_CAF_HMAC, $hmac);
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
         file_put_contents($sig_file, $hmac);
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod
+        @chmod($sig_file, 0644);
 
         if (function_exists('opcache_invalidate')) {
             opcache_invalidate($caf_file, true);
