@@ -9576,6 +9576,60 @@ class ScannerRoutes {
         ]);
     }
 
+    /**
+     * Build a method-specific Rule #37 allowlist update, removing equivalent legacy route-only entries.
+     *
+     * @param array<int,string> $lines
+     * @param string            $route
+     * @param string            $method
+     * @return array{lines:array<int,string>,changed:bool,added:bool,legacy_route_replaced:bool}
+     */
+    private static function build_method_scoped_rest_allowlist(array $lines, string $route, string $method): array {
+        $entry = strtoupper($method) . ' ' . $route;
+        $route_key = rtrim('/' . ltrim(strtolower(trim($route)), '/'), '/');
+        $result_lines = [];
+        $exact_exists = false;
+        $legacy_route_replaced = false;
+
+        foreach ($lines as $line) {
+            $line = trim((string) $line);
+            if ($line === '') {
+                continue;
+            }
+
+            if (strcasecmp($line, $entry) === 0) {
+                $exact_exists = true;
+                $result_lines[] = $line;
+                continue;
+            }
+
+            // Methodless exact routes are legacy all-method grants. A one-click
+            // method-specific action replaces them so the broader grant does not remain active.
+            $has_method_prefix = (bool) preg_match('/^[A-Za-z]+(?:[,|][A-Za-z]+)*\s+/', $line);
+            if (!$has_method_prefix && !str_starts_with($line, '#') && !str_contains($line, '*')) {
+                $legacy_key = rtrim('/' . ltrim(strtolower($line), '/'), '/');
+                if ($legacy_key === $route_key) {
+                    $legacy_route_replaced = true;
+                    continue;
+                }
+            }
+
+            $result_lines[] = $line;
+        }
+
+        if (!$exact_exists) {
+            $result_lines[] = $entry;
+        }
+
+        $result_lines = array_values(array_unique($result_lines));
+        return [
+            'lines'                 => $result_lines,
+            'changed'               => !$exact_exists || $legacy_route_replaced,
+            'added'                 => !$exact_exists,
+            'legacy_route_replaced' => $legacy_route_replaced,
+        ];
+    }
+
     public static function allowlist_firewall_rule_target(\WP_REST_Request $request) {
         $params = $request->get_json_params() ?: [];
         $rule = (int) ($params['rule'] ?? 0);
@@ -9643,43 +9697,70 @@ class ScannerRoutes {
                 return new \WP_Error('dangerous_route', __('This REST route cannot be added to guest allowlist for security reasons.', 'webcare-pro-security'), ['status' => 400]);
             }
 
-            $entry = "{$method} {$route}";
             $current_raw = (string) ($settings['waf_guest_rest_custom_allowlist'] ?? '');
             $lines = array_filter(array_map('trim', explode("\n", str_replace("\r", '', $current_raw))));
-
-            // Check if exact entry or route-only entry already exists
-            $already_exists = false;
-            foreach ($lines as $line) {
-                if (strcasecmp($line, $entry) === 0 || strcasecmp($line, $route) === 0) {
-                    $already_exists = true;
-                    break;
-                }
+            $allowlist_update = self::build_method_scoped_rest_allowlist(array_values($lines), $route, $method);
+            if (
+                !empty($allowlist_update['added'])
+                && empty($allowlist_update['legacy_route_replaced'])
+                && count($lines) >= 500
+            ) {
+                return new \WP_Error('allowlist_limit', __('Custom allowlist has reached maximum capacity (500 items).', 'webcare-pro-security'), ['status' => 400]);
             }
 
-            if (!$already_exists) {
-                if (count($lines) >= 500) {
-                    return new \WP_Error('allowlist_limit', __('Custom allowlist has reached maximum capacity (500 items).', 'webcare-pro-security'), ['status' => 400]);
-                }
-                $lines[] = $entry;
-                $settings['waf_guest_rest_custom_allowlist'] = implode("\n", array_unique($lines));
+            if (!empty($allowlist_update['changed'])) {
+                $settings['waf_guest_rest_custom_allowlist'] = implode("\n", $allowlist_update['lines']);
                 \WebCareProScanner\System\SettingsManager::save_settings($settings);
 
                 if (class_exists('\\WebCareProScanner\\System\\WebCareActivityLogger')) {
-                    \WebCareProScanner\System\WebCareActivityLogger::notice(
-                        'firewall_rule37_allowlist_added',
-                        'firewall',
-                        [
-                            /* translators: %1$s: HTTP method, %2$s: REST route, %3$s: admin user login */
-                            'description' => sprintf(__('Added REST route "%1$s %2$s" to Rule #37 custom allowlist by %3$s.', 'webcare-pro-security'), $method, $route, $user_login),
-                        ]
-                    );
+                    if (!empty($allowlist_update['legacy_route_replaced'])) {
+                        \WebCareProScanner\System\WebCareActivityLogger::notice(
+                            'firewall_rule37_allowlist_narrowed',
+                            'firewall',
+                            [
+                                /* translators: %1$s: HTTP method, %2$s: REST route, %3$s: admin user login */
+                                'description' => sprintf(__('Replaced an unrestricted route-only Rule #37 entry with "%1$s %2$s" by %3$s.', 'webcare-pro-security'), $method, $route, $user_login),
+                            ]
+                        );
+                    } else {
+                        \WebCareProScanner\System\WebCareActivityLogger::notice(
+                            'firewall_rule37_allowlist_added',
+                            'firewall',
+                            [
+                                /* translators: %1$s: HTTP method, %2$s: REST route, %3$s: admin user login */
+                                'description' => sprintf(__('Added REST route "%1$s %2$s" to Rule #37 custom allowlist by %3$s.', 'webcare-pro-security'), $method, $route, $user_login),
+                            ]
+                        );
+                    }
                 }
+            }
+
+            if (!empty($allowlist_update['changed']) && !empty($allowlist_update['legacy_route_replaced'])) {
+                $message = sprintf(
+                    /* translators: %1$s: HTTP method, %2$s: REST route */
+                    __('Unrestricted route-only exception narrowed to "%1$s %2$s".', 'webcare-pro-security'),
+                    $method,
+                    $route
+                );
+            } elseif (!empty($allowlist_update['changed'])) {
+                $message = sprintf(
+                    /* translators: %1$s: HTTP method, %2$s: REST route */
+                    __('REST route "%1$s %2$s" successfully allowed in Rule #37.', 'webcare-pro-security'),
+                    $method,
+                    $route
+                );
+            } else {
+                $message = sprintf(
+                    /* translators: %1$s: HTTP method, %2$s: REST route */
+                    __('REST route "%1$s %2$s" is already allowed in Rule #37.', 'webcare-pro-security'),
+                    $method,
+                    $route
+                );
             }
 
             return rest_ensure_response([
                 'success' => true,
-                /* translators: %1$s: HTTP method, %2$s: REST route */
-                'message' => sprintf(__('REST route "%1$s %2$s" successfully allowed in Rule #37.', 'webcare-pro-security'), $method, $route),
+                'message' => $message,
             ]);
         }
 

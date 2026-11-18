@@ -239,6 +239,25 @@ class Plugin {
             && !$guest_route_check->invoke(null, '/stripe/v1/webhook', 'POST', [])
             && !$guest_route_check->invoke(null, '/paypal/v1/private-action', 'POST', []);
 
+        $custom_route_matcher = [\WebCareProScanner\Firewall\FirewallEngine::class, 'is_custom_rest_route_allowed'];
+        $checks['guest_rest_method_scope'] = \call_user_func($custom_route_matcher, '/route', 'POST', ['POST /route'])
+            && !\call_user_func($custom_route_matcher, '/route', 'DELETE', ['POST /route'])
+            && !\call_user_func($custom_route_matcher, '/route/123', 'POST', ['POST /route'])
+            && !\call_user_func($custom_route_matcher, '/route-admin', 'POST', ['POST /route'])
+            && \call_user_func($custom_route_matcher, '/route/123', 'POST', ['POST /route/*'])
+            && \call_user_func($custom_route_matcher, '/route', 'POST', ['POST /route/*'])
+            && \call_user_func($custom_route_matcher, '/legacy-route', 'DELETE', ['/legacy-route']);
+        $checks['guest_rest_root_wildcard_rejected'] = !\call_user_func($custom_route_matcher, '/anything', 'POST', ['/*'])
+            && !\call_user_func($custom_route_matcher, '/anything', 'POST', ['POST /*']);
+
+        $allowlist_builder = new \ReflectionMethod(\WebCareProScanner\Api\ScannerRoutes::class, 'build_method_scoped_rest_allowlist');
+        $allowlist_builder->setAccessible(true);
+        $narrowed_allowlist = $allowlist_builder->invoke(null, ['/route', '/keep'], '/route', 'POST');
+        $checks['guest_rest_one_click_narrows_legacy'] = !in_array('/route', $narrowed_allowlist['lines'], true)
+            && in_array('/keep', $narrowed_allowlist['lines'], true)
+            && in_array('POST /route', $narrowed_allowlist['lines'], true)
+            && !empty($narrowed_allowlist['legacy_route_replaced']);
+
         $vault_htaccess_check = false;
         $htaccess_test_path = wp_tempnam('webcare-vault-policy');
         if (is_string($htaccess_test_path) && $htaccess_test_path !== '') {
@@ -317,6 +336,9 @@ class Plugin {
             empty($checks['mcp_ttl_parse_strict']) ||
             empty($checks['mcp_ttl_fail_closed']) ||
             empty($checks['guest_rest_routes_narrowed']) ||
+            empty($checks['guest_rest_method_scope']) ||
+            empty($checks['guest_rest_root_wildcard_rejected']) ||
+            empty($checks['guest_rest_one_click_narrows_legacy']) ||
             empty($checks['vault_apache_tamper_repaired']) ||
             empty($checks['vault_iis_tamper_repaired']) ||
             empty($checks['rest_no_open_admin'])

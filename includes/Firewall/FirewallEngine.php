@@ -7138,6 +7138,9 @@ class FirewallEngine {
             // Explicit wildcard segment suffix: e.g. "/my-plugin/v1/*" matches "/my-plugin/v1" and "/my-plugin/v1/anything"
             if (str_ends_with($target_route, '/*')) {
                 $base = rtrim(substr($target_route, 0, -2), '/');
+                if ($base === '') {
+                    continue;
+                }
                 if ($clean_route === $base || str_starts_with($clean_route, $base . '/')) {
                     return true;
                 }

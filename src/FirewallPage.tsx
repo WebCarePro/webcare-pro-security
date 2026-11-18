@@ -5801,7 +5801,10 @@ export const FirewallPage = ({
                             style={{ width: '100%', fontSize: '11px', fontFamily: 'monospace', resize: 'vertical' }}
                           />
                           <span style={{ fontSize: '10px', color: 'var(--webcare-text-muted, #64748b)', marginTop: '2px', display: 'block' }}>
-                            Permits unauthenticated visitor mutations targeting bespoke public plugin or theme REST routes without triggering Rule #37 drops. Supports optional HTTP method prefix (e.g. <code>POST /route</code>) and trailing wildcard (<code>/*</code>) for subpaths.
+                            Permits unauthenticated visitor mutations targeting bespoke public plugin or theme REST routes without triggering Rule #37 drops. Supports optional HTTP method prefixes (e.g. <code>POST /route</code>) and trailing wildcards for subpaths; a root wildcard (<code>/*</code>) is rejected.
+                          </span>
+                          <span className="webcare-badge-warning" style={{ fontSize: '10px', display: 'inline-block', padding: '3px 6px', borderRadius: '4px', marginTop: '5px' }}>
+                            Legacy route-only lines (e.g. <code>/route</code>) allow every mutation method on that exact route. Prefer a method-specific line such as <code>POST /route</code>. The one-click Allow action narrows an equivalent legacy line.
                           </span>
                         </div>
                       )}
