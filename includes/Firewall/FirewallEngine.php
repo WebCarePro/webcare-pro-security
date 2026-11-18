@@ -4935,16 +4935,24 @@ class FirewallEngine {
 
     /**
      * Determine whether a rule is eligible for the progressive warning and PoW clearance flow.
+     * Critical exploit categories, confirmed-exploit catalog signatures, admin custom rules,
+     * and explicit hard blocks must NEVER be eligible for progressive warning or PoW clearance,
+     * even if caller-supplied metadata flags is_warning.
      *
      * @param array $rule
      * @param array $settings
      * @return bool
      */
     private static function is_progressive_warning_rule(array $rule, array $settings): bool {
-        if (!empty($rule['is_warning'])) {
-            return true;
+        // Absolute invariants: Hard blocks and custom admin blocks never qualify
+        if (!empty($rule['is_hard_block'])) {
+            return false;
         }
 
+        $category = (string) ($rule['category'] ?? '');
+        $rule_id  = (string) ($rule['id'] ?? '');
+
+        // Critical categories are strictly excluded under all circumstances
         $critical_categories = [
             'SQL Injection',
             'PHP Code Injection',
@@ -4960,14 +4968,34 @@ class FirewallEngine {
             'Forbidden Default Admin Usernames Shield',
         ];
 
-        $category = (string) ($rule['category'] ?? '');
-        $rule_id  = (string) ($rule['id'] ?? '');
+        if (in_array($category, $critical_categories, true)) {
+            return false;
+        }
 
-        return !empty($settings['waf_enable_progressive_warnings'])
-            && !in_array($category, $critical_categories, true)
-            && !str_starts_with($rule_id, 'MOD-CUSTOM-')
-            && !str_starts_with($rule_id, 'WAF-SQL-RASP-')
-            && empty($rule['is_hard_block']);
+        if (str_starts_with($rule_id, 'MOD-CUSTOM-') || str_starts_with($rule_id, 'WAF-SQL-RASP-')) {
+            return false;
+        }
+
+        // Confirmed exploit signatures and admin policies can never be downgraded to warnings
+        if (self::get_confirmed_exploit_definition(strtoupper($rule_id)) !== null) {
+            return false;
+        }
+
+        if (self::get_verified_admin_custom_rule($rule) !== null) {
+            return false;
+        }
+
+        $tier = self::get_rule_enforcement_tier($rule);
+        if ($tier === self::TIER_CONFIRMED_EXPLOIT || $tier === self::TIER_ADMIN_POLICY) {
+            return false;
+        }
+
+        // Only after all critical/hard-block exclusions pass: check warning flag or progressive warning mode
+        if (!empty($rule['is_warning'])) {
+            return true;
+        }
+
+        return !empty($settings['waf_enable_progressive_warnings']);
     }
 
     /**
@@ -4980,7 +5008,7 @@ class FirewallEngine {
      * @return bool True if the request is cleared to proceed.
      */
     public static function is_cleared_by_pow(array $rule, array $settings, string $client_ip): bool {
-        if (empty($settings['waf_enable_progressive_warnings']) || wp_doing_ajax() || !class_exists(BotReconDefense::class)) {
+        if (wp_doing_ajax() || !class_exists(BotReconDefense::class)) {
             return false;
         }
 
@@ -6412,7 +6440,7 @@ class FirewallEngine {
      * @param int    $status_code
      * @return void
      */
-    private static function handle_rule_violation(array $rule, array $settings, string $client_ip, int $status_code = 403): void {
+    public static function handle_rule_violation(array $rule, array $settings, string $client_ip, int $status_code = 403): void {
         // Honor ModularFirewallSynthesizer runtime exempt rule IDs (WCP-14)
         if (class_exists('\\WebCareProScanner\\Firewall\\Modular\\ModularFirewallSynthesizer')) {
             $modular_exempt_ids = \WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer::get_runtime_exempt_rule_ids();
@@ -6512,6 +6540,32 @@ class FirewallEngine {
             }
         }
 
+        $rule_id_str = strtoupper((string) ($rule['id'] ?? ''));
+
+        // Bind authentic stored custom rule definition or canonical exploit definition
+        // Operates strictly on the authoritative database/catalog record rather than caller-supplied definitions
+        $stored_custom_rule = self::get_verified_admin_custom_rule($rule);
+        if ($stored_custom_rule !== null) {
+            $rule = array_merge($rule, $stored_custom_rule);
+        } else {
+            $canonical_exploit = self::get_confirmed_exploit_definition($rule_id_str);
+            if ($canonical_exploit !== null) {
+                $rule = array_merge($rule, $canonical_exploit);
+            }
+        }
+
+        // Authoritative enforcement tier resolution (governed by get_rule_enforcement_tier)
+        // Must be resolved before progressive warning / PoW clearance evaluation to prevent
+        // caller-supplied definitions or preliminary metadata from bypassing exploit classification.
+        $tier = self::get_rule_enforcement_tier($rule);
+
+        // Common clearance-aware decision point: If the authoritatively resolved rule qualifies
+        // for progressive warning and visitor holds a valid PoW clearance cookie, allow the request to proceed immediately.
+        // Bypasses ahead of learning mode observations, incident logging, threat score accumulation, and surge alerts.
+        if (self::is_cleared_by_pow($rule, $settings, $client_ip)) {
+            return;
+        }
+
         $mode = $settings['waf_mode'] ?? 'enabled';
 
         // Check Synthesized Exemptions (CAF Phase 3): 1-Click safe-passes generated via Learning Mode
@@ -6555,37 +6609,12 @@ class FirewallEngine {
             }
         }
 
-        // Common clearance-aware decision point: If the rule qualifies for progressive warning
-        // and visitor holds a valid PoW clearance cookie, allow the request to proceed immediately.
-        // Bypasses ahead of incident logging, threat score accumulation, and surge alerts.
-        if (self::is_cleared_by_pow($rule, $settings, $client_ip)) {
-            return;
-        }
-
         $incident_id = 'WEBCARE-' . strtoupper(substr(md5($client_ip . microtime(true) . wp_rand()), 0, 8));
         self::log_incident($rule, 'blocked', $incident_id);
 
         // Record blocked probe for 60-second rolling velocity counter (OS-01)
         if (class_exists('\\WebCareProScanner\\Firewall\\CAF\\OriginLoadCircuitBreaker')) {
             \WebCareProScanner\Firewall\CAF\OriginLoadCircuitBreaker::record_blocked_probe();
-        }
-
-        // Authoritative enforcement tier resolution (governed by get_rule_enforcement_tier)
-        $tier = self::get_rule_enforcement_tier($rule);
-
-        // Bind authentic stored custom rule definition or canonical exploit definition
-        // Operates strictly on the authoritative database/catalog record rather than caller-supplied definitions
-        $stored_custom_rule = null;
-        if ($tier === self::TIER_ADMIN_POLICY) {
-            $stored_custom_rule = self::get_verified_admin_custom_rule($rule);
-            if ($stored_custom_rule !== null) {
-                $rule = array_merge($rule, $stored_custom_rule);
-            }
-        } elseif ($tier === self::TIER_CONFIRMED_EXPLOIT) {
-            $canonical_exploit = self::get_confirmed_exploit_definition(strtoupper((string) ($rule['id'] ?? '')));
-            if ($canonical_exploit !== null) {
-                $rule = array_merge($rule, $canonical_exploit);
-            }
         }
 
         $rule_id_str = (string) ($rule['id'] ?? '');

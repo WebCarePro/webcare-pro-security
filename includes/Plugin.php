@@ -329,13 +329,16 @@ class Plugin {
         $rest_req->set_body(wp_json_encode(['referral' => ['sld' => '<script>alert(1)</script>']]));
         $rest_req->set_param('referral', ['sld' => '<script>alert(1)</script>']);
 
-        $affiliate_class::set_early_json_inspected(true);
-        $skipped_when_early = ($affiliate_class::inspect_rest_dispatch('early_pass', rest_get_server(), $rest_req) === 'early_pass');
+        $test_lifecycle_params = $affiliate_class::collect_referral_parameters([], [], ['referral' => ['sld' => 'partner1']]);
+        $affiliate_class::set_early_json_inspected(!empty($test_lifecycle_params));
+        $early_flag_recorded = $affiliate_class::is_early_json_inspected();
+        $skipped_when_early  = ($affiliate_class::inspect_rest_dispatch('early_pass', rest_get_server(), $rest_req) === 'early_pass');
         $affiliate_class::set_early_json_inspected(false);
 
         $checks['affiliate_multi_param_injection'] = count($aff_params) === 4
             && isset($aff_params['JSON:referral.sld'])
             && (($aff_multi_violation['id'] ?? '') === 'WAF-AFFILIATE-INJECTION')
+            && $early_flag_recorded
             && $skipped_when_early;
 
         $checks['affiliate_rest_route_anchored'] = !\WebCareProScanner\Firewall\Core\AffiliateSecurityEngine::is_public_affiliate_rest_route('affwp/v1/visits/123/delete')
@@ -366,11 +369,59 @@ class Plugin {
             ['waf_enable_progressive_warnings' => 1],
             $test_clear_ip
         );
+        $cleared_warning_rule = \WebCareProScanner\Firewall\FirewallEngine::is_cleared_by_pow(
+            ['id' => 'RATE-LIMIT-404-LOCKOUT', 'category' => '404 Scanner Rate Limit', 'is_warning' => true],
+            ['waf_enable_progressive_warnings' => 0],
+            $test_clear_ip
+        );
         $blocked_sqli = \WebCareProScanner\Firewall\FirewallEngine::is_cleared_by_pow(
             ['id' => 'WAF-SQLI-UNION', 'category' => 'SQL Injection'],
             ['waf_enable_progressive_warnings' => 1],
             $test_clear_ip
         );
+        // Regression check: caller passing is_warning => true must NEVER override critical categories
+        $blocked_sqli_with_warning = \WebCareProScanner\Firewall\FirewallEngine::is_cleared_by_pow(
+            ['id' => 'WAF-SQLI-UNION', 'category' => 'SQL Injection', 'is_warning' => true],
+            ['waf_enable_progressive_warnings' => 1],
+            $test_clear_ip
+        );
+        // Regression check: confirmed exploit signatures must NEVER be cleared even with is_warning => true
+        $blocked_confirmed_exploit_with_warning = \WebCareProScanner\Firewall\FirewallEngine::is_cleared_by_pow(
+            ['id' => 'WAF-SQLI-INJECTION', 'is_warning' => true],
+            ['waf_enable_progressive_warnings' => 1],
+            $test_clear_ip
+        );
+        // Regression check: explicit hard-block rules must NEVER be cleared even with is_warning => true
+        $blocked_hard_block_with_warning = \WebCareProScanner\Firewall\FirewallEngine::is_cleared_by_pow(
+            ['id' => 'RATE-LIMIT-404-LOCKOUT', 'category' => '404 Scanner Rate Limit', 'is_hard_block' => true, 'is_warning' => true],
+            ['waf_enable_progressive_warnings' => 1],
+            $test_clear_ip
+        );
+        // Regression check: admin custom rules must NEVER be cleared even with is_warning => true
+        $blocked_custom_with_warning = \WebCareProScanner\Firewall\FirewallEngine::is_cleared_by_pow(
+            ['id' => 'MOD-CUSTOM-1', 'is_warning' => true],
+            ['waf_enable_progressive_warnings' => 1],
+            $test_clear_ip
+        );
+        // Verify handle_rule_violation() production path returns cleanly without terminal exit or logging when cleared by PoW
+        $violation_cleared_cleanly = false;
+        try {
+            \WebCareProScanner\Firewall\FirewallEngine::handle_rule_violation(
+                ['id' => 'RATE-LIMIT-404-LOCKOUT', 'category' => '404 Scanner Rate Limit', 'is_warning' => true],
+                ['waf_enable_progressive_warnings' => 1, 'waf_mode' => 'learning'],
+                $test_clear_ip
+            );
+            $violation_cleared_cleanly = true; // Returned without terminal exit or exception
+        } catch (\Throwable $e) {
+            $violation_cleared_cleanly = false;
+        }
+        unset($_COOKIE[\WebCareProScanner\Firewall\BotReconDefense::POW_COOKIE_NAME]);
+
+        // Production empty-UA clearance cookie simulation (empty UA HMAC)
+        $test_empty_ua_sig = hash_hmac('sha256', $test_clear_ip . '||' . $test_exp, $test_salt);
+        $_COOKIE[\WebCareProScanner\Firewall\BotReconDefense::POW_COOKIE_NAME] = $test_exp . '.' . $test_empty_ua_sig;
+        $empty_ua_cookie_valid = \WebCareProScanner\Firewall\BotReconDefense::has_valid_clearance_cookie($test_clear_ip, '');
+        $empty_ua_post_action = \WebCareProScanner\Firewall\FirewallEngine::get_empty_user_agent_action('POST', $empty_ua_cookie_valid);
         unset($_COOKIE[\WebCareProScanner\Firewall\BotReconDefense::POW_COOKIE_NAME]);
 
         $checks['empty_ua_clearance_and_methods'] = \WebCareProScanner\Firewall\FirewallEngine::get_empty_user_agent_action('GET', true) === 'allow'
@@ -381,7 +432,15 @@ class Plugin {
             && \WebCareProScanner\Firewall\FirewallEngine::get_empty_user_agent_action('OPTIONS', false) === 'allow'
             && \WebCareProScanner\Firewall\FirewallEngine::get_empty_user_agent_action('POST', false) === 'block'
             && $cleared_rate_limit === true
-            && $blocked_sqli === false;
+            && $cleared_warning_rule === true
+            && $violation_cleared_cleanly === true
+            && $blocked_sqli === false
+            && $blocked_sqli_with_warning === false
+            && $blocked_confirmed_exploit_with_warning === false
+            && $blocked_hard_block_with_warning === false
+            && $blocked_custom_with_warning === false
+            && $empty_ua_cookie_valid === true
+            && $empty_ua_post_action === 'allow';
 
         $test_bot_ip = '198.51.100.' . wp_rand(10, 250);
         $hit1 = \WebCareProScanner\Firewall\Core\AffiliateSecurityEngine::track_referral_click_velocity($test_bot_ip, 2);
