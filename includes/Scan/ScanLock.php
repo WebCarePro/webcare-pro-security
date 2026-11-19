@@ -260,9 +260,17 @@ class ScanLock {
     }
 
     /**
-     * Explicit administrative or recovery operation to forcefully release all locks.
+     * Explicit administrative or recovery operation to forcefully release the scan lease option.
      * Reserved for emergency resets, aborts, and test teardowns, with audit logging.
      * Serializes option deletion under MySQL advisory mutex and returns success/failure.
+     *
+     * Note on connection-scoped advisory mutexes:
+     * MySQL advisory locks (GET_LOCK / RELEASE_LOCK) are connection-scoped. If another active
+     * PHP worker process currently holds BATCH_LOCK_NAME on its own database connection,
+     * RELEASE_LOCK() on this separate connection cannot release it; the active batch mutex
+     * is automatically freed when that remote worker's database connection terminates.
+     * Concurrency safety is preserved because every subsequent batch request strictly re-validates
+     * the scan lease token under the serialized ADVISORY_LOCK_NAME mutex before attempting batch execution.
      *
      * @param int|null $scan_id Optional scan ID for audit context.
      * @return bool True if lock was definitively released and verified deleted from storage.

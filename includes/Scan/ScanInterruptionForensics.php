@@ -127,7 +127,7 @@ class ScanInterruptionForensics {
                     'Scan ID'        => $scan_id,
                     'Reason Code'    => $reason_code,
                     'Last File'      => $last_file ?: __('N/A', 'webcare-pro-security'),
-                    'Files Scanned'  => number_format($scanned_files) . ' / ' . number_format($total_files),
+                    'Files Scanned'  => number_format($payload['scanned_files']) . ' / ' . number_format($payload['total_files']),
                     'Elapsed'        => round($elapsed_sec, 1) . 's',
                 ],
             ]);
