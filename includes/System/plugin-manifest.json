@@ -1,6 +1,6 @@
 {
   "version": "2.19.0",
-  "generated_at": "2026-11-19T01:17:07.842Z",
+  "generated_at": "2026-11-19T01:52:45.030Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -448,8 +448,8 @@
       "size": 40170
     },
     "includes/Firewall/Core/ExploitSignatureEngine.php": {
-      "sha256": "b28968943c0e29abbdd82d6f74c33b0ac6c96207c6e6c0a6744200fa10b5201b",
-      "size": 124334
+      "sha256": "382448a5ac627609b7ca32bdf0d90c08f89618fdbe1b64f15a16285bf97e6c87",
+      "size": 126347
     },
     "includes/Firewall/Core/RaspPrivilegeGuard.php": {
       "sha256": "6cd05a9ca8b1b046311ad6853a061203b879524b57a6d4b9a0957c8878e06225",
@@ -496,8 +496,8 @@
       "size": 15983
     },
     "includes/Firewall/MicroWafCompiler.php": {
-      "sha256": "e3397af0b22bab447d7d23616e918da6e81e04032b29519e62557f4d673c5ffb",
-      "size": 103251
+      "sha256": "257fb70c322406c38a1020308be46e0cb38baaaa664d91ea08d8245f25f0d688",
+      "size": 103428
     },
     "includes/Firewall/Modular/BehavioralVaultManager.php": {
       "sha256": "a085c30ab44032dc5979d30e85acd3bff42b919dd08c3e51b0fced877fcf4f5a",
@@ -544,8 +544,8 @@
       "size": 14029
     },
     "includes/Firewall/OutboundEgressFirewall.php": {
-      "sha256": "a55dcf24f6003a0a2b5550558cf4da30e2e821ccf667c535a031d234e7964133",
-      "size": 53686
+      "sha256": "461f0f0ef20a3e8bea023437638e11dc310c9a77bbf92b86345fcc3b802ef334",
+      "size": 53374
     },
     "includes/Firewall/RedirectCanaryEngine.php": {
       "sha256": "56274c67e9dfe6725a2e6952590e5df70f2db524e657efcb8201b762048e1e5c",
@@ -736,8 +736,8 @@
       "size": 18077
     },
     "includes/Scan/ScanLock.php": {
-      "sha256": "05dd2152d670afcec50273569ed513a27e8117829567e40bd779123750eb8b4c",
-      "size": 8451
+      "sha256": "357c5b744a9105f3e0d35a30ce98e1ba1b3bbe4f033887e965978bb8a4409c88",
+      "size": 8962
     },
     "includes/Scan/ScanManager.php": {
       "sha256": "f3590463fa1a7e5f5641a05a407534115ca448a4265820e8ed129419808849d1",

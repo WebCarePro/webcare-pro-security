@@ -1506,7 +1506,7 @@ class MicroWafCompiler {
         $hmac = hash_hmac('sha256', $php_code, $salt);
         update_option(self::OPTION_CAF_HMAC, $hmac);
 
-        $sig_code = "<?php\n// WebCare Pro CAF Cryptographic Signature\n\$s_file = isset(\$_SERVER['SCRIPT_FILENAME']) ? basename(\$_SERVER['SCRIPT_FILENAME']) : '';\nif (\$s_file === basename(__FILE__) || (!defined('ABSPATH') && !defined('WEBCAREPRO_PRELOAD_WAF_ACTIVE'))) {\n    http_response_code(403);\n    exit;\n}\nreturn '" . addslashes($hmac) . "';\n";
+        $sig_code = "<?php\n// WebCare Pro CAF Cryptographic Signature\n\$s_file = isset(\$_SERVER['SCRIPT_FILENAME']) ? (realpath(\$_SERVER['SCRIPT_FILENAME']) ?: \$_SERVER['SCRIPT_FILENAME']) : '';\n\$this_file = realpath(__FILE__) ?: __FILE__;\nif ((\$s_file !== '' && (\$s_file === \$this_file || str_replace('\\\\', '/', \$s_file) === str_replace('\\\\', '/', \$this_file))) || (!defined('ABSPATH') && !defined('WEBCAREPRO_PRELOAD_WAF_ACTIVE'))) {\n    http_response_code(403);\n    exit;\n}\nreturn '" . addslashes($hmac) . "';\n";
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
         file_put_contents($sig_file, $sig_code, LOCK_EX);
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod

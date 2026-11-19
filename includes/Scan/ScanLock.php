@@ -28,16 +28,17 @@ class ScanLock {
 
         // 1. Attempt MySQL advisory lock if database connection is available
         // Note: GET_LOCK() returns 1 (success), 0 (locked by another thread), or NULL (database lock error)
-        // Must fail-closed if lock is not definitively granted.
-        $has_advisory_lock = false;
-        if ($wpdb instanceof \wpdb) {
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
-            $lock_res = $wpdb->get_var($wpdb->prepare("SELECT GET_LOCK(%s, %d)", self::ADVISORY_LOCK_NAME, 0));
-            if ($lock_res === null || (int) $lock_res !== 1) {
-                return false;
-            }
-            $has_advisory_lock = true;
+        // Must fail-closed if lock is not definitively granted or wpdb is unavailable.
+        if (!($wpdb instanceof \wpdb)) {
+            return false;
         }
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
+        $lock_res = $wpdb->get_var($wpdb->prepare("SELECT GET_LOCK(%s, %d)", self::ADVISORY_LOCK_NAME, 0));
+        if ($lock_res === null || (int) $lock_res !== 1) {
+            return false;
+        }
+        $has_advisory_lock = true;
 
         // 2. Check option-based tracking for active scan timeout and scan ID match
         $existing = get_option(self::LOCK_OPTION);
@@ -81,7 +82,7 @@ class ScanLock {
     public static function acquire_batch_lock($scan_id): bool {
         global $wpdb;
         $scan_id = (int) $scan_id;
-        if ($scan_id <= 0) {
+        if ($scan_id <= 0 || !($wpdb instanceof \wpdb)) {
             return false;
         }
 
@@ -91,12 +92,10 @@ class ScanLock {
         }
 
         // 2. Acquire per-batch advisory mutex to serialize concurrent batch requests
-        if ($wpdb instanceof \wpdb) {
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
-            $batch_res = $wpdb->get_var($wpdb->prepare("SELECT GET_LOCK(%s, %d)", self::BATCH_LOCK_NAME, 0));
-            if ($batch_res === null || (int) $batch_res !== 1) {
-                return false;
-            }
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
+        $batch_res = $wpdb->get_var($wpdb->prepare("SELECT GET_LOCK(%s, %d)", self::BATCH_LOCK_NAME, 0));
+        if ($batch_res === null || (int) $batch_res !== 1) {
+            return false;
         }
 
         return true;
@@ -120,8 +119,9 @@ class ScanLock {
      * @return bool True if owner lease verified and refreshed.
      */
     public static function verify_and_renew_lease($scan_id): bool {
+        global $wpdb;
         $scan_id = (int) $scan_id;
-        if ($scan_id <= 0) {
+        if ($scan_id <= 0 || !($wpdb instanceof \wpdb)) {
             return false;
         }
 
@@ -161,28 +161,35 @@ class ScanLock {
 
     /**
      * Release the scan lock (both MySQL advisory mutex and option state).
-     * Strictly verifies ownership before clearing options.
+     * Strictly verifies ownership before clearing options and advisory locks.
      *
      * @param int|null $scan_id
      */
     public static function release($scan_id = null): void {
         global $wpdb;
-        if ($wpdb instanceof \wpdb) {
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
-            $wpdb->query($wpdb->prepare("SELECT RELEASE_LOCK(%s)", self::ADVISORY_LOCK_NAME));
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
-            $wpdb->query($wpdb->prepare("SELECT RELEASE_LOCK(%s)", self::BATCH_LOCK_NAME));
-        }
-
-        if ($scan_id === null) {
-            delete_option(self::LOCK_OPTION);
+        if (!($wpdb instanceof \wpdb)) {
             return;
         }
 
-        $existing = get_option(self::LOCK_OPTION);
-        if ($existing && is_array($existing) && (int) ($existing['scan_id'] ?? 0) === (int) $scan_id) {
+        // 1. Verify lease ownership if a specific scan_id is provided
+        if ($scan_id !== null) {
+            $scan_id = (int) $scan_id;
+            $existing = get_option(self::LOCK_OPTION);
+            if (!$existing || !is_array($existing) || (int) ($existing['scan_id'] ?? 0) !== $scan_id) {
+                // Mismatched scan ID or no active lease — fail safe and do NOT release advisory lock
+                return;
+            }
+            delete_option(self::LOCK_OPTION);
+        } else {
+            // Unconditional forced release
             delete_option(self::LOCK_OPTION);
         }
+
+        // 2. Release MySQL advisory locks only after ownership verification or forced release
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
+        $wpdb->query($wpdb->prepare("SELECT RELEASE_LOCK(%s)", self::ADVISORY_LOCK_NAME));
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
+        $wpdb->query($wpdb->prepare("SELECT RELEASE_LOCK(%s)", self::BATCH_LOCK_NAME));
     }
 
     /**
@@ -191,6 +198,10 @@ class ScanLock {
      * @return int|null Scan ID if locked, or null.
      */
     public static function get_locked_scan_id(): ?int {
+        global $wpdb;
+        if (!($wpdb instanceof \wpdb)) {
+            return null;
+        }
         $existing = get_option(self::LOCK_OPTION);
         if ($existing && is_array($existing)) {
             $locked_time = (int) ($existing['time'] ?? 0);

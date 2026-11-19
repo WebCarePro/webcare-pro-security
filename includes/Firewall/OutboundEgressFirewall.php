@@ -788,31 +788,24 @@ class OutboundEgressFirewall {
         if ($packed !== false) {
             // IPv4 Range Checks
             if (strlen($packed) === 4) {
-                $ip_long = ip2long($clean_host);
-                if ($ip_long !== false) {
-                    // Loopback: 127.0.0.0/8 (0x7F000000)
-                    if (($ip_long & 0xFF000000) === 0x7F000000 || $ip_long === 0) {
+                if (\WebCareProScanner\Firewall\Core\ExploitSignatureEngine::is_loopback_or_private_ipv4($clean_host)) {
+                    $long = unpack('N', $packed)[1];
+                    if (($long & 0xFF000000) === 0x7F000000 || ($long & 0xFF000000) === 0x00000000) {
                         return [
                             'threat' => 'ssrf_loopback',
                             'reason' => 'Unauthorized loopback network connection attempted (127.0.0.0/8).',
                         ];
                     }
-                    // Link-Local / Cloud Metadata: 169.254.0.0/16 (0xA9FE0000)
-                    if (($ip_long & 0xFFFF0000) === (int) 0xA9FE0000) {
+                    if (($long & 0xFFFF0000) === 0xA9FE0000 || ($long & 0xFFC00000) === 0x64400000) {
                         return [
                             'threat' => 'ssrf_metadata',
-                            'reason' => 'Cloud metadata/link-local address probe attempted (169.254.0.0/16).',
+                            'reason' => 'Cloud metadata/link-local address probe attempted (169.254.0.0/16 or 100.64.0.0/10).',
                         ];
                     }
-                    // Private RFC1918: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
-                    if (($ip_long & 0xFF000000) === 0x0A000000 ||
-                        ($ip_long & 0xFFF00000) === (int) 0xAC100000 ||
-                        ($ip_long & 0xFFFF0000) === (int) 0xC0A80000) {
-                        return [
-                            'threat' => 'ssrf_private_network',
-                            'reason' => 'Private internal RFC1918 network connection attempted.',
-                        ];
-                    }
+                    return [
+                        'threat' => 'ssrf_private_network',
+                        'reason' => 'Private internal RFC1918/RFC6598 network connection attempted.',
+                    ];
                 }
             } elseif (strlen($packed) === 16) {
                 // IPv6 Loopback: ::1 or any packed representation matching \x00...1
