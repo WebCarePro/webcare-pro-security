@@ -232,17 +232,41 @@ if (!/Text Domain:\s*webcare-pro-security/.test(mainPluginContent)) {
 }
 console.log('✓ Text Domain header verified as webcare-pro-security');
 
-// 6. Create ZIP archive
-console.log('\n--- Generating Release Archive ---');
-try {
-  // Use tar or powershell Compress-Archive
-  execSync(`tar -a -cf "${ZIP_FILE}" -C "${DIST_DIR}" "${PLUGIN_SLUG}"`, { stdio: 'inherit' });
-  console.log(`✓ Created: ${ZIP_FILE}`);
-} catch (err) {
-  console.log('tar fallback to PowerShell Compress-Archive...');
-  execSync(`powershell -Command "Compress-Archive -Path '${PACKAGE_DIR}' -DestinationPath '${ZIP_FILE}' -Force"`, { stdio: 'inherit' });
-  console.log(`✓ Created: ${ZIP_FILE}`);
+// 6. Create ZIP archive with strict Unix permissions (0755 dirs, 0644 files)
+console.log('\n--- Generating Release Archive with Unix Permissions ---');
+const AdmZip = require('adm-zip');
+const zip = new AdmZip();
+
+function addFolderToZip(folderPath, zipPrefix) {
+  const items = fs.readdirSync(folderPath);
+  for (const item of items) {
+    const fullPath = path.join(folderPath, item);
+    const relZipPath = zipPrefix ? `${zipPrefix}/${item}` : item;
+    const stat = fs.statSync(fullPath);
+    if (stat.isDirectory()) {
+      zip.addFile(`${relZipPath}/`, Buffer.alloc(0));
+      addFolderToZip(fullPath, relZipPath);
+    } else {
+      zip.addLocalFile(fullPath, zipPrefix);
+    }
+  }
 }
+
+addFolderToZip(PACKAGE_DIR, PLUGIN_SLUG);
+
+// Force standard Unix file attributes across all archive entries
+for (const entry of zip.getEntries()) {
+  if (entry.isDirectory) {
+    // 0040755: Directory (0040000) with rwxr-xr-x (0755)
+    entry.attr = ((0o040755 << 16) | 0x10) >>> 0;
+  } else {
+    // 0100644: Regular file (0100000) with rw-r--r-- (0644)
+    entry.attr = (0o100644 << 16) >>> 0;
+  }
+}
+
+zip.writeZip(ZIP_FILE);
+console.log(`✓ Created: ${ZIP_FILE} (Strict Unix permissions: 0755 dirs, 0644 files)`);
 
 // Clean up staging folder
 fs.rmSync(DIST_DIR, { recursive: true, force: true });

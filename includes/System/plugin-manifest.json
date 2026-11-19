@@ -1,6 +1,6 @@
 {
   "version": "3.0.0",
-  "generated_at": "2026-11-19T21:50:41.748Z",
+  "generated_at": "2026-11-19T22:31:27.507Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -528,8 +528,8 @@
       "size": 40170
     },
     "includes/Firewall/Core/ExploitSignatureEngine.php": {
-      "sha256": "26df8810cae7b89b16994a4979df722a175efb678e11f19e17b1c608cb957d48",
-      "size": 127207
+      "sha256": "3f007a52097ca0c08f20af668ea448036b7843608662bec73008e734da501732",
+      "size": 127634
     },
     "includes/Firewall/Core/FirewallTelemetryService.php": {
       "sha256": "dd97f57ad8e2a91e029968c27ea9f146563c0c9ca526c6cab394609f7257415c",
