@@ -118,7 +118,11 @@ class Plugin {
 
         // 3. REST API Routes (Loaded lazily only when WP REST API initializes)
         add_action('rest_api_init', static function (): void {
-            ScannerRoutes::register();
+            if (class_exists(\WebCareProScanner\Api\RestRouter::class)) {
+                \WebCareProScanner\Api\RestRouter::register();
+            } else {
+                ScannerRoutes::register();
+            }
         });
 
         // 4. Admin, Cron & WP-CLI Heavy Subsystems (Never booted on public storefront GET/POST)
