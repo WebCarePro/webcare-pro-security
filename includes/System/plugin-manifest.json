@@ -1,6 +1,6 @@
 {
   "version": "2.19.0",
-  "generated_at": "2026-11-18T22:52:40.392Z",
+  "generated_at": "2026-11-19T00:52:22.319Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -448,8 +448,8 @@
       "size": 40170
     },
     "includes/Firewall/Core/ExploitSignatureEngine.php": {
-      "sha256": "5439446952ef4a74ed067b7019de854b563c8609624d195c657f0f2355497355",
-      "size": 113553
+      "sha256": "addbb235295969a7c9909def0b929cce6d38d022d07ea7ea6163aae5b617df1f",
+      "size": 115877
     },
     "includes/Firewall/Core/RaspPrivilegeGuard.php": {
       "sha256": "6cd05a9ca8b1b046311ad6853a061203b879524b57a6d4b9a0957c8878e06225",
@@ -496,8 +496,8 @@
       "size": 15983
     },
     "includes/Firewall/MicroWafCompiler.php": {
-      "sha256": "05a879b0bb7ba1f574e13767c1791a4d63d1928aee12be6084f7c506b27771d3",
-      "size": 101834
+      "sha256": "7d541afc72897f476475e7b83afc65d2f4980681b57f7befb419f0d216b8a5ad",
+      "size": 103016
     },
     "includes/Firewall/Modular/BehavioralVaultManager.php": {
       "sha256": "a085c30ab44032dc5979d30e85acd3bff42b919dd08c3e51b0fced877fcf4f5a",

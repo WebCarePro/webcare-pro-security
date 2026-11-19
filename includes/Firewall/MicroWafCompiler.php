@@ -31,6 +31,7 @@ class MicroWafCompiler {
     const FAIL2BAN_LOG_REL = 'webcare-pro-security/waf-logs/fail2ban.log';
     const OPTION_STATUS = 'webcareproscan_micro_waf_status';
     const CAF_COMPILED_FILE_NAME = 'webcare-caf-compiled-rules.php';
+    const CAF_COMPILED_SIG_FILE_NAME = 'webcare-caf-compiled-rules.sig.php';
     const OPTION_CAF_HMAC = 'webcareproscan_caf_compiled_hmac';
 
     /**
@@ -57,6 +58,13 @@ class MicroWafCompiler {
      */
     public static function get_caf_compiled_file_path(): string {
         return trailingslashit(self::get_compiled_dir()) . self::CAF_COMPILED_FILE_NAME;
+    }
+
+    /**
+     * Get the absolute path to the compiled CAF data rules cryptographic signature.
+     */
+    public static function get_caf_compiled_sig_path(): string {
+        return trailingslashit(self::get_compiled_dir()) . self::CAF_COMPILED_SIG_FILE_NAME;
     }
 
     /**
@@ -223,11 +231,11 @@ class MicroWafCompiler {
         // 2. High-confidence zero-false-positive attack signatures for early drop
         $compiled_signatures = [
             'SQLI-CORE' => [
-                'pattern' => '/(?:(?:^|[^a-z_]|[\d.eE])union\s+(?:all\s+)?select\b|\bselect\b.{1,40}\bfrom\b.{1,40}\b[a-z0-9_]+_users\b|\b(?:benchmark|sleep|pg_sleep|get_lock)\s*\(|\binformation_schema\b)/i',
+                'pattern' => '/(?:(?:^|[^a-z_]|[\d.eE])union\s+(?:all\s+)?select\b|\bselect\b.{1,40}\bfrom\b.{1,40}\b[a-z0-9_]+_users\b|\b(?:benchmark|sleep|pg_sleep|get_lock)\s*\(|\binformation_schema\b|;\s*(?:drop|alter|truncate)\s+table\b)/i',
                 'desc'    => 'High-Confidence SQL Injection Probe',
             ],
             'RCE-EXEC' => [
-                'pattern' => '/(?:\b(?:passthru|shell_exec|exec|proc_open|popen)\s*\(|(?:eval|assert)\s*\(\s*(?:\$|_GET|_POST|_COOKIE|_REQUEST))/i',
+                'pattern' => '/(?:\b(?:passthru|shell_exec|exec|proc_open|popen)\s*\(|\bsystem\s*\(\s*[\'"]?[a-z0-9_\-\.\/\\\$\)]|(?:eval|assert)\s*\(\s*(?:\$|_GET|_POST|_COOKIE|_REQUEST))/i',
                 'desc'    => 'Remote Code Execution / Webshell Ingress',
             ],
             'LFI-PATH' => [
@@ -899,7 +907,9 @@ class MicroWafCompiler {
         // 4. Context-Adaptive Firewall (CAF) Preload Enforcement
         $caf_compiled_path = self::get_caf_compiled_file_path();
         $caf_compiled_escaped = addslashes($caf_compiled_path);
-        $caf_sig_escaped = addslashes($caf_compiled_path . '.sig');
+        $caf_sig_path = self::get_caf_compiled_sig_path();
+        $caf_sig_escaped = addslashes($caf_sig_path);
+        $legacy_sig_escaped = addslashes($caf_compiled_path . '.sig');
         $salt = function_exists('wp_salt') ? wp_salt('auth') : 'webcare-caf-fallback-salt';
         $salt_escaped = addslashes($salt);
 
@@ -907,8 +917,8 @@ class MicroWafCompiler {
         $out .= "        // Whitelisted URLs bypass CAF dormant component heuristics while preserving mandatory exploit signatures (Finding 1.6)\n";
         $out .= "        \$caf_data_file = '{$caf_compiled_escaped}';\n";
         $out .= "        \$caf_sig_file  = '{$caf_sig_escaped}';\n";
-        $out .= "        if (!\$url_whitelisted && !\$vis_allow_all_custom && file_exists(\$caf_data_file) && file_exists(\$caf_sig_file)) {\n";
-        $out .= "            \$sig_content = trim((string) @file_get_contents(\$caf_sig_file));\n";
+        $out .= "        if (!\$url_whitelisted && !\$vis_allow_all_custom && file_exists(\$caf_data_file) && (file_exists(\$caf_sig_file) || file_exists('{$legacy_sig_escaped}'))) {\n";
+        $out .= "            \$sig_content = file_exists(\$caf_sig_file) ? (string) @include \$caf_sig_file : trim((string) @file_get_contents('{$legacy_sig_escaped}'));\n";
         $out .= "            \$raw_php = (string) @file_get_contents(\$caf_data_file);\n";
         $out .= "            \$expected_hmac = hash_hmac('sha256', \$raw_php, '{$salt_escaped}');\n";
         $out .= "            // Fail-open security guardrail: only execute artifact if cryptographic signature is intact\n";
@@ -1379,7 +1389,7 @@ class MicroWafCompiler {
      */
     public static function compile_caf_data_artifact(): bool {
         $caf_file = self::get_caf_compiled_file_path();
-        $sig_file = $caf_file . '.sig';
+        $sig_file = self::get_caf_compiled_sig_path();
 
         $snapshot = null;
         $active_profile = 'balanced';
@@ -1491,14 +1501,22 @@ class MicroWafCompiler {
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod
         @chmod($caf_file, 0644);
 
-        // Detached HMAC-SHA256 signature
+        // Detached HMAC-SHA256 signature wrapped in executable PHP protection
         $salt = function_exists('wp_salt') ? wp_salt('auth') : 'webcare-caf-fallback-salt';
         $hmac = hash_hmac('sha256', $php_code, $salt);
         update_option(self::OPTION_CAF_HMAC, $hmac);
+
+        $sig_code = "<?php\n// WebCare Pro CAF Cryptographic Signature\nif (!defined('ABSPATH') && !defined('WEBCAREPRO_PRELOAD_WAF_ACTIVE')) {\n    http_response_code(403);\n    exit;\n}\nreturn '" . addslashes($hmac) . "';\n";
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
-        file_put_contents($sig_file, $hmac);
+        file_put_contents($sig_file, $sig_code, LOCK_EX);
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod
         @chmod($sig_file, 0644);
+
+        // Delete legacy unprotected .sig file if present to eliminate static exposure on Nginx
+        $legacy_sig = $caf_file . '.sig';
+        if (file_exists($legacy_sig)) {
+            wp_delete_file($legacy_sig);
+        }
 
         if (function_exists('opcache_invalidate')) {
             opcache_invalidate($caf_file, true);
