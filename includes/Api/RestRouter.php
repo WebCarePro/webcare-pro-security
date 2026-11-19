@@ -144,7 +144,7 @@ final class RestRouter {
 
         // Extract relative route segment after namespace prefix: e.g. 'firewall/status'
         $relative_route = substr($resolved_route, strlen($ns_prefix));
-        $prefix = (string) strtok($relative_route, '/');
+        $prefix = strtolower((string) strtok($relative_route, '/'));
 
         // Case 3: NextGen module routes (/webcare-pro-security/v1/nextgen/...)
         if ($prefix === 'nextgen') {

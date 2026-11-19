@@ -71,18 +71,19 @@ final class CanonicalRouteParser {
 
         // 2. Check path-based REST route
         $path = self::get_normalized_path($server);
+        $path_lower = strtolower($path);
         $prefix = function_exists('rest_get_url_prefix') ? rest_get_url_prefix() : 'wp-json';
-        $prefix_segment = '/' . trim($prefix, '/') . '/';
+        $prefix_segment = '/' . strtolower(trim($prefix, '/')) . '/';
 
-        $pos = strpos($path, $prefix_segment);
+        $pos = strpos($path_lower, $prefix_segment);
         if ($pos !== false) {
             $route_part = substr($path, $pos + strlen($prefix_segment) - 1);
             return '/' . ltrim(preg_replace('#[\\\\/]+#', '/', $route_part) ?? '', '/');
         }
 
         // Fallback check for /wp-json/ if custom prefix was empty or different
-        if (str_contains($path, '/wp-json/')) {
-            $pos = strpos($path, '/wp-json/');
+        if (str_contains($path_lower, '/wp-json/')) {
+            $pos = strpos($path_lower, '/wp-json/');
             $route_part = substr($path, $pos + 8);
             return '/' . ltrim(preg_replace('#[\\\\/]+#', '/', $route_part) ?? '', '/');
         }

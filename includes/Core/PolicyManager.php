@@ -29,17 +29,15 @@ final class PolicyManager {
     }
 
     public const PROTECTED_SETTINGS_DENYLIST = [
-        'firewall_enabled',
         'waf_enabled',
-        'sqli_protection',
-        'xss_protection',
-        'rce_protection',
-        'ssrf_protection',
-        'auth_lockout_enabled',
-        'session_binding_enabled',
-        'exploit_signatures_enabled',
-        'two_factor_enforced',
-        'self_defense_enabled',
+        'waf_block_sqli',
+        'waf_block_xss',
+        'waf_block_ssrf_metadata',
+        'waf_runtime_rasp_privilege_guard',
+        'waf_enforce_host_allowlist',
+        'auth_2fa_enabled',
+        'auth_2fa_enforce_admins',
+        'self_defense_watchdog_enabled',
     ];
 
     /**

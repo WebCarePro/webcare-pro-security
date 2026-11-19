@@ -51,7 +51,7 @@ final class ViolationResponder {
      * @param array<string, mixed> $settings
      */
     public static function is_progressive_warning_rule(array $rule, array $settings): bool {
-        return FirewallEngine::is_cleared_by_pow($rule, $settings, '0.0.0.0') || true;
+        return FirewallEngine::is_progressive_warning_rule($rule, $settings);
     }
 
     /**

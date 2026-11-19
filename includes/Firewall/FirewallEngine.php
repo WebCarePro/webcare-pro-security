@@ -4954,7 +4954,7 @@ class FirewallEngine {
      * @param array $settings
      * @return bool
      */
-    private static function is_progressive_warning_rule(array $rule, array $settings): bool {
+    public static function is_progressive_warning_rule(array $rule, array $settings): bool {
         // Master toggle check: If progressive warnings are globally disabled in settings, no rule qualifies
         if (empty($settings['waf_enable_progressive_warnings'])) {
             return false;

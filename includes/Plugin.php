@@ -187,7 +187,7 @@ class Plugin {
                 $sim_server = [
                     'REQUEST_METHOD' => $method,
                     'REQUEST_URI'    => $uri,
-                    'QUERY_STRING'   => (string) strtok($uri, '?#'),
+                    'QUERY_STRING'   => (string) (wp_parse_url($uri, PHP_URL_QUERY) ?? ''),
                 ];
                 if ($payload !== '') {
                     $sim_server['REQUEST_URI'] .= (str_contains($sim_server['REQUEST_URI'], '?') ? '&' : '?') . 'sim_payload=' . rawurlencode($payload);
