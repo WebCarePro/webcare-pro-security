@@ -1,4 +1,13 @@
 ﻿v:2.19.0 - 2026-11-19
+- Antigravity Master Plan PR 4: Request Pipeline Orchestration, Canonical 5-Case Lazy RestRouter & Measured Benchmarks (RequestPipeline.php, RestRouter.php, FirewallEngine.php):
+  * Canonical 5-Case Lazy REST Router: Enabled high-performance lazy routing in `RestRouter.php` based on `CanonicalRouteParser::resolve_rest_route($_SERVER)`:
+    - Case 1 (Discovery/Index): `/wp-json/` and `/wp-json/webcare-pro-security/v1` registers all domain controllers (preserving 100% REST index catalog parity).
+    - Case 2 (Known Prefix): Specific routes (e.g. `/firewall/status`) load ONLY the targeted controller (reducing loaded classes from 64 to 54 and eliminating 8 unneeded controllers).
+    - Case 3 (NextGen Prefix): `/nextgen/...` registers solely NextGen module routes via `ModuleRegistry`.
+    - Case 4 (Unknown Prefix): Unknown WebCare routes register 0 controllers (returning standard WP 404 `rest_no_route`).
+    - Case 5 (Non-WebCare REST): Foreign requests (e.g. `/wp/v2/posts`) register 0 WebCare controllers, incurring zero controller overhead.
+  * Fail-Closed Request Pipeline: Activated `RequestPipeline::process_incoming_request()` running Always-On Mandatory Core before conditionally evaluating stack-manifest evaluators with full fail-closed exception handling.
+  * Measured OPcache Benchmarks: Verified 9 distinct request profiles on warm PHP 8.4 engine (Public GET: 46 classes / 16.57 MB, Public Mutation: 46 classes / 16.57 MB, Commerce: 51 classes / 16.58 MB, Membership: 50 classes / 16.58 MB, Specific REST: 54 classes, Foreign REST: 52 classes, Discovery REST: 64 classes).
 - Antigravity Master Plan PR 3: FirewallEngine Core & Evaluator Decomposition (BlocklistRepository.php, AllowlistManager.php, ViolationResponder.php, FirewallTelemetryService.php, RequestPipeline.php, RestAndAjaxEvaluator.php, AuthPolicyEvaluator.php, UploadAndInstallGuard.php, FirewallEngine.php):
   * Core Repositories & Responders: Extracted `BlocklistRepository.php` (IP bans & duration math), `AllowlistManager.php` (IP/URL allowlists & rDNS), `ViolationResponder.php` (terminal violation handling & PoW clearance), and `FirewallTelemetryService.php` (admin status & log management) under `includes/Firewall/Core/`.
   * Specialized Evaluators: Extracted `RestAndAjaxEvaluator.php` (REST user enum & guest AJAX policies), `AuthPolicyEvaluator.php` (login hardening & HIBP breached passwords), and `UploadAndInstallGuard.php` (upload validation & prohibited plugin blocking) under `includes/Firewall/Evaluators/`.

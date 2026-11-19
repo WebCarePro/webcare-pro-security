@@ -57,8 +57,12 @@ class FirewallEngine {
             HoneyTokenEngine::init();
         }
 
-        // Run early at plugins_loaded priority 0
-        add_action('plugins_loaded', [__CLASS__, 'inspect_incoming_request'], 0);
+        // Run early at plugins_loaded priority 0 via RequestPipeline orchestrator
+        if (class_exists('\\WebCareProScanner\\Firewall\\Core\\RequestPipeline')) {
+            add_action('plugins_loaded', ['\\WebCareProScanner\\Firewall\\Core\\RequestPipeline', 'process_incoming_request'], 0);
+        } else {
+            add_action('plugins_loaded', [__CLASS__, 'inspect_incoming_request'], 0);
+        }
 
         // Protect XML-RPC early if enabled
         add_action('init', [__CLASS__, 'check_xmlrpc_guard'], 0);

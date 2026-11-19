@@ -109,10 +109,76 @@ final class RestRouter {
     ];
 
     /**
-     * Register REST API routes.
-     * In PR 2, registers all domain controllers identically to ensure 100% parity before lazy-loading in PR 4.
+     * Register REST API routes using canonical 5-case lazy loading.
+     *
+     * 1. Discovery/Index (/wp-json/ or /wp-json/webcare-pro-security/v1): registers all controllers.
+     * 2. Known WebCare prefix: registers ONLY matching controller(s).
+     * 3. NextGen module prefix ('nextgen'): registers ModuleRegistry nextgen routes.
+     * 4. Unknown WebCare prefix: registers 0 controllers (WP 404 fallback).
+     * 5. Non-WebCare route (/wp/v2/..., etc.): registers 0 controllers (zero memory overhead).
      */
     public static function register(): void {
+        $server = $_SERVER;
+        $resolved_route = \WebCareProScanner\Core\CanonicalRouteParser::resolve_rest_route($server);
+
+        // Case 1: REST Discovery / Index query
+        // E.g. GET /wp-json/, GET /wp-json/webcare-pro-security/v1, or empty route
+        $is_discovery = (
+            $resolved_route === ''
+            || $resolved_route === '/'
+            || $resolved_route === '/' . self::NAMESPACE
+            || $resolved_route === '/' . self::NAMESPACE . '/'
+        );
+
+        if ($is_discovery) {
+            self::register_all();
+            return;
+        }
+
+        // Case 5: Non-WebCare route (e.g. /wp/v2/posts, /wc/v3/orders)
+        $ns_prefix = '/' . self::NAMESPACE . '/';
+        if (!str_starts_with($resolved_route, $ns_prefix)) {
+            // Zero WebCare controllers registered on foreign REST requests
+            return;
+        }
+
+        // Extract relative route segment after namespace prefix: e.g. 'firewall/status'
+        $relative_route = substr($resolved_route, strlen($ns_prefix));
+        $prefix = (string) strtok($relative_route, '/');
+
+        // Case 3: NextGen module routes (/webcare-pro-security/v1/nextgen/...)
+        if ($prefix === 'nextgen') {
+            if (class_exists('\\WebCareProScanner\\Core\\ModuleRegistry')) {
+                \WebCareProScanner\Core\ModuleRegistry::register_rest_routes(self::NAMESPACE);
+            }
+            return;
+        }
+
+        // Case 2: Known WebCare route prefix
+        if (isset(self::PREFIX_MAP[$prefix])) {
+            $controller = self::PREFIX_MAP[$prefix];
+            $permission = static function (): bool {
+                return current_user_can('manage_options');
+            };
+
+            if ($controller === CronRoutes::class) {
+                if (class_exists(CronRoutes::class)) {
+                    CronRoutes::register($permission);
+                }
+            } elseif (class_exists($controller) && method_exists($controller, 'register')) {
+                $controller::register(self::NAMESPACE, $permission);
+            }
+            return;
+        }
+
+        // Case 4: Unknown WebCare prefix: register 0 controllers (WP core returns 404 rest_no_route)
+    }
+
+    /**
+     * Register all domain controllers, cron routes, and nextgen modules.
+     * Invoked during REST index discovery or schema reflection.
+     */
+    public static function register_all(): void {
         $permission = static function (): bool {
             return current_user_can('manage_options');
         };

@@ -3,12 +3,15 @@ declare(strict_types=1);
 
 namespace WebCareProScanner\Firewall\Core;
 
+use WebCareProScanner\Contracts\RequestContext;
 use WebCareProScanner\Contracts\RouteClass;
 use WebCareProScanner\Contracts\WafAction;
+use WebCareProScanner\Contracts\WafEvaluatorInterface;
 use WebCareProScanner\Contracts\WafVerdict;
 use WebCareProScanner\Core\CompiledStackManifest;
 use WebCareProScanner\Core\RouteClassifier;
 use WebCareProScanner\Firewall\FirewallEngine;
+use WebCareProScanner\System\SettingsManager;
 
 if (!defined('ABSPATH')) {
     exit;
@@ -21,15 +24,115 @@ if (!defined('ABSPATH')) {
  * Evaluates the Always-On Mandatory Core first, followed by conditional evaluators
  * from the CompiledStackManifest. Short-circuits on the first terminal WafVerdict.
  *
+ * Fail-closed design: Exceptions caught within pipeline log the anomaly and terminate
+ * with safe error status rather than allowing uninspected request execution.
+ *
  * Author: Mir Alamin (WebCare Pro)
  */
 final class RequestPipeline {
 
     /**
      * Inspect incoming request through the firewall pipeline.
+     * Evaluates Always-On Mandatory Core, then conditional manifest evaluators,
+     * and delegates to FirewallEngine::inspect_incoming_request().
      */
     public static function process_incoming_request(): void {
-        FirewallEngine::inspect_incoming_request();
+        try {
+            // 1. Evaluate Always-On Core & Conditional Pipeline via RequestContext
+            if (class_exists(RequestContext::class) && class_exists(SettingsManager::class)) {
+                $ctx = RequestContext::from_globals();
+                $settings = SettingsManager::get_settings();
+
+                $verdict = self::evaluate_pipeline($ctx, $settings);
+                if ($verdict !== null && $verdict->action !== 'allow') {
+                    // Terminal or challenging action triggered
+                    $rule = [
+                        'id'              => $verdict->ruleId,
+                        'name'            => $verdict->category,
+                        'category'        => $verdict->category,
+                        'description'     => $verdict->reason,
+                        'match_type'      => $verdict->action,
+                        'match_value'     => $verdict->ruleId,
+                        'payload'         => "Client IP: {$ctx->ip} URI: {$ctx->uri}",
+                        'sync_cloudflare' => $verdict->syncCloudflare,
+                        'ban_ttl'         => $verdict->action === 'block_and_ban' ? max(60, $verdict->banTtl) : $verdict->banTtl,
+                    ];
+
+                    if ($verdict->action === 'challenge_pow' && class_exists('\\WebCareProScanner\\Firewall\\BotReconDefense')) {
+                        if (!\WebCareProScanner\Firewall\BotReconDefense::has_valid_clearance_cookie($ctx->ip, $ctx->userAgent)) {
+                            FirewallEngine::log_incident($rule, 'challenged');
+                            \WebCareProScanner\Firewall\BotReconDefense::render_pow_challenge($ctx->ip, $verdict->reason);
+                        }
+                    } elseif (in_array($verdict->action, ['block', 'block_and_ban', 'rate_limit'], true)) {
+                        ViolationResponder::handle_rule_violation($rule, $settings, $ctx->ip, $verdict->statusCode);
+                        return;
+                    } else {
+                        FirewallEngine::log_incident($rule, 'detected');
+                    }
+                }
+            }
+
+            // 2. Delegate to comprehensive engine inspection
+            FirewallEngine::inspect_incoming_request();
+        } catch (\Throwable $e) {
+            // Fail-closed invariant: Log critical failure
+            if (class_exists(FirewallEngine::class)) {
+                FirewallEngine::log_incident([
+                    'id'          => 'WAF-PIPELINE-EXCEPTION',
+                    'name'        => 'Pipeline Exception Fail-Closed',
+                    'category'    => 'System Integrity',
+                    'description' => 'Firewall pipeline caught unhandled exception; failing closed: ' . $e->getMessage(),
+                    'match_type'  => 'Exception Guard',
+                    'match_value' => $e->getCode(),
+                    'payload'     => $e->getFile() . ':' . $e->getLine(),
+                ], 'blocked');
+            }
+            status_header(403);
+            exit;
+        }
+    }
+
+    /**
+     * Evaluate pipeline across active route class and compiled evaluators.
+     *
+     * @param RequestContext $ctx
+     * @param array<string, mixed> $settings
+     * @return WafVerdict|null First terminal verdict or null if passed.
+     */
+    public static function evaluate_pipeline(RequestContext $ctx, array $settings): ?WafVerdict {
+        $route_class = RouteClassifier::classify($_SERVER);
+        $manifest = CompiledStackManifest::load();
+        $route_evaluators = $manifest['routes'][$route_class->value] ?? [];
+
+        if (empty($route_evaluators) || !is_array($route_evaluators)) {
+            return null;
+        }
+
+        foreach ($route_evaluators as $evaluator_class) {
+            if (!class_exists($evaluator_class)) {
+                continue;
+            }
+
+            // Instantiate or call evaluator if it implements WafEvaluatorInterface
+            if (is_subclass_of($evaluator_class, WafEvaluatorInterface::class)) {
+                $evaluator = new $evaluator_class();
+                $verdict = $evaluator->evaluate_runtime_request($ctx);
+                if ($verdict instanceof WafVerdict) {
+                    if (self::is_terminal_verdict($verdict)) {
+                        return $verdict;
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Check if a WafVerdict represents a terminal action.
+     */
+    private static function is_terminal_verdict(WafVerdict $verdict): bool {
+        return in_array($verdict->action, ['block', 'block_and_ban', 'challenge_pow', 'rate_limit'], true);
     }
 
     /**
