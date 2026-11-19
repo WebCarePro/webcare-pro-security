@@ -32,7 +32,10 @@ final readonly class WafVerdict {
     ) {}
 
     public function get_action_value(): string {
-        return $this->action instanceof WafAction ? $this->action->value : (string) $this->action;
+        if ($this->action === 'block_and_ban') {
+            return 'block_and_ban';
+        }
+        return $this->getActionEnum()->value;
     }
 
     public function __get(string $name): mixed {

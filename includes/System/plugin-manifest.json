@@ -1,6 +1,6 @@
 {
   "version": "3.0.0",
-  "generated_at": "2026-11-19T19:15:26.038Z",
+  "generated_at": "2026-11-19T19:26:50.618Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -336,8 +336,8 @@
       "size": 790
     },
     "includes/Contracts/WafVerdict.php": {
-      "sha256": "bc55e40cc9b71dad34c42006f43c4b9bc7a0754710ec2a97141d8b6bbc28d436",
-      "size": 5549
+      "sha256": "180e3effd5c7ecaa08e680e51f744a686c2071e50a8c95341780b501c64de445",
+      "size": 5591
     },
     "includes/Core/CanonicalRouteParser.php": {
       "sha256": "973d4c484f85ca7909c70be9df22a5514be0b09c0ada622905a604ab1e8d0ec5",
@@ -540,8 +540,8 @@
       "size": 41931
     },
     "includes/Firewall/Core/RequestPipeline.php": {
-      "sha256": "16c74ea3a0ff0e2b7740c0495e937ee4e2e2252e80e59720d22d8310efa06d38",
-      "size": 7863
+      "sha256": "6ff5e5ae1c726f055675d6c90a38f2699f3ae4caaf9da32cf5191e79e58e5ed6",
+      "size": 7982
     },
     "includes/Firewall/Core/ViolationResponder.php": {
       "sha256": "45aa299e9a90106ffdc2491f249fc4a6e3942bbad2d53c0d4a6734f3936586df",

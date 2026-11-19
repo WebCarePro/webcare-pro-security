@@ -64,7 +64,7 @@ final class RequestPipeline {
                             FirewallEngine::log_incident($rule, 'challenged');
                             \WebCareProScanner\Firewall\BotReconDefense::render_pow_challenge($ctx->ip, $verdict->reason);
                         }
-                    } elseif (in_array($action_val, ['block', 'block_and_ban', 'rate_limit'], true)) {
+                    } elseif (in_array($action_val, ['block', 'block_and_ban', 'rate_limit'], true) || $verdict->is_terminal()) {
                         ViolationResponder::handle_rule_violation($rule, $settings, $ctx->ip, $verdict->statusCode);
                         return;
                     } else {
@@ -108,7 +108,10 @@ final class RequestPipeline {
      * @return WafVerdict|null First terminal verdict or null if passed.
      */
     public static function evaluate_pipeline(RequestContext $ctx, array $settings): ?WafVerdict {
-        $route_class = RouteClassifier::classify($_SERVER);
+        $route_class = RouteClassifier::classify([
+            'REQUEST_URI'    => $ctx->uri,
+            'REQUEST_METHOD' => $ctx->method,
+        ]);
         $manifest = CompiledStackManifest::load();
         $route_evaluators = $manifest['routes'][$route_class->value] ?? [];
 
