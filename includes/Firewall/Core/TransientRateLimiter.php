@@ -40,6 +40,7 @@ final class TransientRateLimiter {
                 'allowed'     => true,
                 'retry_after' => 0,
                 'current'     => 1,
+                'limit'       => $limit,
             ];
         }
 
@@ -53,6 +54,7 @@ final class TransientRateLimiter {
                 'allowed'     => true,
                 'retry_after' => 0,
                 'current'     => 1,
+                'limit'       => $limit,
             ];
         }
 
@@ -65,6 +67,7 @@ final class TransientRateLimiter {
                 'allowed'     => false,
                 'retry_after' => $remaining_ttl,
                 'current'     => $data['count'],
+                'limit'       => $limit,
             ];
         }
 
@@ -72,6 +75,29 @@ final class TransientRateLimiter {
             'allowed'     => true,
             'retry_after' => 0,
             'current'     => $data['count'],
+            'limit'       => $limit,
+        ];
+    }
+
+    /**
+     * Record and inspect strike count for progressive warnings (default: 4 strikes within 15 mins).
+     *
+     * @param string $ip Client IP
+     * @param int    $max_strikes Maximum warning strikes allowed before temporary ban
+     * @param int    $window_seconds Strike decay window
+     * @return array{strike: int, max_strikes: int, is_terminal_ban: bool, remaining_strikes: int}
+     */
+    public static function record_warning_strike(string $ip, int $max_strikes = 4, int $window_seconds = 900): array {
+        $key = 'warning_strike:' . md5($ip);
+        $res = self::check_rate_limit($key, $max_strikes, $window_seconds);
+        $strike = min($max_strikes, (int) $res['current']);
+        $remaining = max(0, $max_strikes - $strike);
+
+        return [
+            'strike'             => $strike,
+            'max_strikes'        => $max_strikes,
+            'is_terminal_ban'    => !$res['allowed'],
+            'remaining_strikes'  => $remaining,
         ];
     }
 }

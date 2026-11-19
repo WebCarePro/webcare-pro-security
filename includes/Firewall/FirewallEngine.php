@@ -3082,6 +3082,11 @@ class FirewallEngine {
             }
         }
 
+        $strike_info = \WebCareProScanner\Firewall\Core\TransientRateLimiter::record_warning_strike($client_ip, 4, 900);
+        $strike_current = $strike_info['strike'];
+        $strike_max     = $strike_info['max_strikes'];
+        $strike_remain  = $strike_info['remaining_strikes'];
+
         $site_name   = get_bloginfo('name');
         $rule_cat    = esc_html($rule['category'] ?? 'Security Shield');
 
@@ -3103,12 +3108,35 @@ class FirewallEngine {
         $subheadline = sprintf(esc_html__('Automated safety checkpoint on %s', 'webcare-pro-security'), esc_html($site_name));
 
         $primary_desc = $is_warning
-            ? esc_html__('Unusual or unauthorized activity was detected from your connection. If you continue sending repeated invalid or unauthorized requests, your IP address will be temporarily banned from this site.', 'webcare-pro-security')
+            ? esc_html__('Unusual activity was detected from your connection. If you continue sending repeated invalid requests, your IP address will be temporarily banned.', 'webcare-pro-security')
             : esc_html__('Your connection was temporarily held to protect this website against automated abusive traffic or repeated invalid requests.', 'webcare-pro-security');
 
         $appeal_text = $is_warning
             ? esc_html__('Are you a legitimate visitor or customer experiencing an issue? You can reach out directly with this code and we will resolve it immediately.', 'webcare-pro-security')
             : esc_html__('Are you a legitimate customer having trouble checking out or logging in? Share this code with the site owner or support team to restore access in 1 click.', 'webcare-pro-security');
+
+        // Strike counter indicator for progressive warnings
+        $strike_html = '';
+        if ($is_warning) {
+            $pct = intval(($strike_current / max(1, $strike_max)) * 100);
+            $strike_html = sprintf(
+                '<div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 12px 16px; margin: 16px 0;">' .
+                '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; font-size:12px; font-weight:700; color:#b45309;">' .
+                '<span>%1$s %2$d / %3$d</span>' .
+                '<span>%4$d %5$s</span>' .
+                '</div>' .
+                '<div style="width:100%; height:6px; background:#fef3c7; border-radius:3px; overflow:hidden;">' .
+                '<div style="width:%6$d%%; height:100%%; background:#f59e0b; border-radius:3px;"></div>' .
+                '</div>' .
+                '</div>',
+                esc_html__('Security Warning Level:', 'webcare-pro-security'),
+                $strike_current,
+                $strike_max,
+                $strike_remain,
+                esc_html__('attempt(s) remaining before temporary 15-min pause', 'webcare-pro-security'),
+                $pct
+            );
+        }
 
         $message = sprintf(
             '<div style="font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, Oxygen-Sans, Ubuntu, Cantarell, \"Helvetica Neue\", sans-serif; max-width: 620px; margin: 40px auto; line-height: 1.6; color: #1e293b; background: #ffffff; padding: 36px; border-radius: 14px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.06), 0 8px 10px -6px rgba(0,0,0,0.04); border: 1px solid #e2e8f0; %1$s">' .
@@ -3119,30 +3147,31 @@ class FirewallEngine {
             '<p style="margin: 3px 0 0; color: #64748b; font-size: 13px;">%7$s</p>' .
             '</div>' .
             '</div>' .
-            '<p style="font-size: 14px; color: #334155; margin-bottom: 20px;">%8$s</p>' .
-            '<div style="background: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid %9$s; padding: 16px 20px; border-radius: 8px; margin: 20px 0;">' .
-            '<p style="margin: 0 0 6px; font-size: 11px; text-transform: uppercase; font-weight: 700; letter-spacing: 0.05em; color: #64748b;">%10$s</p>' .
+            '%8$s' .
+            '<p style="font-size: 14px; color: #334155; margin-bottom: 20px;">%9$s</p>' .
+            '<div style="background: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid %10$s; padding: 16px 20px; border-radius: 8px; margin: 20px 0;">' .
+            '<p style="margin: 0 0 6px; font-size: 11px; text-transform: uppercase; font-weight: 700; letter-spacing: 0.05em; color: #64748b;">%11$s</p>' .
             '<div style="display: flex; align-items: baseline; gap: 10px;">' .
-            '<span style="font-family: SFMono-Regular, Consolas, monospace; font-size: 24px; font-weight: 800; color: %11$s; letter-spacing: 1px;">%12$s</span>' .
-            '<span style="font-size: 12px; color: #64748b;">(%13$s)</span>' .
+            '<span style="font-family: SFMono-Regular, Consolas, monospace; font-size: 24px; font-weight: 800; color: %12$s; letter-spacing: 1px;">%13$s</span>' .
+            '<span style="font-size: 12px; color: #64748b;">(%14$s)</span>' .
             '</div>' .
-            '<p style="margin: 8px 0 0; font-size: 12px; color: #475569;">%14$s</p>' .
+            '<p style="margin: 8px 0 0; font-size: 12px; color: #475569;">%15$s</p>' .
             '</div>' .
             '<div style="background: #f1f5f9; border: 1px solid #cbd5e1; padding: 12px 16px; border-radius: 8px; margin: 18px 0; font-size: 12px; color: #475569;">' .
-            '<p style="margin: 3px 0;"><strong>%15$s:</strong> <code>%16$s</code></p>' .
-            '<p style="margin: 3px 0;"><strong>%17$s:</strong> <code>%18$s</code></p>' .
-            '<p style="margin: 3px 0;"><strong>%19$s:</strong> <span>%20$s</span></p>' .
-            '<p style="margin: 3px 0;"><strong>%21$s:</strong> <span>%22$s</span></p>' .
+            '<p style="margin: 3px 0;"><strong>%16$s:</strong> <code>%17$s</code></p>' .
+            '<p style="margin: 3px 0;"><strong>%18$s:</strong> <code>%19$s</code></p>' .
+            '<p style="margin: 3px 0;"><strong>%20$s:</strong> <span>%21$s</span></p>' .
+            '<p style="margin: 3px 0;"><strong>%22$s:</strong> <span>%23$s</span></p>' .
             '</div>' .
             '<div style="margin-top: 24px; display: flex; flex-wrap: wrap; gap: 10px; justify-content: center;">' .
-            '<a href="%23$s" style="display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: %24$s; color: #ffffff; padding: 11px 22px; border-radius: 8px; text-decoration: none; font-weight: 700; font-size: 13.5px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">' .
-            '<span>📩</span> %25$s' .
+            '<a href="%24$s" style="display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: %25$s; color: #ffffff; padding: 11px 22px; border-radius: 8px; text-decoration: none; font-weight: 700; font-size: 13.5px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">' .
+            '<span>📩</span> %26$s' .
             '</a>' .
-            '<a href="%26$s" style="display: inline-flex; align-items: center; justify-content: center; gap: 6px; background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; padding: 11px 18px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 13px;">' .
-            '<span>🏠</span> %27$s' .
+            '<a href="%27$s" style="display: inline-flex; align-items: center; justify-content: center; gap: 6px; background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; padding: 11px 18px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 13px;">' .
+            '<span>🏠</span> %28$s' .
             '</a>' .
             '</div>' .
-            '<p style="font-size: 12px; color: #94a3b8; text-align: center; margin-top: 24px;">%28$s</p>' .
+            '<p style="font-size: 12px; color: #94a3b8; text-align: center; margin-top: 24px;">%29$s</p>' .
             '</div>',
             $card_accent,
             $badge_bg,
@@ -3151,6 +3180,7 @@ class FirewallEngine {
             $title_color,
             $headline,
             $subheadline,
+            $strike_html,
             $primary_desc,
             $ref_border,
             esc_html__('Customer Support Reference Code', 'webcare-pro-security'),
