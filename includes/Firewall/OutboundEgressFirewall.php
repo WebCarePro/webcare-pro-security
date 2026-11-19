@@ -169,7 +169,9 @@ class OutboundEgressFirewall {
     }
 
     /**
-     * Ensure cURL transport is prioritized so CURLOPT_RESOLVE DNS pinning is strictly enforced.
+     * Enforce cURL transport across WordPress HTTP API to guarantee CURLOPT_RESOLVE DNS pinning.
+     * Fails closed by returning an empty array if cURL is unavailable, preventing alternative
+     * non-pinning transports (e.g. Streams/fsockopen) from executing unprotected requests.
      *
      * @param array  $transports
      * @param array  $args
@@ -180,7 +182,8 @@ class OutboundEgressFirewall {
         if (extension_loaded('curl') && function_exists('curl_init')) {
             return ['curl'];
         }
-        return $transports;
+        // Fail closed: reject non-pinning fallback transports to prevent TOCTOU DNS rebinding
+        return [];
     }
 
     /**
@@ -499,6 +502,15 @@ class OutboundEgressFirewall {
                         'ip'        => $ssrf_eval['safe_ip'],
                         'timestamp' => time(),
                     ];
+
+                    // Fail-closed verification: Ensure cURL extension is available to enforce CURLOPT_RESOLVE
+                    // If cURL is not loaded, alternative transports cannot guarantee DNS pinning,
+                    // opening a TOCTOU DNS rebinding vulnerability.
+                    if (!extension_loaded('curl') || !function_exists('curl_init')) {
+                        $threat = 'curl_transport_missing';
+                        /* translators: %s: hostname */
+                        $reason = sprintf(__('Outbound request to %s blocked: cURL extension with DNS pinning (CURLOPT_RESOLVE) is required for protected destinations.', 'webcare-pro-security'), $host);
+                    }
                 }
             }
         }

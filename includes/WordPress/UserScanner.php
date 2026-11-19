@@ -80,6 +80,12 @@ class UserScanner {
     public function scan($scan_id, $admins_only = false, string $lease_token = '') {
         global $wpdb;
         $findings = [];
+
+        // Fail-closed: enforce valid lease token whenever running within an active scan lifecycle
+        if (!empty($scan_id) && empty($lease_token)) {
+            throw new \InvalidArgumentException(esc_html__('Valid scan lease token is required for scan-linked user audits.', 'webcare-pro-security'));
+        }
+
         $users_table    = $wpdb->prefix . 'users';
         $usermeta_table = $wpdb->prefix . 'usermeta';
         $posts_table    = $wpdb->prefix . 'posts';
@@ -112,8 +118,8 @@ class UserScanner {
                 number_format(max(1, $total_users_count))
             );
             set_transient("webcareproscan_active_scan_file_{$scan_id}", $status_msg, 120);
-            if (!empty($lease_token)) {
-                \WebCareProScanner\Scan\ScanLock::heartbeat((int) $scan_id, $lease_token);
+            if (!\WebCareProScanner\Scan\ScanLock::heartbeat((int) $scan_id, $lease_token)) {
+                return $findings;
             }
         }
 
@@ -150,8 +156,8 @@ class UserScanner {
                     number_format(max($scanned_users_count, $total_users_count))
                 );
                 set_transient("webcareproscan_active_scan_file_{$scan_id}", $status_msg, 120);
-                if (!empty($lease_token)) {
-                    \WebCareProScanner\Scan\ScanLock::heartbeat((int) $scan_id, $lease_token);
+                if (!\WebCareProScanner\Scan\ScanLock::heartbeat((int) $scan_id, $lease_token)) {
+                    break;
                 }
             }
 
@@ -281,8 +287,8 @@ class UserScanner {
                     number_format(max($user_cap_idx, $total_users_count))
                 );
                 set_transient("webcareproscan_active_scan_file_{$scan_id}", $status_msg, 120);
-                if (!empty($lease_token)) {
-                    \WebCareProScanner\Scan\ScanLock::heartbeat((int) $scan_id, $lease_token);
+                if (!\WebCareProScanner\Scan\ScanLock::heartbeat((int) $scan_id, $lease_token)) {
+                    break;
                 }
             }
 

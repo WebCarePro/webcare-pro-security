@@ -28,10 +28,14 @@ class WordPressSecurityScanner {
      * Run all WordPress security & persistence audits.
      *
      * @param string $scan_id
-     * @param string $lease_token Optional cryptographic lease token.
+     * @param string $lease_token Mandatory cryptographic lease token when run within an active scan.
      * @return Finding[]
      */
-    public function scan($scan_id, string $lease_token = '') {
+    public function scan(string $scan_id, string $lease_token = ''): array {
+        if (!empty($scan_id) && empty($lease_token)) {
+            throw new \InvalidArgumentException(esc_html__('Valid scan lease token is required for security scanner execution.', 'webcare-pro-security'));
+        }
+
         $findings = [];
         $monitor = new ResourceMonitor(80, 20);
 
