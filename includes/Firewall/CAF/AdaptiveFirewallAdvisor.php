@@ -595,8 +595,8 @@ final class AdaptiveFirewallAdvisor {
 			$profile_id = self::PROFILE_BALANCED;
 		}
 
-		update_option( self::OPTION_ACTIVE_PROFILE, $profile_id );
-		update_option( self::OPTION_DORMANT_LOCK, $lock_dormant );
+		update_option( self::OPTION_ACTIVE_PROFILE, $profile_id, false);
+		update_option( self::OPTION_DORMANT_LOCK, $lock_dormant, false);
 
 		// --- Profile-Specific Auto-Enable Logic ---
 		$auto_enabled = [];

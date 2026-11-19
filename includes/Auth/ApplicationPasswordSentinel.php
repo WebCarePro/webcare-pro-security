@@ -701,15 +701,15 @@ class ApplicationPasswordSentinel {
      */
     public static function update_settings(array $params): bool {
         if (isset($params['disabled_globally'])) {
-            update_option(self::OPTION_DISABLED, !empty($params['disabled_globally']) ? 1 : 0);
+            update_option(self::OPTION_DISABLED, !empty($params['disabled_globally']) ? 1 : 0, false);
         }
 
         if (isset($params['admin_only'])) {
-            update_option(self::OPTION_ADMIN_ONLY, !empty($params['admin_only']) ? 1 : 0);
+            update_option(self::OPTION_ADMIN_ONLY, !empty($params['admin_only']) ? 1 : 0, false);
         }
 
         if (isset($params['require_step_up_2fa'])) {
-            update_option(self::OPTION_REQUIRE_STEP_UP, !empty($params['require_step_up_2fa']) ? 1 : 0);
+            update_option(self::OPTION_REQUIRE_STEP_UP, !empty($params['require_step_up_2fa']) ? 1 : 0, false);
         }
 
         if (isset($params['allowed_callback_domains']) && is_array($params['allowed_callback_domains'])) {
@@ -725,7 +725,7 @@ class ApplicationPasswordSentinel {
                     $cleaned[] = $domain;
                 }
             }
-            update_option(self::OPTION_ALLOWED_DOMAINS, array_values(array_unique($cleaned)));
+            update_option(self::OPTION_ALLOWED_DOMAINS, array_values(array_unique($cleaned)), false);
         }
 
         if (class_exists(WebCareActivityLogger::class)) {

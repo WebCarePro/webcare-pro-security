@@ -389,7 +389,7 @@ class CloudflareSlotOptimizer {
                 'total_rules'           => count($final_rules),
                 'reserved_owner_slots'  => $reserved_owner_slots,
                 'origin_survival'       => $origin_survival_active,
-            ]);
+            ], false);
 
             // Synchronize deployed edge rules cache for the Cloudflare settings tab
             $deployed_cache = [];
@@ -404,7 +404,7 @@ class CloudflareSlotOptimizer {
                     'last_synced' => current_time('mysql'),
                 ];
             }
-            update_option(CloudflareService::DEPLOYED_RULES_OPTION, $deployed_cache);
+            update_option(CloudflareService::DEPLOYED_RULES_OPTION, $deployed_cache, false);
 
             return [
                 'success'     => true,

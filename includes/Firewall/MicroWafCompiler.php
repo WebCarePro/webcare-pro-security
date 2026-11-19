@@ -273,7 +273,7 @@ class MicroWafCompiler {
         $bypass_token = get_option('webcareproscan_micro_waf_bypass_token', '');
         if (empty($bypass_token)) {
             $bypass_token = wp_generate_password(32, false, false);
-            update_option('webcareproscan_micro_waf_bypass_token', $bypass_token);
+            update_option('webcareproscan_micro_waf_bypass_token', $bypass_token, false);
         }
 
                 // 4. Compile CAF (Context-Adaptive Firewall) Phase 1 Rules
@@ -389,7 +389,7 @@ class MicroWafCompiler {
             'signatures_count'  => count($compiled_signatures),
             'fail2ban_log'      => $fail2ban_log,
         ];
-        update_option(self::OPTION_STATUS, $status_data);
+        update_option(self::OPTION_STATUS, $status_data, false);
 
         return [
             'success'     => true,
@@ -1206,7 +1206,7 @@ class MicroWafCompiler {
             $detected = trim(!empty($m[1]) ? $m[1] : ($m[2] ?? ''));
             if (!empty($detected) && !str_contains($detected, self::COMPILED_FILE_NAME) && file_exists($detected)) {
                 $chained_file = $detected;
-                update_option('webcareproscan_micro_waf_chained_file', $chained_file);
+                update_option('webcareproscan_micro_waf_chained_file', $chained_file, false);
             }
         }
 
@@ -1526,7 +1526,7 @@ class MicroWafCompiler {
         // Detached HMAC-SHA256 signature wrapped in executable PHP protection
         $salt = self::get_caf_auth_key();
         $hmac = hash_hmac('sha256', $php_code, $salt);
-        update_option(self::OPTION_CAF_HMAC, $hmac);
+        update_option(self::OPTION_CAF_HMAC, $hmac, false);
 
         $sig_code = "<?php\n// WebCare Pro CAF Cryptographic Signature\n\$s_file = isset(\$_SERVER['SCRIPT_FILENAME']) ? (realpath(\$_SERVER['SCRIPT_FILENAME']) ?: \$_SERVER['SCRIPT_FILENAME']) : '';\n\$this_file = realpath(__FILE__) ?: __FILE__;\nif ((\$s_file !== '' && (\$s_file === \$this_file || str_replace('\\\\', '/', \$s_file) === str_replace('\\\\', '/', \$this_file))) || (!defined('ABSPATH') && !defined('WEBCAREPRO_PRELOAD_WAF_ACTIVE'))) {\n    http_response_code(403);\n    exit;\n}\nreturn '" . addslashes($hmac) . "';\n";
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents

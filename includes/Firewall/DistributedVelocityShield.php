@@ -145,7 +145,7 @@ class DistributedVelocityShield {
             'whitelist_ips'                 => $whitelist,
         ];
 
-        update_option(self::OPTION_SETTINGS, $updated);
+        update_option(self::OPTION_SETTINGS, $updated, false);
 
         if (class_exists(WebCareActivityLogger::class)) {
             WebCareActivityLogger::notice(

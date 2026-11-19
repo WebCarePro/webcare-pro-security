@@ -22,7 +22,14 @@ class NotificationDispatcher {
      */
     public static function get_event_catalog(): array {
         return [
-            // Category: Scans
+            // Category: Scans & Vulnerabilities
+            'cve_vulnerability_detected' => [
+                'category'       => 'scans',
+                'category_label' => __('Core Scans & Threats', 'webcare-pro-security'),
+                'title'          => __('Component CVE Vulnerability Detected', 'webcare-pro-security'),
+                'description'    => __('Fires when an installed plugin, theme, or core version matches a known high or critical CVE vulnerability.', 'webcare-pro-security'),
+                'severity'       => 'critical',
+            ],
             'scan_scheduled_complete' => [
                 'category'    => 'scans',
                 'category_label' => __('Core Scans & Threats', 'webcare-pro-security'),

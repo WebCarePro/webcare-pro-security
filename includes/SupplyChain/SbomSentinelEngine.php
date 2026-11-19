@@ -599,7 +599,7 @@ class SbomSentinelEngine {
             'ini_append'      => ini_get('auto_append_file'),
         ];
 
-        update_option(self::OPTION_BASELINE, $baseline);
+        update_option(self::OPTION_BASELINE, $baseline, false);
 
         AuditLogger::log(
             'sbom_baseline_calibrated',

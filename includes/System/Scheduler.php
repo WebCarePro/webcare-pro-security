@@ -12,8 +12,9 @@ if (!defined('ABSPATH')) {
 
 class Scheduler {
     const CRON_HOOK   = 'webcareproscan_scheduled_scan_event';
-    const DIGEST_HOOK = 'webcareproscan_weekly_digest_event';
-    const CANARY_HOOK = 'webcareproscan_redirect_canary_event';
+    const DIGEST_HOOK    = 'webcareproscan_weekly_digest_event';
+    const CANARY_HOOK    = 'webcareproscan_redirect_canary_event';
+    const CVE_AUDIT_HOOK = 'webcareproscan_daily_cve_audit';
 
     public static function register() {
         if (class_exists('\\WebCareProScanner\\System\\Cron\\CronControlCenter')) {
@@ -28,6 +29,9 @@ class Scheduler {
             add_action(self::CANARY_HOOK, static function () {
                 \WebCareProScanner\System\Cron\CronControlCenter::invoke_task_handler(self::CANARY_HOOK, 'wp_cron');
             });
+            add_action(self::CVE_AUDIT_HOOK, static function () {
+                \WebCareProScanner\System\Cron\CronControlCenter::invoke_task_handler(self::CVE_AUDIT_HOOK, 'wp_cron');
+            });
 
             if (class_exists('\\WebCareProScanner\\Firewall\\Modular\\SiteBehavioralAnalyzer')) {
                 \WebCareProScanner\Firewall\Modular\SiteBehavioralAnalyzer::register_cron_hook();
@@ -36,6 +40,7 @@ class Scheduler {
             add_action('init', static function () {
                 \WebCareProScanner\System\Cron\CronControlCenter::ensure_scheduled(self::DIGEST_HOOK, 0, 'weekly');
                 \WebCareProScanner\System\Cron\CronControlCenter::ensure_scheduled(self::CANARY_HOOK, 60, 'webcare_15min');
+                \WebCareProScanner\System\Cron\CronControlCenter::ensure_scheduled(self::CVE_AUDIT_HOOK, HOUR_IN_SECONDS, 'daily');
             }, 20);
             return;
         }
@@ -43,6 +48,7 @@ class Scheduler {
         add_action(self::CRON_HOOK, [__CLASS__, 'run_scheduled_scan']);
         add_action(self::DIGEST_HOOK, [__CLASS__, 'run_weekly_digest']);
         add_action(self::CANARY_HOOK, ['\\WebCareProScanner\\Firewall\\RedirectCanaryEngine', 'run_scheduled_canary']);
+        add_action(self::CVE_AUDIT_HOOK, ['\\WebCareProScanner\\Firewall\\CVEIntelligenceService', 'run_daily_cve_audit']);
         if (class_exists('\\WebCareProScanner\\Firewall\\Modular\\SiteBehavioralAnalyzer')) {
             \WebCareProScanner\Firewall\Modular\SiteBehavioralAnalyzer::register_cron_hook();
         }

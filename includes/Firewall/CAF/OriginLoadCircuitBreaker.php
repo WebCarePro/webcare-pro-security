@@ -210,7 +210,7 @@ class OriginLoadCircuitBreaker {
             'escalation_type'      => $escalation_type,
             'prior_security_level' => $prior_level,
             'auto_managed'         => $auto_managed,
-        ]);
+        ], false);
 
         return true;
     }
@@ -263,7 +263,7 @@ class OriginLoadCircuitBreaker {
             'escalation_type'      => 'none',
             'prior_security_level' => $prior_level,
             'auto_managed'         => false,
-        ]);
+        ], false);
 
         return true;
     }

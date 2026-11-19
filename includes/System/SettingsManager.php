@@ -946,7 +946,7 @@ class SettingsManager {
         $valid_retention = [7, 14, 30, 60, 90, 180, 365, 0];
         $retention_val = (int) ($merged['waf_log_retention_days'] ?? 60);
         $clean['waf_log_retention_days'] = in_array($retention_val, $valid_retention, true) ? $retention_val : 60;
-        update_option(\WebCareProScanner\Firewall\WafFileLogger::RETENTION_OPTION, $clean['waf_log_retention_days']);
+        update_option(\WebCareProScanner\Firewall\WafFileLogger::RETENTION_OPTION, $clean['waf_log_retention_days'], false);
 
         // 9. Cloud Threat Intelligence & Community Blacklists
         $clean['threat_intel_enabled']               = !empty($merged['threat_intel_enabled']);
@@ -1254,7 +1254,7 @@ class SettingsManager {
         // Compute settings diff before persisting
         $diff = self::compute_settings_diff($current, $clean);
 
-        update_option(self::OPTION_KEY, $clean);
+        update_option(self::OPTION_KEY, $clean, false);
 
         // Synchronize Cron Schedule
         self::sync_cron_schedule($clean);
@@ -1615,7 +1615,7 @@ class SettingsManager {
      */
     public static function reset_defaults(): array {
         $defaults = self::get_defaults();
-        update_option(self::OPTION_KEY, $defaults);
+        update_option(self::OPTION_KEY, $defaults, false);
         self::sync_cron_schedule($defaults);
         return self::get_settings();
     }

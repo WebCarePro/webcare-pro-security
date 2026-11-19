@@ -840,4 +840,113 @@ class CVEIntelligenceService {
         set_transient($transient_key, $version, 604800); // Cache 7 days
         return $version;
     }
+
+    /**
+     * Perform an automated daily CVE audit across all installed WordPress Core, plugins, and themes.
+     * Caches inventory and findings in vault/cve-inventory.json and notifies on new/unpatched CVEs.
+     *
+     * @param bool $force_notification
+     * @return array<string, mixed>
+     */
+    public static function run_daily_cve_audit(bool $force_notification = false): array {
+        if (!function_exists('get_plugins')) {
+            require_once ABSPATH . 'wp-admin/includes/plugin.php';
+        }
+
+        $all_plugins = get_plugins();
+        $catalog     = VirtualPatchManager::get_patch_catalog();
+        $findings    = [];
+        $scanned_count = 0;
+
+        // 1. Audit against local Virtual Patch Catalog (verified critical/high WordPress zero-days & CVEs)
+        foreach ($catalog as $cve_id => $patch) {
+            $comp_slug = (string) ($patch['component'] ?? '');
+            $comp_type = ($comp_slug === 'wordpress-core') ? 'core' : 'plugin';
+            $corr = self::correlate_component(
+                $comp_slug,
+                (string) ($patch['title'] ?? ''),
+                (string) ($patch['description'] ?? ''),
+                $comp_type
+            );
+
+            if (!empty($corr['installed'])) {
+                $scanned_count++;
+                if (($corr['status'] ?? '') === 'vulnerable') {
+                    $findings[$cve_id] = [
+                        'cve_id'         => $cve_id,
+                        'title'          => $patch['title'] ?? $cve_id,
+                        'severity'       => $patch['severity'] ?? 'high',
+                        'component_type' => $corr['component_type'] ?? 'plugin',
+                        'component_name' => $corr['name'] ?? $comp_slug,
+                        'installed_ver'  => $corr['version'] ?? 'unknown',
+                        'description'    => $patch['description'] ?? '',
+                        'patch_available'=> true,
+                    ];
+                }
+            }
+        }
+
+        // 2. Read previous inventory from vault/cve-inventory.json to compute smart diff
+        $vault_dir = \WebCareProScanner\Firewall\Core\WafVaultManager::get_vault_dir();
+        $inv_file  = $vault_dir . '/cve-inventory.json';
+        $prev_data = [];
+        if (file_exists($inv_file)) {
+            $raw_prev = @file_get_contents($inv_file);
+            if ($raw_prev) {
+                $decoded = json_decode($raw_prev, true);
+                if (is_array($decoded) && isset($decoded['findings']) && is_array($decoded['findings'])) {
+                    $prev_data = $decoded['findings'];
+                }
+            }
+        }
+
+        $new_cves = [];
+        foreach ($findings as $cve_id => $item) {
+            if (!isset($prev_data[$cve_id])) {
+                $new_cves[$cve_id] = $item;
+            }
+        }
+
+        // 3. Save new snapshot to vault
+        $now = time();
+        $snapshot = [
+            'last_audit'       => $now,
+            'audited_at'       => gmdate('Y-m-d H:i:s', $now),
+            'scanned_count'    => $scanned_count,
+            'vulnerable_count' => count($findings),
+            'findings'         => $findings,
+        ];
+        // phpcs:ignore WordPress.WP.AlternativeFileSystem.file_put_contents_file_put_contents
+        @file_put_contents($inv_file, (string) wp_json_encode($snapshot, JSON_PRETTY_PRINT), LOCK_EX);
+
+        // 4. Smart notification dispatch: only send when new CVEs appear or if forced
+        $should_notify = $force_notification || !empty($new_cves);
+        if ($should_notify && !empty($findings)) {
+            if (class_exists('\\WebCareProScanner\\Notifications\\NotificationDispatcher')) {
+                $notify_items = !empty($new_cves) ? $new_cves : $findings;
+                $lines = [];
+                foreach ($notify_items as $cve_id => $info) {
+                    $lines[] = sprintf('• [%s] %s in %s (Installed: v%s)', strtoupper($info['severity']), $cve_id, $info['component_name'], $info['installed_ver']);
+                }
+                \WebCareProScanner\Notifications\NotificationDispatcher::trigger('cve_vulnerability_detected', [
+                    'title'    => sprintf(__('Security Alert: %d Vulnerable Component(s) Detected', 'webcare-pro-security'), count($notify_items)),
+                    'message'  => implode("\n", $lines),
+                    'severity' => 'critical',
+                    'details'  => [
+                        'vulnerabilities' => $notify_items,
+                        'total'           => count($findings),
+                    ],
+                ]);
+            }
+        }
+
+        return [
+            'success'          => true,
+            'scanned_count'    => $scanned_count,
+            'vulnerable_count' => count($findings),
+            'new_cves_count'   => count($new_cves),
+            'findings'         => $findings,
+            'new_cves'         => $new_cves,
+        ];
+    }
 }

@@ -65,7 +65,7 @@ class LearningModeEngine {
             'auto_tune_admin_benign'    => isset($new_settings['auto_tune_admin_benign']) ? !empty($new_settings['auto_tune_admin_benign']) : !empty($current['auto_tune_admin_benign']),
             'graduation_confidence'     => max(50, min(99, intval($new_settings['graduation_confidence'] ?? 85))),
         ];
-        update_option(self::OPTION_SETTINGS, $updated);
+        update_option(self::OPTION_SETTINGS, $updated, false);
 
         // Audit Trail: Log behavioral learning settings change
         $diff = \WebCareProScanner\System\SettingsManager::compute_settings_diff($current, $updated);

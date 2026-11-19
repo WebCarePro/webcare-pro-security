@@ -156,7 +156,7 @@ class HIBPBreachAuditor {
             'accounts'       => $audit_results,
         ];
 
-        update_option(self::OPTION_AUDIT_REPORT, $report);
+        update_option(self::OPTION_AUDIT_REPORT, $report, false);
         return $report;
     }
 
@@ -251,6 +251,6 @@ class HIBPBreachAuditor {
             $stats['breached_blocked']++;
         }
         $stats['last_check_time'] = time();
-        update_option(self::OPTION_STATS, $stats);
+        update_option(self::OPTION_STATS, $stats, false);
     }
 }

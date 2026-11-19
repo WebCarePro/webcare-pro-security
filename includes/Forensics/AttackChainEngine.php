@@ -795,7 +795,7 @@ class AttackChainEngine {
                     $actions_taken[] = sprintf(__('Blocked threat IP in WAF: %s', 'webcare-pro-security'), $ip);
                 }
             }
-            update_option('webcareproscan_firewall_blacklist_ips', implode("\n", $blocked_lines));
+            update_option('webcareproscan_firewall_blacklist_ips', implode("\n", $blocked_lines), false);
         }
 
         // 6. Auto-reconcile open scan issues associated with these quarantined files

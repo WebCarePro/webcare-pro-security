@@ -536,7 +536,7 @@ final class HtaccessVaultManager {
 
         $perms = $locked ? 0444 : 0644;
         $res   = self::safe_chmod($htaccess_path, $perms);
-        update_option(self::OPTION_READONLY_LOCK, (bool) $locked);
+        update_option(self::OPTION_READONLY_LOCK, (bool) $locked, false);
         return $res;
     }
 

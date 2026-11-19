@@ -179,6 +179,24 @@ class Plugin {
                 }
             });
 
+            \WP_CLI::add_command('webcare cve scan', static function ($args, $assoc_args): void {
+                $force = !empty($assoc_args['force']);
+                \WP_CLI::line('Executing WebCare Pro Daily CVE Component Intelligence Audit...');
+                $res = \WebCareProScanner\Firewall\CVEIntelligenceService::run_daily_cve_audit($force);
+                $vuln = (int) ($res['vulnerable_count'] ?? 0);
+                $scanned = (int) ($res['scanned_count'] ?? 0);
+                $new = (int) ($res['new_cves_count'] ?? 0);
+
+                if ($vuln > 0) {
+                    \WP_CLI::warning(sprintf('Audit complete: %d vulnerable component(s) found across %d scanned (%d new).', $vuln, $scanned, $new));
+                    foreach ($res['findings'] as $cve_id => $info) {
+                        \WP_CLI::line(sprintf('  • [%s] %s: %s (Installed: v%s)', strtoupper($info['severity']), $cve_id, $info['component_name'], $info['installed_ver']));
+                    }
+                } else {
+                    \WP_CLI::success(sprintf('Audit complete: All %d component(s) scanned are clean or patched. Zero vulnerable CVEs found.', $scanned));
+                }
+            });
+
             \WP_CLI::add_command('webcare waf simulate', static function ($args, $assoc_args): void {
                 $uri = isset($args[0]) ? (string) $args[0] : (isset($assoc_args['uri']) ? (string) $assoc_args['uri'] : '/');
                 $method = isset($assoc_args['method']) ? strtoupper((string) $assoc_args['method']) : 'GET';

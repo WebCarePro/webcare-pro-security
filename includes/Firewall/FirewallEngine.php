@@ -3211,17 +3211,11 @@ class FirewallEngine {
             $top_rules    = array_slice($file_stats['top_categories'] ?? [], 0, 5);
         }
 
-        // Fast O(1) lifetime persistent counter in wp_options
-        $lifetime_counter = get_option('webcareproscan_lifetime_blocked_counter', false);
-        if ($lifetime_counter === false) {
+        // Fast O(1) lifetime persistent counter via Vault JSON (zero SQL overhead)
+        $vault_stats      = \WebCareProScanner\Firewall\Core\WafVaultManager::get_stats_summary();
+        $lifetime_counter = $vault_stats['lifetime_blocked'];
+        if ($lifetime_counter < $blocks_today) {
             $lifetime_counter = $blocks_today;
-            update_option('webcareproscan_lifetime_blocked_counter', $lifetime_counter, false);
-        } else {
-            $lifetime_counter = (int) $lifetime_counter;
-            if ($lifetime_counter < $blocks_today) {
-                $lifetime_counter = $blocks_today;
-                update_option('webcareproscan_lifetime_blocked_counter', $lifetime_counter, false);
-            }
         }
 
         $total_blocks = $lifetime_counter;

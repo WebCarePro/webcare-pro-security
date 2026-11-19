@@ -66,7 +66,7 @@ class SessionForensicsEngine {
             'detect_ua_hijack'              => !empty($new_settings['detect_ua_hijack']),
             'notify_admin_on_suspicious'    => !empty($new_settings['notify_admin_on_suspicious']),
         ];
-        update_option(self::OPTION_SETTINGS, $updated);
+        update_option(self::OPTION_SETTINGS, $updated, false);
 
         // Audit Trail: Log Session Sentinel policy change
         $diff = \WebCareProScanner\System\SettingsManager::compute_settings_diff($current, $updated);
@@ -336,7 +336,7 @@ class SessionForensicsEngine {
         if (count($alerts) > 50) {
             $alerts = array_slice($alerts, 0, 50);
         }
-        update_option(self::OPTION_TRAVEL_ALERTS, $alerts);
+        update_option(self::OPTION_TRAVEL_ALERTS, $alerts, false);
 
         AuditLogger::log(
             'impossible_travel_detected',
@@ -562,7 +562,7 @@ class SessionForensicsEngine {
                     break;
                 }
             }
-            update_option(self::OPTION_TRAVEL_ALERTS, $alerts);
+            update_option(self::OPTION_TRAVEL_ALERTS, $alerts, false);
         }
         return ['success' => true];
     }

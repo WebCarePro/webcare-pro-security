@@ -189,7 +189,7 @@ class Migration {
         }
 
         if ($all_created) {
-            update_option('webcareproscan_db_version', '1.13.0');
+            update_option('webcareproscan_db_version', '1.13.0', false);
         }
     }
 }

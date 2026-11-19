@@ -115,7 +115,7 @@ class AdaptiveRateLimiter {
             'enable_auto_escalation' => false,
         ];
 
-        update_option(self::OPTION_SETTINGS, $updated);
+        update_option(self::OPTION_SETTINGS, $updated, false);
 
         $diff = SettingsManager::compute_settings_diff($current, $updated);
         if (!empty($diff) && class_exists('\WebCareProScanner\System\WebCareActivityLogger')) {

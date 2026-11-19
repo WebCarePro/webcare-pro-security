@@ -1207,7 +1207,7 @@ class CloudflareService {
             'action'             => $action,
             'path'               => $saved_path_string,
             'bypass_ips'         => $bypass_ips,
-        ]);
+        ], false);
 
         $existing_res = self::request("zones/{$zone_id}/rulesets/phases/http_ratelimit/entrypoint");
         $preserved_rules = [];
@@ -1299,7 +1299,7 @@ class CloudflareService {
                         'action'             => $action,
                         'path'               => $saved_path_string,
                         'bypass_ips'         => $bypass_ips,
-                    ]);
+                    ], false);
 
                     return [
                         'success' => true,

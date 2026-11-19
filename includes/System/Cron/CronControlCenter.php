@@ -805,6 +805,18 @@ class CronControlCenter {
                             'metrics' => ['pruned_files' => $pruned, 'retention_days' => $days],
                         ];
 
+                    case 'webcareproscan_daily_cve_audit':
+                        $force_notify = ($trigger_source === 'manual_admin');
+                        $cve_result   = \WebCareProScanner\Firewall\CVEIntelligenceService::run_daily_cve_audit($force_notify);
+                        $vuln_count   = (int) ($cve_result['vulnerable_count'] ?? 0);
+                        $scanned_c    = (int) ($cve_result['scanned_count'] ?? 0);
+                        return [
+                            'status'  => 'success',
+                            /* translators: 1: vulnerable components count, 2: total components audited */
+                            'summary' => sprintf(__('Audited %2$d installed component(s); %1$d vulnerability finding(s) detected.', 'webcare-pro-security'), $vuln_count, $scanned_c),
+                            'metrics' => $cve_result,
+                        ];
+
                     case 'webcareproscan_weekly_digest_event':
                         $force = ($trigger_source === 'manual_admin');
                         $sent  = Scheduler::run_weekly_digest($force);

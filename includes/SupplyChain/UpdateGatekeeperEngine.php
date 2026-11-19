@@ -131,7 +131,7 @@ class UpdateGatekeeperEngine {
             'auto_snapshot_updates'  => !empty($new_settings['auto_snapshot_updates']),
             'max_snapshots'          => max(3, min(30, intval($new_settings['max_snapshots'] ?? 10))),
         ];
-        update_option(self::OPTION_SETTINGS, $updated);
+        update_option(self::OPTION_SETTINGS, $updated, false);
 
         // Audit Trail: Log Update Gatekeeper settings change
         $diff = \WebCareProScanner\System\SettingsManager::compute_settings_diff($current, $updated);

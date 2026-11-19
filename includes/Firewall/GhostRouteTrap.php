@@ -191,12 +191,7 @@ class GhostRouteTrap {
             exit;
         }
 
-        // 1. Record catch telemetry
-        $catches = get_option(self::OPTION_CATCHES, []);
-        if (!is_array($catches)) {
-            $catches = [];
-        }
-
+        // 1. Record catch telemetry directly to append-only Vault JSON (P-02: zero SQL overhead)
         $event = [
             'id'             => 'ghost_' . gmdate('Ymd_His') . '_' . bin2hex(random_bytes(3)),
             'ip'             => $ip,
@@ -207,11 +202,7 @@ class GhostRouteTrap {
             'action_taken'   => !empty($settings['block_client_ip']) ? 'blocked' : 'logged',
         ];
 
-        array_unshift($catches, $event);
-        if (count($catches) > 100) {
-            $catches = array_slice($catches, 0, 100);
-        }
-        update_option(self::OPTION_CATCHES, $catches, false);
+        \WebCareProScanner\Firewall\Core\WafVaultManager::record_ghost_catch($event);
 
         // 2. Forensic Incident Logging
         if (class_exists('\\WebCareProScanner\\Firewall\\WafFileLogger')) {
@@ -244,10 +235,10 @@ class GhostRouteTrap {
             );
         }
 
-        // 5. Artificial delay if tarpit duration is configured
-        if (!empty($settings['tarpit_duration']) && $settings['tarpit_duration'] > 0) {
-            sleep((int) $settings['tarpit_duration']);
-        }
+        // 5. Respond immediately without blocking PHP workers (P-01: eliminate sleep tarpit self-DoS)
+        // Rate-limiting / slow tarpits should be offloaded to Cloudflare Edge or edge proxies.
+        $retry_after = !empty($settings['tarpit_duration']) ? max(10, (int) $settings['tarpit_duration']) : 60;
+        header('Retry-After: ' . $retry_after);
 
         // 6. Terminate request with 403 Forbidden payload
         status_header(403);
@@ -297,10 +288,7 @@ class GhostRouteTrap {
      */
     public static function get_status(): array {
         $settings = self::get_settings();
-        $catches  = get_option(self::OPTION_CATCHES, []);
-        if (!is_array($catches)) {
-            $catches = [];
-        }
+        $catches  = \WebCareProScanner\Firewall\Core\WafVaultManager::get_ghost_catches(100);
 
         return [
             'enabled'              => !empty($settings['enabled']),

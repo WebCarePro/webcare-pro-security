@@ -170,7 +170,7 @@ class HoneyTokenEngine {
             'enable_canary_admin'      => $canary_admin,
             'enable_honey_options'     => $honey_options,
         ];
-        update_option(self::OPTION_SETTINGS, $updated);
+        update_option(self::OPTION_SETTINGS, $updated, false);
 
         if ($canary_admin) {
             self::ensure_canary_admin_seeded();

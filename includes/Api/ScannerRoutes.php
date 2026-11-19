@@ -442,16 +442,16 @@ class ScannerRoutes {
                         }
                     }
                 }
-                update_option('webcareproscan_ip_whitelist', $sanitized_whitelist);
+                update_option('webcareproscan_ip_whitelist', $sanitized_whitelist, false);
             }
 
             if ($whitelist_updated) {
-                update_option('webcareproscan_waf_whitelisted_ips', implode("\n", array_unique($ip_lines)));
+                update_option('webcareproscan_waf_whitelisted_ips', implode("\n", array_unique($ip_lines)), false);
             }
 
             // 2. Archetype & Profile
             $archetype = sanitize_key($params['archetype'] ?? 'business');
-            update_option('webcareproscan_site_archetype', $archetype);
+            update_option('webcareproscan_site_archetype', $archetype, false);
 
             // 3. Firewall Toggles & Archetype Smart Rules
             $waf_settings = get_option('webcareproscan_waf_settings', []);
@@ -497,7 +497,7 @@ class ScannerRoutes {
                         $waf_settings[$k] = max($bounds[0], min($bounds[1], (int) $fs[$k]));
                     }
                 }
-                update_option('webcareproscan_waf_settings', $waf_settings);
+                update_option('webcareproscan_waf_settings', $waf_settings, false);
 
                 // Map high-level wizard switches to exact SettingsManager keys
                 if (isset($fs['waf_block_uploads_exec'])) {
@@ -807,7 +807,7 @@ class ScannerRoutes {
                 $notif_settings['notify_critical'] = !empty($params['alerts']['notify_critical']);
                 $notif_settings['notify_logins']   = !empty($params['alerts']['notify_logins']);
                 $notif_settings['notify_panic']    = !empty($params['alerts']['notify_panic']);
-                update_option('webcareproscan_notification_settings', $notif_settings);
+                update_option('webcareproscan_notification_settings', $notif_settings, false);
 
                 // Also save to SettingsManager for webhook dispatch
                 $webhook_updates = [
@@ -838,13 +838,13 @@ class ScannerRoutes {
 
             // 9. Save Step Progress & Completion Status
             if (!empty($params['current_step'])) {
-                update_option('webcareproscan_wizard_current_step', max(1, min(14, intval($params['current_step']))));
+                update_option('webcareproscan_wizard_current_step', max(1, min(14, intval($params['current_step']))), false);
             }
             if (!empty($params['wizard_mode'])) {
-                update_option('webcareproscan_wizard_mode', sanitize_key($params['wizard_mode']));
+                update_option('webcareproscan_wizard_mode', sanitize_key($params['wizard_mode']), false);
             }
             if (empty($params['is_intermediate_step'])) {
-                update_option('webcareproscan_wizard_completed', true);
+                update_option('webcareproscan_wizard_completed', true, false);
             }
         } finally {
             if (class_exists('\\WebCareProScanner\\System\\WebCareActivityLogger')) {

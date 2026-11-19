@@ -264,10 +264,9 @@ class WafFileLogger {
 
         self::append_record_to_file($incident_record);
 
-        // Maintain atomic O(1) lifetime blocked incidents counter in wp_options to eliminate multi-file scan overhead
+        // Maintain atomic O(1) lifetime blocked incidents counter in Vault JSON (zero SQL overhead)
         if ($action === 'blocked') {
-            $prev_c = (int) get_option('webcareproscan_lifetime_blocked_counter', 0);
-            update_option('webcareproscan_lifetime_blocked_counter', $prev_c + 1, false);
+            \WebCareProScanner\Firewall\Core\WafVaultManager::increment_blocked_counter(1);
         }
 
         return $incident_id;
@@ -309,6 +308,9 @@ class WafFileLogger {
 
         // phpcs:ignore WordPress.WP.AlternativeFileSystem.file_put_contents_file_put_contents
         $bytes = @file_put_contents($filepath, $json_line . "\n", FILE_APPEND | LOCK_EX);
+        if ($bytes !== false) {
+            \WebCareProScanner\Firewall\Core\WafVaultManager::update_daily_index($record);
+        }
         return $bytes !== false;
     }
 
@@ -415,6 +417,9 @@ class WafFileLogger {
         }
 
         $all_matched = [];
+        $is_export   = !empty($filters['is_export']);
+        $max_needed  = $is_export ? 25000 : ($offset + $limit + 100);
+        $total_found = 0;
 
         foreach ($files_to_read as $filepath) {
             if (!file_exists($filepath) || !is_readable($filepath)) {
@@ -443,7 +448,10 @@ class WafFileLogger {
                     continue;
                 }
 
-                $all_matched[] = $record;
+                $total_found++;
+                if (count($all_matched) < $max_needed) {
+                    $all_matched[] = $record;
+                }
             }
 
             // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose -- Stream resource cleanup
@@ -483,9 +491,10 @@ class WafFileLogger {
                 'hostname'         => '',
             ];
             $all_matched[] = $synthetic;
+            $total_found++;
         }
 
-        $total = count($all_matched);
+        $total = max($total_found, count($all_matched));
 
         // Preserve stream arrival sequence for deterministic tie-breaking on identical timestamps
         foreach ($all_matched as $idx => &$entry) {
@@ -998,7 +1007,7 @@ class WafFileLogger {
         if (!in_array($days, $valid_options, true)) {
             $days = self::DEFAULT_RETENTION_DAYS;
         }
-        $updated = update_option(self::RETENTION_OPTION, $days);
+        $updated = update_option(self::RETENTION_OPTION, $days, false);
         $settings = \WebCareProScanner\System\SettingsManager::get_settings();
         $settings['waf_log_retention_days'] = $days;
         \WebCareProScanner\System\SettingsManager::save_settings($settings);

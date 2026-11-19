@@ -199,7 +199,7 @@ class MCPSnapshotManager {
                     $raw[$k] = $v;
                 }
             }
-            update_option(SettingsManager::OPTION_KEY, $raw);
+            update_option(SettingsManager::OPTION_KEY, $raw, false);
             $applied[] = 'settings_subset';
         }
 

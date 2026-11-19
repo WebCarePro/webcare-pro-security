@@ -213,7 +213,7 @@ class GeoShieldService {
             }
         }
 
-        update_option(self::BASELINE_OPTION, $baselines);
+        update_option(self::BASELINE_OPTION, $baselines, false);
 
         return [
             'success'   => true,
