@@ -4126,7 +4126,15 @@ class ScannerRoutes {
         $scan_id = (int) $wpdb->insert_id;
 
         // Acquire lock
-        ScanLock::acquire($scan_id);
+        if (!ScanLock::acquire($scan_id)) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            $wpdb->delete($table_scans, ['id' => $scan_id]);
+            return new \WP_Error(
+                'scan_locked',
+                __('A security scan is currently running in another process or held by a concurrent lock.', 'webcare-pro-security'),
+                ['status' => 409]
+            );
+        }
 
         // Initialize high-performance streaming session queue on disk
         $total_files = 0;
@@ -4168,8 +4176,14 @@ class ScannerRoutes {
         $batch_start = microtime(true);
         $batch_ru_start = function_exists('getrusage') ? @getrusage() : null;
 
-        // Update lock heartbeat
-        ScanLock::heartbeat($scan_id);
+        // Acquire per-batch mutex and verify active scan lease
+        if (!ScanLock::acquire_batch_lock($scan_id)) {
+            return new \WP_Error(
+                'scan_lock_conflict',
+                __('Concurrent scan batch execution rejected or active scan lease not held.', 'webcare-pro-security'),
+                ['status' => 409]
+            );
+        }
 
         // Initialize Dynamic Resource Governor
         $governor = new \WebCareProScanner\Resource\ResourceMonitor(70, 18, 'balanced');
@@ -4190,6 +4204,7 @@ class ScannerRoutes {
             );
             if ($scan_exists) {
                 \WebCareProScanner\Scan\ScanQueueManager::cleanup($scan_id);
+                ScanLock::release_batch_lock();
                 return rest_ensure_response([
                     'success'     => true,
                     'is_finished' => true,
@@ -4198,6 +4213,7 @@ class ScannerRoutes {
                     'last_file'   => '',
                 ]);
             }
+            ScanLock::release_batch_lock();
             return new \WP_Error('scan_not_found', 'Scan queue expired or not found', ['status' => 404]);
         }
 
@@ -4330,6 +4346,8 @@ class ScannerRoutes {
             $governor
         );
         set_transient("webcareproscan_scan_live_telemetry_{$scan_id}", $telemetry, 600);
+
+        ScanLock::release_batch_lock();
 
         return rest_ensure_response([
             'success'        => true,

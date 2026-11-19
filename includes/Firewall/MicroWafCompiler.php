@@ -231,7 +231,7 @@ class MicroWafCompiler {
         // 2. High-confidence zero-false-positive attack signatures for early drop
         $compiled_signatures = [
             'SQLI-CORE' => [
-                'pattern' => '/(?:(?:^|[^a-z_]|[\d.eE])union\s+(?:all\s+)?select\b|\bselect\b.{1,40}\bfrom\b.{1,40}\b[a-z0-9_]+_users\b|\b(?:benchmark|sleep|pg_sleep|get_lock)\s*\(|\binformation_schema\b|;\s*(?:drop|alter|truncate)\s+table\b)/i',
+                'pattern' => '/(?:(?:^|[^a-z_]|[\d.eE])union\s+(?:all\s+)?select\b|\bselect\b.{1,40}\bfrom\b.{1,40}\b[a-z0-9_]+_users\b|\b(?:benchmark|sleep|pg_sleep|get_lock)\s*\(|\binformation_schema\b|;\s*(?:(?:drop|alter|truncate)\s+(?:table|database|procedure|function|trigger|view)|delete\s+from|insert\s+into|update\s+[a-z0-9_]+\s+set)\b)/i',
                 'desc'    => 'High-Confidence SQL Injection Probe',
             ],
             'RCE-EXEC' => [
@@ -1506,7 +1506,7 @@ class MicroWafCompiler {
         $hmac = hash_hmac('sha256', $php_code, $salt);
         update_option(self::OPTION_CAF_HMAC, $hmac);
 
-        $sig_code = "<?php\n// WebCare Pro CAF Cryptographic Signature\nif (!defined('ABSPATH') && !defined('WEBCAREPRO_PRELOAD_WAF_ACTIVE')) {\n    http_response_code(403);\n    exit;\n}\nreturn '" . addslashes($hmac) . "';\n";
+        $sig_code = "<?php\n// WebCare Pro CAF Cryptographic Signature\n\$s_file = isset(\$_SERVER['SCRIPT_FILENAME']) ? basename(\$_SERVER['SCRIPT_FILENAME']) : '';\nif (\$s_file === basename(__FILE__) || (!defined('ABSPATH') && !defined('WEBCAREPRO_PRELOAD_WAF_ACTIVE'))) {\n    http_response_code(403);\n    exit;\n}\nreturn '" . addslashes($hmac) . "';\n";
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
         file_put_contents($sig_file, $sig_code, LOCK_EX);
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod
