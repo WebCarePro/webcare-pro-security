@@ -27,25 +27,25 @@ final class FirewallController extends AbstractApiController {
     public static function register(string $namespace, callable $permission): void {
         register_rest_route($namespace, '/firewall/status', [
             'methods'             => 'GET',
-            'callback'            => [\WebCareProScanner\Api\ScannerRoutes::class, 'get_firewall_status'],
+            'callback'            => [self::class, 'get_firewall_status'],
             'permission_callback' => $permission,
         ]);
 
         register_rest_route($namespace, '/firewall/logs', [
             'methods'             => 'GET',
-            'callback'            => [\WebCareProScanner\Api\ScannerRoutes::class, 'get_firewall_logs'],
+            'callback'            => [self::class, 'get_firewall_logs'],
             'permission_callback' => $permission,
         ]);
 
         register_rest_route($namespace, '/firewall/logs/stats', [
             'methods'             => 'GET',
-            'callback'            => [\WebCareProScanner\Api\ScannerRoutes::class, 'get_firewall_log_stats'],
+            'callback'            => [self::class, 'get_firewall_log_stats'],
             'permission_callback' => $permission,
         ]);
 
         register_rest_route($namespace, '/firewall/logs/files', [
             'methods'             => 'GET',
-            'callback'            => [\WebCareProScanner\Api\ScannerRoutes::class, 'get_firewall_log_files'],
+            'callback'            => [self::class, 'get_firewall_log_files'],
             'permission_callback' => $permission,
         ]);
 
@@ -351,5 +351,67 @@ final class FirewallController extends AbstractApiController {
             'permission_callback' => $permission,
         ]);
 
+    }
+
+    public static function get_firewall_status(): \WP_REST_Response {
+        return rest_ensure_response(\WebCareProScanner\Firewall\FirewallEngine::get_status());
+    }
+
+    public static function get_firewall_logs(\WP_REST_Request $request): \WP_REST_Response {
+        $limit       = (int) ($request->get_param('limit') ?: 50);
+        $offset      = (int) ($request->get_param('offset') ?: 0);
+        $range       = sanitize_key((string) ($request->get_param('range') ?: 'today'));
+        $date        = sanitize_text_field((string) ($request->get_param('date') ?: ''));
+        $search      = sanitize_text_field((string) ($request->get_param('search') ?: ''));
+        $category    = sanitize_text_field((string) ($request->get_param('category') ?: ''));
+        $action      = sanitize_text_field((string) ($request->get_param('action') ?: ''));
+        $method      = sanitize_text_field((string) ($request->get_param('method') ?: ''));
+        $ip          = sanitize_text_field((string) ($request->get_param('ip') ?: ''));
+        $status_code = sanitize_text_field((string) ($request->get_param('status_code') ?: ''));
+        $sort_by     = sanitize_key((string) ($request->get_param('sort_by') ?: 'created_at'));
+        $sort_order  = strtolower(sanitize_key((string) ($request->get_param('sort_order') ?: 'desc')));
+        $is_export   = !empty($request->get_param('is_export'));
+        $include_system_info = !empty($request->get_param('include_system_info'));
+
+        $filters = array_filter([
+            'range'       => $range,
+            'date'        => $date,
+            'search'      => $search,
+            'category'    => $category,
+            'action'      => $action,
+            'method'      => $method,
+            'ip'          => $ip,
+            'status_code' => $status_code,
+            'sort_by'     => $sort_by,
+            'sort_order'  => $sort_order,
+            'is_export'   => $is_export,
+        ]);
+
+        $res = \WebCareProScanner\Firewall\FirewallEngine::get_logs($limit, $offset, $filters);
+        $res['current_client_ip'] = \WebCareProScanner\Firewall\FirewallEngine::get_client_ip();
+        $res['retention_days']    = \WebCareProScanner\Firewall\WafFileLogger::get_retention_days();
+        $res['active_range']      = $range;
+
+        if ($include_system_info && class_exists('\\WebCareProScanner\\System\\TelemetrySnapshot')) {
+            $res['environment_snapshot'] = \WebCareProScanner\System\TelemetrySnapshot::get_snapshot();
+        }
+
+        return rest_ensure_response($res);
+    }
+
+    public static function get_firewall_log_stats(\WP_REST_Request $request): \WP_REST_Response {
+        $range = sanitize_key((string) ($request->get_param('range') ?: 'today'));
+        return rest_ensure_response([
+            'stats'          => \WebCareProScanner\Firewall\FirewallEngine::get_log_stats($range),
+            'retention_days' => \WebCareProScanner\Firewall\WafFileLogger::get_retention_days(),
+        ]);
+    }
+
+    public static function get_firewall_log_files(): \WP_REST_Response {
+        return rest_ensure_response([
+            'files'          => \WebCareProScanner\Firewall\WafFileLogger::get_available_files(),
+            'storage_dir'    => \WebCareProScanner\Firewall\WafFileLogger::get_storage_dir(),
+            'retention_days' => \WebCareProScanner\Firewall\WafFileLogger::get_retention_days(),
+        ]);
     }
 }
