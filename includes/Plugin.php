@@ -63,24 +63,41 @@ class Plugin {
         // Route-Gated Micro-Kernel Booting for zero-waste loading
         $route_class = \WebCareProScanner\Core\RouteClassifier::classify($_SERVER);
         $manifest = \WebCareProScanner\Core\CompiledStackManifest::load();
-        $is_editorial_or_public_get = ($route_class === \WebCareProScanner\Contracts\RouteClass::PublicGet);
 
-        // Subsystems only booted when surface matches or in admin/cron/cli context
-        if ($route_class === \WebCareProScanner\Contracts\RouteClass::AuthLogin || $is_admin || $is_cli) {
+        $has_auth_cookie = !empty($_COOKIE) && (bool) array_filter(
+            array_keys($_COOKIE),
+            static fn(string $k): bool => str_starts_with($k, 'wordpress_logged_in_')
+        );
+        $is_xmlrpc = str_contains(strtolower((string) ($_SERVER['REQUEST_URI'] ?? '')), 'xmlrpc.php');
+
+        // Auth guards: boot on wp-login, WooCommerce/Membership login surfaces, XML-RPC, REST, Admin, CLI
+        if (
+            in_array($route_class, [
+                \WebCareProScanner\Contracts\RouteClass::AuthLogin,
+                \WebCareProScanner\Contracts\RouteClass::Membership,
+                \WebCareProScanner\Contracts\RouteClass::Commerce,
+                \WebCareProScanner\Contracts\RouteClass::RestApi,
+            ], true)
+            || $is_xmlrpc
+            || $is_admin
+            || $is_cli
+        ) {
             \WebCareProScanner\Auth\TwoFactorAuth::init();
             \WebCareProScanner\Auth\LoginHardening::init();
             \WebCareProScanner\Auth\WebAuthnManager::init();
-            \WebCareProScanner\Auth\ApplicationPasswordSentinel::init();
         }
 
-        if ($route_class === \WebCareProScanner\Contracts\RouteClass::Membership || $route_class === \WebCareProScanner\Contracts\RouteClass::Commerce || $is_admin) {
+        // Application Passwords and REST inventory strictly belong on REST API, XML-RPC, Admin, and CLI
+        if ($route_class === \WebCareProScanner\Contracts\RouteClass::RestApi || $is_xmlrpc || $is_admin || $is_cli) {
+            \WebCareProScanner\Auth\ApplicationPasswordSentinel::init();
+            \WebCareProScanner\WordPress\RestApiInventory::init();
+        }
+
+        // Session binding and forensics must protect any logged-in session on every route
+        if ($has_auth_cookie || $route_class === \WebCareProScanner\Contracts\RouteClass::AuthLogin || $is_admin) {
             \WebCareProScanner\Auth\SessionSentinel::init();
             \WebCareProScanner\Auth\LoginHistoryManager::init();
             \WebCareProScanner\Identity\SessionForensicsEngine::init();
-        }
-
-        if ($route_class === \WebCareProScanner\Contracts\RouteClass::RestApi || $is_admin || $is_cli) {
-            \WebCareProScanner\WordPress\RestApiInventory::init();
         }
 
         // Lightweight public forms and scans

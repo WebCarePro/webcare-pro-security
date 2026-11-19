@@ -68,6 +68,7 @@ final class RouteClassifier {
 
         // 6. Commerce Routes (WooCommerce checkout, cart, API webhooks, dynamic slugs)
         $commerce_matched = false;
+        $path_trailing = rtrim($path, '/') . '/';
         // phpcs:ignore WordPress.Security.NonceVerification.Recommended
         if (
             str_contains($path, '/checkout')
@@ -84,7 +85,7 @@ final class RouteClassifier {
             $manifest = CompiledStackManifest::load();
             if (!empty($manifest['commerce_slugs']) && is_array($manifest['commerce_slugs'])) {
                 foreach ($manifest['commerce_slugs'] as $c_slug) {
-                    if ($c_slug !== '' && str_contains($path, '/' . trim($c_slug, '/') . '/')) {
+                    if ($c_slug !== '' && str_contains($path_trailing, '/' . trim($c_slug, '/') . '/')) {
                         $commerce_matched = true;
                         break;
                     }
@@ -97,12 +98,30 @@ final class RouteClassifier {
         }
 
         // 7. Membership / Account Routes
+        $membership_matched = false;
         if (
             str_contains($path, '/my-account')
             || str_contains($path, '/account')
             || str_contains($path, '/portal')
             || str_contains($path, '/membership')
         ) {
+            $membership_matched = true;
+        }
+
+        // Match against compiled localized membership slugs if manifest exists
+        if (!$membership_matched && class_exists(CompiledStackManifest::class)) {
+            $manifest = CompiledStackManifest::load();
+            if (!empty($manifest['membership_slugs']) && is_array($manifest['membership_slugs'])) {
+                foreach ($manifest['membership_slugs'] as $m_slug) {
+                    if ($m_slug !== '' && str_contains($path_trailing, '/' . trim($m_slug, '/') . '/')) {
+                        $membership_matched = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if ($membership_matched) {
             return RouteClass::Membership;
         }
 

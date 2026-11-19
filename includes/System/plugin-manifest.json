@@ -1,6 +1,6 @@
 {
   "version": "2.19.0",
-  "generated_at": "2026-11-19T16:18:01.253Z",
+  "generated_at": "2026-11-19T16:40:30.307Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -296,8 +296,8 @@
       "size": 2100
     },
     "includes/Core/CompiledStackManifest.php": {
-      "sha256": "63b691cf14bb9ec8e03c56f478be60afa2a2d6848d5ad464aa3d30b9f1bfa70f",
-      "size": 12379
+      "sha256": "67f3f4fbb0a7e3f6cd11c0e35f9ab53666cb122fda7c4c330fc7bd06c3b63d71",
+      "size": 13605
     },
     "includes/Core/ModuleRegistry.php": {
       "sha256": "0ecddd5325ff7b92d552f29054ef2d549181a8cfa00f175864e1c7494a5ff828",
@@ -316,8 +316,8 @@
       "size": 2142
     },
     "includes/Core/RouteClassifier.php": {
-      "sha256": "8bca0beaeb06e6c23accecf97d96cb9d709110abd000cdfcc5e44fec77d61648",
-      "size": 3949
+      "sha256": "23c7e0fa9ac2ca60a86d58f0a50be10a2b342af4e78dd27d8085470c8ce4b846",
+      "size": 4771
     },
     "includes/Database/CronPersistenceScanner.php": {
       "sha256": "e7567996de9e74e3596a213fe01521cb69d14f0177edaf8737fa81ace82f5f2c",
@@ -720,8 +720,8 @@
       "size": 35591
     },
     "includes/Plugin.php": {
-      "sha256": "b721d3a83f9ab3fc4d69b38098a2c9aa9015e3bc2f3e855c133ee72637a8cfbd",
-      "size": 46803
+      "sha256": "6625c85f6c8316e2bc8f134708785e05abe622437d5126f65a1b0acc6b4b8bb7",
+      "size": 47499
     },
     "includes/Quarantine/CoreRepairManager.php": {
       "sha256": "e4b6a6438e72eefdfcc59fe1b4db45caf4cf269c62a1143b0f61ba998a90e3b9",

@@ -29,6 +29,13 @@ final class CompiledStackManifest {
     public const OPTION_MANIFEST_HMAC = 'webcareproscan_manifest_hmac';
 
     /**
+     * In-memory request cache to avoid duplicate file I/O and HMAC checks within the same request.
+     *
+     * @var array<string, mixed>|null
+     */
+    private static ?array $request_cache = null;
+
+    /**
      * Get the absolute path to the compiled site manifest.
      */
     public static function get_manifest_path(): string {
@@ -45,6 +52,7 @@ final class CompiledStackManifest {
      * @return array{success: bool, path: string, message: string}
      */
     public static function compile(): array {
+        self::$request_cache = null;
         $storage_dir = class_exists(MicroWafCompiler::class)
             ? MicroWafCompiler::get_compiled_dir()
             : (defined('WP_CONTENT_DIR') ? WP_CONTENT_DIR . '/webcare-waf' : ABSPATH . 'wp-content/webcare-waf');
@@ -82,6 +90,7 @@ final class CompiledStackManifest {
 
         // Dynamic localized commerce paths detection
         $commerce_slugs = ['checkout', 'cart'];
+        $membership_slugs = ['my-account', 'account', 'portal', 'membership'];
         if ($has_woo && function_exists('wc_get_page_id')) {
             $checkout_id = wc_get_page_id('checkout');
             if ($checkout_id > 0 && function_exists('get_post_field')) {
@@ -97,8 +106,16 @@ final class CompiledStackManifest {
                     $commerce_slugs[] = $cart_slug;
                 }
             }
+            $myaccount_id = wc_get_page_id('myaccount');
+            if ($myaccount_id > 0 && function_exists('get_post_field')) {
+                $myaccount_slug = (string) get_post_field('post_name', $myaccount_id);
+                if ($myaccount_slug !== '') {
+                    $membership_slugs[] = $myaccount_slug;
+                }
+            }
         }
         $commerce_slugs = array_values(array_unique($commerce_slugs));
+        $membership_slugs = array_values(array_unique($membership_slugs));
 
         // Build route-to-evaluator mappings
         $routes = [
@@ -167,8 +184,9 @@ final class CompiledStackManifest {
                 'lms'         => $has_lms,
                 'graphql'     => $has_graphql,
             ],
-            'commerce_slugs'  => $commerce_slugs,
-            'routes'          => $routes,
+            'commerce_slugs'   => $commerce_slugs,
+            'membership_slugs' => $membership_slugs,
+            'routes'           => $routes,
         ];
 
         // Format into OPcache-executable standalone array
@@ -236,21 +254,28 @@ final class CompiledStackManifest {
      * @return array<string, mixed>
      */
     public static function load(): array {
+        if (self::$request_cache !== null) {
+            return self::$request_cache;
+        }
+
         $path = self::get_manifest_path();
         if (!file_exists($path)) {
             // Lazy compile once if missing
             $compile_res = self::compile();
             if (empty($compile_res['success'])) {
+                self::$request_cache = [];
                 return [];
             }
         }
 
         if (!file_exists($path)) {
+            self::$request_cache = [];
             return [];
         }
 
         $content = (string) @file_get_contents($path);
         if ($content === '') {
+            self::$request_cache = [];
             return [];
         }
 
@@ -261,6 +286,7 @@ final class CompiledStackManifest {
         if ($stored_hmac === '') {
             $compile_res = self::compile();
             if (empty($compile_res['success'])) {
+                self::$request_cache = [];
                 return [];
             }
             $stored_hmac = (string) get_option(self::OPTION_MANIFEST_HMAC, '');
@@ -273,17 +299,21 @@ final class CompiledStackManifest {
             $compile_res = self::compile();
             if (empty($compile_res['success'])) {
                 // Fail closed immediately; never execute tampered PHP artifact
+                self::$request_cache = [];
                 return [];
             }
             $content = (string) @file_get_contents($path);
             $stored_hmac = (string) get_option(self::OPTION_MANIFEST_HMAC, '');
             if (!hash_equals(hash_hmac('sha256', $content, $secret_key), $stored_hmac)) {
+                self::$request_cache = [];
                 return [];
             }
         }
 
         $data = @include $path;
-        return is_array($data) ? $data : [];
+        $result = is_array($data) ? $data : [];
+        self::$request_cache = $result;
+        return $result;
     }
 
     /**
