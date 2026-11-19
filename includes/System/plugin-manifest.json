@@ -1,6 +1,6 @@
 {
-  "version": "2.19.0",
-  "generated_at": "2026-11-19T17:54:46.271Z",
+  "version": "3.0.0",
+  "generated_at": "2026-11-19T18:04:38.017Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -216,8 +216,8 @@
       "size": 9420
     },
     "includes/Api/MCPAgentService.php": {
-      "sha256": "b8ceffe84aa4805a65596032e85e7cf7023b0b6ad37111a02e568f44f8a0fe1a",
-      "size": 109764
+      "sha256": "833cd338df4fb12b2b27f36f873f7fc73846967767717672cc8d2721b23354d2",
+      "size": 110605
     },
     "includes/Api/MCPAntiLockoutValidator.php": {
       "sha256": "129327fd62c436b50f0338d3026de714429e0325e75dc067e847a77ec63fd718",
@@ -280,8 +280,8 @@
       "size": 97668
     },
     "includes/Content/BlockDirectiveSanitizer.php": {
-      "sha256": "642e6ac48edfb5c557f7842f0b68405048371a363582a6a2983413e2da1d6cac",
-      "size": 18935
+      "sha256": "8d6dd3c1a8b19c2f687ca9bb5ca35cf28ed6bcde441f696af78a1955d92f4081",
+      "size": 20315
     },
     "includes/Content/CommentScanner.php": {
       "sha256": "2c5ef2fa1e790d4322ef874c599361ca5b8db5fc055cfe63d97e92776f6ff04f",
@@ -296,8 +296,8 @@
       "size": 20358
     },
     "includes/Content/HTMLAnalyzer.php": {
-      "sha256": "d3fcec65e939771b48404c212e241d63e587330e58db12d99a3ab375ca9f772c",
-      "size": 10263
+      "sha256": "42c11018a7e931b2d13f7d871c44dbd276cc0a8173f5117b7e9596f7ee545db3",
+      "size": 12874
     },
     "includes/Content/ScriptInventoryMonitor.php": {
       "sha256": "22426ce8282a297c01bf4e66857046dfeae32cefdfb1fed137541e284d51eda5",
@@ -464,8 +464,8 @@
       "size": 26968
     },
     "includes/Firewall/BotReconDefense.php": {
-      "sha256": "e82697efe9407584703fb3b5548d75325acada410d88bcb81e3009299b8609b9",
-      "size": 42062
+      "sha256": "ea46ff139159ad8ab174c812e7c6a3b3f72cd05afec8e035798570239eb6dcaf",
+      "size": 42055
     },
     "includes/Firewall/CAF/AdaptiveFirewallAdvisor.php": {
       "sha256": "a284dabd1a08e8dbf8015cc022855823fee4757a760629910908a726b1377bbd",
@@ -800,8 +800,8 @@
       "size": 35591
     },
     "includes/Plugin.php": {
-      "sha256": "415e8c37c09e809f98f9b5eb4b8472e6087da3a251bb47c622b31d89767a5792",
-      "size": 47746
+      "sha256": "9df374574f08ebc4688139159b1aeb8811cda312a4255a7a9d0680e3d9a90c0b",
+      "size": 50764
     },
     "includes/Quarantine/CoreRepairManager.php": {
       "sha256": "e4b6a6438e72eefdfcc59fe1b4db45caf4cf269c62a1143b0f61ba998a90e3b9",
@@ -824,8 +824,8 @@
       "size": 32392
     },
     "includes/Reports/IncidentReportEngine.php": {
-      "sha256": "2d94eedefaa631e6a5abc3224a79f52ca9b651d5d092e1f9cd364374ceaddd34",
-      "size": 38255
+      "sha256": "8bfaa590b3ff492ac9166bf1d4adfe3106146c3a98432d8968d07f8b887e6972",
+      "size": 38284
     },
     "includes/Reports/WeeklyDigestEngine.php": {
       "sha256": "fd1e47e7f888c1d3487bc7d9f51b0be5d8bacb92b9f0f9cb24727fdd338e50b3",
@@ -1052,24 +1052,24 @@
       "size": 28
     },
     "package.json": {
-      "sha256": "73b5a0ac2b9e47c3ad4a521bf88c1ace9754e2edb737282101a1c08feda29ecd",
-      "size": 438
+      "sha256": "c9104cf14e0334ef604f6146869bbe9e2650caa4f589605d11063611379d695f",
+      "size": 437
     },
     "README.md": {
-      "sha256": "2a2518b3beda0b6b6fdf16f2cfcaf21b4219c538433998a640c1e685b12223ff",
-      "size": 28900
+      "sha256": "87946ad263f6d1410db223688f9a52fea5f4d072b4b4a314a4e1fc5834f3b0e7",
+      "size": 28898
     },
     "readme.txt": {
-      "sha256": "f32f1a8c195512da141a7d118465d18e477835c5e744b0514d99de78d64cd5a9",
-      "size": 48981
+      "sha256": "865dfc1898b1cf6fc82470ddc5b286a626022ec1a967eb5f8b545a3e50b1dac0",
+      "size": 48980
     },
     "uninstall.php": {
       "sha256": "ddc8a1e6f7d51b3b29bad7427ee596af23e3df06658f34e2ef3a12d15fe9f5cb",
       "size": 15530
     },
     "webcare-pro-security.php": {
-      "sha256": "d212bf738ea83bf71cba4af7d2a39231410a7529628cc95a7fe86cecdb272687",
-      "size": 8335
+      "sha256": "f4848ee653f550eb507df7d352147a1b2379f771c9e920dff45900157ce167cb",
+      "size": 8333
     }
   }
 }

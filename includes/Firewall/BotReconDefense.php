@@ -789,7 +789,7 @@ class BotReconDefense {
         if (empty($salt) || !is_string($salt)) {
             $salt = function_exists('wp_generate_password')
                 ? wp_generate_password(64, true, true)
-                : hash('sha256', uniqid((string) wp_rand(), true) . microtime());
+                : hash('sha256', bin2hex(random_bytes(32)) . microtime());
             update_option($opt_key, $salt, false);
         }
         return $salt;

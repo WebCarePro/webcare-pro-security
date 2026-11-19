@@ -2494,11 +2494,26 @@ class MCPAgentService {
                     ];
                 }
                 $exec = self::execute_tool($tool_name, $tool_args);
+
+                // Outbound DLP Secret Inspection & Redaction on MCP tool execution outputs
+                $content_payload = $exec['content'] ?? [['type' => 'text', 'text' => (string) wp_json_encode($exec)]];
+                if (class_exists('\\WebCareProScanner\\Firewall\\NextGen\\ResponseDlpSentinel') && is_array($content_payload)) {
+                    foreach ($content_payload as &$block) {
+                        if (is_array($block) && isset($block['text']) && is_string($block['text'])) {
+                            $dlp_res = \WebCareProScanner\Firewall\NextGen\ResponseDlpSentinel::inspect_and_redact($block['text'], true);
+                            if (!empty($dlp_res['leaked'])) {
+                                $block['text'] = $dlp_res['safe_body'];
+                            }
+                        }
+                    }
+                    unset($block);
+                }
+
                 return [
                     'jsonrpc' => '2.0',
                     'id'      => $id,
                     'result'  => [
-                        'content' => $exec['content'] ?? [['type' => 'text', 'text' => (string) wp_json_encode($exec)]],
+                        'content' => $content_payload,
                         'isError' => !empty($exec['isError']),
                     ],
                 ];

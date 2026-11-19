@@ -158,6 +158,56 @@ class Plugin {
                     \WP_CLI::error($res['message'] ?? 'Failed compiling stack manifest.');
                 }
             });
+
+            \WP_CLI::add_command('webcare waf explain', static function ($args, $assoc_args): void {
+                $route = isset($args[0]) ? (string) $args[0] : (isset($assoc_args['route']) ? (string) $assoc_args['route'] : '/');
+                $method = isset($assoc_args['method']) ? strtoupper((string) $assoc_args['method']) : 'GET';
+                $sim_server = [
+                    'REQUEST_METHOD' => $method,
+                    'REQUEST_URI'    => $route,
+                ];
+                $rc = \WebCareProScanner\Core\RouteClassifier::classify($sim_server);
+                $manifest = \WebCareProScanner\Core\CompiledStackManifest::load();
+                $evaluators = $manifest['routes'][$rc->value] ?? [];
+
+                \WP_CLI::line('Route: ' . $route);
+                \WP_CLI::line('Method: ' . $method);
+                \WP_CLI::line('RouteClass: ' . $rc->value);
+                \WP_CLI::line('Evaluators registered: ' . count($evaluators));
+                foreach ($evaluators as $idx => $ev) {
+                    \WP_CLI::line(sprintf('  [%d] %s', $idx + 1, $ev));
+                }
+            });
+
+            \WP_CLI::add_command('webcare waf simulate', static function ($args, $assoc_args): void {
+                $uri = isset($args[0]) ? (string) $args[0] : (isset($assoc_args['uri']) ? (string) $assoc_args['uri'] : '/');
+                $method = isset($assoc_args['method']) ? strtoupper((string) $assoc_args['method']) : 'GET';
+                $payload = isset($assoc_args['payload']) ? (string) $assoc_args['payload'] : '';
+
+                $sim_server = [
+                    'REQUEST_METHOD' => $method,
+                    'REQUEST_URI'    => $uri,
+                    'QUERY_STRING'   => (string) strtok($uri, '?#'),
+                ];
+                if ($payload !== '') {
+                    $sim_server['REQUEST_URI'] .= (str_contains($sim_server['REQUEST_URI'], '?') ? '&' : '?') . 'sim_payload=' . rawurlencode($payload);
+                }
+                $rc = \WebCareProScanner\Core\RouteClassifier::classify($sim_server);
+                $settings = \WebCareProScanner\System\SettingsManager::get_settings();
+                $verdict = null;
+
+                if (class_exists('\\WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine')) {
+                    $orig_server = $_SERVER;
+                    $_SERVER = array_merge($_SERVER, $sim_server);
+                    $res = \WebCareProScanner\Firewall\Core\ExploitSignatureEngine::evaluate_rules($settings, false);
+                    $_SERVER = $orig_server;
+                    if ($res !== null) {
+                        \WP_CLI::warning(sprintf('VIOLATION: [%s] %s (%s)', $res['id'] ?? 'WAF', $res['name'] ?? 'Violation', $res['description'] ?? ''));
+                        return;
+                    }
+                }
+                \WP_CLI::success(sprintf('ALLOWED: Request to "%s" (%s, RouteClass: %s) passed all simulated firewall filters.', $uri, $method, $rc->value));
+            });
         }
     }
 

@@ -363,11 +363,11 @@ class IncidentReportEngine {
 
         // 5. PHP Environment
         $php_ver = $server_info['php']['version'] ?? phpversion();
-        if (version_compare($php_ver, '8.1', '<')) {
+        if (version_compare($php_ver, '8.3', '<')) {
             $recs[] = [
                 'priority' => 'P2 - High',
                 'action'   => "Upgrade PHP Runtime (Current: PHP {$php_ver})",
-                'details'  => 'Upgrade server runtime to PHP 8.2 or 8.3 with OPcache enabled to receive active security updates and JIT execution speed.',
+                'details'  => 'Upgrade server runtime to PHP 8.3 or PHP 8.4 with OPcache enabled to maintain compliance with WordPress 7.0+ and WebCare Pro Security platform floors.',
             ];
         }
 

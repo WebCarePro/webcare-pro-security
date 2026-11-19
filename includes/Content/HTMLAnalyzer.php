@@ -163,11 +163,52 @@ class HTMLAnalyzer {
             }
         }
 
-        // 10. WordPress 6.5+ Interactivity API & Gutenberg Block Directive Sanitization
+        // 10. WordPress 6.5+ / 7.0+ Interactivity API & Gutenberg Block Directive Sanitization
         if (class_exists('\\WebCareProScanner\\Content\\BlockDirectiveSanitizer')) {
             $block_hits = \WebCareProScanner\Content\BlockDirectiveSanitizer::audit_content($html);
             if (!empty($block_hits)) {
                 $detections = array_merge($detections, $block_hits);
+            }
+        }
+
+        // 11. WordPress 7.0+ WP_HTML_Tag_Processor Deep Streaming Security Audit
+        if (class_exists('\\WP_HTML_Tag_Processor')) {
+            $processor = new \WP_HTML_Tag_Processor($html);
+            while ($processor->next_tag()) {
+                $tag_name = strtolower($processor->get_tag());
+
+                // Inspect interactive attributes for JavaScript protocol injection
+                foreach (['href', 'src', 'action', 'formaction', 'data', 'poster'] as $attr) {
+                    $attr_val = $processor->get_attribute($attr);
+                    if (is_string($attr_val) && $attr_val !== '') {
+                        $norm_attr = strtolower(trim($attr_val));
+                        $norm_attr = str_replace(["\0", "\r", "\n", "\t"], '', $norm_attr);
+                        if (str_starts_with($norm_attr, 'javascript:') || str_starts_with($norm_attr, 'vbscript:')) {
+                            $detections[] = [
+                                'type'       => 'html_processor_javascript_uri',
+                                'snippet'    => sprintf('<%s %s="%s">', esc_html($tag_name), esc_html($attr), esc_attr(substr($attr_val, 0, 80))),
+                                'desc'       => sprintf('Executable javascript: URI protocol found in <%s> attribute "%s".', esc_html($tag_name), esc_html($attr)),
+                                'severity'   => 'critical',
+                                'confidence' => 99,
+                            ];
+                        }
+                    }
+                }
+
+                // Inspect inline style attributes via tag processor
+                $style_val = $processor->get_attribute('style');
+                if (is_string($style_val) && $style_val !== '') {
+                    $norm_style = strtolower(str_replace(["\0", "\r", "\n", "\t", ' '], '', $style_val));
+                    if (str_contains($norm_style, 'expression(') || str_contains($norm_style, '-moz-binding') || str_contains($norm_style, 'behavior:url(')) {
+                        $detections[] = [
+                            'type'       => 'html_processor_css_expression',
+                            'snippet'    => sprintf('<%s style="%s">', esc_html($tag_name), esc_attr(substr($style_val, 0, 80))),
+                            'desc'       => sprintf('Dynamic CSS expression execution vector detected in <%s> style attribute.', esc_html($tag_name)),
+                            'severity'   => 'critical',
+                            'confidence' => 97,
+                        ];
+                    }
+                }
             }
         }
 
