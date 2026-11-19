@@ -1,6 +1,6 @@
 {
   "version": "2.19.0",
-  "generated_at": "2026-11-19T17:32:59.464Z",
+  "generated_at": "2026-11-19T17:39:58.819Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -507,6 +507,14 @@
       "sha256": "5f46a331916603afa46022cfd0d6021aefae7dc1a9912e10a6c0cebcc7647959",
       "size": 38405
     },
+    "includes/Firewall/Core/AllowlistManager.php": {
+      "sha256": "4655c8bfb41782190641e07b672fe9ba418cb07f3cf29fe90cedd92a0b099dfe",
+      "size": 2951
+    },
+    "includes/Firewall/Core/BlocklistRepository.php": {
+      "sha256": "a891bfd2d36d3203aeab497bf74d0110fea1663bfcb089d2ca101c1a96b775db",
+      "size": 2772
+    },
     "includes/Firewall/Core/ClientIpResolver.php": {
       "sha256": "95d371ee733306878a5f86fa1919b878fe3672c352da119d09d6f21a82d39649",
       "size": 15773
@@ -523,9 +531,21 @@
       "sha256": "d98107496a1ba39a57069e4c3781749732fefc667807baccfd2f1337018654db",
       "size": 126309
     },
+    "includes/Firewall/Core/FirewallTelemetryService.php": {
+      "sha256": "dd97f57ad8e2a91e029968c27ea9f146563c0c9ca526c6cab394609f7257415c",
+      "size": 2018
+    },
     "includes/Firewall/Core/RaspPrivilegeGuard.php": {
       "sha256": "6cd05a9ca8b1b046311ad6853a061203b879524b57a6d4b9a0957c8878e06225",
       "size": 41931
+    },
+    "includes/Firewall/Core/RequestPipeline.php": {
+      "sha256": "c89e55538d36401c6e9a14e06a37f829b640c5cdf3836da11c18ac5abfd6bc29",
+      "size": 1245
+    },
+    "includes/Firewall/Core/ViolationResponder.php": {
+      "sha256": "6e523d1ea8e0bc89ecb8e6b5b420b53c06459aa130740022e54619dfc30ddb4a",
+      "size": 2563
     },
     "includes/Firewall/CVEIntelligenceService.php": {
       "sha256": "51cbe5c3c07b71d29dadcfd18b2fab95b01145f31b42353cf26c4b3bb2617e52",
@@ -538,6 +558,18 @@
     "includes/Firewall/DomainReputationMonitor.php": {
       "sha256": "89f12173f141491467097211f8ef1b2d01725b8e41d5af4b7907a54c5a203df9",
       "size": 16339
+    },
+    "includes/Firewall/Evaluators/AuthPolicyEvaluator.php": {
+      "sha256": "07f6c8b1e346564c1bcab1d8dc59bb53d189db5c87506fca514ca53c243e35b2",
+      "size": 2938
+    },
+    "includes/Firewall/Evaluators/RestAndAjaxEvaluator.php": {
+      "sha256": "7c120cba658504979b9c10fc77769e94790cf09500459876dd98090aeaf4f236",
+      "size": 1959
+    },
+    "includes/Firewall/Evaluators/UploadAndInstallGuard.php": {
+      "sha256": "c688d7e00a02219e043061bde951ad05ae1d8385512eb8522dfcee4c12346f3f",
+      "size": 2449
     },
     "includes/Firewall/FirewallEngine.php": {
       "sha256": "e8a0f9b4693ceb18bab39a3814c7ae43ce7b9ea767392ab84d48c627b3c0fb99",
