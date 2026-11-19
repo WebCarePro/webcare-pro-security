@@ -49,6 +49,18 @@ final class FirewallController extends AbstractApiController {
             'permission_callback' => $permission,
         ]);
 
+        register_rest_route($namespace, '/firewall/logs/timeline', [
+            'methods'             => 'GET',
+            'callback'            => [self::class, 'get_session_timeline'],
+            'permission_callback' => $permission,
+        ]);
+
+        register_rest_route($namespace, '/firewall/logs/trust-action', [
+            'methods'             => 'POST',
+            'callback'            => [self::class, 'trust_log_action'],
+            'permission_callback' => $permission,
+        ]);
+
         register_rest_route($namespace, '/firewall/logs/retention', [
             'methods'             => 'POST',
             'callback'            => [\WebCareProScanner\Api\ScannerRoutes::class, 'update_firewall_log_retention'],
@@ -413,5 +425,81 @@ final class FirewallController extends AbstractApiController {
             'storage_dir'    => \WebCareProScanner\Firewall\WafFileLogger::get_storage_dir(),
             'retention_days' => \WebCareProScanner\Firewall\WafFileLogger::get_retention_days(),
         ]);
+    }
+
+    /**
+     * Retrieve chronological behavioral event timeline for a specific IP or session fingerprint.
+     */
+    public static function get_session_timeline(\WP_REST_Request $request): \WP_REST_Response {
+        $ip = sanitize_text_field(trim((string) $request->get_param('ip')));
+        $session = sanitize_text_field(trim((string) $request->get_param('session_hash')));
+
+        if ($ip === '' && $session === '') {
+            return new \WP_REST_Response(['error' => __('Either IP address or session fingerprint is required.', 'webcare-pro-security')], 400);
+        }
+
+        $filters = ['range' => '7days'];
+        if ($ip !== '') {
+            $filters['ip'] = $ip;
+        }
+
+        $result = \WebCareProScanner\Firewall\FirewallEngine::get_logs(100, 0, $filters);
+        $logs   = $result['logs'] ?? [];
+
+        if ($session !== '') {
+            $logs = array_values(array_filter($logs, static function ($log) use ($session) {
+                return ($log['session_hash'] ?? '') === $session;
+            }));
+        }
+
+        // Ascending chronological order for timeline playback
+        usort($logs, static function ($a, $b) {
+            $ts_a = isset($a['timestamp']) ? (int) $a['timestamp'] : strtotime((string) ($a['created_at'] ?? 'now'));
+            $ts_b = isset($b['timestamp']) ? (int) $b['timestamp'] : strtotime((string) ($b['created_at'] ?? 'now'));
+            return $ts_a <=> $ts_b;
+        });
+
+        // Compute aggregate behavioral verdict
+        $is_human_scores = array_filter(array_column($logs, 'is_human_score'));
+        $avg_human_score = !empty($is_human_scores) ? intval(array_sum($is_human_scores) / count($is_human_scores)) : 50;
+        $human_verdict   = ($avg_human_score >= 80) ? 'Likely Real Customer' : (($avg_human_score <= 20) ? 'Confirmed Bot / Automated Probe' : 'Uncertain / Mixed');
+
+        return rest_ensure_response([
+            'ip'              => $ip,
+            'session_hash'    => $session,
+            'total_events'    => count($logs),
+            'human_verdict'   => $human_verdict,
+            'human_score'     => $avg_human_score,
+            'timeline'        => $logs,
+        ]);
+    }
+
+    /**
+     * 1-Click "Learn From This Log" — Create narrow, route-scoped allowlist rule from a log incident.
+     */
+    public static function trust_log_action(\WP_REST_Request $request): \WP_REST_Response {
+        $params = $request->get_json_params() ?: [];
+        $rule_id = sanitize_text_field(trim((string) ($params['rule_id'] ?? '')));
+        $uri     = sanitize_text_field(trim((string) ($params['uri'] ?? '')));
+        $ip      = sanitize_text_field(trim((string) ($params['ip'] ?? '')));
+        $label   = sanitize_text_field(trim((string) ($params['label'] ?? '')));
+
+        if ($uri === '' && $rule_id === '') {
+            return new \WP_REST_Response(['success' => false, 'message' => __('Log URI or rule ID is required.', 'webcare-pro-security')], 400);
+        }
+
+        if (class_exists('\\WebCareProScanner\\Firewall\\RescueAssistantManager')) {
+            $clean_path = (string) wp_parse_url($uri, PHP_URL_PATH);
+            $trust_res = \WebCareProScanner\Firewall\RescueAssistantManager::trust_and_allow_action([
+                'type'    => $clean_path !== '' ? 'uri' : 'rule',
+                'value'   => $clean_path !== '' ? $clean_path : $rule_id,
+                'rule_id' => $rule_id,
+                'label'   => $label ?: sprintf(__('1-Click Trust from WAF Log (%s)', 'webcare-pro-security'), $rule_id),
+                'ip'      => $ip,
+            ]);
+            return rest_ensure_response($trust_res);
+        }
+
+        return new \WP_REST_Response(['success' => false, 'message' => __('Rescue assistant manager not available.', 'webcare-pro-security')], 500);
     }
 }

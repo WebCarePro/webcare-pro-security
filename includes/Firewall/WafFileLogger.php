@@ -258,6 +258,11 @@ class WafFileLogger {
             'user_role'        => $user_role,
             'is_authenticated' => $is_authenticated,
             'hostname'         => isset($_SERVER['HTTP_HOST']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_HOST'])) : '',
+            'session_hash'     => substr(hash('sha256', $ip . '|' . $user_agent . '|' . (string) (wp_salt('auth'))), 0, 16),
+            'route_class'      => class_exists('\\WebCareProScanner\\Core\\RouteClassifier') ? \WebCareProScanner\Core\RouteClassifier::classify(['REQUEST_URI' => $uri, 'REQUEST_METHOD' => $method])->value : 'public_get',
+            'matched_param'    => !empty($rule['match_value']) ? sanitize_text_field($rule['match_value']) : (!empty($rule['matched_param']) ? sanitize_text_field($rule['matched_param']) : null),
+            'strike_count'     => ($action === 'warned') ? (\WebCareProScanner\Firewall\Core\TransientRateLimiter::record_warning_strike($ip, 4, 900)['strike'] . '/4') : null,
+            'is_human_score'   => (class_exists(BotReconDefense::class) && BotReconDefense::has_valid_clearance_cookie($ip, $user_agent)) ? 95 : ($is_authenticated ? 90 : (stripos($user_agent, 'bot') !== false || stripos($user_agent, 'crawl') !== false ? 5 : 50)),
             'cf_sync_enabled'  => class_exists('\\WebCareProScanner\\System\\SettingsManager') ? (!empty(\WebCareProScanner\System\SettingsManager::get_settings()['cloudflare_enabled']) && !empty(\WebCareProScanner\System\SettingsManager::get_settings()['cloudflare_auto_sync_bans'])) : false,
             'cf_connected'     => class_exists('\\WebCareProScanner\\System\\SettingsManager') ? (!empty(\WebCareProScanner\System\SettingsManager::get_settings()['cloudflare_enabled']) && !empty(\WebCareProScanner\System\SettingsManager::get_settings()['has_cloudflare_key'])) : false,
         ];
