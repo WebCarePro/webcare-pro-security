@@ -28,6 +28,20 @@ final class PolicyManager {
         return wp_normalize_path(trailingslashit($content_dir) . self::POLICY_FILE_NAME);
     }
 
+    public const PROTECTED_SETTINGS_DENYLIST = [
+        'firewall_enabled',
+        'waf_enabled',
+        'sqli_protection',
+        'xss_protection',
+        'rce_protection',
+        'ssrf_protection',
+        'auth_lockout_enabled',
+        'session_binding_enabled',
+        'exploit_signatures_enabled',
+        'two_factor_enforced',
+        'self_defense_enabled',
+    ];
+
     /**
      * Check if a developer-defined policy file exists.
      */
@@ -37,6 +51,7 @@ final class PolicyManager {
 
     /**
      * Load developer policy configuration and register custom hooks.
+     * Enforces strict protection: strips core security keys from settings overrides.
      *
      * @return array<string, mixed>
      */
@@ -49,10 +64,15 @@ final class PolicyManager {
         try {
             $policy = @include $path;
             if (is_array($policy)) {
-                // If policy declares settings overrides, apply them via filter
+                // If policy declares settings overrides, sanitize against denylist and apply via filter
                 if (!empty($policy['settings_overrides']) && is_array($policy['settings_overrides'])) {
-                    add_filter('webcareproscan_settings', static function (array $settings) use ($policy): array {
-                        return array_merge($settings, $policy['settings_overrides']);
+                    $sanitized_overrides = array_diff_key(
+                        $policy['settings_overrides'],
+                        array_flip(self::PROTECTED_SETTINGS_DENYLIST)
+                    );
+
+                    add_filter('webcareproscan_settings', static function (array $settings) use ($sanitized_overrides): array {
+                        return array_merge($settings, $sanitized_overrides);
                     }, 999);
                 }
 

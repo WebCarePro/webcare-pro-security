@@ -1,4 +1,6 @@
 <?php
+declare(strict_types=1);
+
 namespace WebCareProScanner\Contracts;
 
 if (!defined('ABSPATH')) {
@@ -6,54 +8,126 @@ if (!defined('ABSPATH')) {
 }
 
 /**
- * Structured WAF evaluation verdict returned by pluggable WafEvaluatorInterface modules.
+ * WafVerdict
+ *
+ * Immutable value object representing a security evaluation outcome.
+ *
+ * Author: Mir Alamin (WebCare Pro)
  */
-class WafVerdict {
-
-    /** @var string One of allow|monitor|challenge_pow|rate_limit|block|block_and_ban */
-    public string $action = 'monitor';
-
-    /** @var string Rule identifier (e.g. WAF-AI-AGENT-KILLCHAIN) */
-    public string $ruleId = '';
-
-    /** @var string Human-readable security reason */
-    public string $reason = '';
-
-    /** @var string Category label for incident logging */
-    public string $category = 'Next-Gen Threat Defense';
-
-    /** @var string Severity level (low|medium|high|critical) */
-    public string $severity = 'high';
-
-    /** @var int HTTP response status code */
-    public int $statusCode = 403;
-
-    /** @var int Ban TTL in seconds when action enforces or escalates a ban */
-    public int $banTtl = 86400;
-
-    /** @var bool Whether to sync offender IP to Cloudflare Edge */
-    public bool $syncCloudflare = false;
-
-    /** @var string[] Rule IDs exempted when action === 'allow' */
-    public array $exemptRules = [];
+final readonly class WafVerdict {
 
     /**
-     * Construct a verdict object cleanly.
-     *
-     * @param string $action
-     * @param string $ruleId
-     * @param string $reason
-     * @param array<string, mixed> $meta
+     * @param WafAction            $action     The evaluated action.
+     * @param string               $rule_id    Unique rule identifier (e.g. 'SQLI-CORE', 'XSS-01').
+     * @param string               $message    Human-readable explanation of the finding.
+     * @param array<string, mixed> $context    Forensic payload details and match data.
+     * @param int                  $risk_score Heuristic risk rating (0-100).
      */
-    public function __construct(string $action, string $ruleId, string $reason, array $meta = []) {
-        $this->action         = $action;
-        $this->ruleId         = $ruleId;
-        $this->reason         = $reason;
-        $this->category       = (string) ($meta['category'] ?? $this->category);
-        $this->severity       = (string) ($meta['severity'] ?? $this->severity);
-        $this->statusCode     = (int) ($meta['status_code'] ?? ($action === 'rate_limit' ? 429 : 403));
-        $this->banTtl         = (int) ($meta['ban_ttl'] ?? 86400);
-        $this->syncCloudflare = !empty($meta['sync_cloudflare']);
-        $this->exemptRules    = isset($meta['exempt_rules']) && is_array($meta['exempt_rules']) ? $meta['exempt_rules'] : [];
+    public function __construct(
+        public WafAction $action,
+        public string $rule_id = '',
+        public string $message = '',
+        public array $context = [],
+        public int $risk_score = 0
+    ) {}
+
+    /**
+     * Helper to instantiate an Allow verdict.
+     */
+    public static function allow(): self {
+        return new self(action: WafAction::Allow);
+    }
+
+    /**
+     * Helper to instantiate a Block verdict.
+     *
+     * @param string               $rule_id Rule identifier.
+     * @param string               $message Reason for block.
+     * @param array<string, mixed> $context Forensics.
+     * @param int                  $risk_score Threat score.
+     */
+    public static function block(string $rule_id, string $message, array $context = [], int $risk_score = 100): self {
+        return new self(
+            action: WafAction::Block,
+            rule_id: $rule_id,
+            message: $message,
+            context: $context,
+            risk_score: $risk_score
+        );
+    }
+
+    /**
+     * Helper to instantiate a PoW challenge verdict.
+     *
+     * @param string               $rule_id Rule identifier.
+     * @param string               $message Reason for challenge.
+     * @param array<string, mixed> $context Forensics.
+     */
+    public static function challenge(string $rule_id, string $message, array $context = []): self {
+        return new self(
+            action: WafAction::Challenge,
+            rule_id: $rule_id,
+            message: $message,
+            context: $context,
+            risk_score: 50
+        );
+    }
+
+    /**
+     * Helper to instantiate a RateLimit verdict.
+     *
+     * @param string               $rule_id Rule identifier.
+     * @param string               $message Reason.
+     * @param array<string, mixed> $context Forensics.
+     */
+    public static function rate_limit(string $rule_id, string $message, array $context = []): self {
+        return new self(
+            action: WafAction::RateLimit,
+            rule_id: $rule_id,
+            message: $message,
+            context: $context,
+            risk_score: 75
+        );
+    }
+
+    /**
+     * Helper to instantiate a Sanitize verdict.
+     *
+     * @param string               $rule_id Rule identifier.
+     * @param string               $message Reason.
+     * @param array<string, mixed> $context Forensics including sanitized values.
+     */
+    public static function sanitize(string $rule_id, string $message, array $context = []): self {
+        return new self(
+            action: WafAction::Sanitize,
+            rule_id: $rule_id,
+            message: $message,
+            context: $context,
+            risk_score: 30
+        );
+    }
+
+    /**
+     * Helper to instantiate a LogOnly verdict.
+     *
+     * @param string               $rule_id Rule identifier.
+     * @param string               $message Reason.
+     * @param array<string, mixed> $context Forensics.
+     */
+    public static function log_only(string $rule_id, string $message, array $context = []): self {
+        return new self(
+            action: WafAction::LogOnly,
+            rule_id: $rule_id,
+            message: $message,
+            context: $context,
+            risk_score: 20
+        );
+    }
+
+    /**
+     * Whether this verdict is terminal and must halt the pipeline immediately.
+     */
+    public function is_terminal(): bool {
+        return $this->action->is_terminal();
     }
 }

@@ -67,6 +67,10 @@ final class CompiledStackManifest {
         }
 
         $active_plugins = (array) get_option('active_plugins', []);
+        if (function_exists('is_multisite') && is_multisite()) {
+            $sitewide_plugins = array_keys((array) get_site_option('active_sitewide_plugins', []));
+            $active_plugins = array_values(array_unique(array_merge($active_plugins, $sitewide_plugins)));
+        }
         $active_str = implode(' ', $active_plugins);
 
         // Detect ecosystems
@@ -122,6 +126,11 @@ final class CompiledStackManifest {
             RouteClass::PublicGet->value => [
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
                 'WebCareProScanner\\Firewall\\BotReconDefense',
+            ],
+            RouteClass::PublicMutation->value => [
+                'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
+                'WebCareProScanner\\Firewall\\BotReconDefense',
+                'WebCareProScanner\\Firewall\\NextGen\\RuntimeSqlRaspEngine',
             ],
             RouteClass::Commerce->value => [
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
@@ -231,10 +240,37 @@ final class CompiledStackManifest {
 
         @chmod($target_file, 0600);
 
-        // Store HMAC signature
-        $secret_key = class_exists(SecretVault::class) ? SecretVault::get_key() : (defined('AUTH_KEY') ? AUTH_KEY : 'webcare-manifest-salt');
+        // Store HMAC signature with fail-closed key derivation
+        $secret_key = class_exists(SecretVault::class) ? SecretVault::get_key() : (defined('AUTH_KEY') && AUTH_KEY !== '' ? AUTH_KEY : '');
+        if ($secret_key === '') {
+            return [
+                'success' => false,
+                'path'    => $target_file,
+                'message' => 'Cryptographic secret key unavailable for manifest signing.',
+            ];
+        }
+
         $hmac = hash_hmac('sha256', $php_content, $secret_key);
-        update_option(self::OPTION_MANIFEST_HMAC, $hmac, false);
+        if (!update_option(self::OPTION_MANIFEST_HMAC, $hmac, false)) {
+            // Check if option was already set to this exact value
+            if (get_option(self::OPTION_MANIFEST_HMAC) !== $hmac) {
+                return [
+                    'success' => false,
+                    'path'    => $target_file,
+                    'message' => 'Failed to persist cryptographic HMAC option.',
+                ];
+            }
+        }
+
+        // Verification check: ensure generated file can be loaded safely
+        $test_load = @include $target_file;
+        if (!is_array($test_load) || empty($test_load['archetype'])) {
+            return [
+                'success' => false,
+                'path'    => $target_file,
+                'message' => 'Compiled manifest self-verification test read failed.',
+            ];
+        }
 
         if (function_exists('opcache_invalidate')) {
             opcache_invalidate($target_file, true);
@@ -280,7 +316,11 @@ final class CompiledStackManifest {
         }
 
         $stored_hmac = (string) get_option(self::OPTION_MANIFEST_HMAC, '');
-        $secret_key = class_exists(SecretVault::class) ? SecretVault::get_key() : (defined('AUTH_KEY') ? AUTH_KEY : 'webcare-manifest-salt');
+        $secret_key = class_exists(SecretVault::class) ? SecretVault::get_key() : (defined('AUTH_KEY') && AUTH_KEY !== '' ? AUTH_KEY : '');
+        if ($secret_key === '') {
+            self::$request_cache = [];
+            return [];
+        }
 
         // Fail-closed 1: Missing stored HMAC indicates corruption or tampering
         if ($stored_hmac === '') {

@@ -26,20 +26,9 @@ final class RouteClassifier {
      * @return RouteClass
      */
     public static function classify(array $server): RouteClass {
-        $raw_uri = (string) ($server['REQUEST_URI'] ?? '/');
-        // Decode percent-encoded characters (e.g. /%77p-json/ -> /wp-json/) and normalize path
-        $decoded_uri = urldecode($raw_uri);
-        $raw_path = (string) (wp_parse_url($decoded_uri, PHP_URL_PATH) ?? $decoded_uri);
-        $path = strtolower((string) preg_replace('#/+#', '/', $raw_path));
         $method = strtoupper((string) ($server['REQUEST_METHOD'] ?? 'GET'));
-
-        // Check for ?rest_route= or &rest_route= query parameters
-        $has_rest_query = false;
-        if (isset($_GET['rest_route']) && is_string($_GET['rest_route']) && $_GET['rest_route'] !== '') {
-            $has_rest_query = true;
-        } elseif (str_contains($raw_uri, 'rest_route=')) {
-            $has_rest_query = true;
-        }
+        $path = strtolower(CanonicalRouteParser::get_normalized_path($server));
+        $has_rest_query = CanonicalRouteParser::is_rest_request($server);
 
         // 1. Admin UI
         if (str_contains($path, '/wp-admin/') && !str_contains($path, 'admin-ajax.php') && !str_contains($path, 'admin-post.php')) {
@@ -125,7 +114,11 @@ final class RouteClassifier {
             return RouteClass::Membership;
         }
 
-        // 8. Public Standard Requests
+        // 8. Public Standard Requests (Differentiate GET vs Mutation)
+        if (!in_array($method, ['GET', 'HEAD', 'OPTIONS'], true)) {
+            return RouteClass::PublicMutation;
+        }
+
         return RouteClass::PublicGet;
     }
 }

@@ -572,7 +572,8 @@ class Plugin {
             && ($live_whitelist_flags_correct === true);
 
         // Headless X-WebCare-PoW-Solution verification check
-        $test_headless_challenge = \WebCareProScanner\Firewall\BotReconDefense::generate_challenge($test_clear_ip, 'HeadlessDoctor/1.0');
+        $test_headless_ip = '198.51.100.' . wp_rand(10, 250);
+        $test_headless_challenge = \WebCareProScanner\Firewall\BotReconDefense::generate_challenge($test_headless_ip, 'HeadlessDoctor/1.0');
         $test_headless_nonce = '';
         $target_zeros = str_repeat('0', \WebCareProScanner\Firewall\BotReconDefense::POW_DIFFICULTY);
         for ($n = 0; $n < 500000; $n++) {
@@ -582,8 +583,8 @@ class Plugin {
             }
         }
         $_SERVER['HTTP_X_WEBCARE_POW_SOLUTION'] = $test_headless_challenge . ':' . $test_headless_nonce;
-        $headless_pow_verified = \WebCareProScanner\Firewall\BotReconDefense::verify_and_clear_pow_header($test_clear_ip, 'HeadlessDoctor/1.0');
-        $headless_pow_cookie_active = \WebCareProScanner\Firewall\BotReconDefense::has_valid_clearance_cookie($test_clear_ip, 'HeadlessDoctor/1.0');
+        $headless_pow_verified = \WebCareProScanner\Firewall\BotReconDefense::verify_and_clear_pow_header($test_headless_ip, 'HeadlessDoctor/1.0');
+        $headless_pow_cookie_active = \WebCareProScanner\Firewall\BotReconDefense::has_valid_clearance_cookie($test_headless_ip, 'HeadlessDoctor/1.0');
         unset($_SERVER['HTTP_X_WEBCARE_POW_SOLUTION'], $_COOKIE[\WebCareProScanner\Firewall\BotReconDefense::POW_COOKIE_NAME]);
 
         // Dynamic cryptographic salt fallback check (never hardcoded strings)

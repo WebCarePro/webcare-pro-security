@@ -14,4 +14,14 @@ enum WafAction: string {
     case Challenge  = 'challenge_pow';
     case RateLimit  = 'rate_limit';
     case Block      = 'block';
+
+    /**
+     * Check if this action terminates request processing immediately.
+     */
+    public function is_terminal(): bool {
+        return match ($this) {
+            self::Challenge, self::RateLimit, self::Block => true,
+            self::Allow, self::LogOnly, self::Sanitize    => false,
+        };
+    }
 }
