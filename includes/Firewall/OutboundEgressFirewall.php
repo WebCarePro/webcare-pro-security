@@ -900,15 +900,12 @@ class OutboundEgressFirewall {
             }
         }
 
-        // Fail-safe: If hostname failed to resolve any valid IP records, only hard-block if it is an IP/hex/octal literal
+        // Strict zero-trust rule: Fail closed if hostname failed to resolve any valid IP records
         if (!$has_records || empty($first_safe_ip)) {
-            if (preg_match('/^[0-9a-fA-FxX.:]+$/', $clean_host)) {
-                return [
-                    'threat' => 'unresolvable_host',
-                    'reason' => sprintf('Outbound destination host (%s) could not be resolved to a valid IP address.', $clean_host),
-                ];
-            }
-            return ($dns_cache[$clean_host] = ['threat' => null, 'reason' => '', 'safe_ip' => '']);
+            return ($dns_cache[$clean_host] = [
+                'threat' => 'unresolvable_host',
+                'reason' => sprintf('Outbound destination host (%s) could not be resolved to a valid IP address.', $clean_host),
+            ]);
         }
 
         set_transient($transient_key, $first_safe_ip, 900); // 15-minute DNS cache

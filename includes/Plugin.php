@@ -633,11 +633,14 @@ class Plugin {
 
         // 7. Atomic Concurrency Lock: verify MySQL advisory mutex and option state isolation
         $lock_acquired = \WebCareProScanner\Scan\ScanLock::acquire(999991);
+        $lock_token = \WebCareProScanner\Scan\ScanLock::get_active_lease_token(999991);
         $lock_conflict = \WebCareProScanner\Scan\ScanLock::acquire(999992);
         $lock_id_active = \WebCareProScanner\Scan\ScanLock::get_locked_scan_id() === 999991;
-        \WebCareProScanner\Scan\ScanLock::release(999991);
-        $lock_released = !\WebCareProScanner\Scan\ScanLock::is_locked();
-        $checks['scan_lock_advisory_mutex'] = $lock_acquired && !$lock_conflict && $lock_id_active && $lock_released;
+        $batch_lock_ok = !empty($lock_token) && \WebCareProScanner\Scan\ScanLock::acquire_batch_lock(999991, $lock_token);
+        \WebCareProScanner\Scan\ScanLock::release_batch_lock();
+        $lock_released = !empty($lock_token) && \WebCareProScanner\Scan\ScanLock::release(999991, $lock_token);
+        $is_locked = \WebCareProScanner\Scan\ScanLock::is_locked();
+        $checks['scan_lock_advisory_mutex'] = $lock_acquired && !$lock_conflict && $lock_id_active && $batch_lock_ok && $lock_released && !$is_locked;
 
         foreach ($checks as $name => $val) {
             \WP_CLI::line(sprintf('%-26s : %s', $name, is_bool($val) ? ($val ? 'PASS' : 'FAIL') : (string) $val));

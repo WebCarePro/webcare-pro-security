@@ -165,6 +165,7 @@ class Scheduler {
              $wpdb->update($table_scans, ['status' => 'cancelled'], ['id' => $scan_id]);
              return;
          }
+         $lease_token = (string) ScanLock::get_active_lease_token($scan_id);
          set_transient("webcareproscan_scan_start_micro_{$scan_id}", $start_time, HOUR_IN_SECONDS);
 
          // Audit Trail: Log scheduled scan started (Attributed to System WP-Cron)
@@ -197,7 +198,7 @@ class Scheduler {
              foreach ($files as $idx => $filepath) {
                  // Refresh lock heartbeat and persist progress count every 15 files
                  if ($idx > 0 && $idx % 15 === 0) {
-                     \WebCareProScanner\Scan\ScanLock::heartbeat($scan_id);
+                     \WebCareProScanner\Scan\ScanLock::heartbeat($scan_id, $lease_token);
                      // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
                      $wpdb->update($table_scans, [
                          'scanned_files' => $scanned_count,
@@ -253,7 +254,7 @@ class Scheduler {
              }
 
              // 3. Run target-specific deep audit engines
-             \WebCareProScanner\Scan\ScanLock::heartbeat($scan_id);
+             \WebCareProScanner\Scan\ScanLock::heartbeat($scan_id, $lease_token);
              $all_deep_findings = [];
 
              if ($target === 'unknown_files') {
@@ -270,7 +271,7 @@ class Scheduler {
                  $all_deep_findings = array_merge($all_deep_findings, $content->scan((string) $scan_id, 300));
              } elseif ($target === 'user_security') {
                  $user_scanner = new \WebCareProScanner\WordPress\UserScanner();
-                 $all_deep_findings = array_merge($all_deep_findings, $user_scanner->scan((string) $scan_id, false));
+                 $all_deep_findings = array_merge($all_deep_findings, $user_scanner->scan((string) $scan_id, false, $lease_token));
              } elseif ($target === 'outdated_software') {
                  $update_scanner = new \WebCareProScanner\WordPress\UpdateScanner();
                  $all_deep_findings = array_merge($all_deep_findings, $update_scanner->scan((string) $scan_id));
@@ -287,7 +288,7 @@ class Scheduler {
                  $rogue = new \WebCareProScanner\Database\RogueAdminAnomalyDetector();
                  $all_deep_findings = array_merge($all_deep_findings, $rogue->scan((string) $scan_id));
                  $user_scanner = new \WebCareProScanner\WordPress\UserScanner();
-                 $all_deep_findings = array_merge($all_deep_findings, $user_scanner->scan((string) $scan_id, true));
+                 $all_deep_findings = array_merge($all_deep_findings, $user_scanner->scan((string) $scan_id, true, $lease_token));
              } elseif ($target === 'hook_sentinel') {
                  $hook_sentinel = new \WebCareProScanner\WordPress\HookInfiltrationSentinel();
                  $all_deep_findings = array_merge($all_deep_findings, $hook_sentinel->scan((string) $scan_id));
@@ -418,7 +419,11 @@ class Scheduler {
              }
 
              // Release exclusive lock
-             \WebCareProScanner\Scan\ScanLock::release($scan_id);
+             if (!empty($lease_token)) {
+                 \WebCareProScanner\Scan\ScanLock::release($scan_id, $lease_token);
+             } else {
+                 \WebCareProScanner\Scan\ScanLock::force_release($scan_id);
+             }
              delete_transient("webcareproscan_active_scan_file_{$scan_id}");
              delete_transient("webcareproscan_scan_start_micro_{$scan_id}");
 
@@ -450,7 +455,11 @@ class Scheduler {
              );
 
          } catch (\Throwable $e) {
-             \WebCareProScanner\Scan\ScanLock::release($scan_id);
+             if (!empty($lease_token)) {
+                 \WebCareProScanner\Scan\ScanLock::release($scan_id, $lease_token);
+             } else {
+                 \WebCareProScanner\Scan\ScanLock::force_release($scan_id);
+             }
              $last_file = get_transient("webcareproscan_active_scan_file_{$scan_id}") ?: '';
              delete_transient("webcareproscan_active_scan_file_{$scan_id}");
              delete_transient("webcareproscan_scan_start_micro_{$scan_id}");

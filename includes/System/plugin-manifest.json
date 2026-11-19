@@ -1,6 +1,6 @@
 {
   "version": "2.19.0",
-  "generated_at": "2026-11-19T02:13:11.909Z",
+  "generated_at": "2026-11-19T03:10:16.021Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -88,12 +88,12 @@
       "size": 1405
     },
     "build/index.asset.php": {
-      "sha256": "ee4037863d8dda99e4a2a44c939523d81b7293af795b2d8da2083a11c8100552",
+      "sha256": "9e5854bb3063fc3ccb1d2c14afbd7fc71b47db7fbf187dd24f95ff2c4ba5e626",
       "size": 174
     },
     "build/index.js": {
-      "sha256": "8cee991d865f1ec320b2f50ec534c8a1a0d9e7d1aa31ab43e0f3da3503d2ca7e",
-      "size": 2696584
+      "sha256": "070fb80d5d5fff7f1fec9a4883b8ca44623fe76112a55b64bf057aa3ab308edd",
+      "size": 2696722
     },
     "build/modular-waf.asset.php": {
       "sha256": "6941a30cfd90e0a997540ab1757c25a112213e1a4419535c21076b04ed4abd3e",
@@ -112,12 +112,12 @@
       "size": 130970
     },
     "build/scan.asset.php": {
-      "sha256": "f8d40160eee86951d61efd86d925aad08df8f5e3e321a45428ace1230dc47d98",
+      "sha256": "86ff921e7781681f93ff9179c2dce218abd13965e99d4b3053dacc18c2d19ed6",
       "size": 174
     },
     "build/scan.js": {
-      "sha256": "e163eb399d982a14026eb3f1f542262b6de3f8e5039ea941cf1f75ea60d9fbcd",
-      "size": 2695892
+      "sha256": "f8659d3c3745bb58e953c7644bd3ac67b02ddae9c38eaedf603dbe4e9f7a2329",
+      "size": 2696030
     },
     "build/settings.asset.php": {
       "sha256": "2363a265eb377f9baa2408d8ec538b64c302c81ebea376be6a0dd40975929b17",
@@ -196,8 +196,8 @@
       "size": 11237
     },
     "includes/Api/ScannerRoutes.php": {
-      "sha256": "b65352f7ca12dacbd1a1464b02e4c599c47e928e12e433693113f1c603b16835",
-      "size": 769637
+      "sha256": "51275e89f9b5b4ee9ecf6cf3f16cb5d6f633e744ea7aa2e641f7c57090c83b9b",
+      "size": 771275
     },
     "includes/Auth/ApplicationPasswordSentinel.php": {
       "sha256": "942165dd09813d8b9b94ecd8b6434a099a30bfeb429f5a7913e39c9b1088fb3e",
@@ -544,8 +544,8 @@
       "size": 14029
     },
     "includes/Firewall/OutboundEgressFirewall.php": {
-      "sha256": "c63025094282bc37236205a7787e674b7cf82fb1f1bebbf89498e2c380e37ebe",
-      "size": 53653
+      "sha256": "29d897e1e2c55efb4e6d1064dace4649634fa8641fcbcbba3f7556b0ba38827f",
+      "size": 53459
     },
     "includes/Firewall/RedirectCanaryEngine.php": {
       "sha256": "56274c67e9dfe6725a2e6952590e5df70f2db524e657efcb8201b762048e1e5c",
@@ -696,8 +696,8 @@
       "size": 32218
     },
     "includes/Plugin.php": {
-      "sha256": "f85873c0f62c1d8bb4f0f8713893819cadc0a0c2d83f09d6e5033f8665e9eebb",
-      "size": 44875
+      "sha256": "07a09016df20aabf065f02651add1b2d541e91e7b4edbec8a430fc6480ad4060",
+      "size": 45231
     },
     "includes/Quarantine/CoreRepairManager.php": {
       "sha256": "e4b6a6438e72eefdfcc59fe1b4db45caf4cf269c62a1143b0f61ba998a90e3b9",
@@ -736,8 +736,8 @@
       "size": 18077
     },
     "includes/Scan/ScanLock.php": {
-      "sha256": "fba4e49a5ff83bdd2ee07425e6d2458b065c29207c1e73264da2271566591d1e",
-      "size": 11296
+      "sha256": "b22c6215376f558b09bc0f195745ec1f41a2d380d0761749c029246c2d9d82ad",
+      "size": 13956
     },
     "includes/Scan/ScanManager.php": {
       "sha256": "f3590463fa1a7e5f5641a05a407534115ca448a4265820e8ed129419808849d1",
@@ -880,8 +880,8 @@
       "size": 6412
     },
     "includes/System/Scheduler.php": {
-      "sha256": "96c7b58c3f8593d2cc13d5d8d95e1de762b815c08013395cd7b6a2f24652efdd",
-      "size": 44819
+      "sha256": "ae51503586fd366be4c8163c79a093b6c9c993af958683330c812c3c17ffb2b9",
+      "size": 45296
     },
     "includes/System/ServerInfo.php": {
       "sha256": "d4f7a59e3939b24d2e0d5cdd542dc5e7de682f4c1b45cc15171a5f6a5efcdf0d",
@@ -932,12 +932,12 @@
       "size": 35020
     },
     "includes/WordPress/UserScanner.php": {
-      "sha256": "2889d8792872c9314ef1cc209697035039997ade1dc1bdbfea291e103d987b38",
-      "size": 33843
+      "sha256": "408aa999bcf8fecdc74f2bc8f422017fa5964040fcf8d171165a60be4873a76c",
+      "size": 34222
     },
     "includes/WordPress/WordPressSecurityScanner.php": {
-      "sha256": "e700e21aba884c12f1531b0ea9ea86360895e40299eab44405c6fbf826fbcb17",
-      "size": 2186
+      "sha256": "3feda83aba6b77f8540b686a86486ca8ad6c478a77da98d0dc62e3536aa09b1e",
+      "size": 2303
     },
     "languages/index.php": {
       "sha256": "bd48c24ce4500e60d2524571756787283f0d3fbfa50b116331309c09773f0cd1",

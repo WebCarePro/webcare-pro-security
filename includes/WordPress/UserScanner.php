@@ -73,10 +73,11 @@ class UserScanner {
      * Inspect users, administrator accounts, capabilities, password strength, and detect orphaned authors.
      *
      * @param string $scan_id
-     * @param bool $admins_only
+     * @param bool   $admins_only
+     * @param string $lease_token Mandatory cryptographic lease token to refresh ScanLock heartbeat.
      * @return Finding[]
      */
-    public function scan($scan_id, $admins_only = false) {
+    public function scan($scan_id, $admins_only = false, string $lease_token = '') {
         global $wpdb;
         $findings = [];
         $users_table    = $wpdb->prefix . 'users';
@@ -111,7 +112,9 @@ class UserScanner {
                 number_format(max(1, $total_users_count))
             );
             set_transient("webcareproscan_active_scan_file_{$scan_id}", $status_msg, 120);
-            \WebCareProScanner\Scan\ScanLock::heartbeat($scan_id);
+            if (!empty($lease_token)) {
+                \WebCareProScanner\Scan\ScanLock::heartbeat((int) $scan_id, $lease_token);
+            }
         }
 
         foreach ($admins as $admin) {
@@ -147,7 +150,9 @@ class UserScanner {
                     number_format(max($scanned_users_count, $total_users_count))
                 );
                 set_transient("webcareproscan_active_scan_file_{$scan_id}", $status_msg, 120);
-                \WebCareProScanner\Scan\ScanLock::heartbeat($scan_id);
+                if (!empty($lease_token)) {
+                    \WebCareProScanner\Scan\ScanLock::heartbeat((int) $scan_id, $lease_token);
+                }
             }
 
             $test_passwords = array_merge($common_passwords, [
@@ -276,7 +281,9 @@ class UserScanner {
                     number_format(max($user_cap_idx, $total_users_count))
                 );
                 set_transient("webcareproscan_active_scan_file_{$scan_id}", $status_msg, 120);
-                \WebCareProScanner\Scan\ScanLock::heartbeat($scan_id);
+                if (!empty($lease_token)) {
+                    \WebCareProScanner\Scan\ScanLock::heartbeat((int) $scan_id, $lease_token);
+                }
             }
 
             $roles = (array) $user->roles;

@@ -4030,12 +4030,13 @@ class ScannerRoutes {
                 ARRAY_A
             );
             if (!$existing_scan || $existing_scan['status'] !== 'running') {
-                ScanLock::release($locked_id);
+                ScanLock::force_release($locked_id);
             } else {
                 $remaining = \WebCareProScanner\Scan\ScanQueueManager::get_remaining_count($locked_id);
                 return rest_ensure_response([
                     'success'       => true,
                     'scan_id'       => $locked_id,
+                    'lease_token'   => ScanLock::get_active_lease_token($locked_id),
                     'scan_target'   => $existing_scan['scan_target'],
                     'total_files'   => (int) $existing_scan['total_files'],
                     'scanned_files' => (int) $existing_scan['scanned_files'],
@@ -4135,6 +4136,7 @@ class ScannerRoutes {
                 ['status' => 409]
             );
         }
+        $lease_token = ScanLock::get_active_lease_token($scan_id);
 
         // Initialize high-performance streaming session queue on disk
         $total_files = 0;
@@ -4159,6 +4161,7 @@ class ScannerRoutes {
         return rest_ensure_response([
             'success'     => true,
             'scan_id'     => $scan_id,
+            'lease_token' => $lease_token,
             'total_files' => $total_files,
             'status'      => 'running',
             'started_at'  => $now_exact,
@@ -4170,6 +4173,15 @@ class ScannerRoutes {
         global $wpdb;
 
         $scan_id = (int) $request->get_param('scan_id');
+        $lease_token = sanitize_text_field((string) ($request->get_param('lease_token') ?? ''));
+        if (empty($lease_token)) {
+            return new \WP_Error(
+                'invalid_lease_token',
+                __('Valid scan lease token is required for batch execution.', 'webcare-pro-security'),
+                ['status' => 403]
+            );
+        }
+
         $configured_batch = (int) \WebCareProScanner\System\SettingsManager::get('scan_batch_size', 50);
         $param_batch = (int) $request->get_param('batch_size');
         $batch_size = $param_batch > 0 ? max($param_batch, $configured_batch) : $configured_batch;
@@ -4177,7 +4189,7 @@ class ScannerRoutes {
         $batch_ru_start = function_exists('getrusage') ? @getrusage() : null;
 
         // Acquire per-batch mutex and verify active scan lease
-        if (!ScanLock::acquire_batch_lock($scan_id)) {
+        if (!ScanLock::acquire_batch_lock($scan_id, $lease_token)) {
             return new \WP_Error(
                 'scan_lock_conflict',
                 __('Concurrent scan batch execution rejected or active scan lease not held.', 'webcare-pro-security'),
@@ -4375,14 +4387,29 @@ class ScannerRoutes {
         }
 
         $scan_id = (int) $request->get_param('scan_id');
+        $lease_token = sanitize_text_field((string) ($request->get_param('lease_token') ?? ''));
+        if (empty($lease_token)) {
+            return new \WP_Error(
+                'invalid_lease_token',
+                __('Valid scan lease token is required for deep audit execution.', 'webcare-pro-security'),
+                ['status' => 403]
+            );
+        }
+
         $target = sanitize_text_field($request->get_param('target') ?: '');
         $admins_only = (bool) $request->get_param('admins_only');
 
         $table_issues = $wpdb->prefix . 'webcareproscan_scan_issues';
         $table_scans = $wpdb->prefix . 'webcareproscan_scans';
 
-        // Keep lock alive
-        ScanLock::heartbeat($scan_id);
+        // Keep lock alive and verify lease token ownership
+        if (!ScanLock::heartbeat($scan_id, $lease_token)) {
+            return new \WP_Error(
+                'scan_lock_conflict',
+                __('Active scan lease verification failed or scan timed out.', 'webcare-pro-security'),
+                ['status' => 409]
+            );
+        }
 
         // If scan is already completed, return results directly (idempotent for reconnects)
         $scan_query = "SELECT * FROM `{$table_scans}` WHERE id = %d";
@@ -4437,7 +4464,7 @@ class ScannerRoutes {
             } elseif ($target === 'user_security') {
                 // Password strength, privilege escalation, and Trojan capability injection audit across all accounts
                 $user_scanner = new UserScanner();
-                $all_deep_findings = array_merge($all_deep_findings, $user_scanner->scan((string) $scan_id, false));
+                $all_deep_findings = array_merge($all_deep_findings, $user_scanner->scan((string) $scan_id, false, $lease_token));
             } elseif ($target === 'outdated_software') {
                 // Check outdated WP core, plugins, themes
                 $update_scanner = new UpdateScanner();
@@ -4459,7 +4486,7 @@ class ScannerRoutes {
                 $rogue_detector = new \WebCareProScanner\Database\RogueAdminAnomalyDetector();
                 $all_deep_findings = array_merge($all_deep_findings, $rogue_detector->scan((string) $scan_id));
                 $user_scanner = new UserScanner();
-                $all_deep_findings = array_merge($all_deep_findings, $user_scanner->scan((string) $scan_id, true));
+                $all_deep_findings = array_merge($all_deep_findings, $user_scanner->scan((string) $scan_id, true, $lease_token));
             } elseif ($target === 'hook_sentinel') {
                 // Living-off-the-Land (LotL) Native Hook Infiltration Sentinel
                 $hook_sentinel = new \WebCareProScanner\WordPress\HookInfiltrationSentinel();
@@ -4603,7 +4630,7 @@ class ScannerRoutes {
                     $rogue_detector = new \WebCareProScanner\Database\RogueAdminAnomalyDetector();
                     $all_deep_findings = array_merge($all_deep_findings, $rogue_detector->scan((string) $scan_id));
                     $user_scanner = new UserScanner();
-                    $all_deep_findings = array_merge($all_deep_findings, $user_scanner->scan((string) $scan_id, true));
+                    $all_deep_findings = array_merge($all_deep_findings, $user_scanner->scan((string) $scan_id, true, $lease_token));
                 }
 
                 // 13. Check the strength of passwords
@@ -4640,7 +4667,7 @@ class ScannerRoutes {
             } else {
                 // Full or plugins_themes: execute deep audit engines with heartbeat & fault isolation
                 try {
-                    ScanLock::heartbeat($scan_id);
+                    ScanLock::heartbeat($scan_id, $lease_token);
                     set_transient("webcareproscan_active_scan_file_{$scan_id}", 'Core Integrity: Verifying WordPress core files against official WP.org API checksums...', 120);
                     $core_integrity = new CoreIntegrity();
                     $all_deep_findings = array_merge($all_deep_findings, $core_integrity->verify((string) $scan_id));
@@ -4653,48 +4680,48 @@ class ScannerRoutes {
                 } catch (\Throwable $e) {}
 
                 try {
-                    ScanLock::heartbeat($scan_id);
+                    ScanLock::heartbeat($scan_id, $lease_token);
                     set_transient("webcareproscan_active_scan_file_{$scan_id}", 'Plugin Integrity: Verifying installed plugins against official WordPress.org checksums...', 120);
                     $plugin_integrity = new PluginIntegrity();
                     $all_deep_findings = array_merge($all_deep_findings, $plugin_integrity->verify((string) $scan_id));
                 } catch (\Throwable $e) {}
 
                 try {
-                    ScanLock::heartbeat($scan_id);
+                    ScanLock::heartbeat($scan_id, $lease_token);
                     set_transient("webcareproscan_active_scan_file_{$scan_id}", 'Theme Integrity: Verifying active and installed themes against repository checksums...', 120);
                     $theme_integrity = new ThemeIntegrity();
                     $all_deep_findings = array_merge($all_deep_findings, $theme_integrity->verify((string) $scan_id));
                 } catch (\Throwable $e) {}
 
                 try {
-                    ScanLock::heartbeat($scan_id);
+                    ScanLock::heartbeat($scan_id, $lease_token);
                     $db_scanner = new DatabaseScanner();
                     $all_deep_findings = array_merge($all_deep_findings, $db_scanner->scan((string) $scan_id, 100));
                 } catch (\Throwable $e) {}
 
                 try {
-                    ScanLock::heartbeat($scan_id);
+                    ScanLock::heartbeat($scan_id, $lease_token);
                     set_transient("webcareproscan_active_scan_file_{$scan_id}", 'Content & Post Scanner: Inspecting published posts and comments for hidden SEO spam and XSS...', 120);
                     $content_scanner = new ContentScanner();
                     $all_deep_findings = array_merge($all_deep_findings, $content_scanner->scan((string) $scan_id, 100));
                 } catch (\Throwable $e) {}
 
                 try {
-                    ScanLock::heartbeat($scan_id);
+                    ScanLock::heartbeat($scan_id, $lease_token);
                     set_transient("webcareproscan_active_scan_file_{$scan_id}", 'User & Auth Sentinel: Auditing user accounts, administrator privileges, and password strength...', 120);
                     $wp_security = new WordPressSecurityScanner();
-                    $all_deep_findings = array_merge($all_deep_findings, $wp_security->scan((string) $scan_id));
+                    $all_deep_findings = array_merge($all_deep_findings, $wp_security->scan((string) $scan_id, $lease_token));
                 } catch (\Throwable $e) {}
 
                 try {
-                    ScanLock::heartbeat($scan_id);
+                    ScanLock::heartbeat($scan_id, $lease_token);
                     set_transient("webcareproscan_active_scan_file_{$scan_id}", 'Vulnerability Intelligence: Checking installed plugins, themes, and WP Core against CVE database...', 120);
                     $update_scanner = new UpdateScanner();
                     $all_deep_findings = array_merge($all_deep_findings, $update_scanner->scan((string) $scan_id));
                 } catch (\Throwable $e) {}
 
                 try {
-                    ScanLock::heartbeat($scan_id);
+                    ScanLock::heartbeat($scan_id, $lease_token);
                     set_transient("webcareproscan_active_scan_file_{$scan_id}", 'Media & Uploads Audit: Inspecting image metadata and attachments for embedded PHP code...', 120);
                     $uploads_scanner = new UploadsScanner();
                     $all_deep_findings = array_merge($all_deep_findings, $uploads_scanner->scan((string) $scan_id));
@@ -4903,7 +4930,7 @@ class ScannerRoutes {
             }
 
             // Release the scan lock upon completion
-            ScanLock::release($scan_id);
+            ScanLock::release($scan_id, $lease_token);
 
             // Dispatch granular event notifications via NotificationDispatcher
             if (class_exists('\\WebCareProScanner\\Notifications\\NotificationDispatcher')) {
@@ -4970,7 +4997,11 @@ class ScannerRoutes {
                 'status'      => 'completed'
             ]);
         } catch (\Throwable $e) {
-            ScanLock::release($scan_id);
+            if (!empty($lease_token)) {
+                ScanLock::release($scan_id, $lease_token);
+            } else {
+                ScanLock::force_release($scan_id);
+            }
             // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
             error_log('[WebCare Pro] Error during deep audit: ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
 
@@ -5353,7 +5384,7 @@ class ScannerRoutes {
             \WebCareProScanner\Scan\ScanVaultManager::clear_all_manifests();
         }
 
-        ScanLock::release(ScanLock::get_locked_scan_id() ?: 0);
+        ScanLock::force_release();
 
         return rest_ensure_response([
             'success'    => true,
@@ -6117,7 +6148,7 @@ class ScannerRoutes {
         );
 
         if (!$running_scan || $running_scan['status'] !== 'running') {
-            ScanLock::release($locked_id);
+            ScanLock::force_release($locked_id);
             return rest_ensure_response([
                 'is_running' => false,
             ]);
@@ -6142,6 +6173,7 @@ class ScannerRoutes {
         return rest_ensure_response([
             'is_running'     => true,
             'scan_id'        => $locked_id,
+            'lease_token'    => ScanLock::get_active_lease_token($locked_id),
             'scan_target'    => $running_scan['scan_target'],
             'trigger_type'   => $trigger_type,
             'status'         => 'running',
@@ -6235,11 +6267,11 @@ class ScannerRoutes {
                 'completed_at' => $now_exact,
             ], ['id' => $scan_id]);
             \WebCareProScanner\Scan\ScanQueueManager::cleanup($scan_id);
-            ScanLock::release($scan_id);
+            ScanLock::force_release($scan_id);
         }
 
         // Also release any active scan lock and ensure any hanging scans are aborted
-        ScanLock::release();
+        ScanLock::force_release();
         $abort_sql = "UPDATE `{$table_scans}` SET status = 'aborted', completed_at = %s WHERE status = 'running'";
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
         $wpdb->query(

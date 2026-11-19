@@ -57,7 +57,10 @@ class ScanLock {
         }
 
         // 3. Atomically persist lease option
-        $lease_token = wp_generate_password(24, false);
+        $lease_token = (!empty($existing['lease_token']) && is_array($existing) && (int) ($existing['scan_id'] ?? 0) === $scan_id)
+            ? (string) $existing['lease_token']
+            : wp_generate_password(24, false);
+
         $lease_payload = [
             'scan_id'     => $scan_id,
             'time'        => time(),
@@ -91,14 +94,14 @@ class ScanLock {
      * Acquire a per-batch execution lock and verify active scan lease.
      * Prevents overlapping batch execution across concurrent AJAX/REST requests.
      *
-     * @param int         $scan_id
-     * @param string|null $lease_token Optional cryptographic token to verify scan lease ownership.
+     * @param int    $scan_id
+     * @param string $lease_token Mandatory cryptographic token verifying scan lease ownership.
      * @return bool True if batch lock acquired and scan lease is valid.
      */
-    public static function acquire_batch_lock($scan_id, ?string $lease_token = null): bool {
+    public static function acquire_batch_lock(int $scan_id, string $lease_token): bool {
         global $wpdb;
         $scan_id = (int) $scan_id;
-        if ($scan_id <= 0 || !($wpdb instanceof \wpdb)) {
+        if ($scan_id <= 0 || empty($lease_token) || !($wpdb instanceof \wpdb)) {
             return false;
         }
 
@@ -129,16 +132,17 @@ class ScanLock {
     }
 
     /**
-     * Verify that this scan_id currently owns the active lock and refresh its heartbeat.
+     * Verify that this scan_id currently owns the active lock with the matching lease token
+     * and refresh its heartbeat. Checks both in-memory and persisted storage.
      *
-     * @param int         $scan_id
-     * @param string|null $lease_token Optional cryptographic token to verify scan lease ownership.
+     * @param int    $scan_id
+     * @param string $lease_token Mandatory cryptographic token verifying scan lease ownership.
      * @return bool True if owner lease verified and refreshed.
      */
-    public static function verify_and_renew_lease($scan_id, ?string $lease_token = null): bool {
+    public static function verify_and_renew_lease(int $scan_id, string $lease_token): bool {
         global $wpdb;
         $scan_id = (int) $scan_id;
-        if ($scan_id <= 0 || !($wpdb instanceof \wpdb)) {
+        if ($scan_id <= 0 || empty($lease_token) || !($wpdb instanceof \wpdb)) {
             return false;
         }
 
@@ -147,15 +151,15 @@ class ScanLock {
             return false;
         }
 
-        $locked_scan = (int) ($existing['scan_id'] ?? 0);
-        $locked_time = (int) ($existing['time'] ?? 0);
+        $locked_scan  = (int) ($existing['scan_id'] ?? 0);
+        $locked_time  = (int) ($existing['time'] ?? 0);
         $stored_token = (string) ($existing['lease_token'] ?? '');
 
         if ($locked_scan !== $scan_id) {
             return false;
         }
 
-        if ($lease_token !== null && $lease_token !== '' && !hash_equals($stored_token, $lease_token)) {
+        if (empty($stored_token) || !hash_equals($stored_token, $lease_token)) {
             return false;
         }
 
@@ -163,11 +167,23 @@ class ScanLock {
             return false;
         }
 
-        update_option(self::LOCK_OPTION, [
+        $updated_payload = [
             'scan_id'     => $scan_id,
             'time'        => time(),
-            'lease_token' => $stored_token !== '' ? $stored_token : wp_generate_password(24, false),
-        ], false);
+            'lease_token' => $stored_token,
+        ];
+        update_option(self::LOCK_OPTION, $updated_payload, false);
+
+        // Verify heartbeat write persistence in storage
+        $persisted = get_option(self::LOCK_OPTION);
+        if (
+            !is_array($persisted)
+            || (int) ($persisted['scan_id'] ?? 0) !== $scan_id
+            || empty($persisted['lease_token'])
+            || !hash_equals((string) $persisted['lease_token'], $lease_token)
+        ) {
+            return false;
+        }
 
         return true;
     }
@@ -175,49 +191,83 @@ class ScanLock {
     /**
      * Refresh the lock heartbeat to indicate the scan is still actively processing.
      *
-     * @param int         $scan_id
-     * @param string|null $lease_token
+     * @param int    $scan_id
+     * @param string $lease_token Mandatory cryptographic lease token.
+     * @return bool
      */
-    public static function heartbeat($scan_id, ?string $lease_token = null): void {
-        self::verify_and_renew_lease($scan_id, $lease_token);
+    public static function heartbeat(int $scan_id, string $lease_token): bool {
+        return self::verify_and_renew_lease($scan_id, $lease_token);
     }
 
     /**
      * Release the scan lock (both MySQL advisory mutex and option state).
-     * Strictly verifies ownership before clearing options and advisory locks.
+     * Strictly verifies lease token ownership before clearing options and advisory locks.
+     * Verifies that the option is deleted before returning true.
      *
-     * @param int|null    $scan_id
-     * @param string|null $lease_token
+     * @param int    $scan_id
+     * @param string $lease_token Mandatory cryptographic lease token.
+     * @return bool True if verified owner lease was successfully released.
      */
-    public static function release($scan_id = null, ?string $lease_token = null): void {
+    public static function release(int $scan_id, string $lease_token): bool {
         global $wpdb;
-        if (!($wpdb instanceof \wpdb)) {
-            return;
+        $scan_id = (int) $scan_id;
+        if ($scan_id <= 0 || empty($lease_token) || !($wpdb instanceof \wpdb)) {
+            return false;
         }
 
-        // 1. Verify lease ownership if a specific scan_id is provided
-        if ($scan_id !== null) {
-            $scan_id = (int) $scan_id;
-            $existing = get_option(self::LOCK_OPTION);
-            if (!$existing || !is_array($existing) || (int) ($existing['scan_id'] ?? 0) !== $scan_id) {
-                // Mismatched scan ID or no active lease — fail safe and do NOT release advisory lock
-                return;
-            }
-            if ($lease_token !== null && $lease_token !== '' && !empty($existing['lease_token']) && !hash_equals((string) $existing['lease_token'], $lease_token)) {
-                // Token mismatch — do NOT release
-                return;
-            }
-            delete_option(self::LOCK_OPTION);
-        } else {
-            // Unconditional forced release
-            delete_option(self::LOCK_OPTION);
+        // 1. Verify lease ownership with strict timing and token check
+        $existing = get_option(self::LOCK_OPTION);
+        if (!$existing || !is_array($existing) || (int) ($existing['scan_id'] ?? 0) !== $scan_id) {
+            // Mismatched scan ID or no active lease — fail safe and do NOT release advisory lock
+            return false;
         }
 
-        // 2. Release MySQL advisory locks only after ownership verification or forced release
+        $stored_token = (string) ($existing['lease_token'] ?? '');
+        if (empty($stored_token) || !hash_equals($stored_token, $lease_token)) {
+            // Token mismatch — do NOT release
+            return false;
+        }
+
+        // 2. Delete lease option and verify deletion persistence
+        delete_option(self::LOCK_OPTION);
+        $persisted = get_option(self::LOCK_OPTION);
+        if ($persisted !== false) {
+            return false;
+        }
+
+        // 3. Release MySQL advisory locks only after ownership verification and storage deletion
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
         $wpdb->query($wpdb->prepare("SELECT RELEASE_LOCK(%s)", self::ADVISORY_LOCK_NAME));
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
         $wpdb->query($wpdb->prepare("SELECT RELEASE_LOCK(%s)", self::BATCH_LOCK_NAME));
+
+        return true;
+    }
+
+    /**
+     * Explicit administrative or recovery operation to forcefully release all locks.
+     * Reserved for emergency resets, aborts, and test teardowns, with audit logging.
+     *
+     * @param int|null $scan_id Optional scan ID for audit context.
+     * @return void
+     */
+    public static function force_release(?int $scan_id = null): void {
+        global $wpdb;
+        delete_option(self::LOCK_OPTION);
+        if ($wpdb instanceof \wpdb) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
+            $wpdb->query($wpdb->prepare("SELECT RELEASE_LOCK(%s)", self::ADVISORY_LOCK_NAME));
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
+            $wpdb->query($wpdb->prepare("SELECT RELEASE_LOCK(%s)", self::BATCH_LOCK_NAME));
+        }
+
+        if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+            \WebCareProScanner\System\AuditLogger::log(
+                'scan_lock_force_released',
+                sprintf('Scan lock forcefully cleared by administrative operation (Scan ID: %s).', $scan_id ? (string) $scan_id : 'any'),
+                'warning'
+            );
+        }
     }
 
     /**
@@ -242,10 +292,12 @@ class ScanLock {
 
     /**
      * Retrieve the cryptographic lease token for the active scan.
+     * When $scan_id is supplied, verifies that the stored lease belongs to that exact scan.
      *
+     * @param int|null $scan_id Optional scan ID to verify exact ownership.
      * @return string|null
      */
-    public static function get_active_lease_token(): ?string {
+    public static function get_active_lease_token(?int $scan_id = null): ?string {
         global $wpdb;
         if (!($wpdb instanceof \wpdb)) {
             return null;
@@ -253,7 +305,11 @@ class ScanLock {
         $existing = get_option(self::LOCK_OPTION);
         if ($existing && is_array($existing)) {
             $locked_time = (int) ($existing['time'] ?? 0);
+            $locked_scan = (int) ($existing['scan_id'] ?? 0);
             if ((time() - $locked_time) < self::LOCK_TIMEOUT_SECONDS && !empty($existing['lease_token'])) {
+                if ($scan_id !== null && (int) $scan_id !== $locked_scan) {
+                    return null;
+                }
                 return (string) $existing['lease_token'];
             }
         }

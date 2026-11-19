@@ -28,15 +28,16 @@ class WordPressSecurityScanner {
      * Run all WordPress security & persistence audits.
      *
      * @param string $scan_id
+     * @param string $lease_token Optional cryptographic lease token.
      * @return Finding[]
      */
-    public function scan($scan_id) {
+    public function scan($scan_id, string $lease_token = '') {
         $findings = [];
         $monitor = new ResourceMonitor(80, 20);
 
         // 1. Audit Users & Capabilities
         if (!$monitor->is_nearing_limits()) {
-            $user_findings = $this->user_scanner->scan($scan_id);
+            $user_findings = $this->user_scanner->scan($scan_id, false, $lease_token);
             $findings = array_merge($findings, $user_findings);
         }
 
