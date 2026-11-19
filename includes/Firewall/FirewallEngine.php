@@ -3082,7 +3082,7 @@ class FirewallEngine {
             }
         }
 
-        $strike_info = \WebCareProScanner\Firewall\Core\TransientRateLimiter::record_warning_strike($client_ip, 4, 900);
+        $strike_info = $rule['strike_info'] ?? ($is_warning ? \WebCareProScanner\Firewall\Core\TransientRateLimiter::get_warning_strike($client_ip, 4) : ['strike' => 0, 'max_strikes' => 4, 'is_terminal_ban' => false, 'remaining_strikes' => 4]);
         $strike_current = $strike_info['strike'];
         $strike_max     = $strike_info['max_strikes'];
         $strike_remain  = $strike_info['remaining_strikes'];
@@ -6713,8 +6713,14 @@ class FirewallEngine {
             }
         }
 
+        // Evaluate progressive warning status and record single warning strike strictly when applicable
+        $is_warning = self::is_progressive_warning_rule($rule, $settings);
+        if ($is_warning && !isset($rule['strike_info'])) {
+            $rule['strike_info'] = \WebCareProScanner\Firewall\Core\TransientRateLimiter::record_warning_strike($client_ip, 4, 900);
+        }
+
         $incident_id = 'WEBCARE-' . strtoupper(substr(md5($client_ip . microtime(true) . wp_rand()), 0, 8));
-        self::log_incident($rule, 'blocked', $incident_id);
+        self::log_incident($rule, $is_warning ? 'warned' : 'blocked', $incident_id);
 
         // Record blocked probe for 60-second rolling velocity counter (OS-01)
         if (class_exists('\\WebCareProScanner\\Firewall\\CAF\\OriginLoadCircuitBreaker')) {

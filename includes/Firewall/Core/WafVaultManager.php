@@ -30,6 +30,9 @@ final class WafVaultManager {
 
         if (!is_dir($dir)) {
             wp_mkdir_p($dir);
+            @chmod($dir, 0750);
+        } else {
+            @chmod($dir, 0750);
         }
 
         self::ensure_vault_secured($dir);
@@ -57,11 +60,13 @@ final class WafVaultManager {
                 . "    Deny from all\n"
                 . "</IfModule>\n";
             @file_put_contents($htaccess, $content);
+            @chmod($htaccess, 0600);
         }
 
         $index = $dir . '/index.php';
         if (!file_exists($index)) {
             @file_put_contents($index, "<?php\n// Silence is golden.\n");
+            @chmod($index, 0600);
         }
     }
 
@@ -277,7 +282,7 @@ final class WafVaultManager {
 
     /**
      * Record a ghost-route canary trap hit to vault/ghost-catches.jsonl (append-only stream).
-     * Replaces hot wp_options rewrites.
+     * Replaces hot wp_options rewrites with bounded rotation at 2 MB and 0600 file permissions.
      *
      * @param array<string, mixed> $event
      * @return bool
@@ -286,13 +291,26 @@ final class WafVaultManager {
         $dir  = self::get_vault_dir();
         $file = $dir . '/ghost-catches.jsonl';
 
+        // Rotate at 2 MB to prevent unbounded disk growth
+        if (file_exists($file) && (filesize($file) ?: 0) > 2097152) {
+            $rot = $file . '.1';
+            @unlink($rot);
+            @rename($file, $rot);
+            @chmod($rot, 0600);
+        }
+
         $line = wp_json_encode($event) . "\n";
         // phpcs:ignore WordPress.WP.AlternativeFileSystem.file_put_contents_file_put_contents
-        return (bool) @file_put_contents($file, $line, FILE_APPEND | LOCK_EX);
+        $written = (bool) @file_put_contents($file, $line, FILE_APPEND | LOCK_EX);
+        if ($written) {
+            @chmod($file, 0600);
+        }
+        return $written;
     }
 
     /**
      * Retrieve recent ghost-trap catches from vault/ghost-catches.jsonl (reverse order).
+     * Uses bounded tail-seeking (32 KB buffer) instead of loading the entire file into RAM via file().
      *
      * @param int $limit
      * @return array<int, array<string, mixed>>
@@ -307,19 +325,47 @@ final class WafVaultManager {
             return is_array($legacy) ? array_slice($legacy, 0, $limit) : [];
         }
 
-        $lines = @file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-        if (!$lines || !is_array($lines)) {
+        $fsize = filesize($file) ?: 0;
+        if ($fsize <= 0) {
             return [];
         }
 
-        $catches = [];
-        $total = count($lines);
-        $start = max(0, $total - $limit);
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
+        $fp = @fopen($file, 'rb');
+        if (!$fp) {
+            return [];
+        }
 
-        for ($i = $total - 1; $i >= $start; $i--) {
-            $decoded = json_decode($lines[$i], true);
+        // Read at most the last 32 KB to strictly eliminate OOM risks on active sites
+        $chunk_size = min($fsize, 32768);
+        fseek($fp, -$chunk_size, SEEK_END);
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fread
+        $buffer = fread($fp, $chunk_size);
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+        fclose($fp);
+
+        if (!is_string($buffer) || $buffer === '') {
+            return [];
+        }
+
+        $lines = explode("\n", $buffer);
+        // If we read a partial chunk from the middle of the file, drop the incomplete first line
+        if ($chunk_size < $fsize) {
+            array_shift($lines);
+        }
+
+        $catches = [];
+        for ($i = count($lines) - 1; $i >= 0; $i--) {
+            $line = trim($lines[$i]);
+            if ($line === '' || $line[0] !== '{') {
+                continue;
+            }
+            $decoded = json_decode($line, true);
             if (is_array($decoded)) {
                 $catches[] = $decoded;
+                if (count($catches) >= $limit) {
+                    break;
+                }
             }
         }
 

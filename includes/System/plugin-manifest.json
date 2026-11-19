@@ -1,6 +1,6 @@
 {
   "version": "3.0.0",
-  "generated_at": "2026-11-19T23:25:08.843Z",
+  "generated_at": "2026-11-19T23:49:13.587Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -544,20 +544,20 @@
       "size": 7988
     },
     "includes/Firewall/Core/TransientRateLimiter.php": {
-      "sha256": "ee9cb6387d5afbf4713fc3af8870aedc0e4103efdddd5203a9f1d050e051d18a",
-      "size": 3435
+      "sha256": "f4ded40968ea08e8e113b53c98e60979930a6b722e0e76f989df16656d15499e",
+      "size": 4429
     },
     "includes/Firewall/Core/ViolationResponder.php": {
       "sha256": "45aa299e9a90106ffdc2491f249fc4a6e3942bbad2d53c0d4a6734f3936586df",
       "size": 2554
     },
     "includes/Firewall/Core/WafVaultManager.php": {
-      "sha256": "e1aaddbfadcd56ef9f6516f7d304e9510db5d7d161cd5196c1e514792fa832e9",
-      "size": 11286
+      "sha256": "46f8dfc76384aec265816b1af3e2e70b87553a002dad980ece6cc1cf7f392424",
+      "size": 12945
     },
     "includes/Firewall/CVEIntelligenceService.php": {
-      "sha256": "5a1752aac90bff5eb8f6ddcea6847387bd61ca769de529c8b19ded62f560d4c9",
-      "size": 42887
+      "sha256": "7bc477ad0c5718965ca212223d567bc9ec36ddab6301e58714e43fcf4d5549c7",
+      "size": 47435
     },
     "includes/Firewall/DistributedVelocityShield.php": {
       "sha256": "eab849570736089cda62667615aec5a238af550c46409c4f8da3034876919667",
@@ -580,8 +580,8 @@
       "size": 2449
     },
     "includes/Firewall/FirewallEngine.php": {
-      "sha256": "b86f2e1f29112004cd6a5169531c933d5b96a3448bb93b033bbf433ff848633e",
-      "size": 455114
+      "sha256": "372a3fa3c056f1aa1489238eb4a29921da97ac6a824f6221443dd613098f0864",
+      "size": 455646
     },
     "includes/Firewall/FormSpamProtectionEngine.php": {
       "sha256": "d450cf8289cddf53554c6a084cd4776f6a6333f7c7afdad8d65c39e9fc79bfb6",
@@ -688,8 +688,8 @@
       "size": 21084
     },
     "includes/Firewall/WafFileLogger.php": {
-      "sha256": "d1ab9cb78022aace8d26761f2574b00665bf8e9d2ef141e3d297519acc116917",
-      "size": 49710
+      "sha256": "d0937d221e9b2b206fb757564cee13f8a21c355d2937a123e3943acf71c203a5",
+      "size": 53865
     },
     "includes/Forensics/AttackChainEngine.php": {
       "sha256": "3bf4e688f9c42eecaa4cad29be378f2f116896ee497508d5874033d4ff31a5a9",

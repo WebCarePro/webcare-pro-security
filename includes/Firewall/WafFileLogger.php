@@ -261,7 +261,9 @@ class WafFileLogger {
             'session_hash'     => substr(hash('sha256', $ip . '|' . $user_agent . '|' . (string) (wp_salt('auth'))), 0, 16),
             'route_class'      => class_exists('\\WebCareProScanner\\Core\\RouteClassifier') ? \WebCareProScanner\Core\RouteClassifier::classify(['REQUEST_URI' => $uri, 'REQUEST_METHOD' => $method])->value : 'public_get',
             'matched_param'    => !empty($rule['match_value']) ? sanitize_text_field($rule['match_value']) : (!empty($rule['matched_param']) ? sanitize_text_field($rule['matched_param']) : null),
-            'strike_count'     => ($action === 'warned') ? (\WebCareProScanner\Firewall\Core\TransientRateLimiter::record_warning_strike($ip, 4, 900)['strike'] . '/4') : null,
+            'strike_count'     => ($action === 'warned' || !empty($rule['is_warning']))
+                ? (isset($rule['strike_info']['strike']) ? ($rule['strike_info']['strike'] . '/4') : (\WebCareProScanner\Firewall\Core\TransientRateLimiter::get_warning_strike($ip, 4)['strike'] . '/4'))
+                : null,
             'is_human_score'   => (class_exists(BotReconDefense::class) && BotReconDefense::has_valid_clearance_cookie($ip, $user_agent)) ? 95 : ($is_authenticated ? 90 : (stripos($user_agent, 'bot') !== false || stripos($user_agent, 'crawl') !== false ? 5 : 50)),
             'cf_sync_enabled'  => class_exists('\\WebCareProScanner\\System\\SettingsManager') ? (!empty(\WebCareProScanner\System\SettingsManager::get_settings()['cloudflare_enabled']) && !empty(\WebCareProScanner\System\SettingsManager::get_settings()['cloudflare_auto_sync_bans'])) : false,
             'cf_connected'     => class_exists('\\WebCareProScanner\\System\\SettingsManager') ? (!empty(\WebCareProScanner\System\SettingsManager::get_settings()['cloudflare_enabled']) && !empty(\WebCareProScanner\System\SettingsManager::get_settings()['has_cloudflare_key'])) : false,
@@ -425,42 +427,65 @@ class WafFileLogger {
         $is_export   = !empty($filters['is_export']);
         $max_needed  = $is_export ? 25000 : ($offset + $limit + 100);
         $total_found = 0;
+        $sort_by     = sanitize_key($filters['sort_by'] ?? 'created_at');
+        $sort_order  = strtolower(sanitize_key($filters['sort_order'] ?? 'desc')) === 'asc' ? 'asc' : 'desc';
+        $is_desc_time = ($sort_order === 'desc' && in_array($sort_by, ['created_at', 'timestamp'], true));
 
         foreach ($files_to_read as $filepath) {
             if (!file_exists($filepath) || !is_readable($filepath)) {
                 continue;
             }
 
-            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen -- Low-memory progressive streaming of partitioned JSONL log files
-            $handle = @fopen($filepath, 'r');
-            if (!$handle) {
-                continue;
+            if ($is_desc_time) {
+                // Reverse-line streaming from EOF backwards for default newest-first display
+                self::stream_file_reverse(
+                    $filepath,
+                    function (array $record) use (&$all_matched, &$total_found, $filters, $max_needed): bool {
+                        if (!self::record_matches_filters($record, $filters)) {
+                            return true;
+                        }
+
+                        $total_found++;
+                        if (count($all_matched) < $max_needed) {
+                            $all_matched[] = $record;
+                        }
+
+                        return count($all_matched) < $max_needed;
+                    }
+                );
+            } else {
+                // Forward streaming for ASC or non-timestamp custom sorting
+                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen -- Low-memory progressive streaming of partitioned JSONL log files
+                $handle = @fopen($filepath, 'r');
+                if (!$handle) {
+                    continue;
+                }
+
+                while (($line = fgets($handle)) !== false) {
+                    $line = trim($line);
+                    if ($line === '' || $line[0] !== '{') {
+                        continue;
+                    }
+
+                    $record = json_decode($line, true);
+                    if (!is_array($record)) {
+                        continue;
+                    }
+
+                    // Apply in-memory stream filtering
+                    if (!self::record_matches_filters($record, $filters)) {
+                        continue;
+                    }
+
+                    $total_found++;
+                    if (count($all_matched) < $max_needed) {
+                        $all_matched[] = $record;
+                    }
+                }
+
+                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose -- Stream resource cleanup
+                fclose($handle);
             }
-
-            while (($line = fgets($handle)) !== false) {
-                $line = trim($line);
-                if ($line === '' || $line[0] !== '{') {
-                    continue;
-                }
-
-                $record = json_decode($line, true);
-                if (!is_array($record)) {
-                    continue;
-                }
-
-                // Apply in-memory stream filtering
-                if (!self::record_matches_filters($record, $filters)) {
-                    continue;
-                }
-
-                $total_found++;
-                if (count($all_matched) < $max_needed) {
-                    $all_matched[] = $record;
-                }
-            }
-
-            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose -- Stream resource cleanup
-            fclose($handle);
         }
 
         // Fallback: if a Support Code transient exists (e.g. from a burst-deduped block page) and no disk log matched it,
@@ -782,6 +807,82 @@ class WafFileLogger {
         }
 
         return true;
+    }
+
+    /**
+     * Stream a JSONL file in reverse line-by-line order from EOF backwards.
+     * Uses bounded 64 KB sliding window chunks to guarantee zero memory bloat while
+     * delivering newest log events immediately.
+     *
+     * @param string   $filepath Target JSONL file path.
+     * @param callable $callback Function receiving parsed array, returns false to stop early.
+     * @param int      $chunk_size Window buffer size in bytes (default 64 KB).
+     */
+    public static function stream_file_reverse(string $filepath, callable $callback, int $chunk_size = 65536): void {
+        $file_size = filesize($filepath);
+        if ($file_size === false || $file_size <= 0) {
+            return;
+        }
+
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
+        $fp = @fopen($filepath, 'rb');
+        if (!$fp) {
+            return;
+        }
+
+        $pos = $file_size;
+        $remainder = '';
+
+        while ($pos > 0) {
+            $read_size = min($pos, $chunk_size);
+            $pos -= $read_size;
+            fseek($fp, $pos);
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fread
+            $chunk = fread($fp, $read_size);
+            if ($chunk === false) {
+                break;
+            }
+
+            $content = $chunk . $remainder;
+            $lines   = explode("\n", $content);
+
+            // The first element might be an incomplete line; hold it as remainder for the previous chunk
+            $remainder = ($pos > 0) ? (string) array_shift($lines) : '';
+
+            // Process lines in reverse order (bottom to top)
+            for ($i = count($lines) - 1; $i >= 0; $i--) {
+                $line = trim($lines[$i]);
+                if ($line === '' || $line[0] !== '{') {
+                    continue;
+                }
+
+                $record = json_decode($line, true);
+                if (!is_array($record)) {
+                    continue;
+                }
+
+                $continue = $callback($record);
+                if ($continue === false) {
+                    // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+                    fclose($fp);
+                    return;
+                }
+            }
+        }
+
+        // Process any leftover first line at the very beginning of the file
+        if ($remainder !== '') {
+            $line = trim($remainder);
+            if ($line !== '' && $line[0] === '{') {
+                $record = json_decode($line, true);
+                if (is_array($record)) {
+                    $callback($record);
+                }
+            }
+        }
+
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+        fclose($fp);
     }
 
     /**

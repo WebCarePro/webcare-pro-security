@@ -80,8 +80,30 @@ final class TransientRateLimiter {
     }
 
     /**
-     * Record and inspect strike count for progressive warnings (default: 4 strikes within 15 mins).
+     * Inspect current strike count without incrementing (read-only query).
      *
+     * @param string $ip Client IP
+     * @param int    $max_strikes Maximum warning strikes allowed before temporary ban
+     * @return array{strike: int, max_strikes: int, is_terminal_ban: bool, remaining_strikes: int}
+     */
+    public static function get_warning_strike(string $ip, int $max_strikes = 4): array {
+        $key = 'warning_strike:' . md5($ip);
+        $transient_name = 'webcareproscan_rl_' . substr(md5($key), 0, 24);
+        $data = get_transient($transient_name);
+        $count = (is_array($data) && !empty($data['count'])) ? (int) $data['count'] : 0;
+        $strike = min($max_strikes, $count);
+        $remaining = max(0, $max_strikes - $strike);
+
+        return [
+            'strike'            => $strike,
+            'max_strikes'       => $max_strikes,
+            'is_terminal_ban'   => ($count >= $max_strikes),
+            'remaining_strikes' => $remaining,
+        ];
+    }
+
+    /**
+     * Record and inspect strike count for progressive warnings (default: 4 strikes within 15 mins).
      * @param string $ip Client IP
      * @param int    $max_strikes Maximum warning strikes allowed before temporary ban
      * @param int    $window_seconds Strike decay window

@@ -853,12 +853,102 @@ class CVEIntelligenceService {
             require_once ABSPATH . 'wp-admin/includes/plugin.php';
         }
 
-        $all_plugins = get_plugins();
-        $catalog     = VirtualPatchManager::get_patch_catalog();
-        $findings    = [];
+        $all_plugins   = get_plugins();
+        $catalog       = VirtualPatchManager::get_patch_catalog();
+        $findings      = [];
         $scanned_count = 0;
 
-        // 1. Audit against local Virtual Patch Catalog (verified critical/high WordPress zero-days & CVEs)
+        // 1. Audit WordPress Core
+        global $wp_version;
+        if (!empty($wp_version)) {
+            $scanned_count++;
+            $core_cves = \WebCareProScanner\WordPress\UpdateScanner::get_core_cves((string) $wp_version);
+            if (!empty($core_cves) && is_array($core_cves)) {
+                foreach ($core_cves as $cve) {
+                    $cve_id = (string) ($cve['cve_id'] ?? '');
+                    if ($cve_id === '') {
+                        continue;
+                    }
+                    $findings[$cve_id] = [
+                        'cve_id'         => $cve_id,
+                        'title'          => $cve['title'] ?? $cve_id,
+                        'severity'       => strtolower((string) ($cve['severity'] ?? 'critical')),
+                        'component_type' => 'core',
+                        'component_name' => 'WordPress Core',
+                        'installed_ver'  => (string) $wp_version,
+                        'description'    => $cve['description'] ?? '',
+                        'patch_available'=> isset($catalog[$cve_id]),
+                    ];
+                }
+            }
+        }
+
+        // 2. Audit all installed plugins
+        if (!empty($all_plugins) && is_array($all_plugins)) {
+            foreach ($all_plugins as $plugin_file => $plugin_data) {
+                $scanned_count++;
+                $slug = dirname($plugin_file);
+                if ($slug === '.' || empty($slug)) {
+                    $slug = basename($plugin_file, '.php');
+                }
+                $version = (string) ($plugin_data['Version'] ?? '0.0.0');
+                $name    = (string) ($plugin_data['Name'] ?? $slug);
+
+                $plugin_cves = \WebCareProScanner\WordPress\UpdateScanner::get_plugin_cves($slug, $version, $name);
+                if (!empty($plugin_cves) && is_array($plugin_cves)) {
+                    foreach ($plugin_cves as $cve) {
+                        $cve_id = (string) ($cve['cve_id'] ?? '');
+                        if ($cve_id === '') {
+                            continue;
+                        }
+                        $findings[$cve_id] = [
+                            'cve_id'         => $cve_id,
+                            'title'          => $cve['title'] ?? $cve_id,
+                            'severity'       => strtolower((string) ($cve['severity'] ?? 'high')),
+                            'component_type' => 'plugin',
+                            'component_name' => $name,
+                            'installed_ver'  => $version,
+                            'description'    => $cve['description'] ?? '',
+                            'patch_available'=> isset($catalog[$cve_id]),
+                        ];
+                    }
+                }
+            }
+        }
+
+        // 3. Audit all installed themes
+        if (function_exists('wp_get_themes')) {
+            $all_themes = wp_get_themes();
+            if (!empty($all_themes) && is_array($all_themes)) {
+                foreach ($all_themes as $theme_slug => $theme_obj) {
+                    $scanned_count++;
+                    $theme_name = $theme_obj->get('Name') ?: (string) $theme_slug;
+                    $theme_ver  = (string) ($theme_obj->get('Version') ?: '0.0.0');
+
+                    $theme_cves = \WebCareProScanner\WordPress\UpdateScanner::get_theme_cves((string) $theme_slug, $theme_ver, $theme_name);
+                    if (!empty($theme_cves) && is_array($theme_cves)) {
+                        foreach ($theme_cves as $cve) {
+                            $cve_id = (string) ($cve['cve_id'] ?? '');
+                            if ($cve_id === '') {
+                                continue;
+                            }
+                            $findings[$cve_id] = [
+                                'cve_id'         => $cve_id,
+                                'title'          => $cve['title'] ?? $cve_id,
+                                'severity'       => strtolower((string) ($cve['severity'] ?? 'high')),
+                                'component_type' => 'theme',
+                                'component_name' => $theme_name,
+                                'installed_ver'  => $theme_ver,
+                                'description'    => $cve['description'] ?? '',
+                                'patch_available'=> isset($catalog[$cve_id]),
+                            ];
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4. Correlate with local Virtual Patch Catalog (verified critical/high zero-days)
         foreach ($catalog as $cve_id => $patch) {
             $comp_slug = (string) ($patch['component'] ?? '');
             $comp_type = ($comp_slug === 'wordpress-core') ? 'core' : 'plugin';
@@ -870,7 +960,6 @@ class CVEIntelligenceService {
             );
 
             if (!empty($corr['installed'])) {
-                $scanned_count++;
                 if (($corr['status'] ?? '') === 'vulnerable') {
                     $findings[$cve_id] = [
                         'cve_id'         => $cve_id,
@@ -886,7 +975,7 @@ class CVEIntelligenceService {
             }
         }
 
-        // 2. Read previous inventory from vault/cve-inventory.json to compute smart diff
+        // 5. Read previous inventory from vault/cve-inventory.json to compute smart diff
         $vault_dir = \WebCareProScanner\Firewall\Core\WafVaultManager::get_vault_dir();
         $inv_file  = $vault_dir . '/cve-inventory.json';
         $prev_data = [];
@@ -907,7 +996,7 @@ class CVEIntelligenceService {
             }
         }
 
-        // 3. Save new snapshot to vault
+        // 6. Save new snapshot to vault with 0600 permissions
         $now = time();
         $snapshot = [
             'last_audit'       => $now,
@@ -918,6 +1007,9 @@ class CVEIntelligenceService {
         ];
         // phpcs:ignore WordPress.WP.AlternativeFileSystem.file_put_contents_file_put_contents
         @file_put_contents($inv_file, (string) wp_json_encode($snapshot, JSON_PRETTY_PRINT), LOCK_EX);
+        if (file_exists($inv_file)) {
+            @chmod($inv_file, 0600);
+        }
 
         // 4. Smart notification dispatch: only send when new CVEs appear or if forced
         $should_notify = $force_notification || !empty($new_cves);
