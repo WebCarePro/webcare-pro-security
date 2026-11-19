@@ -162,6 +162,25 @@ class OutboundEgressFirewall {
 
         // Constrain cURL redirect protocols and pin validated safe IPs via CURLOPT_RESOLVE (defeats TOCTOU DNS rebinding)
         add_action('http_api_curl', [__CLASS__, 'constrain_curl_transport'], 10, 3);
+
+        // Enforce cURL transport across WordPress HTTP API to guarantee CURLOPT_RESOLVE DNS pinning
+        add_filter('use_curl_transport', '__return_true');
+        add_filter('http_api_transports', [__CLASS__, 'enforce_curl_transport'], 10, 3);
+    }
+
+    /**
+     * Ensure cURL transport is prioritized so CURLOPT_RESOLVE DNS pinning is strictly enforced.
+     *
+     * @param array  $transports
+     * @param array  $args
+     * @param string $url
+     * @return array
+     */
+    public static function enforce_curl_transport(array $transports, array $args, string $url): array {
+        if (extension_loaded('curl') && function_exists('curl_init')) {
+            return ['curl'];
+        }
+        return $transports;
     }
 
     /**
@@ -733,13 +752,6 @@ class OutboundEgressFirewall {
 
         if (isset($dns_cache[$clean_host])) {
             return $dns_cache[$clean_host];
-        }
-
-        // Fast-path: Approved official infrastructure, payment gateways (Stripe, PayPal), and WooCommerce hosts bypass synchronous DNS penalty
-        foreach (self::DEFAULT_APPROVED_HOSTS as $approved_domain) {
-            if ($clean_host === $approved_domain || str_ends_with($clean_host, '.' . $approved_domain)) {
-                return ($dns_cache[$clean_host] = ['threat' => null, 'reason' => '', 'safe_ip' => '']);
-            }
         }
 
         // Check 15-minute transient cache for safe resolved hosts

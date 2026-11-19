@@ -1,6 +1,6 @@
 {
   "version": "2.19.0",
-  "generated_at": "2026-11-19T01:52:45.030Z",
+  "generated_at": "2026-11-19T02:13:11.909Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -544,8 +544,8 @@
       "size": 14029
     },
     "includes/Firewall/OutboundEgressFirewall.php": {
-      "sha256": "461f0f0ef20a3e8bea023437638e11dc310c9a77bbf92b86345fcc3b802ef334",
-      "size": 53374
+      "sha256": "c63025094282bc37236205a7787e674b7cf82fb1f1bebbf89498e2c380e37ebe",
+      "size": 53653
     },
     "includes/Firewall/RedirectCanaryEngine.php": {
       "sha256": "56274c67e9dfe6725a2e6952590e5df70f2db524e657efcb8201b762048e1e5c",
@@ -736,8 +736,8 @@
       "size": 18077
     },
     "includes/Scan/ScanLock.php": {
-      "sha256": "357c5b744a9105f3e0d35a30ce98e1ba1b3bbe4f033887e965978bb8a4409c88",
-      "size": 8962
+      "sha256": "fba4e49a5ff83bdd2ee07425e6d2458b065c29207c1e73264da2271566591d1e",
+      "size": 11296
     },
     "includes/Scan/ScanManager.php": {
       "sha256": "f3590463fa1a7e5f5641a05a407534115ca448a4265820e8ed129419808849d1",
