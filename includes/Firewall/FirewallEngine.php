@@ -1814,6 +1814,12 @@ class FirewallEngine {
                                 header('Content-Length: 0');
                                 exit;
                             } elseif ($empty_ua_action === 'challenge') {
+                                $raw_ua = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';
+                                if (class_exists(BotReconDefense::class)) {
+                                    if (BotReconDefense::verify_and_clear_pow_header($client_ip, $raw_ua) || BotReconDefense::has_valid_clearance_cookie($client_ip, $raw_ua)) {
+                                        return; // Client passed PoW clearance; allow request through
+                                    }
+                                }
                                 self::log_incident($rule_triggered, 'challenged');
                                 $rule_triggered['is_warning'] = true;
                                 self::render_block_page($rule_triggered, $client_ip);
@@ -3063,9 +3069,6 @@ class FirewallEngine {
             $req_method = strtoupper(isset($_SERVER['REQUEST_METHOD']) ? sanitize_key(wp_unslash($_SERVER['REQUEST_METHOD'])) : 'GET');
             if ($req_method === 'GET' && !wp_doing_ajax() && class_exists(BotReconDefense::class)) {
                 $raw_ua = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';
-                if (BotReconDefense::verify_and_clear_pow_header($client_ip, $raw_ua)) {
-                    return; // Headless client solved challenge via X-WebCare-PoW-Solution header -- allow request to proceed cleanly!
-                }
                 if (!BotReconDefense::has_valid_clearance_cookie($client_ip, $raw_ua)) {
                     // Challenge legitimate browser with invisible WebCrypto PoW (<150ms solve time)
                     BotReconDefense::render_webcrypto_challenge($client_ip, $raw_ua);
@@ -8838,7 +8841,7 @@ class FirewallEngine {
                 list($c_uid, $c_is_admin, $c_exp, $c_sig) = $parts;
                 $current_uid = (int) get_current_user_id();
                 $current_is_admin = current_user_can('manage_options') ? 1 : 0;
-                $salt = function_exists('wp_salt') ? wp_salt('auth') : 'webcare-preload-auth-salt';
+                $salt = class_exists(MicroWafCompiler::class) ? MicroWafCompiler::get_preload_auth_key() : (function_exists('wp_salt') ? wp_salt('auth') : 'webcare-preload-auth-salt');
                 $ip_bind = self::get_client_ip();
                 $expected_sig = hash_hmac('sha256', "{$c_uid}|{$c_is_admin}|{$c_exp}|{$ip_bind}", $salt);
 
@@ -8891,7 +8894,7 @@ class FirewallEngine {
         $is_admin = user_can($user, 'manage_options') ? 1 : 0;
         $exp      = time() + 3600; // 1-hour rolling validity
         $ip_bind  = self::get_client_ip();
-        $salt     = function_exists('wp_salt') ? wp_salt('auth') : 'webcare-preload-auth-salt';
+        $salt     = class_exists(MicroWafCompiler::class) ? MicroWafCompiler::get_preload_auth_key() : (function_exists('wp_salt') ? wp_salt('auth') : 'webcare-preload-auth-salt');
         $payload  = "{$uid}|{$is_admin}|{$exp}";
         $sig      = hash_hmac('sha256', $payload . '|' . $ip_bind, $salt);
         $val      = base64_encode("{$payload}|{$sig}");

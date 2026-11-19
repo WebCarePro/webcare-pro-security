@@ -74,6 +74,7 @@ class Plugin {
         \WebCareProScanner\Content\ScriptInventoryMonitor::init();
         \WebCareProScanner\Content\BlockDirectiveSanitizer::init();
         \WebCareProScanner\WordPress\RestApiInventory::init();
+        \WebCareProScanner\Notifications\WebhookService::init();
         \WebCareProScanner\Core\ModuleRegistry::boot_all();
 
         // 2. Custom WP-Cron Schedules (Always active across all request contexts so wp_reschedule_event never fails with invalid_schedule)

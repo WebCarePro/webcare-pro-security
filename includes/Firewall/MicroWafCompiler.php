@@ -3,6 +3,7 @@ namespace WebCareProScanner\Firewall;
 
 use WebCareProScanner\System\SettingsManager;
 use WebCareProScanner\System\AuditLogger;
+use WebCareProScanner\Security\SecretVault;
 
 if (!defined('ABSPATH')) {
     exit;
@@ -26,9 +27,9 @@ if (!defined('ABSPATH')) {
  */
 class MicroWafCompiler {
 
-    const COMPILED_DIR_REL = 'webcare-pro-security/waf-compiled';
+    const COMPILED_DIR_REL = 'webcare-waf';
     const COMPILED_FILE_NAME = 'micro-waf-compiled.php';
-    const FAIL2BAN_LOG_REL = 'webcare-pro-security/waf-logs/fail2ban.log';
+    const FAIL2BAN_LOG_REL = 'webcare-waf/waf-logs/fail2ban.log';
     const OPTION_STATUS = 'webcareproscan_micro_waf_status';
     const CAF_COMPILED_FILE_NAME = 'webcare-caf-compiled-rules.php';
     const CAF_COMPILED_SIG_FILE_NAME = 'webcare-caf-compiled-rules.sig.php';
@@ -36,12 +37,32 @@ class MicroWafCompiler {
 
     /**
      * Get the absolute path to the compiled Micro-WAF directory.
+     * Isolated in WP_CONTENT_DIR with 0600 permissions, away from uploads.
      *
      * @return string
      */
     public static function get_compiled_dir(): string {
-        $upload_dir = wp_upload_dir();
-        return trailingslashit($upload_dir['basedir']) . self::COMPILED_DIR_REL;
+        if (defined('WEBCARE_WAF_STORAGE_DIR') && !empty(WEBCARE_WAF_STORAGE_DIR)) {
+            return wp_normalize_path(untrailingslashit(WEBCARE_WAF_STORAGE_DIR));
+        }
+        $content_dir = defined('WP_CONTENT_DIR') ? WP_CONTENT_DIR : ABSPATH . 'wp-content';
+        return wp_normalize_path(trailingslashit($content_dir) . self::COMPILED_DIR_REL);
+    }
+
+    /**
+     * Get dedicated preload authentication HMAC key decoupled from core WordPress auth salts.
+     */
+    public static function get_preload_auth_key(): string {
+        $master_key = class_exists(SecretVault::class) ? SecretVault::get_key() : (defined('AUTH_KEY') ? AUTH_KEY : 'webcare-preload-auth-salt');
+        return hash_hmac('sha256', 'webcare_preload_auth_token_v3', $master_key);
+    }
+
+    /**
+     * Get dedicated CAF compilation HMAC key.
+     */
+    public static function get_caf_auth_key(): string {
+        $master_key = class_exists(SecretVault::class) ? SecretVault::get_key() : (defined('AUTH_KEY') ? AUTH_KEY : 'webcare-caf-fallback-salt');
+        return hash_hmac('sha256', 'webcare_caf_compiled_rules_v3', $master_key);
     }
 
     /**
@@ -73,8 +94,8 @@ class MicroWafCompiler {
      * @return string
      */
     public static function get_fail2ban_log_path(): string {
-        $upload_dir = wp_upload_dir();
-        return trailingslashit($upload_dir['basedir']) . self::FAIL2BAN_LOG_REL;
+        $content_dir = defined('WP_CONTENT_DIR') ? WP_CONTENT_DIR : ABSPATH . 'wp-content';
+        return wp_normalize_path(trailingslashit($content_dir) . self::FAIL2BAN_LOG_REL);
     }
 
     /**
@@ -194,7 +215,7 @@ class MicroWafCompiler {
             // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
             @file_put_contents($index_file, "<?php\n// Silence is golden.\n");
             // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod
-            @chmod($index_file, 0644);
+            @chmod($index_file, 0600);
         }
 
         $htaccess_file = trailingslashit($dir) . '.htaccess';
@@ -202,7 +223,7 @@ class MicroWafCompiler {
             // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
             @file_put_contents($htaccess_file, "# WebCare Pro - Restrict Direct HTTP Access\nOrder Deny,Allow\nDeny from all\n<IfModule mod_authz_core.c>\nRequire all denied\n</IfModule>\n");
             // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod
-            @chmod($htaccess_file, 0644);
+            @chmod($htaccess_file, 0600);
         }
 
         $compiled_file = self::get_compiled_file_path();
@@ -312,7 +333,7 @@ class MicroWafCompiler {
             }
         }
 
-        $auth_salt = function_exists('wp_salt') ? wp_salt('auth') : 'webcare-preload-auth-salt';
+        $auth_salt = self::get_preload_auth_key();
 
         $code = self::generate_standalone_code(
             $blocked_ips,
@@ -337,7 +358,7 @@ class MicroWafCompiler {
         if ($written === false) {
             return [
                 'success' => false,
-                'message' => __('Failed to write temporary Micro-WAF file to uploads directory.', 'webcare-pro-security'),
+                'message' => __('Failed to write temporary Micro-WAF file to storage directory.', 'webcare-pro-security'),
             ];
         }
 
@@ -352,7 +373,7 @@ class MicroWafCompiler {
         }
 
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod
-        @chmod($compiled_file, 0644);
+        @chmod($compiled_file, 0600);
 
         // Reset OPcache if available for the compiled file
         if (function_exists('opcache_invalidate')) {
@@ -909,16 +930,15 @@ class MicroWafCompiler {
         $caf_compiled_escaped = addslashes($caf_compiled_path);
         $caf_sig_path = self::get_caf_compiled_sig_path();
         $caf_sig_escaped = addslashes($caf_sig_path);
-        $legacy_sig_escaped = addslashes($caf_compiled_path . '.sig');
-        $salt = function_exists('wp_salt') ? wp_salt('auth') : 'webcare-caf-fallback-salt';
+        $salt = self::get_caf_auth_key();
         $salt_escaped = addslashes($salt);
 
         $out .= "        // 4. Context-Adaptive Firewall (CAF): Inactive component lockdown & verified artifact validation\n";
         $out .= "        // Whitelisted URLs bypass CAF dormant component heuristics while preserving mandatory exploit signatures (Finding 1.6)\n";
         $out .= "        \$caf_data_file = '{$caf_compiled_escaped}';\n";
         $out .= "        \$caf_sig_file  = '{$caf_sig_escaped}';\n";
-        $out .= "        if (!\$url_whitelisted && !\$vis_allow_all_custom && file_exists(\$caf_data_file) && (file_exists(\$caf_sig_file) || file_exists('{$legacy_sig_escaped}'))) {\n";
-        $out .= "            \$sig_content = file_exists(\$caf_sig_file) ? (string) @include \$caf_sig_file : trim((string) @file_get_contents('{$legacy_sig_escaped}'));\n";
+        $out .= "        if (!\$url_whitelisted && !\$vis_allow_all_custom && file_exists(\$caf_data_file) && file_exists(\$caf_sig_file)) {\n";
+        $out .= "            \$sig_content = (string) @include \$caf_sig_file;\n";
         $out .= "            \$raw_php = (string) @file_get_contents(\$caf_data_file);\n";
         $out .= "            \$expected_hmac = hash_hmac('sha256', \$raw_php, '{$salt_escaped}');\n";
         $out .= "            // Fail-open security guardrail: only execute artifact if cryptographic signature is intact\n";
@@ -1108,10 +1128,12 @@ class MicroWafCompiler {
 
         // Chained pre-existing auto_prepend_file script (e.g. Wordfence or hosting runtime)
         if (!empty($chained_file)) {
-            $chained_escaped = addslashes($chained_file);
+            $real_chained = realpath($chained_file);
+            $target_chained = ($real_chained !== false) ? $real_chained : $chained_file;
+            $chained_export = var_export($target_chained, true);
             $out .= "// Chained pre-existing auto_prepend_file runtime\n";
-            $out .= "if (file_exists('{$chained_escaped}')) {\n";
-            $out .= "    require_once '{$chained_escaped}';\n";
+            $out .= "if (file_exists({$chained_export})) {\n";
+            $out .= "    require_once {$chained_export};\n";
             $out .= "}\n\n";
         }
 
@@ -1499,10 +1521,10 @@ class MicroWafCompiler {
         }
 
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod
-        @chmod($caf_file, 0644);
+        @chmod($caf_file, 0600);
 
         // Detached HMAC-SHA256 signature wrapped in executable PHP protection
-        $salt = function_exists('wp_salt') ? wp_salt('auth') : 'webcare-caf-fallback-salt';
+        $salt = self::get_caf_auth_key();
         $hmac = hash_hmac('sha256', $php_code, $salt);
         update_option(self::OPTION_CAF_HMAC, $hmac);
 
@@ -1510,13 +1532,7 @@ class MicroWafCompiler {
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
         file_put_contents($sig_file, $sig_code, LOCK_EX);
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod
-        @chmod($sig_file, 0644);
-
-        // Delete legacy unprotected .sig file if present to eliminate static exposure on Nginx
-        $legacy_sig = $caf_file . '.sig';
-        if (file_exists($legacy_sig)) {
-            wp_delete_file($legacy_sig);
-        }
+        @chmod($sig_file, 0600);
 
         if (function_exists('opcache_invalidate')) {
             opcache_invalidate($caf_file, true);

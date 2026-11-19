@@ -114,6 +114,11 @@ class ResponseDlpSentinel implements SecurityModuleInterface {
     }
 
     /**
+     * Maximum response buffer size to inspect (256 KB) to prevent memory exhaustion on media streams.
+     */
+    const MAX_INSPECT_BYTES = 262144;
+
+    /**
      * Pure detector analyzing outbound response text for high-confidence credential/system leaks.
      * Performs format-aware inline redaction preserving HTML/text content structure.
      *
@@ -126,11 +131,23 @@ class ResponseDlpSentinel implements SecurityModuleInterface {
             return ['leaked' => false, 'pattern' => '', 'safe_body' => $body];
         }
 
-        // Skip binary image/PDF buffers cleanly
-        $head = substr($body, 0, 8);
-        if (strpos($head, "\x89PNG") === 0 || strpos($head, "\xFF\xD8") === 0 || strpos($head, '%PDF-') === 0) {
+        // Fast magic-byte binary media/archive stream exemption:
+        // PNG, JPEG, PDF, WebP (RIFF....WEBP), ZIP (PK..), GZIP (\x1f\x8b), MP4 (ftyp)
+        $head = substr($body, 0, 16);
+        if (
+            str_starts_with($head, "\x89PNG")
+            || str_starts_with($head, "\xFF\xD8")
+            || str_starts_with($head, '%PDF-')
+            || (str_starts_with($head, 'RIFF') && str_contains(substr($head, 8, 4), 'WEBP'))
+            || str_starts_with($head, "PK\x03\x04")
+            || str_starts_with($head, "\x1F\x8B")
+            || str_contains($head, 'ftyp')
+        ) {
             return ['leaked' => false, 'pattern' => '', 'safe_body' => $body];
         }
+
+        // Fast pre-check: If body exceeds 256 KB, cap inspection to first 256 KB for performance
+        $inspect_target = strlen($body) > self::MAX_INSPECT_BYTES ? substr($body, 0, self::MAX_INSPECT_BYTES) : $body;
 
         $redactions = [
             'WP_CONFIG_SECRET_DEFINE' => [
@@ -160,7 +177,7 @@ class ResponseDlpSentinel implements SecurityModuleInterface {
         $redacted_body   = $body;
 
         foreach ($redactions as $name => $cfg) {
-            if (preg_match($cfg['pattern'], $redacted_body) === 1) {
+            if (preg_match($cfg['pattern'], $inspect_target) === 1) {
                 $leaked = true;
                 if (empty($matched_pattern)) {
                     $matched_pattern = $name;
@@ -227,6 +244,18 @@ class ResponseDlpSentinel implements SecurityModuleInterface {
         ) {
             return;
         }
+
+        // Never buffer file download endpoints (WooCommerce, EDD, attachments)
+        // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+        if (!empty($_GET['download_file']) || !empty($_GET['eddfile']) || !empty($_GET['wc-api'])) {
+            return;
+        }
+
+        // Skip buffering if standard file download/attachment headers were already sent
+        if (headers_sent()) {
+            return;
+        }
+
         ob_start([__CLASS__, 'filter_guest_output_buffer']);
     }
 

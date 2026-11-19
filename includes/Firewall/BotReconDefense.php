@@ -795,21 +795,38 @@ class BotReconDefense {
         return $salt;
     }
 
-    public static function generate_challenge(string $ip, string $ua): string {
-        $window = (string) floor(time() / 300); // Valid for 5-minute window
+    public static function generate_challenge(string $ip, string $ua, ?int $target_window = null): string {
+        $window = (string) ($target_window !== null ? $target_window : (int) floor(time() / 300)); // Valid for 5-minute window
         $salt   = self::get_secure_pow_salt('nonce');
         $mac    = hash_hmac('sha256', $ip . '|' . $ua . '|' . $window, $salt);
         return $window . '.' . substr($mac, 0, 32);
     }
 
     public static function verify_pow_solution(string $challenge, string $nonce, string $ip, string $ua): bool {
-        $expected_challenge = self::generate_challenge($ip, $ua);
-        if (!hash_equals($expected_challenge, $challenge)) {
+        $cur_window = (int) floor(time() / 300);
+        $expected_current = self::generate_challenge($ip, $ua, $cur_window);
+        $expected_prev    = self::generate_challenge($ip, $ua, $cur_window - 1);
+
+        $matched = hash_equals($expected_current, $challenge) || hash_equals($expected_prev, $challenge);
+        if (!$matched) {
             return false;
         }
 
+        // Anti-replay: Single-use consumption of solved PoW token
+        $token_hash = hash('sha256', $challenge . ':' . $nonce);
+        $used_key   = 'webcareproscan_pow_used_' . substr($token_hash, 0, 32);
+        if (get_transient($used_key)) {
+            return false; // Replayed solution
+        }
+
         $digest = hash('sha256', $challenge . ':' . $nonce);
-        return strpos($digest, str_repeat('0', self::POW_DIFFICULTY)) === 0;
+        if (strpos($digest, str_repeat('0', self::POW_DIFFICULTY)) !== 0) {
+            return false;
+        }
+
+        // Mark as consumed for 600s (covers current + previous window)
+        set_transient($used_key, 1, 600);
+        return true;
     }
 
     public static function issue_clearance_cookie(string $ip, string $ua): void {

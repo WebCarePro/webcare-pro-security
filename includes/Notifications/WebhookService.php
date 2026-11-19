@@ -24,6 +24,67 @@ class WebhookService {
     const COLOR_SUCCESS  = '#10b981'; // 1096065
     const COLOR_INFO     = '#0284c7'; // 164999
 
+    const CRON_HOOK_DISPATCH_QUEUE = 'webcareproscan_dispatch_webhook_queue';
+
+    /**
+     * Initialize WebhookService async cron handler.
+     */
+    public static function init(): void {
+        add_action(self::CRON_HOOK_DISPATCH_QUEUE, [__CLASS__, 'process_queued_webhooks']);
+    }
+
+    /**
+     * Enqueue a webhook alert for asynchronous delivery to protect live request paths.
+     *
+     * @param string $url
+     * @param array  $payload
+     * @param string $platform_name
+     * @return void
+     */
+    public static function enqueue_webhook(string $url, array $payload, string $platform_name): void {
+        $queue = get_option('webcareproscan_async_webhook_queue', []);
+        if (!is_array($queue)) {
+            $queue = [];
+        }
+
+        // Bounded queue ceiling to prevent option bloat under DDoS
+        if (count($queue) >= 50) {
+            array_shift($queue);
+        }
+
+        $queue[] = [
+            'url'           => $url,
+            'payload'       => $payload,
+            'platform_name' => $platform_name,
+            'enqueued_at'   => time(),
+        ];
+
+        update_option('webcareproscan_async_webhook_queue', $queue, false);
+
+        if (!wp_next_scheduled(self::CRON_HOOK_DISPATCH_QUEUE)) {
+            wp_schedule_single_event(time() + 5, self::CRON_HOOK_DISPATCH_QUEUE);
+        }
+    }
+
+    /**
+     * Process asynchronous queue items via scheduled task.
+     */
+    public static function process_queued_webhooks(): void {
+        $queue = get_option('webcareproscan_async_webhook_queue', []);
+        if (!is_array($queue) || empty($queue)) {
+            return;
+        }
+
+        update_option('webcareproscan_async_webhook_queue', [], false);
+
+        foreach ($queue as $item) {
+            if (empty($item['url']) || !is_array($item['payload'])) {
+                continue;
+            }
+            self::post_webhook($item['url'], $item['payload'], $item['platform_name'] ?? 'Webhook', false);
+        }
+    }
+
     /**
      * Dispatch a test alert to verify webhook integration
      */
@@ -73,7 +134,7 @@ class WebhookService {
                 ]
             ];
 
-            return self::post_webhook($url, $payload, 'Slack');
+            return self::post_webhook($url, $payload, 'Slack', true);
 
         } elseif ($platform === 'discord') {
             $url = !empty($custom_url) ? trim($custom_url) : ($settings['discord_webhook_url'] ?? '');
@@ -100,7 +161,7 @@ class WebhookService {
                 ]
             ];
 
-            return self::post_webhook($url, $payload, 'Discord');
+            return self::post_webhook($url, $payload, 'Discord', true);
 
         } elseif ($platform === 'clickup') {
             $url = !empty($custom_url) ? trim($custom_url) : ($settings['clickup_webhook_url'] ?? '');
@@ -121,7 +182,7 @@ class WebhookService {
                 'tags'         => ['security', 'webcare-pro-security', 'test'],
             ];
 
-            return self::post_webhook($url, $payload, 'ClickUp');
+            return self::post_webhook($url, $payload, 'ClickUp', true);
 
         } elseif ($platform === 'asana') {
             $url = !empty($custom_url) ? trim($custom_url) : ($settings['asana_webhook_url'] ?? '');
@@ -142,7 +203,7 @@ class WebhookService {
                 ],
             ];
 
-            return self::post_webhook($url, $payload, 'Asana');
+            return self::post_webhook($url, $payload, 'Asana', true);
 
         } elseif ($platform === 'generic') {
             $url = !empty($custom_url) ? trim($custom_url) : ($settings['generic_webhook_url'] ?? '');
@@ -163,7 +224,7 @@ class WebhookService {
                 'datetime'      => gmdate('c'),
             ];
 
-            return self::post_webhook($url, $payload, 'Automation Webhook');
+            return self::post_webhook($url, $payload, 'Automation Webhook', true);
         }
 
         return ['success' => false, 'code' => 400, 'message' => __('Unsupported platform.', 'webcare-pro-security')];
@@ -559,7 +620,7 @@ class WebhookService {
                     ]
                 ]
             ];
-            self::post_webhook($settings['slack_webhook_url'], $slack_payload, 'Slack');
+            self::enqueue_webhook($settings['slack_webhook_url'], $slack_payload, 'Slack');
         }
 
         if ($has_discord) {
@@ -581,7 +642,7 @@ class WebhookService {
                     ]
                 ]
             ];
-            self::post_webhook($settings['discord_webhook_url'], $discord_payload, 'Discord');
+            self::enqueue_webhook($settings['discord_webhook_url'], $discord_payload, 'Discord');
         }
 
         if ($has_clickup) {
@@ -594,7 +655,7 @@ class WebhookService {
                 'attacker_ip' => $ip,
                 'category'    => $category,
             ];
-            self::post_webhook($settings['clickup_webhook_url'], $clickup_payload, 'ClickUp');
+            self::enqueue_webhook($settings['clickup_webhook_url'], $clickup_payload, 'ClickUp');
         }
 
         if ($has_asana) {
@@ -606,7 +667,7 @@ class WebhookService {
                     'notes' => "WAF Lite blocked attack on {$site_name}.\nAttacker IP: {$ip}\nCategory: {$category}\nRule: {$rule}\nLive Incidents: {$waf_url}",
                 ],
             ];
-            self::post_webhook($settings['asana_webhook_url'], $asana_payload, 'Asana');
+            self::enqueue_webhook($settings['asana_webhook_url'], $asana_payload, 'Asana');
         }
 
         if ($has_generic) {
@@ -621,16 +682,45 @@ class WebhookService {
                 'timestamp'     => time(),
                 'datetime'      => gmdate('c'),
             ];
-            self::post_webhook($settings['generic_webhook_url'], $generic_payload, 'Automation Webhook');
+            self::enqueue_webhook($settings['generic_webhook_url'], $generic_payload, 'Automation Webhook');
         }
     }
 
     /**
-     * Send HTTP POST to webhook endpoint
+     * Send HTTP POST to webhook endpoint.
+     * Enforces SSRF defense (HTTPS-only, rejects RFC 1918 / loopback / cloud metadata).
      */
-    private static function post_webhook(string $url, array $payload, string $platform_name): array {
-        $response = wp_remote_post($url, [
-            'timeout'     => 8,
+    private static function post_webhook(string $url, array $payload, string $platform_name, bool $is_manual_test = false): array {
+        $parsed = wp_parse_url($url);
+        $scheme = strtolower($parsed['scheme'] ?? '');
+        $host   = strtolower($parsed['host'] ?? '');
+
+        // Strict HTTPS enforcement (allow localhost HTTP strictly if defined in local development constant)
+        if ($scheme !== 'https') {
+            $is_local_dev = defined('WP_ENVIRONMENT_TYPE') && WP_ENVIRONMENT_TYPE === 'local';
+            if (!$is_local_dev) {
+                return [
+                    'success' => false,
+                    'code'    => 400,
+                    'message' => __('Webhook URL must use secure HTTPS.', 'webcare-pro-security'),
+                ];
+            }
+        }
+
+        // SSRF protection: reject AWS/GCP/Azure instance metadata endpoints
+        if ($host === '169.254.169.254' || $host === 'metadata.google.internal' || $host === 'instance-data') {
+            return [
+                'success' => false,
+                'code'    => 400,
+                'message' => __('Webhook URL rejected: Prohibited metadata endpoint.', 'webcare-pro-security'),
+            ];
+        }
+
+        $timeout = $is_manual_test ? 4 : 5;
+
+        // Use wp_safe_remote_post to validate IP boundaries and avoid private intranet SSRF
+        $response = wp_safe_remote_post($url, [
+            'timeout'     => $timeout,
             'blocking'    => true,
             'headers'     => ['Content-Type' => 'application/json'],
             'body'        => wp_json_encode($payload),

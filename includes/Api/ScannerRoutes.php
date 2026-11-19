@@ -14759,11 +14759,14 @@ class ScannerRoutes {
             }
         }
 
-        // Per-account rate limiting when login_hint or username is provided
+        // Per-account + IP composite rate limiting to prevent remote admin lockout DoS
         $params = $request->get_json_params() ?: [];
         $username = !empty($params['username']) ? sanitize_text_field(wp_unslash($params['username'])) : '';
         if (!empty($username)) {
-            $acc_key = 'webcareproscan_wa_acc_' . md5(strtolower($username));
+            $client_ip = class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine')
+                ? \WebCareProScanner\Firewall\FirewallEngine::get_client_ip()
+                : (isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '127.0.0.1');
+            $acc_key = 'webcareproscan_wa_acc_' . md5(strtolower($username) . '|' . $client_ip);
             $acc_attempts = (int) get_transient($acc_key);
             if ($acc_attempts >= 15) {
                 return new \WP_Error(

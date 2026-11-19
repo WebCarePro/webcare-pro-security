@@ -22,6 +22,9 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
     /** @var bool Prevent recursive option updates while inside query filter */
     private static bool $in_guard = false;
 
+    /** @var int Internal query re-entrancy depth counter */
+    private static int $internal_query_depth = 0;
+
     /** @var array<int, array{hash: string, timestamp: int}> Bound authentication records for password rehash */
     private static array $verified_password_users = [];
 
@@ -31,6 +34,26 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
     public static function reset_runtime_auth_state(): void {
         self::$verified_password_users = [];
         self::$verified_reset_users    = [];
+        self::$internal_query_depth    = 0;
+    }
+
+    /**
+     * Safely execute an internal query closure with re-entrancy depth tracking.
+     * Queries executed within this callback bypass SQL RASP without fragile substring heuristics.
+     *
+     * @template T
+     * @param callable(): T $callback
+     * @return T
+     */
+    public static function run_internal_query(callable $callback): mixed {
+        self::$internal_query_depth++;
+        try {
+            return $callback();
+        } finally {
+            if (self::$internal_query_depth > 0) {
+                self::$internal_query_depth--;
+            }
+        }
     }
 
     public static function get_verified_password_user(int $uid): ?array {
@@ -349,9 +372,13 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
         }
 
         if (function_exists('is_user_logged_in') && is_user_logged_in()) {
-            return false;
-        }
-        if (class_exists(FirewallEngine::class)) {
+            if (function_exists('current_user_can') && current_user_can('manage_options')) {
+                return false;
+            }
+            if (class_exists(FirewallEngine::class) && (FirewallEngine::is_authenticated_administrator() || FirewallEngine::is_trusted_plugin_check_or_cli_runtime())) {
+                return false;
+            }
+        } elseif (class_exists(FirewallEngine::class)) {
             if (FirewallEngine::is_authenticated_administrator() || FirewallEngine::is_trusted_plugin_check_or_cli_runtime()) {
                 return false;
             }
@@ -379,13 +406,20 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
         $options_tbl  = isset($wpdb->options) ? preg_quote($wpdb->options, '/') : 'wp_options';
         $posts_tbl    = isset($wpdb->posts) ? preg_quote($wpdb->posts, '/') : 'wp_posts';
 
-        // Never block WebCare's own internal queries or standard WP transient writes
-        if (stripos($trimmed, 'webcareproscan_') !== false || stripos($trimmed, 'SELECT NULL WHERE 1=0') === 0) {
+        // Never block if currently inside an internal plugin operation or standard neutralized query
+        if (self::$internal_query_depth > 0 || stripos($trimmed, 'SELECT NULL WHERE 1=0') === 0) {
             return null;
         }
 
+        // Pre-process SQL: unwrap MySQL conditional comments (e.g., /*!50000 SELECT */ -> SELECT)
+        $unwrapped = (string) preg_replace('#/\*!\d*\s*([\s\S]*?)\s*\*/#', ' $1 ', $trimmed);
+
+        // Strip standard SQL comments (/* ... */, -- ..., # ...) to defeat keyword splitting evasion
+        $clean_sql = (string) preg_replace('#/\*[\s\S]*?\*/#', ' ', $unwrapped);
+        $clean_sql = (string) preg_replace('/(?:--[ \t][^\r\n]*|--[\r\n]|\#[^\r\n]*)/', ' ', $clean_sql);
+
         // Strip balanced string literals to prevent false positives on blog/post text content
-        $skeleton = (string) preg_replace("/'(?:\\\\.|[^'\\\\])*'|\"(?:\\\\.|[^\"\\\\])*\"/", "''", $trimmed);
+        $skeleton = (string) preg_replace("/'(?:\\\\.|[^'\\\\])*'|\"(?:\\\\.|[^\"\\\\])*\"/", "''", $clean_sql);
 
         // 1. Cross-table UNION SELECT touching credential/usermeta tables
         if (preg_match('/\bUNION\s+(?:ALL\s+)?SELECT\b/i', $skeleton) && preg_match('/\b(?:' . $users_tbl . '|' . $usermeta_tbl . ')\b/i', $skeleton)) {
@@ -412,6 +446,18 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
         }
         if (preg_match('/\bLOAD_FILE\s*\(/i', $skeleton) || preg_match('/\bINTO\s+(?:OUT|DUMP)FILE\b/i', $skeleton)) {
             return 'FILE_IO_SQLI_PRIMITIVE';
+        }
+
+        // Stacked queries execution attempt (e.g., ; DROP TABLE ... or ; UPDATE ...)
+        if (preg_match('/;\s*(?:DROP\s+TABLE|ALTER\s+TABLE|UPDATE\s+|INSERT\s+INTO|DELETE\s+FROM)\b/i', $skeleton)) {
+            return 'STACKED_QUERY_ATTEMPT';
+        }
+
+        // Error-based SQL injection extraction primitives (e.g. EXTRACTVALUE, UPDATEXML, FLOOR(RAND()))
+        if (preg_match('/\b(?:EXTRACTVALUE|UPDATEXML)\s*\(/i', $skeleton)
+            || (preg_match('/\bFLOOR\s*\(\s*RAND\s*\(/i', $skeleton) && preg_match('/\bCOUNT\s*\(/i', $skeleton))
+        ) {
+            return 'ERROR_BASED_SQLI_PRIMITIVE';
         }
 
         // 3. Unauthenticated critical privilege mutations inside guest plugin contexts

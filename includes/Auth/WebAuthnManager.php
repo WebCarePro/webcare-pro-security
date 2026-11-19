@@ -617,8 +617,9 @@ class WebAuthnManager {
             | ord($auth_data_bin[36]);
 
         $stored_sign_count = (int) ($matched_cred['sign_count'] ?? 0);
-        // Authenticator Clone Detection: If both counts are > 0 and incoming is less than stored, flag cloning
-        if ($stored_sign_count > 0 && $incoming_sign_count > 0 && $incoming_sign_count < $stored_sign_count) {
+        // Authenticator Clone Detection (W3C WebAuthn Level 2/3):
+        // If both counts are > 0 and incoming is less than or equal to stored, flag potential cloning
+        if ($stored_sign_count > 0 && $incoming_sign_count > 0 && $incoming_sign_count <= $stored_sign_count) {
             AuditLogger::log(
                 'webauthn_clone_suspected',
                 sprintf('CRITICAL: Possible cloned authenticator detected for user %s (Stored count: %d, Received: %d).', $user->user_login, $stored_sign_count, $incoming_sign_count)
@@ -642,7 +643,11 @@ class WebAuthnManager {
         $user_creds = self::get_user_credentials($matched_user_id);
         if (isset($user_creds[$matched_cred_idx])) {
             $user_creds[$matched_cred_idx]['last_used'] = time();
-            $user_creds[$matched_cred_idx]['sign_count'] = max($incoming_sign_count, ($user_creds[$matched_cred_idx]['sign_count'] ?? 0) + 1);
+            // Synced passkeys (Apple iCloud Keychain, Google Password Manager) legitimately emit sign_count = 0.
+            // Only update stored sign_count when incoming is strictly > 0 to comply with W3C standards.
+            if ($incoming_sign_count > 0) {
+                $user_creds[$matched_cred_idx]['sign_count'] = $incoming_sign_count;
+            }
             update_user_meta($matched_user_id, self::META_CREDENTIALS, $user_creds);
         }
 

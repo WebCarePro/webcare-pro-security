@@ -194,6 +194,12 @@ class PromptInjectionGuard {
         $has_mcp_call     = false;
         $has_secret_leak  = false;
 
+        // Step 0: Unicode NFKC normalization & zero-width cleaning for probe inspection
+        $normalized_probe = $text;
+        if (class_exists('Normalizer') && \Normalizer::isNormalized($text, \Normalizer::FORM_C) === false) {
+            $normalized_probe = \Normalizer::normalize($text, \Normalizer::FORM_C) ?: $text;
+        }
+
         // 1. Invisible Unicode Tag Characters & Bidi Control Smuggling
         if (!empty($settings['block_unicode_tags']) && preg_match(self::UNICODE_TAG_REGEX, $text)) {
             $has_unicode_tags = true;
@@ -204,7 +210,7 @@ class PromptInjectionGuard {
         // 2. Prompt Override & Jailbreak Patterns Check
         if (!empty($settings['block_prompt_override'])) {
             foreach (self::PROMPT_OVERRIDE_PATTERNS as $name => $pattern) {
-                if (preg_match($pattern, $text, $m)) {
+                if (preg_match($pattern, $normalized_probe, $m)) {
                     $has_override = true;
                     $score += 85;
                     $findings[] = sprintf(
@@ -220,7 +226,7 @@ class PromptInjectionGuard {
         // 3. LLM Architecture Delimiters (ChatML, Llama, Turn Directives)
         if (!empty($settings['block_llm_delimiters'])) {
             foreach (self::LLM_DELIMITER_PATTERNS as $d_name => $d_pattern) {
-                if (preg_match($d_pattern, $text, $dm)) {
+                if (preg_match($d_pattern, $normalized_probe, $dm)) {
                     $has_delimiters = true;
                     $score += 80;
                     $findings[] = sprintf(
@@ -236,7 +242,7 @@ class PromptInjectionGuard {
         // 4. MCP Tool-Call Canary & Function Call Spoofing
         if (!empty($settings['block_mcp_tool_calls'])) {
             foreach (self::MCP_TOOL_CALL_PATTERNS as $t_name => $t_pattern) {
-                if (preg_match($t_pattern, $text, $tm)) {
+                if (preg_match($t_pattern, $normalized_probe, $tm)) {
                     $has_mcp_call = true;
                     $score += 90;
                     $findings[] = sprintf(
@@ -252,10 +258,10 @@ class PromptInjectionGuard {
         // 5. Secret Leak / Environment Extraction Check
         if (!empty($settings['block_secret_leaks'])) {
             foreach (self::SECRET_LEAK_PATTERNS as $s_name => $s_pattern) {
-                if (preg_match($s_pattern, $text, $sm)) {
+                if (preg_match($s_pattern, $normalized_probe, $sm)) {
                     // In public comment/content contexts, require an explicit extraction verb
                     if (in_array($context, ['wordpress_comment', 'post_content'], true)) {
-                        $has_extraction_intent = (bool) preg_match('/(?:reveal|leak|print|display|dump|extract|output|cat|show|get)\s+.*(?:wp-config|DB_|AUTH_|KEY|passwd|getenv|printenv)/i', $text);
+                        $has_extraction_intent = (bool) preg_match('/(?:reveal|leak|print|display|dump|extract|output|cat|show|get)\s+.*(?:wp-config|DB_|AUTH_|KEY|passwd|getenv|printenv)/i', $normalized_probe);
                         if (!$has_extraction_intent) {
                             continue;
                         }
@@ -282,6 +288,18 @@ class PromptInjectionGuard {
             $cleaned
         );
 
+        // Neutralize prompt overrides and tool injection calls in sanitized output
+        if ($has_override) {
+            foreach (self::PROMPT_OVERRIDE_PATTERNS as $pattern) {
+                $cleaned = (string) preg_replace($pattern, '[neutralized directive]', $cleaned);
+            }
+        }
+        if ($has_mcp_call) {
+            foreach (self::MCP_TOOL_CALL_PATTERNS as $pattern) {
+                $cleaned = (string) preg_replace($pattern, '[neutralized tool call]', $cleaned);
+            }
+        }
+
         $is_safe = ($score === 0);
 
         return [
@@ -305,15 +323,19 @@ class PromptInjectionGuard {
      * @return array
      */
     public static function inspect_incoming_comment(array $commentdata): array {
-        $text   = $commentdata['comment_content'] ?? '';
-        $author = $commentdata['comment_author'] ?? '';
-        $probe  = $author . ' ' . $text;
+        $text   = (string) ($commentdata['comment_content'] ?? '');
+        $author = (string) ($commentdata['comment_author'] ?? '');
 
-        $analysis = self::inspect_prompt($probe, 'wordpress_comment');
+        // Inspect comment_content and comment_author independently to prevent comment corruption
+        $text_analysis   = self::inspect_prompt($text, 'wordpress_comment');
+        $author_analysis = ($author !== '') ? self::inspect_prompt($author, 'wordpress_comment_author') : ['is_safe' => true, 'findings' => [], 'risk_score' => 0, 'cleaned_text' => $author];
 
-        if (!$analysis['is_safe']) {
+        $combined_score = max($text_analysis['risk_score'], $author_analysis['risk_score']);
+        $combined_findings = array_merge($text_analysis['findings'], $author_analysis['findings']);
+
+        if (!$text_analysis['is_safe'] || !$author_analysis['is_safe']) {
             $settings = self::get_settings();
-            self::record_catch('wordpress_comment', $analysis['findings'], $analysis['risk_score'], $settings['action']);
+            self::record_catch('wordpress_comment', $combined_findings, $combined_score, $settings['action']);
 
             if ($settings['action'] === 'block') {
                 wp_die(
@@ -323,7 +345,10 @@ class PromptInjectionGuard {
                     ['response' => 403, 'back_link' => true]
                 );
             } elseif ($settings['action'] === 'sanitize') {
-                $commentdata['comment_content'] = $analysis['cleaned_text'];
+                $commentdata['comment_content'] = $text_analysis['cleaned_text'];
+                if (!$author_analysis['is_safe']) {
+                    $commentdata['comment_author'] = $author_analysis['cleaned_text'];
+                }
             } elseif ($settings['action'] === 'moderate') {
                 $commentdata['comment_approved'] = 0;
             }
