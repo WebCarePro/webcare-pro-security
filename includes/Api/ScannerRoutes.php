@@ -2016,6 +2016,11 @@ class ScannerRoutes {
         $init_telemetry = self::get_realtime_resource_stats(null, null, 0, $total_files, 0, 0.0);
         set_transient("webcareproscan_scan_live_telemetry_{$scan_id}", $init_telemetry, 600);
 
+        // Schedule background continuation worker so the scan continues autonomously if the user navigates away
+        if (class_exists('\\WebCareProScanner\\Scan\\ScanBackgroundWorker')) {
+            \WebCareProScanner\Scan\ScanBackgroundWorker::schedule_continuation(10);
+        }
+
         return rest_ensure_response([
             'success'     => true,
             'scan_id'     => $scan_id,
@@ -2053,6 +2058,16 @@ class ScannerRoutes {
                 __('Concurrent scan batch execution rejected or active scan lease not held.', 'webcare-pro-security'),
                 ['status' => 409]
             );
+        }
+
+        // Record live touch timestamp if request originated from active browser session
+        if (!empty($request->get_param('from_browser')) || (defined('DOING_CRON') && !DOING_CRON)) {
+            set_transient("webcareproscan_active_scan_last_browser_touch_{$scan_id}", microtime(true), 120);
+        }
+
+        // Keep background continuation armed with a grace delay
+        if (class_exists('\\WebCareProScanner\\Scan\\ScanBackgroundWorker')) {
+            \WebCareProScanner\Scan\ScanBackgroundWorker::schedule_continuation(12);
         }
 
         // Initialize Dynamic Resource Governor
@@ -2837,8 +2852,12 @@ class ScannerRoutes {
                 \WebCareProScanner\Scan\ScanVaultManager::finalize_manifest($scan_id, $completed_scan_row);
             }
 
-            // Release the scan lock upon completion
+            // Release the scan lock upon completion and clear background worker continuation
             ScanLock::release($scan_id, $lease_token);
+            if (class_exists('\\WebCareProScanner\\Scan\\ScanBackgroundWorker')) {
+                \WebCareProScanner\Scan\ScanBackgroundWorker::unschedule_continuation();
+            }
+            delete_transient("webcareproscan_active_scan_last_browser_touch_{$scan_id}");
 
             // Dispatch granular event notifications via NotificationDispatcher
             if (class_exists('\\WebCareProScanner\\Notifications\\NotificationDispatcher')) {
@@ -4089,6 +4108,10 @@ class ScannerRoutes {
 
         if ($scan_id) {
             $aborted = ScanLock::force_release($scan_id);
+            if (class_exists('\\WebCareProScanner\\Scan\\ScanBackgroundWorker')) {
+                \WebCareProScanner\Scan\ScanBackgroundWorker::unschedule_continuation();
+            }
+            delete_transient("webcareproscan_active_scan_last_browser_touch_{$scan_id}");
             if (!$aborted) {
                 return new \WP_Error(
                     'abort_failed',

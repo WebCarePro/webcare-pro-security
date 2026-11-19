@@ -37,6 +37,10 @@ class Scheduler {
                 \WebCareProScanner\Firewall\Modular\SiteBehavioralAnalyzer::register_cron_hook();
             }
 
+            if (class_exists('\\WebCareProScanner\\Scan\\ScanBackgroundWorker')) {
+                \WebCareProScanner\Scan\ScanBackgroundWorker::register();
+            }
+
             add_action('init', static function () {
                 \WebCareProScanner\System\Cron\CronControlCenter::ensure_scheduled(self::DIGEST_HOOK, 0, 'weekly');
                 \WebCareProScanner\System\Cron\CronControlCenter::ensure_scheduled(self::CANARY_HOOK, 60, 'webcare_15min');
@@ -51,6 +55,9 @@ class Scheduler {
         add_action(self::CVE_AUDIT_HOOK, ['\\WebCareProScanner\\Firewall\\CVEIntelligenceService', 'run_daily_cve_audit']);
         if (class_exists('\\WebCareProScanner\\Firewall\\Modular\\SiteBehavioralAnalyzer')) {
             \WebCareProScanner\Firewall\Modular\SiteBehavioralAnalyzer::register_cron_hook();
+        }
+        if (class_exists('\\WebCareProScanner\\Scan\\ScanBackgroundWorker')) {
+            \WebCareProScanner\Scan\ScanBackgroundWorker::register();
         }
     }
 

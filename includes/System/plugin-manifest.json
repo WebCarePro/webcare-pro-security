@@ -1,6 +1,6 @@
 {
   "version": "3.0.0",
-  "generated_at": "2026-11-19T22:39:40.323Z",
+  "generated_at": "2026-11-19T23:25:08.843Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -88,12 +88,12 @@
       "size": 1405
     },
     "build/index.asset.php": {
-      "sha256": "9e5854bb3063fc3ccb1d2c14afbd7fc71b47db7fbf187dd24f95ff2c4ba5e626",
+      "sha256": "9a2df96b00fb24cac6b6accc00ee3a4bce2e48996c9334b4ba32499518818bd8",
       "size": 174
     },
     "build/index.js": {
-      "sha256": "070fb80d5d5fff7f1fec9a4883b8ca44623fe76112a55b64bf057aa3ab308edd",
-      "size": 2696722
+      "sha256": "d87cd2fb5b4563861c735b3b6e92d67e92354fdbff44f3e148b0d9271955aa3b",
+      "size": 2696752
     },
     "build/modular-waf.asset.php": {
       "sha256": "6941a30cfd90e0a997540ab1757c25a112213e1a4419535c21076b04ed4abd3e",
@@ -112,12 +112,12 @@
       "size": 130970
     },
     "build/scan.asset.php": {
-      "sha256": "86ff921e7781681f93ff9179c2dce218abd13965e99d4b3053dacc18c2d19ed6",
+      "sha256": "e1c36a9861140ce15ba6dcd1f3d90eb05f873edd2c9284f905962b3638212647",
       "size": 174
     },
     "build/scan.js": {
-      "sha256": "f8659d3c3745bb58e953c7644bd3ac67b02ddae9c38eaedf603dbe4e9f7a2329",
-      "size": 2696030
+      "sha256": "98a594a4eedf138b10608af08f2c56646c02c8c477c73e2f21b93e8ffc466d9c",
+      "size": 2696060
     },
     "build/settings.asset.php": {
       "sha256": "2363a265eb377f9baa2408d8ec538b64c302c81ebea376be6a0dd40975929b17",
@@ -240,8 +240,8 @@
       "size": 9498
     },
     "includes/Api/ScannerRoutes.php": {
-      "sha256": "962c42940a8ae0ee4d407129daa47d2152c373ce9cf4228225e21af4f24c581c",
-      "size": 688053
+      "sha256": "281a74cfc9a8d50abc50474a1047327729fe55ea83a8c4498623acde77c02009",
+      "size": 689507
     },
     "includes/Auth/ApplicationPasswordSentinel.php": {
       "sha256": "530c5eb1b43053db36fc9ff79db0143359293999b4ef793ab4bbf2c983e19cff",
@@ -843,6 +843,10 @@
       "sha256": "6816ad729aedeb553fbab839c4cab31de4603be14af7a93e58f1b70a029910ba",
       "size": 11696
     },
+    "includes/Scan/ScanBackgroundWorker.php": {
+      "sha256": "64cf45726997abba5b9eb25b620ac14575ad229dd321fbc2f6cd3d4c43eb3c93",
+      "size": 9398
+    },
     "includes/Scan/ScanInterruptionForensics.php": {
       "sha256": "3335b39b22d8110593ff14cc3bb8ebb6298c4d9b6bcb8e54f2521baf87b2698c",
       "size": 18099
@@ -980,32 +984,32 @@
       "size": 33259
     },
     "includes/System/Cron/CronControlCenter.php": {
-      "sha256": "0851b1da9ebf19f05daba196f4cefb98d3c10560eae531f8a7479cad9562a470",
-      "size": 51949
+      "sha256": "ac7ccfa9b565b1af6dcf0b0c3924298f3ca321fa5a7368e9ce6ad351c366f029",
+      "size": 52998
     },
     "includes/System/Cron/CronExecutionLogger.php": {
       "sha256": "a6829cf16db27c2488ed7b9644f7f6ea374a7163473a3713d2da3990821d9e30",
       "size": 19448
     },
     "includes/System/Cron/CronRegistry.php": {
-      "sha256": "c33de6c92c7adfef06d285489dceb58d79ad6ef0a25ee39e9aeb273e4fb757f2",
-      "size": 26852
+      "sha256": "98b1740740a2a92375389aec484ff6ab9a11b19c67a9182df19b52cbb0d34ea2",
+      "size": 28255
     },
     "includes/System/PulseHealthCheck.php": {
       "sha256": "2595bc5bdbc9cb713be1b843a1fc157464613c6758c904cfe0fbb49a5cc39437",
       "size": 6412
     },
     "includes/System/Scheduler.php": {
-      "sha256": "cda2fb0b4b083549213e96ba6b1bf5f368c1f324a56dad2fdc91837a0a4880e7",
-      "size": 46907
+      "sha256": "9e2355b9a7c56b263b47120f5d36d86aa6d16fb072a483554d1d1bad86eccf26",
+      "size": 47238
     },
     "includes/System/ServerInfo.php": {
       "sha256": "d4f7a59e3939b24d2e0d5cdd542dc5e7de682f4c1b45cc15171a5f6a5efcdf0d",
       "size": 24882
     },
     "includes/System/SettingsManager.php": {
-      "sha256": "a551105d460b38eadff4eb464f7ec55d916b4cb13bd1e4d2515453ae0454a763",
-      "size": 118498
+      "sha256": "af08a96b5482339eb42d18b2b2203553a0c72b7e77523a2ac20fe40d9a1ca4ca",
+      "size": 118592
     },
     "includes/System/SystemReadinessChecker.php": {
       "sha256": "18ff82f64e622f407d5c3067dd78541d6d7444fef5e5cd3f634e9516b939fb0c",
@@ -1068,8 +1072,8 @@
       "size": 28898
     },
     "readme.txt": {
-      "sha256": "865dfc1898b1cf6fc82470ddc5b286a626022ec1a967eb5f8b545a3e50b1dac0",
-      "size": 48980
+      "sha256": "89ee8d845457894e07f03a0d225b7756411cbb3aa2309558d5c7f2bb16e4679c",
+      "size": 15155
     },
     "uninstall.php": {
       "sha256": "ddc8a1e6f7d51b3b29bad7427ee596af23e3df06658f34e2ef3a12d15fe9f5cb",

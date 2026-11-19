@@ -279,6 +279,8 @@ class CronControlCenter {
                 wp_clear_scheduled_hook($hook);
             } elseif ($hook === 'webcareproscan_modular_ast_step' && empty($settings['cron_modular_ast_bg_enabled'] ?? true)) {
                 wp_clear_scheduled_hook($hook);
+            } elseif ($hook === 'webcareproscan_scan_step_worker' && empty($settings['cron_scan_bg_enabled'] ?? true)) {
+                wp_clear_scheduled_hook($hook);
             } elseif ($hook === 'webcareproscan_backup_step_worker' && empty($settings['cron_backup_bg_enabled'] ?? true)) {
                 wp_clear_scheduled_hook($hook);
             }
@@ -692,6 +694,20 @@ class CronControlCenter {
                             /* translators: 1: batch files processed, 2: processed count, 3: total count */
                             'summary' => sprintf(__('Advanced AST scan by %1$d file(s) (%2$d / %3$d total).', 'webcare-pro-security'), $delta, $after, (int) ($prog['total_files'] ?? $after)),
                             'metrics' => ['delta_files' => $delta, 'processed_files' => $after, 'total_files' => (int) ($prog['total_files'] ?? 0)],
+                        ];
+
+                    case 'webcareproscan_scan_step_worker':
+                        if (class_exists('\\WebCareProScanner\\Scan\\ScanBackgroundWorker')) {
+                            $res = \WebCareProScanner\Scan\ScanBackgroundWorker::run_background_step($trigger_source === 'manual_admin');
+                            return [
+                                'status'  => $res['status'] ?? 'success',
+                                'summary' => $res['summary'] ?? __('Scan background worker stepped.', 'webcare-pro-security'),
+                                'metrics' => $res['metrics'] ?? [],
+                            ];
+                        }
+                        return [
+                            'status'  => 'skipped',
+                            'summary' => __('ScanBackgroundWorker class not loaded.', 'webcare-pro-security'),
                         ];
 
                     case 'webcareproscan_threat_intel_cron_sync':

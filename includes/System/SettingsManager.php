@@ -287,6 +287,7 @@ class SettingsManager {
             'cron_reinfection_watchdog_enabled'  => true,
             'cron_modular_autopilot_enabled'     => true,
             'cron_modular_ast_bg_enabled'        => true,
+            'cron_scan_bg_enabled'               => true,
             'cron_backup_bg_enabled'             => true,
             'cron_task_schedules'                => [],
             'cron_log_retention_days'            => 30,
@@ -1207,6 +1208,7 @@ class SettingsManager {
             'cron_reinfection_watchdog_enabled',
             'cron_modular_autopilot_enabled',
             'cron_modular_ast_bg_enabled',
+            'cron_scan_bg_enabled',
             'cron_backup_bg_enabled',
         ];
         foreach ($cron_bool_keys as $cron_k) {
