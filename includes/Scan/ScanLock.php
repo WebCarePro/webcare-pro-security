@@ -262,17 +262,18 @@ class ScanLock {
     /**
      * Explicit administrative or recovery operation to forcefully release all locks.
      * Reserved for emergency resets, aborts, and test teardowns, with audit logging.
-     * Serializes option deletion under MySQL advisory mutex.
+     * Serializes option deletion under MySQL advisory mutex and returns success/failure.
      *
      * @param int|null $scan_id Optional scan ID for audit context.
-     * @return void
+     * @return bool True if lock was definitively released and verified deleted from storage.
      */
-    public static function force_release(?int $scan_id = null): void {
+    public static function force_release(?int $scan_id = null): bool {
         global $wpdb;
 
-        self::execute_with_mutation_mutex(static function () {
+        $deleted = (bool) self::execute_with_mutation_mutex(static function () {
             delete_option(self::LOCK_OPTION);
-            return true;
+            $persisted = get_option(self::LOCK_OPTION);
+            return $persisted === false;
         });
 
         if ($wpdb instanceof \wpdb) {
@@ -280,13 +281,25 @@ class ScanLock {
             $wpdb->query($wpdb->prepare("SELECT RELEASE_LOCK(%s)", self::BATCH_LOCK_NAME));
         }
 
+        if ($deleted) {
+            if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                \WebCareProScanner\System\AuditLogger::log(
+                    'scan_lock_force_released',
+                    sprintf('Scan lock forcefully cleared by administrative operation (Scan ID: %s).', $scan_id ? (string) $scan_id : 'any'),
+                    'warning'
+                );
+            }
+            return true;
+        }
+
         if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
             \WebCareProScanner\System\AuditLogger::log(
-                'scan_lock_force_released',
-                sprintf('Scan lock forcefully cleared by administrative operation (Scan ID: %s).', $scan_id ? (string) $scan_id : 'any'),
-                'warning'
+                'scan_lock_force_release_failed',
+                sprintf('Failed to forcefully clear scan lock due to mutex acquisition timeout or storage persistence failure (Scan ID: %s).', $scan_id ? (string) $scan_id : 'any'),
+                'critical'
             );
         }
+        return false;
     }
 
     /**

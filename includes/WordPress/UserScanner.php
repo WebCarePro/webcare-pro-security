@@ -119,7 +119,7 @@ class UserScanner {
             );
             set_transient("webcareproscan_active_scan_file_{$scan_id}", $status_msg, 120);
             if (!\WebCareProScanner\Scan\ScanLock::heartbeat((int) $scan_id, $lease_token)) {
-                return $findings;
+                throw new \RuntimeException(esc_html__('Active scan lease lost or superseded during user audit.', 'webcare-pro-security'));
             }
         }
 
@@ -157,7 +157,7 @@ class UserScanner {
                 );
                 set_transient("webcareproscan_active_scan_file_{$scan_id}", $status_msg, 120);
                 if (!\WebCareProScanner\Scan\ScanLock::heartbeat((int) $scan_id, $lease_token)) {
-                    break;
+                    throw new \RuntimeException(esc_html__('Active scan lease lost or superseded during user audit.', 'webcare-pro-security'));
                 }
             }
 
@@ -288,7 +288,7 @@ class UserScanner {
                 );
                 set_transient("webcareproscan_active_scan_file_{$scan_id}", $status_msg, 120);
                 if (!\WebCareProScanner\Scan\ScanLock::heartbeat((int) $scan_id, $lease_token)) {
-                    break;
+                    throw new \RuntimeException(esc_html__('Active scan lease lost or superseded during user audit.', 'webcare-pro-security'));
                 }
             }
 

@@ -170,8 +170,10 @@ class OutboundEgressFirewall {
 
     /**
      * Enforce cURL transport across WordPress HTTP API to guarantee CURLOPT_RESOLVE DNS pinning.
-     * Fails closed by returning an empty array if cURL is unavailable, preventing alternative
-     * non-pinning transports (e.g. Streams/fsockopen) from executing unprotected requests.
+     * When cURL is available, restricts transports to cURL so CURLOPT_RESOLVE pinning is enforced.
+     * If cURL is unavailable, only restricts transports (fails closed) if the destination URL
+     * is a protected target requiring SSRF DNS pinning. For non-pinning requests, preserves
+     * original transports to avoid breaking general HTTP operations.
      *
      * @param array  $transports
      * @param array  $args
@@ -182,8 +184,16 @@ class OutboundEgressFirewall {
         if (extension_loaded('curl') && function_exists('curl_init')) {
             return ['curl'];
         }
-        // Fail closed: reject non-pinning fallback transports to prevent TOCTOU DNS rebinding
-        return [];
+
+        // When cURL is unavailable, fail closed only for protected destinations that require DNS pinning
+        if (!empty($url)) {
+            $host = strtolower((string) wp_parse_url($url, PHP_URL_HOST));
+            if (!empty($host) && isset(self::$resolved_safe_pins[$host])) {
+                return [];
+            }
+        }
+
+        return $transports;
     }
 
     /**

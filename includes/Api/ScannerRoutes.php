@@ -4694,61 +4694,97 @@ class ScannerRoutes {
                     set_transient("webcareproscan_active_scan_file_{$scan_id}", 'Core Integrity: Verifying WordPress core files against official WP.org API checksums...', 120);
                     $core_integrity = new CoreIntegrity();
                     $all_deep_findings = array_merge($all_deep_findings, $core_integrity->verify((string) $scan_id));
-                } catch (\Throwable $e) {}
+                } catch (\Throwable $e) {
+                    if (str_contains(strtolower($e->getMessage()), 'lease')) {
+                        throw $e;
+                    }
+                }
 
                 try {
                     set_transient("webcareproscan_active_scan_file_{$scan_id}", 'File Integrity: Checking critical system files (wp-config.php, .htaccess, index.php)...', 120);
                     $important_fim = new ImportantFileFIM();
                     $all_deep_findings = array_merge($all_deep_findings, $important_fim->verify((string) $scan_id));
-                } catch (\Throwable $e) {}
+                } catch (\Throwable $e) {
+                    if (str_contains(strtolower($e->getMessage()), 'lease')) {
+                        throw $e;
+                    }
+                }
 
                 $assert_lease_active();
                 try {
                     set_transient("webcareproscan_active_scan_file_{$scan_id}", 'Plugin Integrity: Verifying installed plugins against official WordPress.org checksums...', 120);
                     $plugin_integrity = new PluginIntegrity();
                     $all_deep_findings = array_merge($all_deep_findings, $plugin_integrity->verify((string) $scan_id));
-                } catch (\Throwable $e) {}
+                } catch (\Throwable $e) {
+                    if (str_contains(strtolower($e->getMessage()), 'lease')) {
+                        throw $e;
+                    }
+                }
 
                 $assert_lease_active();
                 try {
                     set_transient("webcareproscan_active_scan_file_{$scan_id}", 'Theme Integrity: Verifying active and installed themes against repository checksums...', 120);
                     $theme_integrity = new ThemeIntegrity();
                     $all_deep_findings = array_merge($all_deep_findings, $theme_integrity->verify((string) $scan_id));
-                } catch (\Throwable $e) {}
+                } catch (\Throwable $e) {
+                    if (str_contains(strtolower($e->getMessage()), 'lease')) {
+                        throw $e;
+                    }
+                }
 
                 $assert_lease_active();
                 try {
                     $db_scanner = new DatabaseScanner();
                     $all_deep_findings = array_merge($all_deep_findings, $db_scanner->scan((string) $scan_id, 100));
-                } catch (\Throwable $e) {}
+                } catch (\Throwable $e) {
+                    if (str_contains(strtolower($e->getMessage()), 'lease')) {
+                        throw $e;
+                    }
+                }
 
                 $assert_lease_active();
                 try {
                     set_transient("webcareproscan_active_scan_file_{$scan_id}", 'Content & Post Scanner: Inspecting published posts and comments for hidden SEO spam and XSS...', 120);
                     $content_scanner = new ContentScanner();
                     $all_deep_findings = array_merge($all_deep_findings, $content_scanner->scan((string) $scan_id, 100));
-                } catch (\Throwable $e) {}
+                } catch (\Throwable $e) {
+                    if (str_contains(strtolower($e->getMessage()), 'lease')) {
+                        throw $e;
+                    }
+                }
 
                 $assert_lease_active();
                 try {
                     set_transient("webcareproscan_active_scan_file_{$scan_id}", 'User & Auth Sentinel: Auditing user accounts, administrator privileges, and password strength...', 120);
                     $wp_security = new WordPressSecurityScanner();
                     $all_deep_findings = array_merge($all_deep_findings, $wp_security->scan((string) $scan_id, $lease_token));
-                } catch (\Throwable $e) {}
+                } catch (\Throwable $e) {
+                    if (str_contains(strtolower($e->getMessage()), 'lease')) {
+                        throw $e;
+                    }
+                }
 
                 $assert_lease_active();
                 try {
                     set_transient("webcareproscan_active_scan_file_{$scan_id}", 'Vulnerability Intelligence: Checking installed plugins, themes, and WP Core against CVE database...', 120);
                     $update_scanner = new UpdateScanner();
                     $all_deep_findings = array_merge($all_deep_findings, $update_scanner->scan((string) $scan_id));
-                } catch (\Throwable $e) {}
+                } catch (\Throwable $e) {
+                    if (str_contains(strtolower($e->getMessage()), 'lease')) {
+                        throw $e;
+                    }
+                }
 
                 $assert_lease_active();
                 try {
                     set_transient("webcareproscan_active_scan_file_{$scan_id}", 'Media & Uploads Audit: Inspecting image metadata and attachments for embedded PHP code...', 120);
                     $uploads_scanner = new UploadsScanner();
                     $all_deep_findings = array_merge($all_deep_findings, $uploads_scanner->scan((string) $scan_id));
-                } catch (\Throwable $e) {}
+                } catch (\Throwable $e) {
+                    if (str_contains(strtolower($e->getMessage()), 'lease')) {
+                        throw $e;
+                    }
+                }
 
                 // Quick reputation check (skips if non-responsive or local)
                 try {
@@ -4759,7 +4795,11 @@ class ScannerRoutes {
                         'check_spam_ip'          => true,
                     ]);
                     $all_deep_findings = array_merge($all_deep_findings, $reputation_findings);
-                } catch (\Throwable $e) {}
+                } catch (\Throwable $e) {
+                    if (str_contains(strtolower($e->getMessage()), 'lease')) {
+                        throw $e;
+                    }
+                }
             }
 
             // Cross-engine Correlation
@@ -5419,7 +5459,13 @@ class ScannerRoutes {
             \WebCareProScanner\Scan\ScanVaultManager::clear_all_manifests();
         }
 
-        ScanLock::force_release();
+        if (ScanLock::is_locked() && !ScanLock::force_release()) {
+            return new \WP_Error(
+                'clear_history_lock_failed',
+                __('Failed to clear active scan lock.', 'webcare-pro-security'),
+                ['status' => 500]
+            );
+        }
 
         return rest_ensure_response([
             'success'    => true,
@@ -6302,11 +6348,24 @@ class ScannerRoutes {
                 'completed_at' => $now_exact,
             ], ['id' => $scan_id]);
             \WebCareProScanner\Scan\ScanQueueManager::cleanup($scan_id);
-            ScanLock::force_release($scan_id);
+            $aborted = ScanLock::force_release($scan_id);
+            if (!$aborted) {
+                return new \WP_Error(
+                    'abort_failed',
+                    __('Failed to forcefully release active scan lock due to database mutex timeout or storage persistence error.', 'webcare-pro-security'),
+                    ['status' => 500]
+                );
+            }
         }
 
         // Also release any active scan lock and ensure any hanging scans are aborted
-        ScanLock::force_release();
+        if (ScanLock::is_locked() && !ScanLock::force_release()) {
+            return new \WP_Error(
+                'abort_failed',
+                __('Failed to forcefully release active scan lock due to database mutex timeout or storage persistence error.', 'webcare-pro-security'),
+                ['status' => 500]
+            );
+        }
         $abort_sql = "UPDATE `{$table_scans}` SET status = 'aborted', completed_at = %s WHERE status = 'running'";
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
         $wpdb->query(
