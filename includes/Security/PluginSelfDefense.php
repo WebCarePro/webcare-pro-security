@@ -572,6 +572,13 @@ class PluginSelfDefense {
         }
 
         $expected_hash = is_array($expected_meta) ? ($expected_meta['sha256'] ?? '') : (string)$expected_meta;
+        if (!is_string($expected_hash) || preg_match('/^[a-f0-9]{64}$/i', $expected_hash) !== 1) {
+            return [
+                'success' => false,
+                'message' => __('Invalid SHA-256 hash in official plugin manifest.', 'webcare-pro-security'),
+            ];
+        }
+
         $raw_host = 'raw.' . 'githubusercontent' . '.com';
         $version_tag = defined('WEBCAREPROSCAN_VERSION') ? 'v' . WEBCAREPROSCAN_VERSION : 'main';
         $github_raw_url = "https://{$raw_host}/WebCarePro/webcare-pro-security/{$version_tag}/" . $clean_path;
@@ -584,20 +591,8 @@ class PluginSelfDefense {
             ],
         ]);
 
-        // Fallback to main branch if tag not yet pushed
-        if ((is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) && $version_tag !== 'main') {
-            $github_raw_url = "https://{$raw_host}/WebCarePro/webcare-pro-security/main/" . $clean_path;
-            $response = wp_remote_get($github_raw_url, [
-                'timeout'    => 15,
-                'sslverify'  => true,
-                'headers'    => [
-                    'Cache-Control' => 'no-cache, must-revalidate',
-                ],
-            ]);
-        }
-
         if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
-            return ['success' => false, 'message' => __('Failed to fetch clean file from GitHub repository.', 'webcare-pro-security')];
+            return ['success' => false, 'message' => sprintf(__('Failed to fetch clean file from GitHub repository for release tag %s.', 'webcare-pro-security'), esc_html($version_tag))];
         }
 
         $content = wp_remote_retrieve_body($response);

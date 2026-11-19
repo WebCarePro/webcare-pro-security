@@ -111,16 +111,18 @@ final class RequestPipeline {
         $manifest = CompiledStackManifest::load();
         $route_evaluators = $manifest['routes'][$route_class->value] ?? [];
 
-        if (empty($route_evaluators) || !is_array($route_evaluators)) {
-            return null;
+        // Verify mandatory evaluators are present in runtime and in the active route stack
+        foreach (self::MANDATORY_EVALUATORS as $mand_class) {
+            if (!class_exists($mand_class)) {
+                throw new \RuntimeException(sprintf('Mandatory firewall evaluator unavailable: %s', $mand_class));
+            }
+            if (!is_array($route_evaluators) || !in_array($mand_class, $route_evaluators, true)) {
+                throw new \RuntimeException(sprintf('Mandatory firewall evaluator missing from route stack: %s', $mand_class));
+            }
         }
 
-        // Verify mandatory evaluators are present
-        foreach (self::MANDATORY_EVALUATORS as $mand_class) {
-            if (in_array($mand_class, $route_evaluators, true) && !class_exists($mand_class)) {
-                // Fail closed if mandatory evaluator is missing from runtime
-                throw new \RuntimeException(sprintf('Mandatory firewall evaluator class missing: %s', $mand_class));
-            }
+        if (empty($route_evaluators) || !is_array($route_evaluators)) {
+            return null;
         }
 
         foreach ($route_evaluators as $evaluator_class) {

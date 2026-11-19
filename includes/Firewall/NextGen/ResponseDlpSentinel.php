@@ -165,7 +165,7 @@ class ResponseDlpSentinel implements SecurityModuleInterface {
                 'replacement' => '[REDACTED_AWS_KEY]',
             ],
             'PRIVATE_CRYPTO_PEM_KEY' => [
-                'pattern'     => '/-----BEGIN (?:RSA |OPENSSH |EC |PGP |ENCRYPTED )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |OPENSSH |EC |PGP |ENCRYPTED )?PRIVATE KEY-----/',
+                'pattern'     => '/-----BEGIN (?:RSA |OPENSSH |EC |PGP |ENCRYPTED )?PRIVATE KEY-----[\s\S]*?(?:-----END (?:RSA |OPENSSH |EC |PGP |ENCRYPTED )?PRIVATE KEY-----|$)/',
                 'replacement' => '[REDACTED_PRIVATE_KEY_BY_WEBCARE_DLP]',
             ],
             'RAW_DB_AUTH_ERROR_DUMP' => [
@@ -205,14 +205,36 @@ class ResponseDlpSentinel implements SecurityModuleInterface {
     }
 
     /**
+     * Maximum depth and node limits for safe recursive DLP inspection.
+     */
+    public const MAX_RECURSION_DEPTH = 20;
+    public const MAX_RECURSION_NODES = 5000;
+
+    /**
      * Recursively inspect and redact strings inside nested arrays or objects (for REST responses).
      *
-     * @param mixed  $data
-     * @param bool   $has_leak
-     * @param string $matched_pattern
-     * @return mixed
+     * @param mixed              $data
+     * @param bool               $has_leak
+     * @param string             $matched_pattern
+     * @param int                $depth
+     * @param int                $nodes
+     * @param array<int, bool>   $visited
+     * @return mixed Normalized array/primitive with secrets redacted.
+     * @throws \RuntimeException If recursion depth, node budget, or circular reference detected.
      */
-    public static function redact_data_recursive($data, bool &$has_leak, string &$matched_pattern) {
+    public static function redact_data_recursive(
+        $data,
+        bool &$has_leak,
+        string &$matched_pattern,
+        int $depth = 0,
+        int &$nodes = 0,
+        array &$visited = []
+    ) {
+        $nodes++;
+        if ($depth > self::MAX_RECURSION_DEPTH || $nodes > self::MAX_RECURSION_NODES) {
+            throw new \RuntimeException('DLP recursion limit exceeded (depth > 20 or nodes > 5000); failing closed.');
+        }
+
         if (is_string($data)) {
             $check = self::inspect_and_redact($data, true);
             if (!empty($check['leaked'])) {
@@ -226,18 +248,27 @@ class ResponseDlpSentinel implements SecurityModuleInterface {
         }
 
         if (is_array($data)) {
+            $cleaned = [];
             foreach ($data as $key => $val) {
-                $data[$key] = self::redact_data_recursive($val, $has_leak, $matched_pattern);
+                $cleaned[$key] = self::redact_data_recursive($val, $has_leak, $matched_pattern, $depth + 1, $nodes, $visited);
             }
-            return $data;
+            return $cleaned;
         }
 
         if (is_object($data)) {
-            $vars = get_object_vars($data);
-            foreach ($vars as $prop => $val) {
-                $data->$prop = self::redact_data_recursive($val, $has_leak, $matched_pattern);
+            $oid = spl_object_id($data);
+            if (isset($visited[$oid])) {
+                throw new \RuntimeException('Circular reference detected during DLP inspection; failing closed.');
             }
-            return $data;
+            $visited[$oid] = true;
+
+            $vars = get_object_vars($data);
+            $cleaned_obj = [];
+            foreach ($vars as $prop => $val) {
+                $cleaned_obj[$prop] = self::redact_data_recursive($val, $has_leak, $matched_pattern, $depth + 1, $nodes, $visited);
+            }
+            unset($visited[$oid]);
+            return $cleaned_obj;
         }
 
         return $data;

@@ -181,8 +181,15 @@ class HTMLAnalyzer {
                 foreach (['href', 'src', 'action', 'formaction', 'data', 'poster'] as $attr) {
                     $attr_val = $processor->get_attribute($attr);
                     if (is_string($attr_val) && $attr_val !== '') {
-                        // Multi-pass decode HTML entities and strip ASCII control chars (0x00 - 0x20)
-                        $norm_attr = html_entity_decode($attr_val, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+                        // Multi-pass decode HTML entities (up to 3 passes) and strip ASCII control chars (0x00 - 0x20)
+                        $norm_attr = $attr_val;
+                        for ($i = 0; $i < 3; $i++) {
+                            $decoded = html_entity_decode($norm_attr, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+                            if ($decoded === $norm_attr) {
+                                break;
+                            }
+                            $norm_attr = $decoded;
+                        }
                         $norm_attr = strtolower(preg_replace('/[\x00-\x20]+/', '', $norm_attr) ?? '');
                         if (str_starts_with($norm_attr, 'javascript:') || str_starts_with($norm_attr, 'vbscript:') || str_starts_with($norm_attr, 'data:text/html')) {
                             $detections[] = [

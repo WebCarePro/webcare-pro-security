@@ -177,6 +177,11 @@ final class CompiledStackManifest {
                                 $sanitized_evals[] = $eval_cls;
                             }
                         }
+                        // Non-negotiable invariant: Always preserve ExploitSignatureEngine in every route stack
+                        $core_exploit_engine = 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine';
+                        if (!in_array($core_exploit_engine, $sanitized_evals, true)) {
+                            array_unshift($sanitized_evals, $core_exploit_engine);
+                        }
                         $routes[$r_key] = $sanitized_evals;
                     }
                 }
