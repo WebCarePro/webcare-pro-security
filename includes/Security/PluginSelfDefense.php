@@ -439,7 +439,11 @@ class PluginSelfDefense {
      * @return array|null
      */
     public static function get_remote_github_manifest(bool $force_refresh = false): ?array {
-        $transient_key = 'webcareproscan_github_remote_manifest';
+        if (!defined('WEBCAREPROSCAN_VERSION') || WEBCAREPROSCAN_VERSION === '') {
+            return null; // Fail closed without a pinned release version
+        }
+        $version_tag   = 'v' . WEBCAREPROSCAN_VERSION;
+        $transient_key = 'webcareproscan_github_manifest_' . sanitize_key($version_tag);
         if (!$force_refresh) {
             $cached = get_transient($transient_key);
             if (is_array($cached) && !empty($cached['files'])) {
@@ -448,7 +452,7 @@ class PluginSelfDefense {
         }
 
         $raw_host = 'raw.' . 'githubusercontent' . '.com';
-        $remote_url = "https://{$raw_host}/WebCarePro/webcare-pro-security/main/includes/System/plugin-manifest.json";
+        $remote_url = "https://{$raw_host}/WebCarePro/webcare-pro-security/refs/tags/{$version_tag}/includes/System/plugin-manifest.json";
         $res = wp_remote_get($remote_url, [
             'timeout'    => 12,
             'user-agent' => 'WEBCARE-Self-Defense/' . (defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '1.0'),
@@ -580,8 +584,11 @@ class PluginSelfDefense {
         }
 
         $raw_host = 'raw.' . 'githubusercontent' . '.com';
-        $version_tag = defined('WEBCAREPROSCAN_VERSION') ? 'v' . WEBCAREPROSCAN_VERSION : 'main';
-        $github_raw_url = "https://{$raw_host}/WebCarePro/webcare-pro-security/{$version_tag}/" . $clean_path;
+        if (!defined('WEBCAREPROSCAN_VERSION') || WEBCAREPROSCAN_VERSION === '') {
+            return ['success' => false, 'message' => __('Plugin release version not defined; cannot restore file.', 'webcare-pro-security')];
+        }
+        $version_tag = 'v' . WEBCAREPROSCAN_VERSION;
+        $github_raw_url = "https://{$raw_host}/WebCarePro/webcare-pro-security/refs/tags/{$version_tag}/" . $clean_path;
 
         $response = wp_remote_get($github_raw_url, [
             'timeout'    => 15,

@@ -130,6 +130,23 @@ final class RequestPipeline {
                 continue;
             }
 
+            // ExploitSignatureEngine evaluation branch
+            if ($evaluator_class === ExploitSignatureEngine::class) {
+                $match = ExploitSignatureEngine::evaluate_rules($settings, false);
+                if (is_array($match)) {
+                    return new WafVerdict(
+                        'block',
+                        (string) ($match['id'] ?? 'WAF-EXPLOIT-SIG'),
+                        (string) ($match['description'] ?? 'Exploit signature matched.'),
+                        [
+                            'category'    => (string) ($match['category'] ?? 'Exploit Signature'),
+                            'status_code' => 403,
+                        ]
+                    );
+                }
+                continue;
+            }
+
             // Instantiate or call evaluator if it implements WafEvaluatorInterface
             if (is_subclass_of($evaluator_class, WafEvaluatorInterface::class)) {
                 $evaluator = new $evaluator_class();

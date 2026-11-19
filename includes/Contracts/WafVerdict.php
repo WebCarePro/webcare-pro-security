@@ -24,12 +24,38 @@ final readonly class WafVerdict {
      * @param int                  $risk_score Heuristic risk rating (0-100).
      */
     public function __construct(
-        public WafAction $action,
+        public WafAction|string $action,
         public string $rule_id = '',
         public string $message = '',
         public array $context = [],
         public int $risk_score = 0
     ) {}
+
+    public function __get(string $name): mixed {
+        return match ($name) {
+            'action' => is_string($this->action) ? $this->action : $this->action->value,
+            'ruleId' => $this->rule_id,
+            'reason' => $this->message,
+            'category' => (string) ($this->context['category'] ?? 'Next-Gen Threat Defense'),
+            'severity' => (string) ($this->context['severity'] ?? 'high'),
+            'statusCode' => (int) ($this->context['status_code'] ?? ($this->getActionEnum() === WafAction::RateLimit ? 429 : 403)),
+            'banTtl' => (int) ($this->context['ban_ttl'] ?? 86400),
+            'syncCloudflare' => !empty($this->context['sync_cloudflare']),
+            'exemptRules' => isset($this->context['exempt_rules']) && is_array($this->context['exempt_rules']) ? $this->context['exempt_rules'] : [],
+            default => null,
+        };
+    }
+
+    public function __isset(string $name): bool {
+        return in_array($name, ['action', 'ruleId', 'reason', 'category', 'severity', 'statusCode', 'banTtl', 'syncCloudflare', 'exemptRules'], true);
+    }
+
+    private function getActionEnum(): WafAction {
+        if ($this->action instanceof WafAction) {
+            return $this->action;
+        }
+        return WafAction::tryFrom($this->action) ?? WafAction::Block;
+    }
 
     /**
      * Helper to instantiate an Allow verdict.
@@ -128,6 +154,6 @@ final readonly class WafVerdict {
      * Whether this verdict is terminal and must halt the pipeline immediately.
      */
     public function is_terminal(): bool {
-        return $this->action->is_terminal();
+        return $this->getActionEnum()->is_terminal();
     }
 }

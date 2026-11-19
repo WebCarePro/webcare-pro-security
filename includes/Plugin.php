@@ -184,20 +184,25 @@ class Plugin {
                 $method = isset($assoc_args['method']) ? strtoupper((string) $assoc_args['method']) : 'GET';
                 $payload = isset($assoc_args['payload']) ? (string) $assoc_args['payload'] : '';
 
+                if ($payload !== '') {
+                    $uri .= (str_contains($uri, '?') ? '&' : '?') . 'sim_payload=' . rawurlencode($payload);
+                }
+
                 $sim_server = [
                     'REQUEST_METHOD' => $method,
                     'REQUEST_URI'    => $uri,
                     'QUERY_STRING'   => (string) (wp_parse_url($uri, PHP_URL_QUERY) ?? ''),
                 ];
-                if ($payload !== '') {
-                    $sim_server['REQUEST_URI'] .= (str_contains($sim_server['REQUEST_URI'], '?') ? '&' : '?') . 'sim_payload=' . rawurlencode($payload);
-                }
                 $rc = \WebCareProScanner\Core\RouteClassifier::classify($sim_server);
                 $settings = \WebCareProScanner\System\SettingsManager::get_settings();
                 $orig_server = $_SERVER;
+                $orig_get = $_GET;
 
                 try {
                     $_SERVER = array_merge($_SERVER, $sim_server);
+                    if ($payload !== '') {
+                        $_GET['sim_payload'] = $payload;
+                    }
 
                     if (!class_exists('\\WebCareProScanner\\Firewall\\Core\\RequestPipeline') || !class_exists('\\WebCareProScanner\\Contracts\\RequestContext')) {
                         \WP_CLI::error('NOT_TESTED: Required RequestPipeline or RequestContext classes unavailable.');
@@ -211,19 +216,20 @@ class Plugin {
                     if ($verdict !== null) {
                         if ($verdict->action === 'challenge_pow') {
                             \WP_CLI::warning(sprintf('CHALLENGED: [%s] %s', $verdict->ruleId, $verdict->reason));
-                            return;
+                            \WP_CLI::halt(1);
                         } elseif (in_array($verdict->action, ['block', 'block_and_ban'], true)) {
                             \WP_CLI::warning(sprintf('BLOCKED: [%s] %s', $verdict->ruleId, $verdict->reason));
-                            return;
+                            \WP_CLI::halt(1);
                         } elseif ($verdict->action === 'rate_limit') {
                             \WP_CLI::warning(sprintf('RATE_LIMITED: [%s] %s', $verdict->ruleId, $verdict->reason));
-                            return;
+                            \WP_CLI::halt(1);
                         }
                     }
 
                     \WP_CLI::success(sprintf('ALLOWED (NO_MATCH): Request to "%s" (%s, RouteClass: %s) did not trigger active rules.', $uri, $method, $rc->value));
                 } finally {
                     $_SERVER = $orig_server;
+                    $_GET = $orig_get;
                 }
             });
         }
