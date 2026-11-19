@@ -1,6 +1,6 @@
 {
   "version": "3.0.0",
-  "generated_at": "2026-11-19T19:35:39.175Z",
+  "generated_at": "2026-11-19T20:03:43.063Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -312,8 +312,8 @@
       "size": 3658
     },
     "includes/Contracts/RequestContext.php": {
-      "sha256": "830037ca1f219c8fd21d289753caf86c2c2604ca8857cde0c9ed19eb5caa1987",
-      "size": 9957
+      "sha256": "78c043539d39569f9a0a839572f6fe7fd6e02d9c02dbd0e1480df02c42cf0f3f",
+      "size": 9989
     },
     "includes/Contracts/RouteClass.php": {
       "sha256": "94f40358eeb842cdbf02a1ae6b57580114c5ca7c09921566d08ac442a4767a7b",
@@ -528,8 +528,8 @@
       "size": 40170
     },
     "includes/Firewall/Core/ExploitSignatureEngine.php": {
-      "sha256": "d98107496a1ba39a57069e4c3781749732fefc667807baccfd2f1337018654db",
-      "size": 126309
+      "sha256": "13f18991f46a20a41f727125ce85dbf0d25f4b9288838f6fadfe68192622be2f",
+      "size": 126320
     },
     "includes/Firewall/Core/FirewallTelemetryService.php": {
       "sha256": "dd97f57ad8e2a91e029968c27ea9f146563c0c9ca526c6cab394609f7257415c",
@@ -540,8 +540,8 @@
       "size": 41931
     },
     "includes/Firewall/Core/RequestPipeline.php": {
-      "sha256": "6ff5e5ae1c726f055675d6c90a38f2699f3ae4caaf9da32cf5191e79e58e5ed6",
-      "size": 7982
+      "sha256": "8e5292273c4b53539976513a08405766e4d73906c9e627f72c12a38f2367d97b",
+      "size": 7988
     },
     "includes/Firewall/Core/ViolationResponder.php": {
       "sha256": "45aa299e9a90106ffdc2491f249fc4a6e3942bbad2d53c0d4a6734f3936586df",

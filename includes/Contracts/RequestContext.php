@@ -96,7 +96,7 @@ class RequestContext {
 
         // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Raw URI decomposed cleanly before field sanitization
         $raw_uri = isset($_SERVER['REQUEST_URI']) ? (string) wp_unslash($_SERVER['REQUEST_URI']) : '';
-        $ctx->uri = sanitize_text_field($raw_uri);
+        $ctx->uri = str_replace(["\0", "\r", "\n"], '', $raw_uri);
         $q_pos    = strpos($raw_uri, '?');
         $raw_clean = strtolower(sanitize_text_field($q_pos === false ? $raw_uri : substr($raw_uri, 0, $q_pos)));
         if (strpos($raw_clean, '/.') !== false || strpos($raw_clean, '//') !== false) {
@@ -116,7 +116,7 @@ class RequestContext {
             $raw_clean = '/' . implode('/', $p_stack);
         }
         $ctx->cleanUri = $raw_clean;
-        $ctx->query    = $q_pos === false ? '' : sanitize_text_field(substr($raw_uri, $q_pos + 1));
+        $ctx->query    = $q_pos === false ? '' : str_replace(["\0", "\r", "\n"], '', substr($raw_uri, $q_pos + 1));
 
         $ctx->userAgent    = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';
         $ctx->referer      = isset($_SERVER['HTTP_REFERER']) ? esc_url_raw(wp_unslash($_SERVER['HTTP_REFERER'])) : '';

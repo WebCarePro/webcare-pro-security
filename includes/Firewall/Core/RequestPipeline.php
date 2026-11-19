@@ -136,7 +136,7 @@ final class RequestPipeline {
 
             // ExploitSignatureEngine evaluation branch
             if ($evaluator_class === ExploitSignatureEngine::class) {
-                $match = ExploitSignatureEngine::evaluate_rules($settings, false);
+                $match = ExploitSignatureEngine::evaluate_rules($settings, false, $ctx);
                 if (is_array($match)) {
                     return new WafVerdict(
                         'block',
