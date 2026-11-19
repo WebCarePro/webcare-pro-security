@@ -295,9 +295,9 @@ class VirtualPatchSynthesizer {
 
         // 1. Test Attack Payloads
         foreach ($attacks as $idx => $payload) {
-            $t0 = function_exists('hrtime') ? hrtime(true) : microtime(true) * 1000000000;
+            $t0 = hrtime(true);
             $matched = @preg_match($regex, $payload, $m);
-            $t1 = function_exists('hrtime') ? hrtime(true) : microtime(true) * 1000000000;
+            $t1 = hrtime(true);
             $latency_us = round(($t1 - $t0) / 1000, 2);
             $total_elapsed_ns += ($t1 - $t0);
 

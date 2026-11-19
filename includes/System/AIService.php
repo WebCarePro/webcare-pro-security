@@ -144,6 +144,14 @@ class AIService {
             $code = substr($code, 0, 8000) . "\n...[truncated for token limit]...";
         }
 
+        // Neutralize adversarial prompt injection and tool directives in code before LLM inference
+        if (class_exists('\\WebCareProScanner\\Security\\PromptInjectionGuard')) {
+            $prompt_check = \WebCareProScanner\Security\PromptInjectionGuard::inspect_prompt($code, 'ai_code_analysis');
+            if (!empty($prompt_check['cleaned_text'])) {
+                $code = $prompt_check['cleaned_text'];
+            }
+        }
+
         // Generate cryptographic random boundary delimiter to prevent Indirect Prompt Injection
         $boundary = 'untrusted_code_sample_' . wp_generate_password(10, false, false);
         // Sanitize code to neutralize any attempt to inject closing delimiter tags

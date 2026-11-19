@@ -26,9 +26,20 @@ final class RouteClassifier {
      * @return RouteClass
      */
     public static function classify(array $server): RouteClass {
-        $uri = (string) ($server['REQUEST_URI'] ?? '/');
-        $path = strtolower((string) (wp_parse_url($uri, PHP_URL_PATH) ?? $uri));
+        $raw_uri = (string) ($server['REQUEST_URI'] ?? '/');
+        // Decode percent-encoded characters (e.g. /%77p-json/ -> /wp-json/) and normalize path
+        $decoded_uri = urldecode($raw_uri);
+        $raw_path = (string) (wp_parse_url($decoded_uri, PHP_URL_PATH) ?? $decoded_uri);
+        $path = strtolower((string) preg_replace('#/+#', '/', $raw_path));
         $method = strtoupper((string) ($server['REQUEST_METHOD'] ?? 'GET'));
+
+        // Check for ?rest_route= or &rest_route= query parameters
+        $has_rest_query = false;
+        if (isset($_GET['rest_route']) && is_string($_GET['rest_route']) && $_GET['rest_route'] !== '') {
+            $has_rest_query = true;
+        } elseif (str_contains($raw_uri, 'rest_route=')) {
+            $has_rest_query = true;
+        }
 
         // 1. Admin UI
         if (str_contains($path, '/wp-admin/') && !str_contains($path, 'admin-ajax.php') && !str_contains($path, 'admin-post.php')) {
@@ -40,8 +51,8 @@ final class RouteClassifier {
             return RouteClass::AdminAjax;
         }
 
-        // 3. REST API
-        if (str_contains($path, '/wp-json/')) {
+        // 3. REST API (both /wp-json/ rewrite and ?rest_route= query forms)
+        if (str_contains($path, '/wp-json/') || $has_rest_query) {
             return RouteClass::RestApi;
         }
 
@@ -55,7 +66,8 @@ final class RouteClassifier {
             return RouteClass::AuthLogin;
         }
 
-        // 6. Commerce Routes (WooCommerce checkout, cart, API webhooks)
+        // 6. Commerce Routes (WooCommerce checkout, cart, API webhooks, dynamic slugs)
+        $commerce_matched = false;
         // phpcs:ignore WordPress.Security.NonceVerification.Recommended
         if (
             str_contains($path, '/checkout')
@@ -64,6 +76,23 @@ final class RouteClassifier {
             || isset($_GET['wc-api'])
             || str_contains($path, 'wc-api')
         ) {
+            $commerce_matched = true;
+        }
+
+        // Match against compiled localized slugs if manifest exists
+        if (!$commerce_matched && class_exists(CompiledStackManifest::class)) {
+            $manifest = CompiledStackManifest::load();
+            if (!empty($manifest['commerce_slugs']) && is_array($manifest['commerce_slugs'])) {
+                foreach ($manifest['commerce_slugs'] as $c_slug) {
+                    if ($c_slug !== '' && str_contains($path, '/' . trim($c_slug, '/') . '/')) {
+                        $commerce_matched = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if ($commerce_matched) {
             return RouteClass::Commerce;
         }
 

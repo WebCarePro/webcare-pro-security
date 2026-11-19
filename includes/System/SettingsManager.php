@@ -619,6 +619,11 @@ class SettingsManager {
         $act_settings = get_option('webcareproscan_activity_log_settings', []);
         $merged['activity_log_settings']   = is_array($act_settings) ? $act_settings : [];
 
+        // Apply developer and policy overrides via filter hook
+        if (function_exists('apply_filters')) {
+            $merged = apply_filters('webcareproscan_settings', $merged);
+        }
+
         return $merged;
     }
 

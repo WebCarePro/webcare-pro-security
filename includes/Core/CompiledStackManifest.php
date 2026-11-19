@@ -80,6 +80,26 @@ final class CompiledStackManifest {
             $archetype = SiteArchetype::HeadlessApi;
         }
 
+        // Dynamic localized commerce paths detection
+        $commerce_slugs = ['checkout', 'cart'];
+        if ($has_woo && function_exists('wc_get_page_id')) {
+            $checkout_id = wc_get_page_id('checkout');
+            if ($checkout_id > 0 && function_exists('get_post_field')) {
+                $checkout_slug = (string) get_post_field('post_name', $checkout_id);
+                if ($checkout_slug !== '') {
+                    $commerce_slugs[] = $checkout_slug;
+                }
+            }
+            $cart_id = wc_get_page_id('cart');
+            if ($cart_id > 0 && function_exists('get_post_field')) {
+                $cart_slug = (string) get_post_field('post_name', $cart_id);
+                if ($cart_slug !== '') {
+                    $commerce_slugs[] = $cart_slug;
+                }
+            }
+        }
+        $commerce_slugs = array_values(array_unique($commerce_slugs));
+
         // Build route-to-evaluator mappings
         $routes = [
             RouteClass::PublicGet->value => [
@@ -91,6 +111,11 @@ final class CompiledStackManifest {
                 'WebCareProScanner\\Firewall\\Core\\CommerceSessionGuard',
                 'WebCareProScanner\\Firewall\\Core\\CommerceVelocityGuard',
             ],
+            RouteClass::Membership->value => [
+                'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
+                'WebCareProScanner\\Auth\\SessionSentinel',
+                'WebCareProScanner\\Firewall\\NextGen\\RuntimeSqlRaspEngine',
+            ],
             RouteClass::AuthLogin->value => [
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
                 'WebCareProScanner\\Auth\\WebAuthnManager',
@@ -99,6 +124,10 @@ final class CompiledStackManifest {
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
                 'WebCareProScanner\\Firewall\\NextGen\\RuntimeSqlRaspEngine',
                 'WebCareProScanner\\Firewall\\NextGen\\ResponseDlpSentinel',
+            ],
+            RouteClass::GraphQL->value => [
+                'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
+                'WebCareProScanner\\Firewall\\NextGen\\ModernApiShield',
             ],
             RouteClass::AdminAjax->value => [
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
@@ -111,20 +140,35 @@ final class CompiledStackManifest {
 
         // Custom evaluator registration hook for developers via policy
         if (function_exists('apply_filters')) {
-            $routes = apply_filters('webcare/waf/manifest_routes', $routes, $archetype);
+            $filtered_routes = apply_filters('webcare/waf/manifest_routes', $routes, $archetype);
+            if (is_array($filtered_routes)) {
+                // Sanitize route mappings: ensure only valid class names are accepted
+                foreach ($filtered_routes as $r_key => $evaluators) {
+                    if (is_array($evaluators)) {
+                        $sanitized_evals = [];
+                        foreach ($evaluators as $eval_cls) {
+                            if (is_string($eval_cls) && preg_match('/^[a-zA-Z0-9_\\\\]+$/', $eval_cls)) {
+                                $sanitized_evals[] = $eval_cls;
+                            }
+                        }
+                        $routes[$r_key] = $sanitized_evals;
+                    }
+                }
+            }
         }
 
         $manifest_data = [
-            'compiled_at' => time(),
+            'compiled_at'     => time(),
             'compiled_at_gmt' => gmdate('Y-m-d H:i:s'),
-            'archetype'   => $archetype->value,
-            'ecosystems'  => [
+            'archetype'       => $archetype->value,
+            'ecosystems'      => [
                 'woocommerce' => $has_woo,
                 'commerce'    => $has_commerce,
                 'lms'         => $has_lms,
                 'graphql'     => $has_graphql,
             ],
-            'routes'      => $routes,
+            'commerce_slugs'  => $commerce_slugs,
+            'routes'          => $routes,
         ];
 
         // Format into OPcache-executable standalone array
@@ -137,6 +181,15 @@ final class CompiledStackManifest {
             " */\n" .
             "defined('ABSPATH') || exit;\n\n" .
             "return " . $export . ";\n";
+
+        // Validate strictly data array tokens before writing to disk
+        if (class_exists(MicroWafCompiler::class) && !MicroWafCompiler::assert_strictly_data_tokens($php_content)) {
+            return [
+                'success' => false,
+                'path'    => self::get_manifest_path(),
+                'message' => 'AST Token validation failed: manifest code contains forbidden executable constructs.',
+            ];
+        }
 
         $target_file = self::get_manifest_path();
         $temp_file = $target_file . '.tmp.' . wp_rand();
@@ -178,6 +231,7 @@ final class CompiledStackManifest {
 
     /**
      * Load the compiled manifest array with OPcache and HMAC verification.
+     * Enforces strict fail-closed security: requires non-empty HMAC and rejects tampered files.
      *
      * @return array<string, mixed>
      */
@@ -185,7 +239,10 @@ final class CompiledStackManifest {
         $path = self::get_manifest_path();
         if (!file_exists($path)) {
             // Lazy compile once if missing
-            self::compile();
+            $compile_res = self::compile();
+            if (empty($compile_res['success'])) {
+                return [];
+            }
         }
 
         if (!file_exists($path)) {
@@ -198,12 +255,30 @@ final class CompiledStackManifest {
         }
 
         $stored_hmac = (string) get_option(self::OPTION_MANIFEST_HMAC, '');
-        if ($stored_hmac !== '') {
-            $secret_key = class_exists(SecretVault::class) ? SecretVault::get_key() : (defined('AUTH_KEY') ? AUTH_KEY : 'webcare-manifest-salt');
-            $expected = hash_hmac('sha256', $content, $secret_key);
-            if (!hash_equals($expected, $stored_hmac)) {
-                // Recompile if tampered or key rotated
-                self::compile();
+        $secret_key = class_exists(SecretVault::class) ? SecretVault::get_key() : (defined('AUTH_KEY') ? AUTH_KEY : 'webcare-manifest-salt');
+
+        // Fail-closed 1: Missing stored HMAC indicates corruption or tampering
+        if ($stored_hmac === '') {
+            $compile_res = self::compile();
+            if (empty($compile_res['success'])) {
+                return [];
+            }
+            $stored_hmac = (string) get_option(self::OPTION_MANIFEST_HMAC, '');
+            $content = (string) @file_get_contents($path);
+        }
+
+        $expected = hash_hmac('sha256', $content, $secret_key);
+        if (!hash_equals($expected, $stored_hmac)) {
+            // Tampering detected: attempt recompilation
+            $compile_res = self::compile();
+            if (empty($compile_res['success'])) {
+                // Fail closed immediately; never execute tampered PHP artifact
+                return [];
+            }
+            $content = (string) @file_get_contents($path);
+            $stored_hmac = (string) get_option(self::OPTION_MANIFEST_HMAC, '');
+            if (!hash_equals(hash_hmac('sha256', $content, $secret_key), $stored_hmac)) {
+                return [];
             }
         }
 

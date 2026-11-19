@@ -776,13 +776,6 @@ class OutboundEgressFirewall {
             return $dns_cache[$clean_host];
         }
 
-        // Check 15-minute transient cache for safe resolved hosts
-        $transient_key = 'webcare_egress_dns_' . md5($clean_host);
-        $cached_ip = get_transient($transient_key);
-        if ($cached_ip !== false && is_string($cached_ip)) {
-            return ($dns_cache[$clean_host] = ['threat' => null, 'reason' => '', 'safe_ip' => $cached_ip]);
-        }
-
         // Normalize or hard-block shorthand/octal/hex IPv4 representations (e.g. 0177.0.0.1, 127.1, 0x7f.1)
         if (preg_match('/^(?:0x[0-9a-f]+|0[0-7]+|\d+)(?:\.(?:0x[0-9a-f]+|0[0-7]+|\d+)){1,3}$/i', $clean_host)) {
             if (filter_var($clean_host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) === false) {
@@ -929,8 +922,6 @@ class OutboundEgressFirewall {
                 'reason' => sprintf('Outbound destination host (%s) could not be resolved to a valid IP address.', $clean_host),
             ]);
         }
-
-        set_transient($transient_key, $first_safe_ip, 900); // 15-minute DNS cache
 
         $result = ['threat' => null, 'reason' => '', 'safe_ip' => $first_safe_ip];
         return ($dns_cache[$clean_host] = $result);

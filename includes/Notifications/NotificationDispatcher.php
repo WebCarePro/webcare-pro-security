@@ -1092,7 +1092,25 @@ class NotificationDispatcher {
         if (empty($url)) {
             return false;
         }
-        $resp = wp_remote_post($url, [
+
+        $parsed = wp_parse_url($url);
+        $scheme = strtolower($parsed['scheme'] ?? '');
+        $host   = strtolower($parsed['host'] ?? '');
+
+        // Strict HTTPS enforcement (allow localhost HTTP strictly if defined in local development constant)
+        if ($scheme !== 'https') {
+            $is_local_dev = defined('WP_ENVIRONMENT_TYPE') && WP_ENVIRONMENT_TYPE === 'local';
+            if (!$is_local_dev) {
+                return false;
+            }
+        }
+
+        // SSRF protection: reject AWS/GCP/Azure instance metadata endpoints
+        if ($host === '169.254.169.254' || $host === 'metadata.google.internal' || $host === 'instance-data') {
+            return false;
+        }
+
+        $resp = wp_safe_remote_post($url, [
             'timeout'     => 8,
             'blocking'    => false, // Non-blocking async dispatch for maximum performance
             'headers'     => ['Content-Type' => 'application/json'],

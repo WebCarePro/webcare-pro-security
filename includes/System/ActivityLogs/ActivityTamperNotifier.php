@@ -145,7 +145,24 @@ class ActivityTamperNotifier {
             'timestamp_utc'   => gmdate('Y-m-d\TH:i:s\Z'),
         ];
 
-        wp_remote_post($webhook_url, [
+        $parsed = wp_parse_url($webhook_url);
+        $scheme = strtolower($parsed['scheme'] ?? '');
+        $host   = strtolower($parsed['host'] ?? '');
+
+        // Strict HTTPS enforcement (allow localhost HTTP strictly if defined in local development constant)
+        if ($scheme !== 'https') {
+            $is_local_dev = defined('WP_ENVIRONMENT_TYPE') && WP_ENVIRONMENT_TYPE === 'local';
+            if (!$is_local_dev) {
+                return;
+            }
+        }
+
+        // SSRF protection: reject AWS/GCP/Azure instance metadata endpoints
+        if ($host === '169.254.169.254' || $host === 'metadata.google.internal' || $host === 'instance-data') {
+            return;
+        }
+
+        wp_safe_remote_post($webhook_url, [
             'blocking' => false,
             'body'     => json_encode($payload),
             'headers'  => ['Content-Type' => 'application/json'],

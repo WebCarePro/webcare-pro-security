@@ -392,8 +392,18 @@ class VisualRuleExpressionEngine {
                 if ($want === '') {
                     return false;
                 }
-                $rx = self::wrap_regex($want);
-                return @preg_match($rx, $subject) === 1;
+                // Cap subject length to 8192 bytes and set conservative backtrack limit to prevent ReDoS
+                $capped_subject = strlen($subject) > 8192 ? substr($subject, 0, 8192) : $subject;
+                $prev_backtrack = ini_get('pcre.backtrack_limit');
+                @ini_set('pcre.backtrack_limit', '10000');
+                try {
+                    $rx = self::wrap_regex($want);
+                    return @preg_match($rx, $capped_subject) === 1;
+                } finally {
+                    if ($prev_backtrack !== false) {
+                        @ini_set('pcre.backtrack_limit', (string) $prev_backtrack);
+                    }
+                }
             case 'in':
                 return in_array($subj_l, self::split_list_values($want), true);
             case 'not_in':

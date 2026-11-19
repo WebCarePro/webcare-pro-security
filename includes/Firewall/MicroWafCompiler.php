@@ -1557,6 +1557,8 @@ class MicroWafCompiler {
             T_COMMENT,
             T_DOC_COMMENT,
             T_STRING,
+            T_BOOLEAN_OR,
+            T_EXIT,
         ];
 
         $tokens = token_get_all($code);
@@ -1565,8 +1567,8 @@ class MicroWafCompiler {
                 if (!in_array($token[0], $allowed_tokens, true)) {
                     return false;
                 }
-                // Disallow arbitrary functions or constants (only allow true, false, null)
-                if ($token[0] === T_STRING && !in_array(strtolower($token[1]), ['true', 'false', 'null', 'array'], true)) {
+                // Disallow arbitrary functions or constants (only allow true, false, null, defined, exit)
+                if ($token[0] === T_STRING && !in_array(strtolower($token[1]), ['true', 'false', 'null', 'array', 'defined', 'exit'], true)) {
                     return false;
                 }
             } else {

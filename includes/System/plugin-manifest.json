@@ -1,6 +1,6 @@
 {
   "version": "2.19.0",
-  "generated_at": "2026-11-19T16:01:58.033Z",
+  "generated_at": "2026-11-19T16:18:01.253Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -296,8 +296,8 @@
       "size": 2100
     },
     "includes/Core/CompiledStackManifest.php": {
-      "sha256": "46cbb70837217f7f27fa224b125d74f06d70f291997473442f87d4cbc331e8d5",
-      "size": 8770
+      "sha256": "63b691cf14bb9ec8e03c56f478be60afa2a2d6848d5ad464aa3d30b9f1bfa70f",
+      "size": 12379
     },
     "includes/Core/ModuleRegistry.php": {
       "sha256": "0ecddd5325ff7b92d552f29054ef2d549181a8cfa00f175864e1c7494a5ff828",
@@ -316,8 +316,8 @@
       "size": 2142
     },
     "includes/Core/RouteClassifier.php": {
-      "sha256": "45c432dd86f9543e50849f97b988ae36b0c2c54b8624a53ab9665578a5617f3c",
-      "size": 2559
+      "sha256": "8bca0beaeb06e6c23accecf97d96cb9d709110abd000cdfcc5e44fec77d61648",
+      "size": 3949
     },
     "includes/Database/CronPersistenceScanner.php": {
       "sha256": "e7567996de9e74e3596a213fe01521cb69d14f0177edaf8737fa81ace82f5f2c",
@@ -520,8 +520,8 @@
       "size": 15983
     },
     "includes/Firewall/MicroWafCompiler.php": {
-      "sha256": "b86f4d438933c462bce5711cb16f6b699d3eab964b6c9e635a28094e30941dc0",
-      "size": 104141
+      "sha256": "0807ef280eac23336a1d3f3fda7132085faa5e3f5f665561e5282f0231893e32",
+      "size": 104221
     },
     "includes/Firewall/Modular/BehavioralVaultManager.php": {
       "sha256": "a085c30ab44032dc5979d30e85acd3bff42b919dd08c3e51b0fced877fcf4f5a",
@@ -540,8 +540,8 @@
       "size": 94682
     },
     "includes/Firewall/Modular/VisualRuleExpressionEngine.php": {
-      "sha256": "9f7aef8fe4f1ee8c1f0c68dbf5349886d719bfa6c3fd16e34d6fadcaa2eccf9e",
-      "size": 68513
+      "sha256": "1fdc6776f83f1c236744840d0098a8671948a35d4efce79bf5d277c09ac07ee6",
+      "size": 69085
     },
     "includes/Firewall/NextGen/CheckoutSkimmerSentinel.php": {
       "sha256": "86f30dc46c8f657e1dc1ffa0abc1bb8926e08a616cbc704840417a115882638a",
@@ -568,8 +568,8 @@
       "size": 14029
     },
     "includes/Firewall/OutboundEgressFirewall.php": {
-      "sha256": "6c8249f6287f90b357c67eacb045dcb208be0d5bfb22e709ff9d9a1c8b38025f",
-      "size": 54863
+      "sha256": "cb472e8eefaf87622e8855b967065e5a9653891c29d8adb473f8a2b2ea37dda9",
+      "size": 54413
     },
     "includes/Firewall/RedirectCanaryEngine.php": {
       "sha256": "56274c67e9dfe6725a2e6952590e5df70f2db524e657efcb8201b762048e1e5c",
@@ -596,8 +596,8 @@
       "size": 27476
     },
     "includes/Firewall/VirtualPatchSynthesizer.php": {
-      "sha256": "e32f52d9df780eb60ade79bc8b9301139ea0c30b066fdf0b9d6e734e8bf37d7b",
-      "size": 21202
+      "sha256": "0d2dbb9e7b3558c92d48b9a76cd3ec53986934f028f5c049e3d953416e9e3981",
+      "size": 21084
     },
     "includes/Firewall/WafFileLogger.php": {
       "sha256": "77556a1f0718657844178be98abe3358f30a9b7548a48d078ac26dfbb5eb8cc2",
@@ -712,16 +712,16 @@
       "size": 15407
     },
     "includes/Notifications/NotificationDispatcher.php": {
-      "sha256": "2a413ed693230bc85f46dcf908c12a28814e28ebaed5923d6205e455c59f64b1",
-      "size": 67330
+      "sha256": "746730a42e40dfad7e559e7f2330b7de4fafb0fb2faa0ac751237efc2ce1394e",
+      "size": 68037
     },
     "includes/Notifications/WebhookService.php": {
       "sha256": "35196c79a41499fd5c4fceb11d74d161f81531f09e23974b4dd8113214faa056",
       "size": 35591
     },
     "includes/Plugin.php": {
-      "sha256": "754e9c2ff1530cbcf1d53eec0dc326a03ea3bad3f63a6307b9ded50d92a74235",
-      "size": 45892
+      "sha256": "b721d3a83f9ab3fc4d69b38098a2c9aa9015e3bc2f3e855c133ee72637a8cfbd",
+      "size": 46803
     },
     "includes/Quarantine/CoreRepairManager.php": {
       "sha256": "e4b6a6438e72eefdfcc59fe1b4db45caf4cf269c62a1143b0f61ba998a90e3b9",
@@ -876,12 +876,12 @@
       "size": 10837
     },
     "includes/System/ActivityLogs/ActivityTamperNotifier.php": {
-      "sha256": "e70cf3177c14c22ef2859d7c9f66af59d0ae20f43b479fb249d058c86b95f5b2",
-      "size": 8084
+      "sha256": "82d8470b9ceac35577f288467386bd373842c64c7d673237dcbd302e70909361",
+      "size": 8786
     },
     "includes/System/AIService.php": {
-      "sha256": "0ecfe34b41bac2e249d347b4e422b52e8f8095b0664f04f928080a6ffd49b1e0",
-      "size": 56330
+      "sha256": "ebdf08f9703bf792715e47ffd2389b1131138456b0f4da15dc581cf4ba1e1a5b",
+      "size": 56771
     },
     "includes/System/AuditLogger.php": {
       "sha256": "af5db04a8ff85888611141a90db76d7f40ed70b146573652af5c984763882a93",
@@ -916,8 +916,8 @@
       "size": 24882
     },
     "includes/System/SettingsManager.php": {
-      "sha256": "2f3d5216d9cd48f8799ad7415e509ff3bd16c976a3fea351ddf9298aa33bd5ac",
-      "size": 118281
+      "sha256": "95068dfb5d92b471783498e948e86d969e5073b83cc0f84dfcdfacabe9479c0f",
+      "size": 118477
     },
     "includes/System/SystemReadinessChecker.php": {
       "sha256": "18ff82f64e622f407d5c3067dd78541d6d7444fef5e5cd3f634e9516b939fb0c",

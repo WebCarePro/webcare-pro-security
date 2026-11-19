@@ -57,6 +57,33 @@ class Plugin {
         \WebCareProScanner\Core\CompiledStackManifest::register_lifecycle_hooks();
         \WebCareProScanner\Firewall\WafFileLogger::init();
         \WebCareProScanner\Firewall\FirewallEngine::init();
+        \WebCareProScanner\Hardening\SecurityHeadersEngine::init();
+        \WebCareProScanner\Notifications\WebhookService::init();
+
+        // Route-Gated Micro-Kernel Booting for zero-waste loading
+        $route_class = \WebCareProScanner\Core\RouteClassifier::classify($_SERVER);
+        $manifest = \WebCareProScanner\Core\CompiledStackManifest::load();
+        $is_editorial_or_public_get = ($route_class === \WebCareProScanner\Contracts\RouteClass::PublicGet);
+
+        // Subsystems only booted when surface matches or in admin/cron/cli context
+        if ($route_class === \WebCareProScanner\Contracts\RouteClass::AuthLogin || $is_admin || $is_cli) {
+            \WebCareProScanner\Auth\TwoFactorAuth::init();
+            \WebCareProScanner\Auth\LoginHardening::init();
+            \WebCareProScanner\Auth\WebAuthnManager::init();
+            \WebCareProScanner\Auth\ApplicationPasswordSentinel::init();
+        }
+
+        if ($route_class === \WebCareProScanner\Contracts\RouteClass::Membership || $route_class === \WebCareProScanner\Contracts\RouteClass::Commerce || $is_admin) {
+            \WebCareProScanner\Auth\SessionSentinel::init();
+            \WebCareProScanner\Auth\LoginHistoryManager::init();
+            \WebCareProScanner\Identity\SessionForensicsEngine::init();
+        }
+
+        if ($route_class === \WebCareProScanner\Contracts\RouteClass::RestApi || $is_admin || $is_cli) {
+            \WebCareProScanner\WordPress\RestApiInventory::init();
+        }
+
+        // Lightweight public forms and scans
         \WebCareProScanner\Scan\ScanVaultManager::register();
         \WebCareProScanner\Firewall\RescueAssistantManager::init();
         \WebCareProScanner\Firewall\DistributedVelocityShield::init();
@@ -65,18 +92,8 @@ class Plugin {
         \WebCareProScanner\Firewall\GhostRouteTrap::init();
         \WebCareProScanner\Security\EmergencyContainmentManager::init();
         \WebCareProScanner\Security\PromptInjectionGuard::init();
-        \WebCareProScanner\Hardening\SecurityHeadersEngine::init();
-        \WebCareProScanner\Auth\TwoFactorAuth::init();
-        \WebCareProScanner\Auth\LoginHardening::init();
-        \WebCareProScanner\Auth\SessionSentinel::init();
-        \WebCareProScanner\Auth\LoginHistoryManager::init();
-        \WebCareProScanner\Auth\ApplicationPasswordSentinel::init();
-        \WebCareProScanner\Auth\WebAuthnManager::init();
-        \WebCareProScanner\Identity\SessionForensicsEngine::init();
         \WebCareProScanner\Content\ScriptInventoryMonitor::init();
         \WebCareProScanner\Content\BlockDirectiveSanitizer::init();
-        \WebCareProScanner\WordPress\RestApiInventory::init();
-        \WebCareProScanner\Notifications\WebhookService::init();
         \WebCareProScanner\Core\ModuleRegistry::boot_all();
 
         // 2. Custom WP-Cron Schedules (Always active across all request contexts so wp_reschedule_event never fails with invalid_schedule)
