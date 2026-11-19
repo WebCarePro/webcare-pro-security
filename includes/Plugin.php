@@ -214,13 +214,14 @@ class Plugin {
                     $verdict = \WebCareProScanner\Firewall\Core\RequestPipeline::evaluate_pipeline($ctx, $settings);
 
                     if ($verdict !== null) {
-                        if ($verdict->action === 'challenge_pow') {
+                        $action_val = $verdict->get_action_value();
+                        if ($action_val === 'challenge_pow') {
                             \WP_CLI::warning(sprintf('CHALLENGED: [%s] %s', $verdict->ruleId, $verdict->reason));
                             \WP_CLI::halt(1);
-                        } elseif (in_array($verdict->action, ['block', 'block_and_ban'], true)) {
+                        } elseif (in_array($action_val, ['block', 'block_and_ban'], true)) {
                             \WP_CLI::warning(sprintf('BLOCKED: [%s] %s', $verdict->ruleId, $verdict->reason));
                             \WP_CLI::halt(1);
-                        } elseif ($verdict->action === 'rate_limit') {
+                        } elseif ($action_val === 'rate_limit') {
                             \WP_CLI::warning(sprintf('RATE_LIMITED: [%s] %s', $verdict->ruleId, $verdict->reason));
                             \WP_CLI::halt(1);
                         }

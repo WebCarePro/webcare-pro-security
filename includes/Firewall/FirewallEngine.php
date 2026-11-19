@@ -1207,17 +1207,18 @@ class FirewallEngine {
             $req_ctx = \WebCareProScanner\Contracts\RequestContext::from_globals();
             $verdict = \WebCareProScanner\Core\ModuleRegistry::evaluate_runtime_waf($req_ctx, $settings);
             if ($verdict !== null) {
-                if ($verdict->action === 'allow') {
+                $action_val = $verdict->get_action_value();
+                if ($action_val === 'allow') {
                     $custom_allow_matched = true;
                     $skip_operational_heuristics = true;
-                } elseif ($verdict->action === 'challenge_pow' && class_exists('\\WebCareProScanner\\Firewall\\BotReconDefense')) {
+                } elseif ($action_val === 'challenge_pow' && class_exists('\\WebCareProScanner\\Firewall\\BotReconDefense')) {
                     if (!\WebCareProScanner\Firewall\BotReconDefense::has_valid_clearance_cookie($client_ip, $req_ctx->userAgent)) {
                         self::log_incident([
                             'id'          => $verdict->ruleId,
                             'name'        => $verdict->category,
                             'category'    => $verdict->category,
                             'description' => $verdict->reason,
-                            'match_type'  => $verdict->action,
+                            'match_type'  => $action_val,
                             'match_value' => $verdict->ruleId,
                             'payload'     => "Client IP: {$client_ip} URI: {$request_uri}",
                         ], 'challenged');
@@ -1229,13 +1230,13 @@ class FirewallEngine {
                         'name'            => $verdict->category,
                         'category'        => $verdict->category,
                         'description'     => $verdict->reason,
-                        'match_type'      => $verdict->action,
+                        'match_type'      => $action_val,
                         'match_value'     => $verdict->ruleId,
                         'payload'         => "Client IP: {$client_ip} URI: {$request_uri}",
                         'sync_cloudflare' => $verdict->syncCloudflare,
-                        'ban_ttl'         => $verdict->action === 'block_and_ban' ? max(60, $verdict->banTtl) : $verdict->banTtl,
+                        'ban_ttl'         => $action_val === 'block_and_ban' ? max(60, $verdict->banTtl) : $verdict->banTtl,
                     ];
-                    if (in_array($verdict->action, ['block', 'block_and_ban', 'rate_limit'], true)) {
+                    if (in_array($action_val, ['block', 'block_and_ban', 'rate_limit'], true)) {
                         self::handle_rule_violation($ng_rule, $settings, $client_ip, $verdict->statusCode);
                     } else {
                         self::log_incident($ng_rule, 'detected');

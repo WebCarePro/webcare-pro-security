@@ -31,9 +31,12 @@ final readonly class WafVerdict {
         public int $risk_score = 0
     ) {}
 
+    public function get_action_value(): string {
+        return $this->action instanceof WafAction ? $this->action->value : (string) $this->action;
+    }
+
     public function __get(string $name): mixed {
         return match ($name) {
-            'action' => is_string($this->action) ? $this->action : $this->action->value,
             'ruleId' => $this->rule_id,
             'reason' => $this->message,
             'category' => (string) ($this->context['category'] ?? 'Next-Gen Threat Defense'),
@@ -47,7 +50,7 @@ final readonly class WafVerdict {
     }
 
     public function __isset(string $name): bool {
-        return in_array($name, ['action', 'ruleId', 'reason', 'category', 'severity', 'statusCode', 'banTtl', 'syncCloudflare', 'exemptRules'], true);
+        return in_array($name, ['ruleId', 'reason', 'category', 'severity', 'statusCode', 'banTtl', 'syncCloudflare', 'exemptRules'], true);
     }
 
     private function getActionEnum(): WafAction {

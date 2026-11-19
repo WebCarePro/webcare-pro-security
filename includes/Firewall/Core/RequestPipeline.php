@@ -44,26 +44,27 @@ final class RequestPipeline {
                 $settings = SettingsManager::get_settings();
 
                 $verdict = self::evaluate_pipeline($ctx, $settings);
-                if ($verdict !== null && $verdict->action !== 'allow') {
+                if ($verdict !== null && $verdict->get_action_value() !== 'allow') {
+                    $action_val = $verdict->get_action_value();
                     // Terminal or challenging action triggered
                     $rule = [
                         'id'              => $verdict->ruleId,
                         'name'            => $verdict->category,
                         'category'        => $verdict->category,
                         'description'     => $verdict->reason,
-                        'match_type'      => $verdict->action,
+                        'match_type'      => $action_val,
                         'match_value'     => $verdict->ruleId,
                         'payload'         => "Client IP: {$ctx->ip} URI: {$ctx->uri}",
                         'sync_cloudflare' => $verdict->syncCloudflare,
-                        'ban_ttl'         => $verdict->action === 'block_and_ban' ? max(60, $verdict->banTtl) : $verdict->banTtl,
+                        'ban_ttl'         => $action_val === 'block_and_ban' ? max(60, $verdict->banTtl) : $verdict->banTtl,
                     ];
 
-                    if ($verdict->action === 'challenge_pow' && class_exists('\\WebCareProScanner\\Firewall\\BotReconDefense')) {
+                    if ($action_val === 'challenge_pow' && class_exists('\\WebCareProScanner\\Firewall\\BotReconDefense')) {
                         if (!\WebCareProScanner\Firewall\BotReconDefense::has_valid_clearance_cookie($ctx->ip, $ctx->userAgent)) {
                             FirewallEngine::log_incident($rule, 'challenged');
                             \WebCareProScanner\Firewall\BotReconDefense::render_pow_challenge($ctx->ip, $verdict->reason);
                         }
-                    } elseif (in_array($verdict->action, ['block', 'block_and_ban', 'rate_limit'], true)) {
+                    } elseif (in_array($action_val, ['block', 'block_and_ban', 'rate_limit'], true)) {
                         ViolationResponder::handle_rule_violation($rule, $settings, $ctx->ip, $verdict->statusCode);
                         return;
                     } else {
@@ -166,7 +167,7 @@ final class RequestPipeline {
      * Check if a WafVerdict represents a terminal action.
      */
     private static function is_terminal_verdict(WafVerdict $verdict): bool {
-        return in_array($verdict->action, ['block', 'block_and_ban', 'challenge_pow', 'rate_limit'], true);
+        return $verdict->is_terminal();
     }
 
     /**
