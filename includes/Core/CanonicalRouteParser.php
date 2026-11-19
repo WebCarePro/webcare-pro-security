@@ -69,8 +69,9 @@ final class CanonicalRouteParser {
             parse_str($query_str, $query_params);
         }
 
-        // 1. Check ?rest_route= query parameter (from server URI first, falling back to $_GET)
-        $rest_route_param = $query_params['rest_route'] ?? ($_GET['rest_route'] ?? null);
+        // 1. Check ?rest_route= query parameter (from server URI first, falling back to $_GET only when $server lacks REQUEST_URI)
+        $has_explicit_uri = array_key_exists('REQUEST_URI', $server);
+        $rest_route_param = $query_params['rest_route'] ?? (!$has_explicit_uri ? ($_GET['rest_route'] ?? null) : null);
         if (is_string($rest_route_param) && $rest_route_param !== '') {
             $query_route = (string) wp_unslash($rest_route_param);
             for ($i = 0; $i < 3; $i++) {

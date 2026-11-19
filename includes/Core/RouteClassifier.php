@@ -65,8 +65,9 @@ final class RouteClassifier {
         if ($query_str !== '') {
             parse_str($query_str, $query_params);
         }
-        $has_wc_ajax = isset($query_params['wc-ajax']) || isset($_GET['wc-ajax']);
-        $has_wc_api  = isset($query_params['wc-api']) || isset($_GET['wc-api']);
+        $has_explicit_uri = array_key_exists('REQUEST_URI', $server);
+        $has_wc_ajax = isset($query_params['wc-ajax']) || (!$has_explicit_uri && isset($_GET['wc-ajax']));
+        $has_wc_api  = isset($query_params['wc-api']) || (!$has_explicit_uri && isset($_GET['wc-api']));
 
         if (
             str_contains($path, '/checkout')

@@ -1,6 +1,6 @@
 {
   "version": "3.0.0",
-  "generated_at": "2026-11-19T20:18:19.760Z",
+  "generated_at": "2026-11-19T20:27:58.064Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -340,8 +340,8 @@
       "size": 5591
     },
     "includes/Core/CanonicalRouteParser.php": {
-      "sha256": "283e25f10148a75b9633b6d22d64fbecd0b50b2bd7f4a53e791b534e3b8d3315",
-      "size": 4310
+      "sha256": "af7b6c37b9523890128aa491ad2cf826cd02cff00394ac8d40a38e9267d5d9d0",
+      "size": 4446
     },
     "includes/Core/CompiledStackManifest.php": {
       "sha256": "0adedca60850cf9539da69f059e8fc270380945e6bd6bb876a28ce6797c271b5",
@@ -364,8 +364,8 @@
       "size": 2817
     },
     "includes/Core/RouteClassifier.php": {
-      "sha256": "8d4dd334c3eebdf669b50d21dbab7e2b3471ca60a45d663a9a3d28258fbdc97a",
-      "size": 4721
+      "sha256": "6bd9f32fa033c589b8add9f174123c0123e6be7fd0b10b856d7b4b53f62a98e2",
+      "size": 4839
     },
     "includes/Database/CronPersistenceScanner.php": {
       "sha256": "e7567996de9e74e3596a213fe01521cb69d14f0177edaf8737fa81ace82f5f2c",
