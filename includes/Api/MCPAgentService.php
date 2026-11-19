@@ -2496,24 +2496,24 @@ class MCPAgentService {
                 $exec = self::execute_tool($tool_name, $tool_args);
 
                 // Outbound DLP Secret Inspection & Redaction on MCP tool execution outputs
-                $content_payload = $exec['content'] ?? [['type' => 'text', 'text' => (string) wp_json_encode($exec)]];
-                if (class_exists('\\WebCareProScanner\\Firewall\\NextGen\\ResponseDlpSentinel') && is_array($content_payload)) {
-                    foreach ($content_payload as &$block) {
-                        if (is_array($block) && isset($block['text']) && is_string($block['text'])) {
-                            $dlp_res = \WebCareProScanner\Firewall\NextGen\ResponseDlpSentinel::inspect_and_redact($block['text'], true);
-                            if (!empty($dlp_res['leaked'])) {
-                                $block['text'] = $dlp_res['safe_body'];
-                            }
-                        }
-                    }
-                    unset($block);
+                if (!class_exists('\\WebCareProScanner\\Firewall\\NextGen\\ResponseDlpSentinel')) {
+                    return [
+                        'jsonrpc' => '2.0',
+                        'id'      => $id,
+                        'error'   => ['code' => -32603, 'message' => 'Internal error: Security DLP Sentinel is unavailable; failing closed.'],
+                    ];
                 }
+
+                $content_payload = $exec['content'] ?? [['type' => 'text', 'text' => (string) wp_json_encode($exec)]];
+                $has_leak = false;
+                $matched_pat = '';
+                $safe_result = \WebCareProScanner\Firewall\NextGen\ResponseDlpSentinel::redact_data_recursive($content_payload, $has_leak, $matched_pat);
 
                 return [
                     'jsonrpc' => '2.0',
                     'id'      => $id,
                     'result'  => [
-                        'content' => $content_payload,
+                        'content' => is_array($safe_result) ? $safe_result : [['type' => 'text', 'text' => (string) $safe_result]],
                         'isError' => !empty($exec['isError']),
                     ],
                 ];

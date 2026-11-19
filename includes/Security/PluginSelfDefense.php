@@ -573,7 +573,8 @@ class PluginSelfDefense {
 
         $expected_hash = is_array($expected_meta) ? ($expected_meta['sha256'] ?? '') : (string)$expected_meta;
         $raw_host = 'raw.' . 'githubusercontent' . '.com';
-        $github_raw_url = "https://{$raw_host}/WebCarePro/webcare-pro-security/main/" . $clean_path;
+        $version_tag = defined('WEBCAREPROSCAN_VERSION') ? 'v' . WEBCAREPROSCAN_VERSION : 'main';
+        $github_raw_url = "https://{$raw_host}/WebCarePro/webcare-pro-security/{$version_tag}/" . $clean_path;
 
         $response = wp_remote_get($github_raw_url, [
             'timeout'    => 15,
@@ -583,6 +584,18 @@ class PluginSelfDefense {
             ],
         ]);
 
+        // Fallback to main branch if tag not yet pushed
+        if ((is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) && $version_tag !== 'main') {
+            $github_raw_url = "https://{$raw_host}/WebCarePro/webcare-pro-security/main/" . $clean_path;
+            $response = wp_remote_get($github_raw_url, [
+                'timeout'    => 15,
+                'sslverify'  => true,
+                'headers'    => [
+                    'Cache-Control' => 'no-cache, must-revalidate',
+                ],
+            ]);
+        }
+
         if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
             return ['success' => false, 'message' => __('Failed to fetch clean file from GitHub repository.', 'webcare-pro-security')];
         }
@@ -590,7 +603,7 @@ class PluginSelfDefense {
         $content = wp_remote_retrieve_body($response);
         $downloaded_hash = hash('sha256', $content);
 
-        if ($downloaded_hash !== $expected_hash) {
+        if (!hash_equals($expected_hash, $downloaded_hash)) {
             return [
                 'success' => false,
                 'message' => __('Cryptographic verification failed: Downloaded file hash did not match official GitHub manifest.', 'webcare-pro-security'),

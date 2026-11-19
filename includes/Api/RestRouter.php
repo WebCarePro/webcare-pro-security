@@ -137,7 +137,7 @@ final class RestRouter {
 
         // Case 5: Non-WebCare route (e.g. /wp/v2/posts, /wc/v3/orders)
         $ns_prefix = '/' . self::NAMESPACE . '/';
-        if (!str_starts_with($resolved_route, $ns_prefix)) {
+        if (!str_starts_with(strtolower($resolved_route), strtolower($ns_prefix))) {
             // Zero WebCare controllers registered on foreign REST requests
             return;
         }

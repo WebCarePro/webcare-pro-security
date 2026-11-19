@@ -327,21 +327,27 @@ class BlockDirectiveSanitizer {
             );
         }
 
-        // 5. WordPress 7.0+ WP_HTML_Tag_Processor Attribute-Level Directive Sanitization
+        // 5. WordPress 7.0+ WP_HTML_Tag_Processor Dynamic Directive Family Sanitization
         if (class_exists('\\WP_HTML_Tag_Processor')) {
             $processor = new \WP_HTML_Tag_Processor($content);
             $tag_processor_modified = false;
             while ($processor->next_tag()) {
-                // Check all attributes matching Interactivity API data-wp-on--*
-                $attrs = ['data-wp-on--click', 'data-wp-on--keydown', 'data-wp-on--keyup', 'data-wp-on--mouseenter', 'data-wp-on--submit', 'data-wp-on--change'];
-                foreach ($attrs as $on_attr) {
-                    $on_val = $processor->get_attribute($on_attr);
-                    if (is_string($on_val) && $on_val !== '') {
-                        if (str_contains($on_val, '(') || str_contains($on_val, ')') || str_contains($on_val, ';') || stripos($on_val, 'alert') !== false || stripos($on_val, 'eval') !== false) {
-                            $processor->remove_attribute($on_attr);
-                            $processor->set_attribute('data-wp-on-neutralized', '');
-                            $tag_processor_modified = true;
-                            $modified = true;
+                // Dynamically discover all attributes in the data-wp-on--* family
+                $on_attrs = method_exists($processor, 'get_attribute_names_with_prefix')
+                    ? $processor->get_attribute_names_with_prefix('data-wp-on--')
+                    : ['data-wp-on--click', 'data-wp-on--keydown', 'data-wp-on--keyup', 'data-wp-on--mouseenter', 'data-wp-on--submit', 'data-wp-on--change'];
+
+                if (is_array($on_attrs)) {
+                    foreach ($on_attrs as $on_attr) {
+                        $on_val = $processor->get_attribute($on_attr);
+                        if (is_string($on_val) && $on_val !== '') {
+                            // Check for parenthesis, raw function invocations, semicolons, or high-risk keywords
+                            if (str_contains($on_val, '(') || str_contains($on_val, ')') || str_contains($on_val, ';') || stripos($on_val, 'alert') !== false || stripos($on_val, 'eval') !== false) {
+                                $processor->remove_attribute($on_attr);
+                                $processor->set_attribute('data-wp-on-neutralized', '');
+                                $tag_processor_modified = true;
+                                $modified = true;
+                            }
                         }
                     }
                 }

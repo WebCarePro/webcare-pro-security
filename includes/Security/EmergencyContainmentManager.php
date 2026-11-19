@@ -82,15 +82,22 @@ class EmergencyContainmentManager {
      * @return array
      */
     public static function filter_containment_caps(array $allcaps, array $caps, array $args, \WP_User $user): array {
-        // Disallow file editing, plugin installs, and theme installs for everyone except super admins
+        // Disallow file editing, plugin installs/deletions/activations, theme installs, and user administration
         $allcaps['edit_files']        = false;
         $allcaps['edit_plugins']      = false;
         $allcaps['edit_themes']       = false;
         $allcaps['install_plugins']   = false;
+        $allcaps['activate_plugins']  = false;
+        $allcaps['delete_plugins']    = false;
         $allcaps['install_themes']    = false;
+        $allcaps['switch_themes']     = false;
+        $allcaps['delete_themes']     = false;
         $allcaps['update_plugins']    = false;
         $allcaps['update_themes']     = false;
         $allcaps['update_core']       = false;
+        $allcaps['create_users']      = false;
+        $allcaps['promote_users']     = false;
+        $allcaps['delete_users']      = false;
 
         return $allcaps;
     }

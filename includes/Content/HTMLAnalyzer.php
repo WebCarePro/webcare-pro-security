@@ -181,13 +181,14 @@ class HTMLAnalyzer {
                 foreach (['href', 'src', 'action', 'formaction', 'data', 'poster'] as $attr) {
                     $attr_val = $processor->get_attribute($attr);
                     if (is_string($attr_val) && $attr_val !== '') {
-                        $norm_attr = strtolower(trim($attr_val));
-                        $norm_attr = str_replace(["\0", "\r", "\n", "\t"], '', $norm_attr);
-                        if (str_starts_with($norm_attr, 'javascript:') || str_starts_with($norm_attr, 'vbscript:')) {
+                        // Multi-pass decode HTML entities and strip ASCII control chars (0x00 - 0x20)
+                        $norm_attr = html_entity_decode($attr_val, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+                        $norm_attr = strtolower(preg_replace('/[\x00-\x20]+/', '', $norm_attr) ?? '');
+                        if (str_starts_with($norm_attr, 'javascript:') || str_starts_with($norm_attr, 'vbscript:') || str_starts_with($norm_attr, 'data:text/html')) {
                             $detections[] = [
                                 'type'       => 'html_processor_javascript_uri',
                                 'snippet'    => sprintf('<%s %s="%s">', esc_html($tag_name), esc_html($attr), esc_attr(substr($attr_val, 0, 80))),
-                                'desc'       => sprintf('Executable javascript: URI protocol found in <%s> attribute "%s".', esc_html($tag_name), esc_html($attr)),
+                                'desc'       => sprintf('Executable javascript:/vbscript:/data: URI protocol found in <%s> attribute "%s".', esc_html($tag_name), esc_html($attr)),
                                 'severity'   => 'critical',
                                 'confidence' => 99,
                             ];

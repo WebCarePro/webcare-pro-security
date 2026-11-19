@@ -194,19 +194,42 @@ class Plugin {
                 }
                 $rc = \WebCareProScanner\Core\RouteClassifier::classify($sim_server);
                 $settings = \WebCareProScanner\System\SettingsManager::get_settings();
-                $verdict = null;
+                $orig_server = $_SERVER;
 
-                if (class_exists('\\WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine')) {
-                    $orig_server = $_SERVER;
+                try {
                     $_SERVER = array_merge($_SERVER, $sim_server);
-                    $res = \WebCareProScanner\Firewall\Core\ExploitSignatureEngine::evaluate_rules($settings, false);
-                    $_SERVER = $orig_server;
-                    if ($res !== null) {
-                        \WP_CLI::warning(sprintf('VIOLATION: [%s] %s (%s)', $res['id'] ?? 'WAF', $res['name'] ?? 'Violation', $res['description'] ?? ''));
-                        return;
+
+                    // 1. Check ExploitSignatureEngine
+                    if (class_exists('\\WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine')) {
+                        $res = \WebCareProScanner\Firewall\Core\ExploitSignatureEngine::evaluate_rules($settings, false);
+                        if ($res !== null) {
+                            \WP_CLI::warning(sprintf('BLOCKED: Exploit signature matched [%s] %s (%s)', $res['id'] ?? 'WAF', $res['name'] ?? 'Violation', $res['description'] ?? ''));
+                            return;
+                        }
                     }
+
+                    // 2. Check RequestPipeline with RequestContext
+                    if (class_exists('\\WebCareProScanner\\Firewall\\Core\\RequestPipeline') && class_exists('\\WebCareProScanner\\Contracts\\RequestContext')) {
+                        $ctx = \WebCareProScanner\Contracts\RequestContext::from_globals();
+                        $verdict = \WebCareProScanner\Firewall\Core\RequestPipeline::evaluate_pipeline($ctx, $settings);
+                        if ($verdict !== null) {
+                            if ($verdict->action === 'challenge_pow') {
+                                \WP_CLI::warning(sprintf('CHALLENGED: [%s] %s', $verdict->ruleId, $verdict->reason));
+                                return;
+                            } elseif (in_array($verdict->action, ['block', 'block_and_ban'], true)) {
+                                \WP_CLI::warning(sprintf('BLOCKED: [%s] %s', $verdict->ruleId, $verdict->reason));
+                                return;
+                            } elseif ($verdict->action === 'rate_limit') {
+                                \WP_CLI::warning(sprintf('RATE_LIMITED: [%s] %s', $verdict->ruleId, $verdict->reason));
+                                return;
+                            }
+                        }
+                    }
+
+                    \WP_CLI::success(sprintf('ALLOWED (NO_MATCH): Request to "%s" (%s, RouteClass: %s) did not trigger active rules.', $uri, $method, $rc->value));
+                } finally {
+                    $_SERVER = $orig_server;
                 }
-                \WP_CLI::success(sprintf('ALLOWED: Request to "%s" (%s, RouteClass: %s) passed all simulated firewall filters.', $uri, $method, $rc->value));
             });
         }
     }

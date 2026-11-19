@@ -65,7 +65,14 @@ final class CanonicalRouteParser {
         // 1. Check ?rest_route= query parameter
         // phpcs:ignore WordPress.Security.NonceVerification.Recommended
         if (isset($_GET['rest_route']) && is_string($_GET['rest_route']) && $_GET['rest_route'] !== '') {
-            $query_route = rawurldecode(wp_unslash($_GET['rest_route']));
+            $query_route = (string) wp_unslash($_GET['rest_route']);
+            for ($i = 0; $i < 3; $i++) {
+                $prev = $query_route;
+                $query_route = rawurldecode($query_route);
+                if ($query_route === $prev) {
+                    break;
+                }
+            }
             return '/' . ltrim(preg_replace('#[\\\\/]+#', '/', $query_route) ?? '', '/');
         }
 

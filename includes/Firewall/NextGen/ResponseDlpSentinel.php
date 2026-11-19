@@ -146,8 +146,10 @@ class ResponseDlpSentinel implements SecurityModuleInterface {
             return ['leaked' => false, 'pattern' => '', 'safe_body' => $body];
         }
 
-        // Fast pre-check: If body exceeds 256 KB, cap inspection to first 256 KB for performance
-        $inspect_target = strlen($body) > self::MAX_INSPECT_BYTES ? substr($body, 0, self::MAX_INSPECT_BYTES) : $body;
+        // Sliding-window chunked inspection (256 KB chunks with 4 KB overlap)
+        $chunk_size = self::MAX_INSPECT_BYTES;
+        $overlap = 4096;
+        $body_len = strlen($body);
 
         $redactions = [
             'WP_CONFIG_SECRET_DEFINE' => [
@@ -176,14 +178,23 @@ class ResponseDlpSentinel implements SecurityModuleInterface {
         $matched_pattern = '';
         $redacted_body   = $body;
 
-        foreach ($redactions as $name => $cfg) {
-            if (preg_match($cfg['pattern'], $inspect_target) === 1) {
-                $leaked = true;
-                if (empty($matched_pattern)) {
-                    $matched_pattern = $name;
+        // Iterate through overlapping chunks to ensure secrets across chunk boundaries are caught
+        $offset = 0;
+        while ($offset < $body_len) {
+            $chunk = substr($body, $offset, $chunk_size);
+            foreach ($redactions as $name => $cfg) {
+                if (preg_match($cfg['pattern'], $chunk) === 1) {
+                    $leaked = true;
+                    if (empty($matched_pattern)) {
+                        $matched_pattern = $name;
+                    }
+                    $redacted_body = (string) preg_replace($cfg['pattern'], $cfg['replacement'], $redacted_body);
                 }
-                $redacted_body = (string) preg_replace($cfg['pattern'], $cfg['replacement'], $redacted_body);
             }
+            if ($offset + $chunk_size >= $body_len) {
+                break;
+            }
+            $offset += ($chunk_size - $overlap);
         }
 
         return [

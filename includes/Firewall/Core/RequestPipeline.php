@@ -93,6 +93,13 @@ final class RequestPipeline {
     }
 
     /**
+     * Mandatory evaluators that must always be present in the runtime.
+     */
+    private const MANDATORY_EVALUATORS = [
+        'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
+    ];
+
+    /**
      * Evaluate pipeline across active route class and compiled evaluators.
      *
      * @param RequestContext $ctx
@@ -106,6 +113,14 @@ final class RequestPipeline {
 
         if (empty($route_evaluators) || !is_array($route_evaluators)) {
             return null;
+        }
+
+        // Verify mandatory evaluators are present
+        foreach (self::MANDATORY_EVALUATORS as $mand_class) {
+            if (in_array($mand_class, $route_evaluators, true) && !class_exists($mand_class)) {
+                // Fail closed if mandatory evaluator is missing from runtime
+                throw new \RuntimeException(sprintf('Mandatory firewall evaluator class missing: %s', $mand_class));
+            }
         }
 
         foreach ($route_evaluators as $evaluator_class) {
