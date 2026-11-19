@@ -58,12 +58,21 @@ final class RouteClassifier {
         // 6. Commerce Routes (WooCommerce checkout, cart, API webhooks, dynamic slugs)
         $commerce_matched = false;
         $path_trailing = rtrim($path, '/') . '/';
-        // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+
+        $uri = (string) ($server['REQUEST_URI'] ?? ($_SERVER['REQUEST_URI'] ?? '/'));
+        $query_str = (string) (wp_parse_url($uri, PHP_URL_QUERY) ?? '');
+        $query_params = [];
+        if ($query_str !== '') {
+            parse_str($query_str, $query_params);
+        }
+        $has_wc_ajax = isset($query_params['wc-ajax']) || isset($_GET['wc-ajax']);
+        $has_wc_api  = isset($query_params['wc-api']) || isset($_GET['wc-api']);
+
         if (
             str_contains($path, '/checkout')
             || str_contains($path, '/cart')
-            || isset($_GET['wc-ajax'])
-            || isset($_GET['wc-api'])
+            || $has_wc_ajax
+            || $has_wc_api
             || str_contains($path, 'wc-api')
         ) {
             $commerce_matched = true;

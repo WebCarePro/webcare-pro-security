@@ -62,10 +62,17 @@ final class CanonicalRouteParser {
      * @return string Normalized route with leading slash (e.g. '/webcare-pro-security/v1/scan/status') or empty string.
      */
     public static function resolve_rest_route(array $server = []): string {
-        // 1. Check ?rest_route= query parameter
-        // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-        if (isset($_GET['rest_route']) && is_string($_GET['rest_route']) && $_GET['rest_route'] !== '') {
-            $query_route = (string) wp_unslash($_GET['rest_route']);
+        $uri = (string) ($server['REQUEST_URI'] ?? ($_SERVER['REQUEST_URI'] ?? '/'));
+        $query_str = (string) (wp_parse_url($uri, PHP_URL_QUERY) ?? '');
+        $query_params = [];
+        if ($query_str !== '') {
+            parse_str($query_str, $query_params);
+        }
+
+        // 1. Check ?rest_route= query parameter (from server URI first, falling back to $_GET)
+        $rest_route_param = $query_params['rest_route'] ?? ($_GET['rest_route'] ?? null);
+        if (is_string($rest_route_param) && $rest_route_param !== '') {
+            $query_route = (string) wp_unslash($rest_route_param);
             for ($i = 0; $i < 3; $i++) {
                 $prev = $query_route;
                 $query_route = rawurldecode($query_route);
