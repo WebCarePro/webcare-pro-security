@@ -198,7 +198,7 @@ class ModernApiShield implements SecurityModuleInterface, WafEvaluatorInterface 
             // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Reading bounded raw JSON body for GraphQL AST inspection
             $raw = (string) @file_get_contents('php://input', false, null, 0, 262144);
             if ($raw !== '') {
-                $decoded = (function_exists('json_validate') && !json_validate($raw)) ? null : json_decode($raw, true);
+                $decoded = !json_validate($raw) ? null : json_decode($raw, true);
                 if (is_array($decoded)) {
                     if (isset($decoded['query']) && is_string($decoded['query']) && !in_array($decoded['query'], $queries, true)) {
                         $queries[] = $decoded['query'];

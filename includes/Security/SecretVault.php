@@ -79,7 +79,7 @@ class SecretVault {
             if (empty($db_salt)) {
                 $db_salt = function_exists('wp_generate_password')
                     ? wp_generate_password(64, true, true)
-                    : (function_exists('random_bytes') ? bin2hex(random_bytes(32)) : hash('sha256', uniqid('webcare_', true)));
+                    : bin2hex(random_bytes(32));
                 if (function_exists('add_option')) {
                     add_option('webcareproscan_vault_salt', $db_salt, '', 'no');
                 }
@@ -117,7 +117,7 @@ class SecretVault {
 
         $key = self::get_key();
         $iv_len = 12; // 96-bit standard IV for GCM
-        $iv = function_exists('random_bytes') ? random_bytes($iv_len) : openssl_random_pseudo_bytes($iv_len);
+        $iv = random_bytes($iv_len);
         $tag = '';
 
         $encrypted = openssl_encrypt($plain, self::CIPHER_GCM, $key, OPENSSL_RAW_DATA, $iv, $tag, '', 16);

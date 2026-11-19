@@ -52,7 +52,9 @@ class Plugin {
         add_action('update_option_blogname', $guard_sandbox_install, 0);
         add_action('update_option_blogdescription', $guard_sandbox_install, 0);
 
-        // 1. Always-On Lightweight Runtime Security (WAF, Auth, Session, Headers)
+        // 1. Always-On Lightweight Runtime Security & Compiled Stack Lifecycle
+        \WebCareProScanner\Core\PolicyManager::load_policy();
+        \WebCareProScanner\Core\CompiledStackManifest::register_lifecycle_hooks();
         \WebCareProScanner\Firewall\WafFileLogger::init();
         \WebCareProScanner\Firewall\FirewallEngine::init();
         \WebCareProScanner\Scan\ScanVaultManager::register();
@@ -108,6 +110,15 @@ class Plugin {
         if ($is_cli && class_exists('\\WP_CLI')) {
             \WP_CLI::add_command('webcare doctor', static function (): void {
                 self::cli_webcare_doctor();
+            });
+
+            \WP_CLI::add_command('webcare waf compile', static function (): void {
+                $res = \WebCareProScanner\Core\CompiledStackManifest::compile();
+                if (!empty($res['success'])) {
+                    \WP_CLI::success('Compiled Stack Manifest generated: ' . $res['path']);
+                } else {
+                    \WP_CLI::error($res['message'] ?? 'Failed compiling stack manifest.');
+                }
             });
         }
     }

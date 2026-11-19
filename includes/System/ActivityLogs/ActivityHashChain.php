@@ -101,7 +101,7 @@ class ActivityHashChain {
         $aad = self::build_aad($v, $k_ver, $seq, $event_id, $record_hash);
 
         $iv_len = 12; // 96-bit standard for AES-256-GCM
-        $iv = function_exists('random_bytes') ? random_bytes($iv_len) : openssl_random_pseudo_bytes($iv_len);
+        $iv = random_bytes($iv_len);
         $tag = '';
 
         $plaintext = ActivityCanonicalizer::to_json($event_payload, false);
