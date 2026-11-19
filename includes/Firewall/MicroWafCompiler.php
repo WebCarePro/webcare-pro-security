@@ -353,7 +353,7 @@ class MicroWafCompiler {
         );
 
         // Write compiled file atomically
-        $temp_file = $compiled_file . '.tmp.' . wp_rand();
+        $temp_file = $compiled_file . '.tmp.' . bin2hex(random_bytes(8));
         $written = file_put_contents($temp_file, $code);
         if ($written === false) {
             return [
@@ -365,7 +365,11 @@ class MicroWafCompiler {
         // Rename atomically
         // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename -- Atomic move of compiled WAF cache.
         if (!rename($temp_file, $compiled_file)) {
-            wp_delete_file($temp_file);
+            if (function_exists('wp_delete_file')) {
+                wp_delete_file($temp_file);
+            } else {
+                @unlink($temp_file);
+            }
             return [
                 'success' => false,
                 'message' => __('Failed to atomically deploy compiled Micro-WAF script.', 'webcare-pro-security'),
@@ -1509,14 +1513,18 @@ class MicroWafCompiler {
             return false;
         }
 
-        $temp_file = $caf_file . '.tmp.' . wp_rand();
+        $temp_file = $caf_file . '.tmp.' . bin2hex(random_bytes(8));
         if (file_put_contents($temp_file, $php_code) === false) {
             return false;
         }
 
         // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename -- Atomic move of compiled WAF cache.
         if (!rename($temp_file, $caf_file)) {
-            wp_delete_file($temp_file);
+            if (function_exists('wp_delete_file')) {
+                wp_delete_file($temp_file);
+            } else {
+                @unlink($temp_file);
+            }
             return false;
         }
 

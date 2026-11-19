@@ -224,7 +224,7 @@ final class CompiledStackManifest {
         }
 
         $target_file = self::get_manifest_path();
-        $temp_file = $target_file . '.tmp.' . wp_rand();
+        $temp_file = $target_file . '.tmp.' . bin2hex(random_bytes(8));
 
         if (file_put_contents($temp_file, $php_content, LOCK_EX) === false) {
             return [
@@ -235,7 +235,11 @@ final class CompiledStackManifest {
         }
 
         if (!rename($temp_file, $target_file)) {
-            wp_delete_file($temp_file);
+            if (function_exists('wp_delete_file')) {
+                wp_delete_file($temp_file);
+            } else {
+                @unlink($temp_file);
+            }
             return [
                 'success' => false,
                 'path'    => $target_file,
