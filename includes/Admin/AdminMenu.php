@@ -125,11 +125,11 @@ class AdminMenu {
             [__CLASS__, 'render_app_container']
         );
 
-        // 5. Submenu: Vault & Backups
+        // 5. Submenu: Vault & Tools
         add_submenu_page(
             'webcare-pro-security',
-            __('Quarantine Vault, Database Backups & Storage', 'webcare-pro-security'),
-            __('Vault & Backups', 'webcare-pro-security'),
+            __('Quarantine Vault, Forensics, Backups & Tools', 'webcare-pro-security'),
+            __('Vault & Tools', 'webcare-pro-security'),
             'manage_options',
             'webcare-pro-vault',
             [__CLASS__, 'render_app_container']
@@ -426,6 +426,8 @@ class AdminMenu {
         elseif ($current_page === 'webcare-pro-vault') {
             if ($tab_param === 'server') {
                 $active_tab = 'server';
+            } elseif ($tab_param === 'forensics') {
+                $active_tab = 'forensics';
             } elseif ($tab_param === 'quarantine') {
                 $active_tab = 'quarantine';
             } elseif ($tab_param === 'backup' || $tab_param === 'database') {
@@ -492,7 +494,7 @@ class AdminMenu {
             $page_bundle = 'waf-logs';
         } elseif ($active_tab === 'auth' && file_exists(WEBCAREPROSCAN_PATH . 'build/auth.js')) {
             $page_bundle = 'auth';
-        } elseif (in_array($active_tab, ['vault', 'quarantine', 'backup', 'server'], true) && file_exists(WEBCAREPROSCAN_PATH . 'build/vault.js')) {
+        } elseif (in_array($active_tab, ['vault', 'quarantine', 'backup', 'server', 'forensics'], true) && file_exists(WEBCAREPROSCAN_PATH . 'build/vault.js')) {
             $page_bundle = 'vault';
         } elseif ($active_tab === 'fim' && file_exists(WEBCAREPROSCAN_PATH . 'build/fim.js')) {
             $page_bundle = 'fim';
