@@ -776,12 +776,12 @@ class OutboundEgressFirewall {
             return $dns_cache[$clean_host];
         }
 
-        // Normalize or hard-block shorthand/octal/hex IPv4 representations (e.g. 0177.0.0.1, 127.1, 0x7f.1)
-        if (preg_match('/^(?:0x[0-9a-f]+|0[0-7]+|\d+)(?:\.(?:0x[0-9a-f]+|0[0-7]+|\d+)){1,3}$/i', $clean_host)) {
+        // Normalize or hard-block shorthand/octal/hex/dotless IPv4 representations (e.g. 0177.0.0.1, 127.1, 0x7f.1, 2130706433, 0x7f000001, 017700000001)
+        if (preg_match('/^(?:0x[0-9a-f]+|0[0-7]+|\d+)(?:\.(?:0x[0-9a-f]+|0[0-7]+|\d+)){0,3}$/i', $clean_host)) {
             if (filter_var($clean_host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) === false) {
                 return [
                     'threat' => 'ssrf_loopback',
-                    'reason' => 'Non-standard octal, hex, or shorthand IPv4 literal blocked to prevent SSRF bypass.',
+                    'reason' => 'Non-standard octal, hex, dotless integer, or shorthand IPv4 literal blocked to prevent SSRF bypass.',
                 ];
             }
         }

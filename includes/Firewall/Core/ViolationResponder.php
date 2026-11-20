@@ -112,11 +112,15 @@ final class ViolationResponder {
         if ($action === 'blocked' && class_exists('\\WebCareProScanner\\Notifications\\NotificationDispatcher')) {
             $is_virtual_patch = !empty($rule['is_virtual_patch']) || stripos($rule['category'] ?? '', 'Virtual Patch') !== false;
             if ($is_virtual_patch) {
+                $can_translate = function_exists('did_action') && did_action('init');
+                $patch_msg_fmt = $can_translate
+                    ? __('Virtual Patch intercepted an exploit payload from %1$s targeting "%2$s" [Incident: %3$s].', 'webcare-pro-security')
+                    : 'Virtual Patch intercepted an exploit payload from %1$s targeting "%2$s" [Incident: %3$s].';
                 \WebCareProScanner\Notifications\NotificationDispatcher::trigger('waf_virtual_patch_hit', [
                     'severity' => 'critical',
                     'message'  => sprintf(
                         /* translators: 1: attacker IP address, 2: rule name or category, 3: incident ID */
-                        __('Virtual Patch intercepted an exploit payload from %1$s targeting "%2$s" [Incident: %3$s].', 'webcare-pro-security'),
+                        $patch_msg_fmt,
                         $ip,
                         $rule['name'] ?? $rule['category'],
                         $incident_id
@@ -833,6 +837,21 @@ final class ViolationResponder {
             $eligible_for_ip_ban = false;
         }
 
+        // Active shopper session & commerce protection: Never impose multi-hour/24h IP bans on verified customers or shared carrier CGNAT IPs
+        $has_shopper_session = class_exists('\\WebCareProScanner\\Firewall\\Core\\CommerceSessionGuard')
+            && (\WebCareProScanner\Firewall\Core\CommerceSessionGuard::has_active_shopper_session()
+                || \WebCareProScanner\Firewall\Core\CommerceSessionGuard::is_exempt_from_operational_ban());
+
+        if ($has_shopper_session) {
+            if ($tier !== FirewallEngine::TIER_CONFIRMED_EXPLOIT) {
+                // Heuristic or behavioral anomaly: block single request only, zero IP ban
+                $eligible_for_ip_ban = false;
+            } else {
+                // Confirmed exploit on shopper session: cap cooldown to max 15 minutes instead of 24h
+                $effective_ban_ttl = min($effective_ban_ttl, 900);
+            }
+        }
+
         if ($eligible_for_ip_ban) {
             $ban_reason        = sprintf('[%s] %s', $rule_id_str ?: $rule_cat, $rule['description'] ?? 'Critical WAF exploit intercepted');
             BlocklistRepository::add_blocked_ip(
@@ -846,7 +865,7 @@ final class ViolationResponder {
                 null,
                 $rule_sync_cf
             );
-        } elseif (class_exists('\\WebCareProScanner\\Firewall\\CAF\\ThreatScoreTracker')) {
+        } elseif (!$has_shopper_session && class_exists('\\WebCareProScanner\\Firewall\\CAF\\ThreatScoreTracker')) {
             // Skip ThreatScoreTracker accumulation when genuine crawlers follow on-page links (?add-to-cart= or /wp-login.php) with GET/HEAD
             $req_method = isset($_SERVER['REQUEST_METHOD']) ? strtoupper(sanitize_text_field(wp_unslash($_SERVER['REQUEST_METHOD']))) : 'GET';
             if ($rule_id_str === 'BOT-CRAWLER-MUTATION-BLOCKED' && in_array($req_method, ['GET', 'HEAD', 'OPTIONS'], true)) {
@@ -875,10 +894,14 @@ final class ViolationResponder {
             $surge_alert_sent = get_transient('webcareproscan_waf_block_surge_alerted');
             if (!$surge_alert_sent && class_exists('\\WebCareProScanner\\Notifications\\NotificationDispatcher')) {
                 set_transient('webcareproscan_waf_block_surge_alerted', 1, 300); // Throttle alerts to once per 5 minutes
+                $can_translate = function_exists('did_action') && did_action('init');
+                $surge_msg_fmt = $can_translate
+                    ? __('WAF Lite intercepted an abnormal surge of blocked attacks (%1$d blocks in under 60 seconds).', 'webcare-pro-security')
+                    : 'WAF Lite intercepted an abnormal surge of blocked attacks (%1$d blocks in under 60 seconds).';
                 \WebCareProScanner\Notifications\NotificationDispatcher::trigger('waf_block_surge', [
                     'severity' => 'high',
                     /* translators: 1: number of blocks */
-                    'message'  => sprintf(__('WAF Lite intercepted an abnormal surge of blocked attacks (%1$d blocks in under 60 seconds).', 'webcare-pro-security'), $blocks),
+                    'message'  => sprintf($surge_msg_fmt, $blocks),
                     'details'  => [
                         'Blocks in Window' => $blocks,
                         'Latest Attacker'  => $client_ip,

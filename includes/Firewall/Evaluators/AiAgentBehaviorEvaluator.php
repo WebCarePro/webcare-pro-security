@@ -116,13 +116,16 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
 
         $has_sec_fetch = isset($_SERVER['HTTP_SEC_FETCH_SITE']) || isset($_SERVER['HTTP_SEC_FETCH_MODE']) || isset($_SERVER['HTTP_SEC_FETCH_DEST']);
         if ($is_https && !$has_sec_fetch && $ua !== '') {
-            // Modern desktop & mobile browsers (Chrome, Edge, Safari, Firefox) support Fetch Metadata
+            // Modern desktop & mobile browsers (Chrome, Edge, Safari, Firefox) support Fetch Metadata.
+            // Exclude common iOS & Android in-app WebViews (Instagram, Facebook, TikTok, Line, LinkedIn, Snapchat, etc.) which often omit Sec-Fetch-*
+            $is_inapp_webview = preg_match('/\b(?:FBAN|FBAV|Instagram|BytedanceWebview|TikTok|Line\/|Snapchat|LinkedInApp|MicroMessenger|Pinterest)\b/i', $ua) === 1;
+
             $is_desktop_or_mobile_ua = (
                 str_contains($ua, 'Mozilla/') &&
                 (str_contains($ua, 'Chrome/') || str_contains($ua, 'Safari/') || str_contains($ua, 'Firefox/'))
             );
 
-            if ($is_desktop_or_mobile_ua) {
+            if ($is_desktop_or_mobile_ua && !$is_inapp_webview) {
                 $risk_score += 35;
                 $signals[] = 'missing_sec_fetch_on_https';
             }
@@ -162,21 +165,27 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
         }
 
         // Heuristic 4: Zero-Asset Crawl Pattern (+25 risk)
-        // High-frequency hits against PHP endpoints using fast APCu memory counter without hitting MySQL wp_options
+        // High-frequency hits against PHP endpoints using fast APCu memory counter without hitting MySQL wp_options.
+        // Threshold raised to > 30 hits/60s (or > 15 if missing Accept-Language) to avoid false positives on CDN/Cloudflare-cached static stores.
         $session_key = 'ai_hit_' . substr(hash('xxh128', $ctx->ip . ($ctx->userAgent ?: '')), 0, 16);
         $hits = self::increment_session_hits($session_key, 60);
-        if ($hits > 15) {
+        $has_accept_lang = !empty($_SERVER['HTTP_ACCEPT_LANGUAGE']);
+        if ($hits > 30 || (!$has_accept_lang && $hits > 15)) {
             $risk_score += 25;
             $signals[] = 'zero_asset_high_velocity';
         }
 
         // Action Decision: If risk score >= 60, challenge legitimate browser with invisible WebCrypto PoW
         if ($risk_score >= 60) {
+            $can_translate = function_exists('did_action') && did_action('init');
+            $challenge_fmt = $can_translate
+                ? __('Browser integrity validation required (signals: %s).', 'webcare-pro-security')
+                : 'Browser integrity validation required (signals: %s).';
             return WafVerdict::challenge(
                 'WAF-AI-AGENT-STEPUP',
                 sprintf(
                     /* translators: %s: Comma-separated behavioral signals */
-                    __('Browser integrity validation required (signals: %s).', 'webcare-pro-security'),
+                    $challenge_fmt,
                     implode(', ', $signals)
                 ),
                 [
@@ -200,11 +209,16 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
             return true;
         }
 
-        // 2. Cookie check for logged-in user (WordPress appends COOKIEHASH to 'wordpress_logged_in_')
+        // 2. Cookie check for logged-in user: Must validate cryptographic auth cookie to prevent forgery
         if (!empty($_COOKIE)) {
             foreach ($_COOKIE as $name => $val) {
                 if (str_starts_with((string) $name, 'wordpress_logged_in_')) {
-                    return true;
+                    if (function_exists('wp_validate_auth_cookie')) {
+                        $user_id = wp_validate_auth_cookie((string) $val, 'logged_in');
+                        if (!empty($user_id)) {
+                            return true;
+                        }
+                    }
                 }
             }
         }
@@ -214,12 +228,21 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
             return true;
         }
 
-        // 4. AJAX or WooCommerce JSON endpoints (never return an HTML PoW challenge to JSON callers)
+        // 4. AJAX or WooCommerce JSON endpoints (never return an HTML PoW challenge to legitimate AJAX/JSON callers)
         if (function_exists('wp_doing_ajax') && wp_doing_ajax()) {
             return true;
         }
-        if (isset($_GET['wc-ajax']) || isset($_POST['wc-ajax'])) {
-            return true;
+
+        // Strictly validate wc-ajax against known WooCommerce actions or require valid WC session to prevent unauthenticated bot bypass
+        $wc_ajax_act = !empty($_GET['wc-ajax']) ? sanitize_key(wp_unslash($_GET['wc-ajax'])) : (!empty($_POST['wc-ajax']) ? sanitize_key(wp_unslash($_POST['wc-ajax'])) : '');
+        if ($wc_ajax_act !== '') {
+            $allowed_wc_ajax = [
+                'get_refreshed_fragments', 'apply_coupon', 'remove_coupon', 'update_shipping_method',
+                'checkout', 'get_cart_totals', 'add_to_cart', 'remove_from_cart',
+            ];
+            if (in_array($wc_ajax_act, $allowed_wc_ajax, true) || (class_exists(CommerceSessionGuard::class) && CommerceSessionGuard::has_active_shopper_session())) {
+                return true;
+            }
         }
         if (str_contains($ctx->uri, '/wp-json/') || str_contains($ctx->uri, 'rest_route=')) {
             return true;

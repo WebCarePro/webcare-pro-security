@@ -129,6 +129,19 @@ class ModernApiShield implements SecurityModuleInterface, WafEvaluatorInterface 
         $max_batch   = max(1, min(50, intval($settings['waf_nextgen_graphql_max_batch'] ?? 10)));
 
         $queries = self::extract_graphql_queries($ctx);
+        if ($queries === false) {
+            // Oversized GraphQL payload exceeding inspection limit: fail-closed with 413 Payload Too Large
+            return new WafVerdict(
+                'block',
+                'WAF-GRAPHQL-PAYLOAD-TOO-LARGE',
+                'GraphQL request body exceeds maximum safe inspection limit (256 KB).',
+                [
+                    'category'    => 'Modern API & GraphQL Shield',
+                    'severity'    => 'high',
+                    'status_code' => 413,
+                ]
+            );
+        }
         if (empty($queries)) {
             return null;
         }
@@ -184,19 +197,33 @@ class ModernApiShield implements SecurityModuleInterface, WafEvaluatorInterface 
     }
 
     /**
-     * Extract single or batched GraphQL query strings from RequestContext or php://input JSON array.
+     * Extract single or batched GraphQL query strings from RequestContext or php://input JSON/GraphQL body.
      *
-     * @return string[]
+     * @return string[]|false Array of queries, or false if payload exceeded 256 KB safety limit.
      */
-    public static function extract_graphql_queries(RequestContext $ctx): array {
+    public static function extract_graphql_queries(RequestContext $ctx): array|false {
         $queries = [];
         if (!empty($ctx->params['query']) && is_string($ctx->params['query'])) {
             $queries[] = $ctx->params['query'];
         }
         $ct = $ctx->headers['content-type'] ?? '';
-        if (stripos($ct, 'application/json') !== false) {
+
+        // Handle application/graphql raw text bodies
+        if (stripos($ct, 'application/graphql') !== false) {
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Reading bounded raw GraphQL body
+            $raw = (string) @file_get_contents('php://input', false, null, 0, 262145);
+            if (strlen($raw) > 262144) {
+                return false; // Fail closed on oversized payload
+            }
+            if (trim($raw) !== '') {
+                $queries[] = trim($raw);
+            }
+        } elseif (stripos($ct, 'application/json') !== false) {
             // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Reading bounded raw JSON body for GraphQL AST inspection
-            $raw = (string) @file_get_contents('php://input', false, null, 0, 262144);
+            $raw = (string) @file_get_contents('php://input', false, null, 0, 262145);
+            if (strlen($raw) > 262144) {
+                return false; // Fail closed on oversized payload
+            }
             if ($raw !== '') {
                 $decoded = !json_validate($raw) ? null : json_decode($raw, true);
                 if (is_array($decoded)) {
