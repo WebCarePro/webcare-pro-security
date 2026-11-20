@@ -31,6 +31,7 @@ if (!defined('ABSPATH')) {
 final class ScanBackgroundWorker {
 
     public const CRON_HOOK = 'webcareproscan_scan_step_worker';
+    public const AJAX_ACTION = 'webcare_scan_bg_tick';
 
     /**
      * Minimum idle seconds since the last browser batch before the background cron worker takes over.
@@ -43,19 +44,86 @@ final class ScanBackgroundWorker {
     public const MAX_CRON_SLICE_SECONDS = 9.0;
 
     /**
-     * Register WP-Cron action handlers for scan background continuation.
+     * Register WP-Cron action handlers and AJAX loopback handler for scan background continuation.
      */
     public static function register(): void {
         if (class_exists(CronControlCenter::class)) {
             add_action(self::CRON_HOOK, static function (): void {
                 CronControlCenter::invoke_task_handler(self::CRON_HOOK, 'wp_cron');
             });
-            return;
+        } else {
+            add_action(self::CRON_HOOK, static function (): void {
+                self::run_background_step();
+            });
         }
 
-        add_action(self::CRON_HOOK, static function (): void {
-            self::run_background_step();
-        });
+        // Loopback AJAX handler for autonomous zero-traffic background continuation
+        add_action('wp_ajax_nopriv_' . self::AJAX_ACTION, [__CLASS__, 'handle_loopback_tick']);
+        add_action('wp_ajax_' . self::AJAX_ACTION, [__CLASS__, 'handle_loopback_tick']);
+    }
+
+    /**
+     * Trigger immediate non-blocking loopback request to advance the background scan
+     * without relying on incoming site visitors or WP-Cron's 60-second lock.
+     *
+     * @param int $scan_id Target scan ID.
+     */
+    public static function trigger_loopback_tick(int $scan_id): void {
+        $now = time();
+        $random_nonce = function_exists('wp_generate_password') ? wp_generate_password(16, false) : bin2hex(random_bytes(8));
+        $salt = function_exists('wp_salt') ? wp_salt('auth') : 'webcare_scan_loopback_salt';
+        $signature = hash_hmac('sha256', "scan_tick|{$scan_id}|{$now}|{$random_nonce}", $salt);
+        $token = "{$scan_id}:{$now}:{$random_nonce}:{$signature}";
+
+        $ajax_url = admin_url('admin-ajax.php');
+        wp_remote_post($ajax_url, [
+            'timeout'   => 0.01,
+            'blocking'  => false,
+            // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- Standard WordPress core filter for local loopback requests
+            'sslverify' => apply_filters('https_local_ssl_verify', false),
+            'body'      => [
+                'action' => self::AJAX_ACTION,
+                'token'  => $token,
+            ],
+        ]);
+    }
+
+    /**
+     * Handle non-blocking loopback tick request with HMAC authentication and replay protection.
+     */
+    public static function handle_loopback_tick(): void {
+        // phpcs:ignore WordPress.Security.NonceVerification.Missing
+        $token = isset($_POST['token']) ? sanitize_text_field(wp_unslash($_POST['token'])) : '';
+        $parts = explode(':', $token, 4);
+        if (count($parts) !== 4) {
+            wp_send_json_error(['message' => 'Malformed loopback token.'], 403);
+        }
+
+        [$scan_id_raw, $timestamp, $rand_nonce, $sig] = $parts;
+        $scan_id = (int) $scan_id_raw;
+        $now = time();
+
+        // 5-minute replay/drift protection window
+        if (abs($now - (int) $timestamp) > 300) {
+            wp_send_json_error(['message' => 'Expired loopback token.'], 403);
+        }
+
+        $salt = function_exists('wp_salt') ? wp_salt('auth') : 'webcare_scan_loopback_salt';
+        $expected_sig = hash_hmac('sha256', "scan_tick|{$scan_id}|{$timestamp}|{$rand_nonce}", $salt);
+        if (!hash_equals($expected_sig, $sig)) {
+            wp_send_json_error(['message' => 'Invalid loopback signature.'], 403);
+        }
+
+        // Prevent token replay attacks
+        $replay_transient = 'webcare_scan_lb_nonce_' . md5($rand_nonce);
+        if (get_transient($replay_transient)) {
+            wp_send_json_error(['message' => 'Replayed loopback token.'], 403);
+        }
+        set_transient($replay_transient, 1, 300);
+
+        // Advance scan by running background step
+        $result = self::run_background_step(false);
+        wp_send_json_success($result);
     }
 
     /**
@@ -215,7 +283,11 @@ final class ScanBackgroundWorker {
         // Check if scan is still running; if so, schedule next continuation tick
         $is_still_running = ScanLock::get_locked_scan_id() === $locked_id;
         if ($is_still_running) {
-            self::schedule_continuation(2);
+            // 1. Fire immediate non-blocking loopback to continue background execution without waiting for visitors
+            self::trigger_loopback_tick($locked_id);
+
+            // 2. Schedule WP-Cron event as a safety fallback in case loopback HTTP calls are blocked by host
+            self::schedule_continuation(60);
             if (function_exists('spawn_cron')) {
                 @spawn_cron();
             }
