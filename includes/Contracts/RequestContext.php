@@ -136,6 +136,13 @@ class RequestContext {
         $this->query = $q_pos === false ? '' : substr($uri, $q_pos + 1);
         $this->userAgent = $userAgent;
         $this->params = $params;
+        if (empty($this->params) && $this->query !== '') {
+            $parsed_q = [];
+            parse_str($this->query, $parsed_q);
+            if (is_array($parsed_q)) {
+                $this->params = $parsed_q;
+            }
+        }
         $this->cookies = $cookies;
         $this->headers = $headers;
         $this->files = $files;
