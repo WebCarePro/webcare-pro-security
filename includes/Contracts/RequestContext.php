@@ -88,6 +88,61 @@ class RequestContext {
     public bool $cf_proxied = false;
 
     /**
+     * Optional constructor for synthetic / test contexts.
+     *
+     * @param string $ip
+     * @param string $method
+     * @param string $uri
+     * @param string $userAgent
+     * @param array<string, mixed> $params
+     * @param array<string, mixed> $cookies
+     * @param array<string, string> $headers
+     * @param array<string, mixed> $files
+     * @param array<string, mixed> $server
+     */
+    public function __construct(
+        string $ip = '127.0.0.1',
+        string $method = 'GET',
+        string $uri = '',
+        string $userAgent = '',
+        array $params = [],
+        array $cookies = [],
+        array $headers = [],
+        array $files = [],
+        array $server = []
+    ) {
+        $this->ip = $ip;
+        $this->method = strtoupper($method);
+        $this->uri = $uri;
+        $q_pos = strpos($uri, '?');
+        $raw_clean = strtolower($q_pos === false ? $uri : substr($uri, 0, $q_pos));
+        if (strpos($raw_clean, '/.') !== false || strpos($raw_clean, '//') !== false) {
+            $raw_clean = (string) preg_replace('#/+#', '/', $raw_clean);
+            $p_parts = explode('/', $raw_clean);
+            $p_stack = [];
+            foreach ($p_parts as $p_seg) {
+                if ($p_seg === '' || $p_seg === '.') {
+                    continue;
+                }
+                if ($p_seg === '..') {
+                    array_pop($p_stack);
+                } else {
+                    $p_stack[] = $p_seg;
+                }
+            }
+            $raw_clean = '/' . implode('/', $p_stack);
+        }
+        $this->cleanUri = $raw_clean;
+        $this->query = $q_pos === false ? '' : substr($uri, $q_pos + 1);
+        $this->userAgent = $userAgent;
+        $this->params = $params;
+        $this->cookies = $cookies;
+        $this->headers = $headers;
+        $this->files = $files;
+        $this->server = $server;
+    }
+
+    /**
      * Build a RequestContext from current PHP / WordPress superglobals.
      *
      * @return self

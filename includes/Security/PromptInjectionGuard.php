@@ -45,7 +45,7 @@ class PromptInjectionGuard {
     const PROMPT_OVERRIDE_PATTERNS = [
         'ignore_instructions'   => '/(?:ignore|disregard|forget)\s+(?:all\s+)?(?:previous|prior|system|earlier)\s+(?:instructions|prompts|directives|commands|rules|context)/i',
         'system_override'       => '/(?:system\s+(?:prompt\s+)?override|override\s+system\s+(?:directives|rules|prompts))/i',
-        'dan_jailbreak'         => '/(?:you\s+are\s+now\s+(?:in\s+)?(?:dan|developer\s+mode|unfiltered|jailbroken|an\s+unrestricted\s+ai|chaos\s+mode))/i',
+        'dan_jailbreak'         => '/(?:you\s+are\s+now\s+(?:in\s+)?(?:dan|developer\s+mode|unfiltered|jailbroken|an\s+unrestricted\s+ai|chaos\s+mode)|(?:switch|enter)\s+to\s+dan\s+mode)/i',
         'bypass_safety'         => '/(?:bypass|disable|ignore|deactivate)\s+all\s+(?:safety|content|ethical|moderation)\s+(?:filters|protocols|guidelines|policies)/i',
         'reveal_prompt'         => '/(?:output|print|reveal|display|leak|dump)\s+(?:your\s+)?(?:system\s+prompt|initial\s+instructions|pre-prompt|context\s+window|hidden\s+rules)/i',
         'hypothetical_override' => '/(?:in\s+this\s+hypothetical\s+scenario,\s+you\s+have\s+no\s+rules|act\s+as\s+if\s+you\s+have\s+no\s+restrictions|pretend\s+you\s+are\s+an\s+evil)/i',

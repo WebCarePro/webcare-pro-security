@@ -415,7 +415,9 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
         $unwrapped = (string) preg_replace('#/\*!\d*\s*([\s\S]*?)\s*\*/#', ' $1 ', $trimmed);
 
         // Strip standard SQL comments (/* ... */, -- ..., # ...) to defeat keyword splitting evasion
-        $clean_sql = (string) preg_replace('#/\*[\s\S]*?\*/#', ' ', $unwrapped);
+        // We strip inline block comments first without spaces so split tokens like UN/**/ION re-join into UNION,
+        // and replace line comments with space.
+        $clean_sql = (string) preg_replace('#/\*[\s\S]*?\*/#', '', $unwrapped);
         $clean_sql = (string) preg_replace('/(?:--[ \t][^\r\n]*|--[\r\n]|\#[^\r\n]*)/', ' ', $clean_sql);
 
         // Strip balanced string literals to prevent false positives on blog/post text content
