@@ -2,7 +2,9 @@
 namespace WebCareProScanner\Core\Modules;
 
 use WebCareProScanner\Api\MCPAntiLockoutValidator;
+use WebCareProScanner\Contracts\EvaluatorFailurePolicy;
 use WebCareProScanner\Contracts\RequestContext;
+use WebCareProScanner\Contracts\RouteClass;
 use WebCareProScanner\Contracts\SecurityModuleInterface;
 use WebCareProScanner\Contracts\WafEvaluatorInterface;
 use WebCareProScanner\Contracts\WafVerdict;
@@ -18,6 +20,26 @@ if (!defined('ABSPATH')) {
  * Reference module adapter registering Modular Intelligence WAF & Custom Firewall Rules.
  */
 class ModularWafModule implements SecurityModuleInterface, WafEvaluatorInterface {
+
+    public function get_module_id(): string {
+        return 'modular-waf';
+    }
+
+    public function is_required(): bool {
+        return false;
+    }
+
+    public function get_route_classes(): array {
+        return RouteClass::cases();
+    }
+
+    public function get_required_capabilities(): array {
+        return [];
+    }
+
+    public function get_failure_policy(): EvaluatorFailurePolicy {
+        return EvaluatorFailurePolicy::DegradedLog;
+    }
 
     public function get_id(): string {
         return 'modular-waf';

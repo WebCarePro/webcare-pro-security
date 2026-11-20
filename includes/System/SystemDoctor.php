@@ -241,6 +241,40 @@ final class SystemDoctor {
             'required'    => __('Dedicated single WAF perimeter', 'webcare-pro-security'),
         ];
 
+        // 8. Evaluator Pipeline Health & Metadata Integrity
+        $pipeline_intact = true;
+        $pipeline_issues = [];
+        $manifest_data = class_exists(CompiledStackManifest::class) ? CompiledStackManifest::load() : [];
+        $evaluator_meta = $manifest_data['evaluators'] ?? [];
+        $mandatory_cls = 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine';
+
+        if (!class_exists($mandatory_cls)) {
+            $pipeline_intact = false;
+            $pipeline_issues[] = sprintf(__('Mandatory evaluator %s missing from runtime.', 'webcare-pro-security'), $mandatory_cls);
+        }
+
+        if (is_array($evaluator_meta)) {
+            foreach ($evaluator_meta as $eval_cls => $m) {
+                if (!empty($m['required']) && !class_exists($eval_cls)) {
+                    $pipeline_intact = false;
+                    $pipeline_issues[] = sprintf(__('Required evaluator %s missing.', 'webcare-pro-security'), $eval_cls);
+                }
+            }
+        }
+
+        $checks['evaluator_pipeline'] = [
+            'id'          => 'evaluator_pipeline',
+            'title'       => __('Adaptive Firewall Evaluator Pipeline', 'webcare-pro-security'),
+            'category'    => 'waf',
+            'status'      => $pipeline_intact ? 'pass' : 'fail',
+            'severity'    => 'critical',
+            'message'     => $pipeline_intact
+                ? __('All mandatory and required WAF evaluators are present and compiled with strict metadata contracts.', 'webcare-pro-security')
+                : sprintf(__('WAF pipeline degraded: %s', 'webcare-pro-security'), implode('; ', $pipeline_issues)),
+            'current'     => $pipeline_intact ? __('Active & Intact', 'webcare-pro-security') : __('Degraded / Critical Evaluator Missing', 'webcare-pro-security'),
+            'required'    => __('All required evaluators operational', 'webcare-pro-security'),
+        ];
+
         // Compute overall score
         $total = count($checks);
         $passed = 0;

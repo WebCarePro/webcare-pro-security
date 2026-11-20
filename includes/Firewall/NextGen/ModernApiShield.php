@@ -1,7 +1,9 @@
 <?php
 namespace WebCareProScanner\Firewall\NextGen;
 
+use WebCareProScanner\Contracts\EvaluatorFailurePolicy;
 use WebCareProScanner\Contracts\RequestContext;
+use WebCareProScanner\Contracts\RouteClass;
 use WebCareProScanner\Contracts\SecurityModuleInterface;
 use WebCareProScanner\Contracts\WafEvaluatorInterface;
 use WebCareProScanner\Contracts\WafVerdict;
@@ -19,6 +21,29 @@ if (!defined('ABSPATH')) {
  * - Batched GraphQL mutation brute-force attacks
  */
 class ModernApiShield implements SecurityModuleInterface, WafEvaluatorInterface {
+
+    public function get_module_id(): string {
+        return 'modern-api-shield';
+    }
+
+    public function is_required(): bool {
+        return false;
+    }
+
+    public function get_route_classes(): array {
+        return [
+            RouteClass::GraphQL,
+            RouteClass::RestApi,
+        ];
+    }
+
+    public function get_required_capabilities(): array {
+        return ['graphql'];
+    }
+
+    public function get_failure_policy(): EvaluatorFailurePolicy {
+        return EvaluatorFailurePolicy::DegradedLog;
+    }
 
     public function get_id(): string {
         return 'modern-api-shield';

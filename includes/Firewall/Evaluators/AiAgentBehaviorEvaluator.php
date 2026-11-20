@@ -3,7 +3,9 @@ declare(strict_types=1);
 
 namespace WebCareProScanner\Firewall\Evaluators;
 
+use WebCareProScanner\Contracts\EvaluatorFailurePolicy;
 use WebCareProScanner\Contracts\RequestContext;
+use WebCareProScanner\Contracts\RouteClass;
 use WebCareProScanner\Contracts\WafEvaluatorInterface;
 use WebCareProScanner\Contracts\WafVerdict;
 use WebCareProScanner\Firewall\AdaptiveRateLimiter;
@@ -40,6 +42,31 @@ if (!defined('ABSPATH')) {
  * @package WebCareProScanner\Firewall\Evaluators
  */
 final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
+
+    public function get_module_id(): string {
+        return 'ai-agent-behavior';
+    }
+
+    public function is_required(): bool {
+        return false;
+    }
+
+    public function get_route_classes(): array {
+        return [
+            RouteClass::PublicGet,
+            RouteClass::PublicMutation,
+            RouteClass::Commerce,
+            RouteClass::RestApi,
+        ];
+    }
+
+    public function get_required_capabilities(): array {
+        return [];
+    }
+
+    public function get_failure_policy(): EvaluatorFailurePolicy {
+        return EvaluatorFailurePolicy::DegradedLog;
+    }
 
     /**
      * Stateless rules compilable into micro-waf-compiled.php.

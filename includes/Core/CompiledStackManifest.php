@@ -204,6 +204,7 @@ final class CompiledStackManifest {
             'commerce_slugs'   => $commerce_slugs,
             'membership_slugs' => $membership_slugs,
             'routes'           => $routes,
+            'evaluators'       => self::compile_evaluator_metadata($routes),
         ];
 
         // Format into OPcache-executable standalone array
@@ -293,6 +294,61 @@ final class CompiledStackManifest {
             'path'    => $target_file,
             'message' => 'WebCare Compiled Stack Manifest successfully compiled.',
         ];
+    }
+
+    /**
+     * Compile evaluator metadata for all registered evaluator classes in routes.
+     *
+     * @param array<string, array<int, string>> $routes
+     * @return array<string, array{module_id: string, required: bool, failure_policy: string, capabilities: array<string>}>
+     */
+    public static function compile_evaluator_metadata(array $routes): array {
+        $metadata = [];
+        $all_classes = [];
+        foreach ($routes as $route_evals) {
+            foreach ($route_evals as $cls) {
+                $all_classes[$cls] = true;
+            }
+        }
+
+        foreach (array_keys($all_classes) as $class_name) {
+            if (!class_exists($class_name)) {
+                continue;
+            }
+
+            if (is_subclass_of($class_name, \WebCareProScanner\Contracts\WafEvaluatorInterface::class)) {
+                try {
+                    $ref = new \ReflectionClass($class_name);
+                    if (!$ref->isAbstract()) {
+                        $instance = new $class_name();
+                        $metadata[$class_name] = [
+                            'module_id'      => $instance->get_module_id(),
+                            'required'       => $instance->is_required(),
+                            'failure_policy' => $instance->get_failure_policy()->value,
+                            'capabilities'   => $instance->get_required_capabilities(),
+                        ];
+                    }
+                } catch (\Throwable $e) {
+                    // Fall back to default metadata if instantiation fails during compile
+                    $metadata[$class_name] = [
+                        'module_id'      => sanitize_key(basename(str_replace('\\', '/', $class_name))),
+                        'required'       => false,
+                        'failure_policy' => \WebCareProScanner\Contracts\EvaluatorFailurePolicy::DegradedLog->value,
+                        'capabilities'   => [],
+                    ];
+                }
+            } else {
+                // Non-WafEvaluatorInterface legacy / specialized class
+                $metadata[$class_name] = [
+                    'module_id'      => sanitize_key(basename(str_replace('\\', '/', $class_name))),
+                    'required'       => false,
+                    'failure_policy' => \WebCareProScanner\Contracts\EvaluatorFailurePolicy::DegradedLog->value,
+                    'capabilities'   => [],
+                ];
+            }
+        }
+
+        return $metadata;
     }
 
     /**

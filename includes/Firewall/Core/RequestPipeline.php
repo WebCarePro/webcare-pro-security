@@ -158,7 +158,26 @@ final class RequestPipeline {
         }
 
         foreach ($route_evaluators as $evaluator_class) {
+            $meta = $manifest['evaluators'][$evaluator_class] ?? null;
+            $failure_policy = $meta['failure_policy'] ?? \WebCareProScanner\Contracts\EvaluatorFailurePolicy::DegradedLog->value;
+            $is_req = !empty($meta['required']) || in_array($evaluator_class, self::MANDATORY_EVALUATORS, true);
+
             if (!class_exists($evaluator_class)) {
+                if ($is_req || $failure_policy === \WebCareProScanner\Contracts\EvaluatorFailurePolicy::FailClosedRoute->value) {
+                    throw new \RuntimeException(sprintf('Required firewall evaluator class unavailable: %s', $evaluator_class));
+                }
+                // Optional heuristic evaluator missing: record degraded log and continue safely
+                if (class_exists(FirewallEngine::class)) {
+                    FirewallEngine::log_incident([
+                        'id'          => 'WAF-EVALUATOR-DEGRADED',
+                        'name'        => 'Optional Evaluator Degraded',
+                        'category'    => 'System Integrity',
+                        'description' => sprintf('Optional evaluator class "%s" unavailable; degraded gracefully.', $evaluator_class),
+                        'match_type'  => 'Degraded Log',
+                        'match_value' => $evaluator_class,
+                        'payload'     => 'Route: ' . $route_class->value,
+                    ], 'detected');
+                }
                 continue;
             }
 
@@ -181,11 +200,28 @@ final class RequestPipeline {
 
             // Instantiate or call evaluator if it implements WafEvaluatorInterface
             if (is_subclass_of($evaluator_class, WafEvaluatorInterface::class)) {
-                $evaluator = new $evaluator_class();
-                $verdict = $evaluator->evaluate_runtime_request($ctx);
-                if ($verdict instanceof WafVerdict) {
-                    if (self::is_terminal_verdict($verdict)) {
-                        return $verdict;
+                try {
+                    $evaluator = new $evaluator_class();
+                    $verdict = $evaluator->evaluate_runtime_request($ctx);
+                    if ($verdict instanceof WafVerdict) {
+                        if (self::is_terminal_verdict($verdict)) {
+                            return $verdict;
+                        }
+                    }
+                } catch (\Throwable $eval_err) {
+                    if ($is_req || $failure_policy === \WebCareProScanner\Contracts\EvaluatorFailurePolicy::FailClosedRoute->value) {
+                        throw $eval_err;
+                    }
+                    if (class_exists(FirewallEngine::class)) {
+                        FirewallEngine::log_incident([
+                            'id'          => 'WAF-EVALUATOR-ERROR',
+                            'name'        => 'Evaluator Runtime Degradation',
+                            'category'    => 'System Integrity',
+                            'description' => sprintf('Evaluator "%s" threw error: %s', $evaluator_class, $eval_err->getMessage()),
+                            'match_type'  => 'Degraded Log',
+                            'match_value' => $evaluator_class,
+                            'payload'     => $eval_err->getFile() . ':' . $eval_err->getLine(),
+                        ], 'detected');
                     }
                 }
             }

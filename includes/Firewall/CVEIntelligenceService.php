@@ -26,6 +26,9 @@ if (!defined('ABSPATH')) {
  */
 class CVEIntelligenceService {
 
+    public const TRANSIENT_PREFIX = 'webcareproscan_cve_';
+    public const CACHE_DURATION    = 86400; // 24 hours
+
     /**
      * Map of common upstream NVD / CVE component names to exact canonical WordPress slugs.
      */

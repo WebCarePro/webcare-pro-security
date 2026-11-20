@@ -1,7 +1,9 @@
 <?php
 namespace WebCareProScanner\Firewall\NextGen;
 
+use WebCareProScanner\Contracts\EvaluatorFailurePolicy;
 use WebCareProScanner\Contracts\RequestContext;
+use WebCareProScanner\Contracts\RouteClass;
 use WebCareProScanner\Contracts\SecurityModuleInterface;
 use WebCareProScanner\Contracts\WafEvaluatorInterface;
 use WebCareProScanner\Contracts\WafVerdict;
@@ -19,6 +21,30 @@ if (!defined('ABSPATH')) {
  * kill-chain sequences across a 15-minute sliding window even below rate limits.
  */
 class IntentChainSentinel implements SecurityModuleInterface, WafEvaluatorInterface {
+
+    public function get_module_id(): string {
+        return 'intent-chain-sentinel';
+    }
+
+    public function is_required(): bool {
+        return false;
+    }
+
+    public function get_route_classes(): array {
+        return [
+            RouteClass::PublicGet,
+            RouteClass::PublicMutation,
+            RouteClass::RestApi,
+        ];
+    }
+
+    public function get_required_capabilities(): array {
+        return [];
+    }
+
+    public function get_failure_policy(): EvaluatorFailurePolicy {
+        return EvaluatorFailurePolicy::DegradedLog;
+    }
 
     const STAGE_RECON_USER      = 1;
     const STAGE_RECON_README    = 2;
