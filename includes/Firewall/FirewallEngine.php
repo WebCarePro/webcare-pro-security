@@ -14,12 +14,13 @@ if (!defined('ABSPATH')) {
 }
 
 class FirewallEngine {
-    private static $real_ip = null;
-    private static $connecting_peer_ip = null;
-    private static $detected_environment = null;
-    private static $last_incident_id = null;
-    private static $last_ref_code = null;
-    private static array $wc_session_cache = [];
+    public const OPTION_BLOCKED_IPS_META = 'webcareproscan_blocked_ips_meta';
+    public static $real_ip = null;
+    public static $connecting_peer_ip = null;
+    public static $detected_environment = null;
+    public static $last_incident_id = null;
+    public static $last_ref_code = null;
+    public static array $wc_session_cache = [];
 
     /**
      * Generate a short, unambiguous Customer Support Reference Code (#WEBCARE-XXXX).
@@ -2868,7 +2869,7 @@ class FirewallEngine {
     /**
      * Option key for storing structured metadata for blocked IPs
      */
-    const OPTION_BLOCKED_IPS_META = 'webcareproscan_blocked_ips_meta';
+    // OPTION_BLOCKED_IPS_META constant is defined at class head
 
     /**
      * Retrieve all persistent block metadata for IPs
@@ -4347,7 +4348,7 @@ class FirewallEngine {
      * @param array  $rule        Rule definition array
      * @return bool
      */
-    private static function is_registered_confirmed_exploit_rule(string $rule_id_str, array $rule = []): bool {
+    public static function is_registered_confirmed_exploit_rule(string $rule_id_str, array $rule = []): bool {
         if ($rule_id_str === '' || empty($rule)) {
             return false;
         }

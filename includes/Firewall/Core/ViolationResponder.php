@@ -3,6 +3,9 @@ declare(strict_types=1);
 
 namespace WebCareProScanner\Firewall\Core;
 
+use WebCareProScanner\Firewall\BotReconDefense;
+use WebCareProScanner\System\SettingsManager;
+use WebCareProScanner\Firewall\WafFileLogger;
 use WebCareProScanner\Firewall\FirewallEngine;
 
 if (!defined('ABSPATH')) {
@@ -39,7 +42,7 @@ final class ViolationResponder {
         global $wpdb;
         $table = $wpdb->prefix . 'webcareproscan_firewall_logs';
 
-        $ip = self::get_client_ip();
+        $ip = FirewallEngine::get_client_ip();
         $raw_uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '/';
         $uri = substr($raw_uri, 0, 500);
 
@@ -68,13 +71,13 @@ final class ViolationResponder {
         if (empty($incident_id)) {
             $incident_id = 'WEBCARE-' . strtoupper(substr(md5($ip . microtime(true) . wp_rand()), 0, 8));
         }
-        self::$last_incident_id = $incident_id;
+        FirewallEngine::$last_incident_id = $incident_id;
 
         if ($action === 'blocked' && empty($rule['ref_code'])) {
             $rule['ref_code'] = self::generate_ref_code();
         }
         if (!empty($rule['ref_code'])) {
-            self::$last_ref_code = strtoupper(sanitize_text_field($rule['ref_code']));
+            FirewallEngine::$last_ref_code = strtoupper(sanitize_text_field($rule['ref_code']));
         }
 
         // Determine HTTP Status Code
@@ -159,14 +162,14 @@ final class ViolationResponder {
         $req_method = strtoupper(isset($_SERVER['REQUEST_METHOD']) ? sanitize_key(wp_unslash($_SERVER['REQUEST_METHOD'])) : 'GET');
 
         if (empty($incident_id)) {
-            $incident_id = self::$last_incident_id ?: ('WEBCARE-' . strtoupper(substr(md5($client_ip . microtime(true) . wp_rand()), 0, 8)));
+            $incident_id = FirewallEngine::$last_incident_id ?: ('WEBCARE-' . strtoupper(substr(md5($client_ip . microtime(true) . wp_rand()), 0, 8)));
         }
 
         // Reuse ref_code already attached to log_incident() so WAF Logs and Support Code match 1:1
         $ref_code = !empty($rule['ref_code'])
             ? strtoupper(sanitize_text_field($rule['ref_code']))
-            : (!empty(self::$last_ref_code) ? self::$last_ref_code : self::generate_ref_code());
-        self::$last_ref_code = null;
+            : (!empty(FirewallEngine::$last_ref_code) ? FirewallEngine::$last_ref_code : self::generate_ref_code());
+        FirewallEngine::$last_ref_code = null;
 
         // Fast transient lookup for non-technical site owners to unblock paying customers in 1 click
         $transient_data = [
@@ -214,7 +217,7 @@ final class ViolationResponder {
         // 1. E-Commerce & Checkout AJAX handler (WooCommerce, SureCart, EDD)
         // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Low-level firewall intercept inspects query parameters to determine structured JSON error formatting
         $is_wc_ajax = !empty($_GET['wc-ajax']) || !empty($_GET['wc-api']);
-        if ($is_wc_ajax || (wp_doing_ajax() && self::is_commerce_or_membership_request($raw_uri))) {
+        if ($is_wc_ajax || (wp_doing_ajax() && FirewallEngine::is_commerce_or_membership_request($raw_uri))) {
             status_header(403);
             header('Content-Type: application/json; charset=utf-8');
             /* translators: 1: Security notice label, 2: Security explanation, 3: Support reference code label, 4: Support reference code */
@@ -485,16 +488,16 @@ final class ViolationResponder {
         }
 
         // Confirmed exploit signatures and admin policies can never be downgraded to warnings
-        if (self::get_confirmed_exploit_definition($rule_id_upper) !== null) {
+        if (FirewallEngine::get_confirmed_exploit_definition($rule_id_upper) !== null) {
             return false;
         }
 
-        if (self::get_verified_admin_custom_rule($rule) !== null) {
+        if (FirewallEngine::get_verified_admin_custom_rule($rule) !== null) {
             return false;
         }
 
         $tier = self::get_rule_enforcement_tier($rule);
-        if ($tier === self::TIER_CONFIRMED_EXPLOIT || $tier === self::TIER_ADMIN_POLICY) {
+        if ($tier === FirewallEngine::TIER_CONFIRMED_EXPLOIT || $tier === FirewallEngine::TIER_ADMIN_POLICY) {
             return false;
         }
 
@@ -578,29 +581,29 @@ final class ViolationResponder {
         || str_starts_with($rule_id_str, 'SCANNER-404');
 
         if ($is_heuristic) {
-            return self::TIER_HEURISTIC;
+            return FirewallEngine::TIER_HEURISTIC;
         }
 
         // 2. Authoritative Administrator-Authored Custom Rule Provenance:
         // Must match a registered record in the trusted database repository.
         // Ban eligibility is authoritatively derived from the STORED record, NOT incoming array metadata.
-        $stored_custom_rule = self::get_verified_admin_custom_rule($rule);
+        $stored_custom_rule = FirewallEngine::get_verified_admin_custom_rule($rule);
         if ($stored_custom_rule !== null) {
             $stored_ban_ttl = max(0, (int) ($stored_custom_rule['ban_ttl'] ?? 0));
             if ($stored_ban_ttl > 0) {
-                return self::TIER_ADMIN_POLICY;
+                return FirewallEngine::TIER_ADMIN_POLICY;
             }
         }
 
         // 3. Authoritative Confirmed Exploit Signature Registry:
         // Must match an authentic, registered exploit signature in the trusted internal registry.
         // Rejects unverified caller-supplied categories, fabricated IDs, or substring claims.
-        if (self::is_registered_confirmed_exploit_rule($rule_id_str, $rule)) {
-            return self::TIER_CONFIRMED_EXPLOIT;
+        if (FirewallEngine::is_registered_confirmed_exploit_rule($rule_id_str, $rule)) {
+            return FirewallEngine::TIER_CONFIRMED_EXPLOIT;
         }
 
         // 4. Fail-Safe Default: All unclassified or ambiguous rules default to heuristic (no automated IP ban)
-        return self::TIER_HEURISTIC;
+        return FirewallEngine::TIER_HEURISTIC;
     }
 
     /**
@@ -618,11 +621,11 @@ final class ViolationResponder {
         // 1. Authoritative Rule Binding: Immediately resolve the canonical exploit definition or verified administrator rule
         // at the absolute entry of violation handling before evaluating any exemptions, warnings, or bypass paths.
         // Operates strictly on verified internal catalogs/DB, overriding any caller-supplied preliminary metadata.
-        $stored_custom_rule = self::get_verified_admin_custom_rule($rule);
+        $stored_custom_rule = FirewallEngine::get_verified_admin_custom_rule($rule);
         if ($stored_custom_rule !== null) {
             $rule = array_merge($rule, $stored_custom_rule);
         } else {
-            $canonical_exploit = self::get_confirmed_exploit_definition($rule_id_str);
+            $canonical_exploit = FirewallEngine::get_confirmed_exploit_definition($rule_id_str);
             if ($canonical_exploit !== null) {
                 $rule = array_merge($rule, $canonical_exploit);
             }
@@ -667,8 +670,8 @@ final class ViolationResponder {
         // (where REST nonces are cryptographically validated) must proceed unimpeded for file inspection, diffing, and settings.
         $req_uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '';
         $clean_uri = str_replace(["\0", "\r", "\n"], '', $req_uri);
-        $norm_rest_route = self::resolve_normalized_rest_route($clean_uri);
-        $is_admin_session = self::is_authenticated_administrator();
+        $norm_rest_route = FirewallEngine::resolve_normalized_rest_route($clean_uri);
+        $is_admin_session = FirewallEngine::is_authenticated_administrator();
         $is_admin_context = $is_admin_session && str_starts_with($norm_rest_route, '/webcare-pro-security/v1/');
         if ($is_admin_context) {
             $log_telemetry = isset($settings['waf_whitelist_log_telemetry']) ? !empty($settings['waf_whitelist_log_telemetry']) : true;
@@ -681,7 +684,7 @@ final class ViolationResponder {
         }
 
         // Tiered Context-Aware & Rule-Scoped IP Whitelist Interceptor
-        $whitelist_ctx = self::check_ip_whitelist_context($client_ip, $settings, $rule);
+        $whitelist_ctx = AllowlistManager::check_ip_whitelist_context($client_ip, $settings, $rule);
         if ($whitelist_ctx['is_whitelisted']) {
             $is_admin = $whitelist_ctx['is_admin'];
             $full_bypass = $whitelist_ctx['full_bypass'];
@@ -703,7 +706,7 @@ final class ViolationResponder {
             ];
             $rule_id_check = (string) ($rule['id'] ?? '');
             $rule_cat      = (string) ($rule['category'] ?? '');
-            $is_critical_exploit = ($tier === self::TIER_CONFIRMED_EXPLOIT)
+            $is_critical_exploit = ($tier === FirewallEngine::TIER_CONFIRMED_EXPLOIT)
                 || in_array($rule_cat, $critical_exploit_categories, true)
                 || strpos($rule_id_check, 'MOD-CUSTOM-') === 0
                 || strpos($rule_id_check, 'WAF-SQL-RASP-') === 0
@@ -713,7 +716,7 @@ final class ViolationResponder {
 
             // Pre-authenticated / unauthenticated traffic must NEVER bypass confirmed exploits or critical categories.
             // Authenticated administrator sessions are the ONLY traffic that may bypass critical exploits via IP allowlist.
-            $can_bypass = self::can_ip_whitelist_bypass_rule($is_admin, $full_bypass, $rule_bypass, $is_critical_exploit);
+            $can_bypass = AllowlistManager::can_ip_whitelist_bypass_rule($is_admin, $full_bypass, $rule_bypass, $is_critical_exploit);
 
             if ($can_bypass) {
                 // Log incident telemetry as 'bypassed' if telemetry logging is enabled
@@ -804,14 +807,14 @@ final class ViolationResponder {
         $eligible_for_ip_ban = false;
         $effective_ban_ttl   = 0;
 
-        if ($tier === self::TIER_ADMIN_POLICY && $stored_custom_rule !== null) {
+        if ($tier === FirewallEngine::TIER_ADMIN_POLICY && $stored_custom_rule !== null) {
             // 1. Explicit administrator-configured ban: strictly read TTL from the STORED database record
             $stored_ban_ttl     = max(0, (int) ($stored_custom_rule['ban_ttl'] ?? 0));
             if ($stored_ban_ttl > 0) {
                 $eligible_for_ip_ban = true;
                 $effective_ban_ttl   = $stored_ban_ttl;
             }
-        } elseif ($tier === self::TIER_CONFIRMED_EXPLOIT) {
+        } elseif ($tier === FirewallEngine::TIER_CONFIRMED_EXPLOIT) {
             // 2. Confirmed high-severity exploit: eligible for automated IP containment ban
             $eligible_for_ip_ban = true;
             $rule_ban_ttl        = max(0, (int) ($rule['ban_ttl'] ?? 0));
@@ -832,7 +835,7 @@ final class ViolationResponder {
 
         if ($eligible_for_ip_ban) {
             $ban_reason        = sprintf('[%s] %s', $rule_id_str ?: $rule_cat, $rule['description'] ?? 'Critical WAF exploit intercepted');
-            self::add_blocked_ip(
+            BlocklistRepository::add_blocked_ip(
                 $client_ip,
                 $ban_reason,
                 $effective_ban_ttl,

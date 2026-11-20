@@ -45,6 +45,12 @@ class RequestContext {
     /** @var array<string, mixed> */
     public array $params = [];
 
+    /** @var array<string, mixed> */
+    public array $files = [];
+
+    /** @var array<string, mixed> */
+    public array $server = [];
+
     /** @var array<int, string> */
     public array $uploadedExtensions = [];
 
@@ -133,9 +139,12 @@ class RequestContext {
         $ctx->cf_proxied = $is_cf_peer && !empty($_SERVER['HTTP_CF_RAY']);
 
         foreach ($_SERVER as $k => $v) {
-            if (is_string($k) && strpos($k, 'HTTP_') === 0 && is_string($v)) {
-                $hname = strtolower(str_replace('_', '-', substr($k, 5)));
-                $ctx->headers[$hname] = sanitize_text_field(wp_unslash($v));
+            if (is_string($k)) {
+                $ctx->server[$k] = $v;
+                if (strpos($k, 'HTTP_') === 0 && is_string($v)) {
+                    $hname = strtolower(str_replace('_', '-', substr($k, 5)));
+                    $ctx->headers[$hname] = sanitize_text_field(wp_unslash($v));
+                }
             }
         }
         if (isset($_SERVER['CONTENT_TYPE']) && is_string($_SERVER['CONTENT_TYPE'])) {
@@ -172,6 +181,7 @@ class RequestContext {
 
         // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Pre-dispatch file extension extraction from $_FILES
         if (!empty($_FILES) && is_array($_FILES)) {
+            $ctx->files = $_FILES;
             $queue = [];
             // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Pre-dispatch file metadata audit
             foreach ($_FILES as $fitem) {

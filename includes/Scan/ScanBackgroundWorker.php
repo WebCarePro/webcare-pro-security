@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace WebCareProScanner\Scan;
 
-use WebCareProScanner\Api\ScannerRoutes;
+use WebCareProScanner\Api\Controllers\ScanController;
 use WebCareProScanner\System\Cron\CronControlCenter;
 
 if (!defined('ABSPATH')) {
@@ -240,13 +240,13 @@ final class ScanBackgroundWorker {
         while ($slices < $max_slices && (microtime(true) - $start_time) < self::MAX_CRON_SLICE_SECONDS) {
             $slices++;
 
-            // Create synthetic WP_REST_Request for ScannerRoutes::process_batch()
+            // Create synthetic WP_REST_Request for ScanController::process_batch()
             $request = new \WP_REST_Request('POST', '/webcare-pro-security/v1/scan/batch');
             $request->set_param('scan_id', $locked_id);
             $request->set_param('lease_token', $lease_token);
             $request->set_param('batch_size', $batch_size);
 
-            $batch_res = ScannerRoutes::process_batch($request);
+            $batch_res = ScanController::process_batch($request);
             if (is_wp_error($batch_res)) {
                 $err_code = $batch_res->get_error_code();
                 if ($err_code === 'scan_lock_conflict') {
@@ -271,7 +271,7 @@ final class ScanBackgroundWorker {
                 $audit_request->set_param('lease_token', $lease_token);
                 $audit_request->set_param('target', $scan_row['scan_target'] ?? 'full');
 
-                $audit_res = ScannerRoutes::run_deep_audit($audit_request);
+                $audit_res = ScanController::run_deep_audit($audit_request);
                 self::unschedule_continuation();
 
                 return [

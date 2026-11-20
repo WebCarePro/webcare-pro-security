@@ -3,6 +3,10 @@ declare(strict_types=1);
 
 namespace WebCareProScanner\Firewall\Core;
 
+use WebCareProScanner\Firewall\BotReconDefense;
+use WebCareProScanner\Firewall\MicroWafCompiler;
+use WebCareProScanner\System\SettingsManager;
+use WebCareProScanner\Firewall\WafFileLogger;
 use WebCareProScanner\Firewall\FirewallEngine;
 
 if (!defined('ABSPATH')) {
@@ -53,7 +57,7 @@ final class BlocklistRepository {
                 return $clean;
             }
             // Simple CIDR / subnet support
-            if (strpos($clean, '/') !== false && self::ip_in_range($ip, $clean)) {
+            if (strpos($clean, '/') !== false && FirewallEngine::ip_in_range($ip, $clean)) {
                 return $clean;
             }
         }
@@ -91,18 +95,18 @@ final class BlocklistRepository {
         }
 
         // Safety Guard 1: Never block local loopback IPs or server origin / Docker dev gateways
-        if (in_array($ip, ['127.0.0.1', '::1'], true) || self::is_server_origin_or_loopback($ip)) {
+        if (in_array($ip, ['127.0.0.1', '::1'], true) || FirewallEngine::is_server_origin_or_loopback($ip)) {
             return false;
         }
 
         // Safety Guard 2: Refuse to add current administrator's active IP or whitelisted IP to custom blocklist
-        $current_client_ip = self::get_client_ip();
-        if ($ip === $current_client_ip && (self::is_authenticated_administrator() || self::is_authenticated_editor_or_builder())) {
+        $current_client_ip = FirewallEngine::get_client_ip();
+        if ($ip === $current_client_ip && (FirewallEngine::is_authenticated_administrator() || FirewallEngine::is_authenticated_editor_or_builder())) {
             return false;
         }
 
         // Safety Guard 2b: Never ban an IP during a verified server-side Plugin Check / WP-CLI sandbox run
-        if ($ip === $current_client_ip && self::is_trusted_plugin_check_or_cli_runtime()) {
+        if ($ip === $current_client_ip && FirewallEngine::is_trusted_plugin_check_or_cli_runtime()) {
             return false;
         }
 
@@ -118,7 +122,7 @@ final class BlocklistRepository {
         // Safety Guard 4: Automated Ban Immunity for Whitelisted IPs & Active Shoppers.
         // Refuse automated bans (empty $admin_user) if IP is explicitly whitelisted or belongs to an active shopper.
         if (empty($admin_user)) {
-            if (self::is_ip_whitelisted($ip)) {
+            if (AllowlistManager::is_ip_whitelisted($ip)) {
                 return false;
             }
             if (class_exists('\\WebCareProScanner\\Firewall\\Core\\CommerceSessionGuard') && \WebCareProScanner\Firewall\Core\CommerceSessionGuard::has_active_shopper_session()) {
@@ -144,7 +148,7 @@ final class BlocklistRepository {
         $effective_duration = ($source === 'rule_auto_ban' && $duration_seconds <= 0) ? 86400 : $duration_seconds;
         $expires_at = $effective_duration > 0 ? ($now + $effective_duration) : 0;
 
-        self::set_ip_block_meta($ip, [
+        FirewallEngine::set_ip_block_meta($ip, [
             'ip'               => $ip,
             'source'           => $source,
             'reason'           => !empty($reason) ? $reason : 'Blocked by security firewall policy',
@@ -160,7 +164,7 @@ final class BlocklistRepository {
 
         // Context-Adaptive Firewall (CAF Phase 2): Queue IP ban for Cloudflare Edge synchronization
         if ($sync_cloudflare && class_exists('\\WebCareProScanner\\Firewall\\CAF\\CloudflareIpListSynchronizer')) {
-            $forensic_note = self::build_forensic_cf_note(
+            $forensic_note = FirewallEngine::build_forensic_cf_note(
                 !empty($reason) ? $reason : 'Blocked by security firewall policy',
                 $rule_id,
                 $rule_category,
@@ -243,7 +247,7 @@ final class BlocklistRepository {
         delete_transient('webcareproscan_bot_ban_' . md5($ip));
 
         // 4. Clean up block metadata & lockout references
-        self::delete_ip_block_meta($ip);
+        FirewallEngine::delete_ip_block_meta($ip);
         delete_transient('webcareproscan_lockout_ip_' . md5($ip));
 
         // 5. Bi-Directional Cloudflare Unban Sync: Remove from Cloudflare Edge and queue
@@ -284,7 +288,7 @@ final class BlocklistRepository {
             if ($expires_at > 0 && $now >= $expires_at) {
                 $cleared_count++;
                 $cleared_ips[] = $entry_ip;
-                self::delete_ip_block_meta($entry_ip);
+                FirewallEngine::delete_ip_block_meta($entry_ip);
                 delete_transient('webcareproscan_lockout_ip_' . md5($entry_ip));
                 continue;
             }
@@ -530,7 +534,7 @@ final class BlocklistRepository {
      * Retrieve all persistent block metadata for IPs
      */
     public static function get_all_block_meta(): array {
-        $meta = get_option(self::OPTION_BLOCKED_IPS_META, []);
+        $meta = get_option(FirewallEngine::OPTION_BLOCKED_IPS_META, []);
         return is_array($meta) ? $meta : [];
     }
 
@@ -551,12 +555,12 @@ final class BlocklistRepository {
             $effective_ts = $blocked_ts;
             $ban_time = gmdate('M j, Y, g:i a \U\T\C', $blocked_ts);
             $seconds_ago = max(0, $now - $blocked_ts);
-            $ban_ago = self::format_seconds_human($seconds_ago) . ' ago';
+            $ban_ago = FirewallEngine::format_seconds_human($seconds_ago) . ' ago';
         } elseif ($fallback_last_seen) {
             $ts = strtotime($fallback_last_seen);
             $effective_ts = $ts ?: 0;
             $ban_time = gmdate('M j, Y, g:i a \U\T\C', $ts);
-            $ban_ago = self::format_seconds_human(max(0, $now - $ts)) . ' ago';
+            $ban_ago = FirewallEngine::format_seconds_human(max(0, $now - $ts)) . ' ago';
         } else {
             $effective_ts = 0;
             $ban_time = 'Unknown (Active Policy)';
@@ -579,7 +583,7 @@ final class BlocklistRepository {
                 'seconds' => 0,
             ];
         } else {
-            $duration = self::format_duration_label($duration_secs);
+            $duration = FirewallEngine::format_duration_label($duration_secs);
             $unban_time = gmdate('M j, Y, g:i a \U\T\C', $expires_ts);
             $diff = $expires_ts - $now;
 
@@ -596,8 +600,8 @@ final class BlocklistRepository {
                 ];
             } else {
                 $is_expired = false;
-                $countdown = self::breakdown_seconds($diff);
-                $time_remaining = self::format_countdown_human($countdown);
+                $countdown = FirewallEngine::breakdown_seconds($diff);
+                $time_remaining = FirewallEngine::format_countdown_human($countdown);
             }
         }
 

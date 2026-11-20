@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace WebCareProScanner\Firewall\Core;
 
+use WebCareProScanner\System\SettingsManager;
 use WebCareProScanner\Firewall\FirewallEngine;
 
 if (!defined('ABSPATH')) {
@@ -31,7 +32,7 @@ final class AllowlistManager {
         }
 
         // 0. Auto-accept server's own origin IP (IPv4 and IPv6) and loopback addresses across all sites
-        if (self::is_server_origin_or_loopback($ip)) {
+        if (FirewallEngine::is_server_origin_or_loopback($ip)) {
             return true;
         }
 
@@ -41,7 +42,7 @@ final class AllowlistManager {
             foreach ($override_ips as $override_ip) {
                 $override_ip = trim($override_ip);
                 if (!empty($override_ip)) {
-                    if ($override_ip === $ip || (strpos($override_ip, '/') !== false && self::ip_in_range($ip, $override_ip))) {
+                    if ($override_ip === $ip || (strpos($override_ip, '/') !== false && FirewallEngine::ip_in_range($ip, $override_ip))) {
                         return true;
                     }
                 }
@@ -62,7 +63,7 @@ final class AllowlistManager {
                 return true;
             }
             // Simple CIDR / subnet support
-            if (strpos($clean, '/') !== false && self::ip_in_range($ip, $clean)) {
+            if (strpos($clean, '/') !== false && FirewallEngine::ip_in_range($ip, $clean)) {
                 return true;
             }
         }
@@ -167,7 +168,7 @@ final class AllowlistManager {
                     if ($target_ip === '') {
                         continue;
                     }
-                    if ($target_ip === $ip || (strpos($target_ip, '/') !== false && self::ip_in_range($ip, $target_ip))) {
+                    if ($target_ip === $ip || (strpos($target_ip, '/') !== false && FirewallEngine::ip_in_range($ip, $target_ip))) {
                         $ip_matched = true;
                         break;
                     }
@@ -432,14 +433,14 @@ final class AllowlistManager {
      * @return array [ 'is_whitelisted' => bool, 'is_admin' => bool, 'full_bypass' => bool ]
      */
     public static function check_ip_whitelist_context(string $client_ip, array $settings, ?array $rule = null): array {
-        $is_admin = self::is_authenticated_administrator();
+        $is_admin = FirewallEngine::is_authenticated_administrator();
         $whitelist_str = $settings['waf_whitelisted_ips'] ?? '';
         $is_whitelisted = self::is_ip_whitelisted($client_ip, $whitelist_str);
 
         // Auto-whitelist verified authenticated administrator sessions operating strictly within WebCare Pro REST API
         $req_uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '';
         $clean_uri = str_replace(["\0", "\r", "\n"], '', $req_uri);
-        $norm_rest_route = self::resolve_normalized_rest_route($clean_uri);
+        $norm_rest_route = FirewallEngine::resolve_normalized_rest_route($clean_uri);
         $is_admin_context = $is_admin && str_starts_with($norm_rest_route, '/webcare-pro-security/v1/');
 
         if ($is_admin_context) {
@@ -461,7 +462,7 @@ final class AllowlistManager {
         }
 
         // Check if this IP has granular rule or category scoping
-        $all_meta = self::get_all_whitelist_meta();
+        $all_meta = FirewallEngine::get_all_whitelist_meta();
         $meta = $all_meta[$client_ip] ?? null;
 
         if ($meta && !empty($meta['expires_at']) && time() > (int) $meta['expires_at']) {
@@ -503,7 +504,7 @@ final class AllowlistManager {
             ];
         }
 
-        $is_admin = self::is_authenticated_administrator();
+        $is_admin = FirewallEngine::is_authenticated_administrator();
         $require_admin = isset($settings['waf_whitelist_require_admin']) ? !empty($settings['waf_whitelist_require_admin']) : true;
 
         // If require_admin is FALSE, all whitelisted traffic gets full bypass (classic mode).

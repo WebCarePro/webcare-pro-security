@@ -1928,4 +1928,50 @@ final class FirewallController extends AbstractApiController {
             'enforced'=> array_values($enforced),
         ]);
     }
+
+    public static function build_method_scoped_rest_allowlist(array $lines, string $route, string $method): array {
+        $entry = strtoupper($method) . ' ' . $route;
+        $route_key = rtrim('/' . ltrim(strtolower(trim($route)), '/'), '/');
+        $result_lines = [];
+        $exact_exists = false;
+        $legacy_route_replaced = false;
+
+        foreach ($lines as $line) {
+            $line = trim((string) $line);
+            if ($line === '') {
+                continue;
+            }
+
+            if (strcasecmp($line, $entry) === 0) {
+                $exact_exists = true;
+                $result_lines[] = $line;
+                continue;
+            }
+
+            // Methodless exact routes are legacy all-method grants. A one-click
+            // method-specific action replaces them so the broader grant does not remain active.
+            $has_method_prefix = (bool) preg_match('/^[A-Za-z]+(?:[,|][A-Za-z]+)*\s+/', $line);
+            if (!$has_method_prefix && !str_starts_with($line, '#') && !str_contains($line, '*')) {
+                $legacy_key = rtrim('/' . ltrim(strtolower($line), '/'), '/');
+                if ($legacy_key === $route_key) {
+                    $legacy_route_replaced = true;
+                    continue;
+                }
+            }
+
+            $result_lines[] = $line;
+        }
+
+        if (!$exact_exists) {
+            $result_lines[] = $entry;
+        }
+
+        $result_lines = array_values(array_unique($result_lines));
+        return [
+            'lines'                 => $result_lines,
+            'changed'               => !$exact_exists || $legacy_route_replaced,
+            'added'                 => !$exact_exists,
+            'legacy_route_replaced' => $legacy_route_replaced,
+        ];
+    }
 }

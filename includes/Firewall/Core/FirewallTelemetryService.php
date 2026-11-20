@@ -3,6 +3,9 @@ declare(strict_types=1);
 
 namespace WebCareProScanner\Firewall\Core;
 
+use WebCareProScanner\System\SettingsManager;
+use WebCareProScanner\Firewall\ThreatIntelService;
+use WebCareProScanner\Firewall\WafFileLogger;
 use WebCareProScanner\Firewall\FirewallEngine;
 
 if (!defined('ABSPATH')) {
@@ -27,7 +30,7 @@ final class FirewallTelemetryService {
         $table = $wpdb->prefix . 'webcareproscan_firewall_logs';
 
         $settings = SettingsManager::get_settings();
-        $env = self::detect_environment();
+        $env = FirewallEngine::detect_environment();
 
         $total_blocks = 0;
         $blocks_24h   = 0;
@@ -105,13 +108,13 @@ final class FirewallTelemetryService {
             'today_date_full'    => current_time('F j, Y'),
             'unique_attack_ips'  => $unique_ips,
             'top_rules'          => $top_rules,
-            'client_ip'          => self::get_client_ip(),
+            'client_ip'          => FirewallEngine::get_client_ip(),
             'threat_intel'       => ThreatIntelService::get_status(),
             'edge_advisor'       => class_exists('\\WebCareProScanner\\Cloudflare\\CloudflareService')
                 ? \WebCareProScanner\Cloudflare\CloudflareService::get_edge_advisor()
                 : null,
             'server_telemetry'   => self::get_server_telemetry(),
-            'available_roles'    => self::get_available_roles(),
+            'available_roles'    => FirewallEngine::get_available_roles(),
             'commerce_telemetry' => (function () use ($settings) {
                 $detected_commerce = array_values(array_filter([
                     // Archetype Profile
@@ -159,7 +162,7 @@ final class FirewallTelemetryService {
                 ]));
                 $has_detected = count($detected_commerce) > 0;
                 return [
-                    'is_active'            => self::is_commerce_active(),
+                    'is_active'            => FirewallEngine::is_commerce_active(),
                     'has_detected_plugins' => $has_detected,
                     'detected_names'       => $detected_commerce,
                     'has_woocommerce'      => class_exists('WooCommerce'),
@@ -264,7 +267,7 @@ final class FirewallTelemetryService {
                     class_exists('IWP_MMB_Core') ? 'InfiniteWP Client' : null,
                 ])),
             ],
-            'active_plugin_slugs' => self::get_active_plugin_slugs(),
+            'active_plugin_slugs' => FirewallEngine::get_active_plugin_slugs(),
         ];
     }
 
@@ -353,13 +356,13 @@ final class FirewallTelemetryService {
         $cdn_ipv6 = '';
 
         // Check if connecting peer or raw peer is an edge proxy
-        $raw_peer = self::$connecting_peer_ip ?: (!empty($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '');
+        $raw_peer = FirewallEngine::$connecting_peer_ip ?: (!empty($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '');
 
         // Check incoming CDN headers
         if (!empty($_SERVER['HTTP_CF_RAY']) || !empty($_SERVER['HTTP_CF_CONNECTING_IP'])) {
             $cdn_detected = true;
             $cdn_provider = 'Cloudflare Anycast';
-            if (!empty($raw_peer) && self::is_cloudflare_ip($raw_peer)) {
+            if (!empty($raw_peer) && FirewallEngine::is_cloudflare_ip($raw_peer)) {
                 $cdn_ip = $raw_peer;
             }
         } elseif (!empty($_SERVER['HTTP_FASTLY_CLIENT_IP']) || !empty($_SERVER['HTTP_X_FASTLY_REQUEST_ID'])) {
@@ -452,7 +455,7 @@ final class FirewallTelemetryService {
                     $cdn_ipv6 = $rip;
                 }
 
-                if (self::is_cloudflare_ip($rip)) {
+                if (FirewallEngine::is_cloudflare_ip($rip)) {
                     $cdn_detected = true;
                     if ($cdn_provider === 'None (Direct Origin)') {
                         $cdn_provider = 'Cloudflare Anycast';
@@ -462,7 +465,7 @@ final class FirewallTelemetryService {
 
             // Assign primary CDN IP (prefer connecting raw peer if edge, or resolved IPv4, or resolved IPv6)
             if ($cdn_detected) {
-                if (!empty($raw_peer) && (self::is_cloudflare_ip($raw_peer) || filter_var($raw_peer, FILTER_VALIDATE_IP))) {
+                if (!empty($raw_peer) && (FirewallEngine::is_cloudflare_ip($raw_peer) || filter_var($raw_peer, FILTER_VALIDATE_IP))) {
                     $cdn_ip = $raw_peer;
                     if (filter_var($raw_peer, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
                         $cdn_ipv4 = $raw_peer;

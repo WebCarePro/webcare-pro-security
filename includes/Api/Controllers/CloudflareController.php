@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace WebCareProScanner\Api\Controllers;
 
+use WebCareProScanner\Firewall\ThreatIntelNetwork;
 use WebCareProScanner\Api\ScannerRoutes;
 
 if (!defined('ABSPATH')) {
@@ -710,5 +711,25 @@ final class CloudflareController extends AbstractApiController {
 
     public static function check_domain_reputation_now() {
         return rest_ensure_response(\WebCareProScanner\Firewall\DomainReputationMonitor::run_reputation_audit(true));
+    }
+
+    /**
+     * Helper to load CloudflareService reliably
+     */
+    public static function ensure_cloudflare_service(): bool {
+        if (!class_exists('\WebCareProScanner\Cloudflare\CloudflareService')) {
+            $candidates = [
+                WEBCAREPROSCAN_PATH . 'includes/Cloudflare/CloudflareService.php',
+                WEBCAREPROSCAN_PATH . 'includes/cloudflare/CloudflareService.php',
+                WEBCAREPROSCAN_PATH . 'includes/Firewall/CloudflareService.php',
+            ];
+            foreach ($candidates as $file) {
+                if (file_exists($file)) {
+                    require_once $file;
+                    break;
+                }
+            }
+        }
+        return class_exists('\WebCareProScanner\Cloudflare\CloudflareService');
     }
 }

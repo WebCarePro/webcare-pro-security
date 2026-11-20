@@ -3,6 +3,10 @@ declare(strict_types=1);
 
 namespace WebCareProScanner\Api\Controllers;
 
+use WebCareProScanner\Reports\IncidentReportEngine;
+use WebCareProScanner\Scan\ScanLock;
+use WebCareProScanner\System\ServerInfo;
+use WebCareProScanner\Backup\DatabaseBackup;
 use WebCareProScanner\Api\ScannerRoutes;
 
 if (!defined('ABSPATH')) {
@@ -2210,5 +2214,37 @@ final class SystemController extends AbstractApiController {
     public static function rollback_site_advisor_snapshot(\WP_REST_Request $request) {
         $result = \WebCareProScanner\Advisor\SiteAdvisorEngine::rollback();
         return rest_ensure_response($result);
+    }
+
+    /**
+     * Helper to build schedule time info payload
+     */
+    public static function build_schedule_time_info() {
+        $next_run_timestamp = wp_next_scheduled(\WebCareProScanner\System\SettingsManager::CRON_HOOK);
+        $now_utc = time();
+        $diff_seconds = $next_run_timestamp ? max(0, $next_run_timestamp - $now_utc) : 0;
+
+        $tz_string = get_option('timezone_string');
+        $gmt_offset = get_option('gmt_offset');
+        if (empty($tz_string)) {
+            $offset_sign = $gmt_offset >= 0 ? '+' : '-';
+            $offset_hours = abs((int) $gmt_offset);
+            $offset_mins = abs((int) (($gmt_offset - (int) $gmt_offset) * 60));
+            $tz_string = sprintf('UTC%s%02d:%02d', $offset_sign, $offset_hours, $offset_mins);
+        }
+
+        $is_cron_disabled = defined('DISABLE_WP_CRON') && DISABLE_WP_CRON;
+
+        return [
+            'next_run_timestamp' => $next_run_timestamp ?: null,
+            'next_scheduled_wp'  => $next_run_timestamp ? (function_exists('wp_date') ? wp_date('Y-m-d H:i:s', $next_run_timestamp) : date_i18n('Y-m-d H:i:s', $next_run_timestamp + (int) ($gmt_offset * 3600))) : null,
+            'next_scheduled_gmt' => $next_run_timestamp ? gmdate('Y-m-d H:i:s', $next_run_timestamp) . ' GMT' : null,
+            'diff_seconds'       => $diff_seconds,
+            'current_wp_time'    => current_time('Y-m-d H:i:s'),
+            'current_gmt_time'   => gmdate('Y-m-d H:i:s') . ' GMT',
+            'timezone'           => $tz_string,
+            'gmt_offset'         => (float) $gmt_offset,
+            'cron_disabled'      => $is_cron_disabled,
+        ];
     }
 }

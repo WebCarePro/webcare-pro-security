@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace WebCareProScanner\Api\Controllers;
 
+use WebCareProScanner\Quarantine\CoreRepairManager;
+use WebCareProScanner\Quarantine\QuarantineManager;
 use WebCareProScanner\Api\ScannerRoutes;
 
 if (!defined('ABSPATH')) {
