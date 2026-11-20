@@ -138,7 +138,7 @@ class ScanInterruptionForensics {
         $wpdb->update($table_scans, [
             'status'       => 'interrupted',
             'duration'     => max(1, (int) round($elapsed_sec)),
-            'completed_at' => \WebCareProScanner\Api\ScannerRoutes::now_fractional_mysql(),
+            'completed_at' => \WebCareProScanner\Api\Controllers\ScanController::now_fractional_mysql(),
         ], ['id' => $scan_id]);
 
         return $payload;

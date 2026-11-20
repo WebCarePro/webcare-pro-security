@@ -150,7 +150,7 @@ class Scheduler {
              }
          }
 
-         $now_exact = \WebCareProScanner\Api\ScannerRoutes::now_fractional_mysql();
+         $now_exact = \WebCareProScanner\Api\Controllers\ScanController::now_fractional_mysql();
          $start_time = microtime(true);
 
          // Insert scan record
@@ -404,7 +404,7 @@ class Scheduler {
              $calc_sec = microtime(true) - $start_time;
              $duration_ms = (int) round($calc_sec * 1000);
              $duration = max(1, (int) round($calc_sec));
-             $completed_at_exact = \WebCareProScanner\Api\ScannerRoutes::now_fractional_mysql();
+             $completed_at_exact = \WebCareProScanner\Api\Controllers\ScanController::now_fractional_mysql();
              $all_query = "SELECT * FROM `{$table_issues}` WHERE scan_id = %d";
               // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
               $all_scan_issues = $wpdb->get_results(
@@ -503,7 +503,7 @@ class Scheduler {
                  'status'       => 'interrupted',
                  'duration'     => $duration,
                  'duration_ms'  => $duration_ms,
-                 'completed_at' => \WebCareProScanner\Api\ScannerRoutes::now_fractional_mysql(),
+                 'completed_at' => \WebCareProScanner\Api\Controllers\ScanController::now_fractional_mysql(),
              ], ['id' => $scan_id]);
              // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
              error_log('[WebCare Pro] Scheduled scan failed: ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());

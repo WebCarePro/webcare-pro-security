@@ -393,7 +393,7 @@ class Plugin {
         $checks['guest_rest_root_wildcard_rejected'] = !\call_user_func($custom_route_matcher, '/anything', 'POST', ['/*'])
             && !\call_user_func($custom_route_matcher, '/anything', 'POST', ['POST /*']);
 
-        $allowlist_builder = new \ReflectionMethod(\WebCareProScanner\Api\ScannerRoutes::class, 'build_method_scoped_rest_allowlist');
+        $allowlist_builder = new \ReflectionMethod(\WebCareProScanner\Api\Controllers\FirewallController::class, 'build_method_scoped_rest_allowlist');
         $allowlist_builder->setAccessible(true);
         $narrowed_allowlist = $allowlist_builder->invoke(null, ['/route', '/keep'], '/route', 'POST');
         $checks['guest_rest_one_click_narrows_legacy'] = !in_array('/route', $narrowed_allowlist['lines'], true)
