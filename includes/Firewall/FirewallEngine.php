@@ -2584,7 +2584,7 @@ class FirewallEngine {
      * @return string|null Matching line string or null if not blocked
      */
     public static function get_matching_blocked_entry(string $ip, string $blocklist_str): ?string {
-        return Core\BlocklistRepository::get_matching_blocked_entry();
+        return Core\BlocklistRepository::get_matching_blocked_entry($ip, $blocklist_str);
     }
 
     /**
@@ -2769,7 +2769,7 @@ class FirewallEngine {
      * Render branded 403 Forbidden Error Screen via standard wp_die()
      */
     public static function render_block_page(array $rule, string $client_ip, ?string $incident_id = null) {
-        Core\ViolationResponder::render_block_page();
+        Core\ViolationResponder::render_block_page($rule, $client_ip, $incident_id);
     }
 
     /**
@@ -2982,7 +2982,7 @@ class FirewallEngine {
         ?string $admin_user = null,
         bool $sync_cloudflare = true
     ): bool {
-        return Core\BlocklistRepository::add_blocked_ip();
+        return Core\BlocklistRepository::add_blocked_ip($ip, $reason, $duration_seconds, $rule_id, $rule_name, $rule_category, $incident_id, $admin_user, $sync_cloudflare);
     }
 
     /**
@@ -2994,7 +2994,7 @@ class FirewallEngine {
      * @return bool
      */
     public static function block_ip(string $ip, string $reason = '', int $duration_seconds = 0): bool {
-        return Core\BlocklistRepository::block_ip();
+        return Core\BlocklistRepository::block_ip($ip, $reason, $duration_seconds);
     }
 
     /**
@@ -3432,7 +3432,7 @@ class FirewallEngine {
      * If matched, returns the matching rule definition array, or null if no match.
      */
     public static function match_targeted_allowlist_rule(string $uri, string $user_agent, string $ip, string $method, array $rules): ?array {
-        return Core\AllowlistManager::match_targeted_allowlist_rule();
+        return Core\AllowlistManager::match_targeted_allowlist_rule($uri, $user_agent, $ip, $method, $rules);
     }
 
     /**
@@ -3440,7 +3440,7 @@ class FirewallEngine {
      * Caches verdict in WordPress transient for 24 hours to prevent DNS resolution latency.
      */
     public static function verify_rdns_domain(string $ip, string $target_domain): bool {
-        return Core\AllowlistManager::verify_rdns_domain();
+        return Core\AllowlistManager::verify_rdns_domain($ip, $target_domain);
     }
 
     /**
@@ -3448,7 +3448,7 @@ class FirewallEngine {
      * Checks Cloudflare CF-Connecting-ASN header, proxy headers, or Team Cymru DNS lookup.
      */
     public static function get_client_asn(string $ip): string {
-        return Core\AllowlistManager::get_client_asn();
+        return Core\AllowlistManager::get_client_asn($ip);
     }
 
     /**
@@ -4184,7 +4184,7 @@ class FirewallEngine {
      * @return array [ 'is_whitelisted' => bool, 'is_admin' => bool, 'full_bypass' => bool ]
      */
     public static function check_ip_whitelist_context(string $client_ip, array $settings, ?array $rule = null): array {
-        return Core\AllowlistManager::check_ip_whitelist_context();
+        return Core\AllowlistManager::check_ip_whitelist_context($client_ip, $settings, $rule);
     }
 
     /**
@@ -4493,7 +4493,7 @@ class FirewallEngine {
      * @return void
      */
     public static function handle_rule_violation(array $rule, array $settings, string $client_ip, int $status_code = 403): void {
-        Core\ViolationResponder::handle_rule_violation();
+        Core\ViolationResponder::handle_rule_violation($rule, $settings, $client_ip, $status_code);
     }
 
     /**
