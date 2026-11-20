@@ -209,19 +209,30 @@ class ModernApiShield implements SecurityModuleInterface, WafEvaluatorInterface 
         $ct = $ctx->headers['content-type'] ?? '';
 
         // Handle application/graphql raw text bodies
+        $body_reader_class = '\\WebCareProScanner\\Firewall\\Core\\RequestBodyReader';
         if (stripos($ct, 'application/graphql') !== false) {
-            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Reading bounded raw GraphQL body
-            $raw = (string) @file_get_contents('php://input', false, null, 0, 262145);
-            if (strlen($raw) > 262144) {
+            $raw = class_exists($body_reader_class)
+                ? $body_reader_class::get_bounded_body()
+                : (string) @file_get_contents('php://input', false, null, 0, 262145);
+            $is_trunc = class_exists($body_reader_class)
+                ? $body_reader_class::is_truncated()
+                : (strlen($raw) > 262144);
+
+            if ($is_trunc) {
                 return false; // Fail closed on oversized payload
             }
             if (trim($raw) !== '') {
                 $queries[] = trim($raw);
             }
         } elseif (stripos($ct, 'application/json') !== false) {
-            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Reading bounded raw JSON body for GraphQL AST inspection
-            $raw = (string) @file_get_contents('php://input', false, null, 0, 262145);
-            if (strlen($raw) > 262144) {
+            $raw = class_exists($body_reader_class)
+                ? $body_reader_class::get_bounded_body()
+                : (string) @file_get_contents('php://input', false, null, 0, 262145);
+            $is_trunc = class_exists($body_reader_class)
+                ? $body_reader_class::is_truncated()
+                : (strlen($raw) > 262144);
+
+            if ($is_trunc) {
                 return false; // Fail closed on oversized payload
             }
             if ($raw !== '') {

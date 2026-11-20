@@ -1,6 +1,6 @@
 {
   "version": "3.21.0",
-  "generated_at": "2026-11-20T21:09:24.508Z",
+  "generated_at": "2026-11-20T21:29:10.363Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -312,8 +312,8 @@
       "size": 3658
     },
     "includes/Contracts/RequestContext.php": {
-      "sha256": "87f3588212fdd1ddce28125d09309ecd692b05a2db5ef9bed57fb9d4a0b9d72e",
-      "size": 12595
+      "sha256": "d3654115b024bc843b23467ee21e191474bfac07c1067ce8c8acca2c1d18807f",
+      "size": 14661
     },
     "includes/Contracts/RouteClass.php": {
       "sha256": "94f40358eeb842cdbf02a1ae6b57580114c5ca7c09921566d08ac442a4767a7b",
@@ -528,8 +528,8 @@
       "size": 40170
     },
     "includes/Firewall/Core/ExploitSignatureEngine.php": {
-      "sha256": "4c26ee7bb5c7c0a6618db00c03805b89521231ec924a4d9456eb3f1c85c60298",
-      "size": 133477
+      "sha256": "41b7462b69d118cd4f2553735d967b5b9d5b8faefd9188c7d420c305183ad7b2",
+      "size": 138160
     },
     "includes/Firewall/Core/FirewallTelemetryService.php": {
       "sha256": "3e002bc9d185d05cde822e78b9adf3a214a0088c3c2a3391e58a28059fd76945",
@@ -538,6 +538,10 @@
     "includes/Firewall/Core/RaspPrivilegeGuard.php": {
       "sha256": "6cd05a9ca8b1b046311ad6853a061203b879524b57a6d4b9a0957c8878e06225",
       "size": 41931
+    },
+    "includes/Firewall/Core/RequestBodyReader.php": {
+      "sha256": "7d561bd163a15d62f245d2c8d95ede0775a364bab781ee3cd1bb03615493d06a",
+      "size": 3700
     },
     "includes/Firewall/Core/RequestPipeline.php": {
       "sha256": "e9cae168b4ccf3ebb470487c225bd8edf9f744bd51837ad0eb657e5d14f5085f",
@@ -644,8 +648,8 @@
       "size": 13968
     },
     "includes/Firewall/NextGen/ModernApiShield.php": {
-      "sha256": "7ec2856fce4f6e8fecb1ebb794241faf740f3e88bcc932e3de5eb536548c9d7a",
-      "size": 12061
+      "sha256": "330913502730a1d38fd117748f499d41cec1876c8f3b53201deb3bfd843b6922",
+      "size": 12356
     },
     "includes/Firewall/NextGen/ResponseDlpSentinel.php": {
       "sha256": "ac54a18af8444ac69147b47a46301cafd2bba180cf91a9d80ad811cfef8edfe2",

@@ -37,7 +37,19 @@ class RequestContext {
     public string $cookieHeader = '';
 
     /** @var array<string, mixed> */
+    public array $queryParams = [];
+
+    /** @var array<string, mixed> */
+    public array $formParams = [];
+
+    /** @var array<string, mixed> */
+    public array $jsonParams = [];
+
+    /** @var array<string, mixed> */
     public array $cookies = [];
+
+    /** @var array<string, mixed> */
+    public array $rawBodyMetadata = [];
 
     /** @var array<string, string> */
     public array $headers = [];
@@ -135,18 +147,24 @@ class RequestContext {
         $this->cleanUri = $raw_clean;
         $this->query = $q_pos === false ? '' : substr($uri, $q_pos + 1);
         $this->userAgent = $userAgent;
-        $this->params = $params;
-        if (empty($this->params) && $this->query !== '') {
-            $parsed_q = [];
-            parse_str($this->query, $parsed_q);
-            if (is_array($parsed_q)) {
-                $this->params = $parsed_q;
-            }
-        }
         $this->cookies = $cookies;
         $this->headers = $headers;
         $this->files = $files;
         $this->server = $server;
+
+        $this->queryParams = [];
+        if ($this->query !== '') {
+            $parsed_q = [];
+            parse_str($this->query, $parsed_q);
+            if (is_array($parsed_q)) {
+                $this->queryParams = $parsed_q;
+            }
+        }
+        $this->formParams = [];
+        $this->jsonParams = [];
+        $this->rawBodyMetadata = [];
+
+        $this->params = !empty($params) ? $params : $this->queryParams;
     }
 
     /**
@@ -213,33 +231,75 @@ class RequestContext {
             $ctx->headers['content-type'] = sanitize_text_field(wp_unslash($_SERVER['CONTENT_TYPE']));
         }
 
-        // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Pre-dispatch WAF context extraction across request parameters
-        if (is_array($_REQUEST)) {
-            // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Pre-dispatch WAF parameter snapshot
-            foreach ($_REQUEST as $pk => $pv) {
-                $key_clean = sanitize_key((string) $pk);
-                if ($key_clean !== '') {
-                    $ctx->params[$key_clean] = $pv;
+        // 1. Parse Query Parameters strictly from $_GET (or parsed URI)
+        if (!empty($_GET) && is_array($_GET)) {
+            foreach ($_GET as $gk => $gv) {
+                $k_clean = sanitize_key((string) $gk);
+                if ($k_clean !== '') {
+                    $ctx->queryParams[$k_clean] = $gv;
+                }
+            }
+        } elseif ($ctx->query !== '') {
+            $parsed_q = [];
+            parse_str($ctx->query, $parsed_q);
+            if (is_array($parsed_q)) {
+                foreach ($parsed_q as $pqk => $pqv) {
+                    $k_clean = sanitize_key((string) $pqk);
+                    if ($k_clean !== '') {
+                        $ctx->queryParams[$k_clean] = $pqv;
+                    }
                 }
             }
         }
 
-        // Collect JSON body top-level fields on application/json requests
+        // 2. Parse Form Parameters strictly from $_POST
+        if (!empty($_POST) && is_array($_POST)) {
+            foreach ($_POST as $fk => $fv) {
+                $k_clean = sanitize_key((string) $fk);
+                if ($k_clean !== '') {
+                    $ctx->formParams[$k_clean] = $fv;
+                }
+            }
+        }
+
+        // 3. Parse Cookies strictly from $_COOKIE (Never merged into $params)
+        if (!empty($_COOKIE) && is_array($_COOKIE)) {
+            foreach ($_COOKIE as $ck => $cv) {
+                $k_clean = sanitize_key((string) $ck);
+                if ($k_clean !== '') {
+                    $ctx->cookies[$k_clean] = $cv;
+                }
+            }
+        }
+
+        // 4. Bounded body reader for JSON/REST/GraphQL
         $ct = $ctx->headers['content-type'] ?? '';
-        if (stripos($ct, 'application/json') !== false) {
-            $raw_body = (string) @file_get_contents('php://input');
-            if ($raw_body !== '' && strlen($raw_body) <= 262144) {
+        $body_reader_class = '\\WebCareProScanner\\Firewall\\Core\\RequestBodyReader';
+        if (class_exists($body_reader_class)) {
+            $raw_body = $body_reader_class::get_bounded_body();
+            $ctx->rawBodyMetadata = [
+                'bytes_read'   => $body_reader_class::get_bytes_read(),
+                'truncated'    => $body_reader_class::is_truncated(),
+                'sha256'       => $body_reader_class::get_sha256(),
+                'content_type' => $ct,
+            ];
+
+            // Invariant: Truncated JSON is NEVER parsed as complete payload
+            if (!$body_reader_class::is_truncated() && stripos($ct, 'application/json') !== false && $raw_body !== '') {
                 $decoded = json_decode($raw_body, true);
                 if (is_array($decoded)) {
                     foreach ($decoded as $dk => $dv) {
                         $dkey = sanitize_key((string) $dk);
-                        if ($dkey !== '' && !isset($ctx->params[$dkey])) {
-                            $ctx->params[$dkey] = $dv;
+                        if ($dkey !== '') {
+                            $ctx->jsonParams[$dkey] = $dv;
                         }
                     }
                 }
             }
         }
+
+        // Retain $params strictly as queryParams + formParams + jsonParams (EXCLUDING cookies)
+        $ctx->params = array_merge($ctx->queryParams, $ctx->formParams, $ctx->jsonParams);
 
         // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Pre-dispatch file extension extraction from $_FILES
         if (!empty($_FILES) && is_array($_FILES)) {
