@@ -1,4 +1,9 @@
 ﻿v:3.21.0 - 2026-11-21
+- Phase 3 (v3.4.0) — PR-K: Ed25519-Signed Declarative Virtual Patches & Staged Rollout (DeclarativePatchVerifier.php):
+  * Ed25519 Asymmetric Signature Verification: Implemented `DeclarativePatchVerifier.php` using native `sodium_crypto_sign_verify_detached()` to cryptographically verify virtual patch manifests before execution or installation, defending against MITM and supply-chain tampering.
+  * Pinned Vendor Public Keys & Revocation Tracking: Bundled trusted public keys with strict key-ID tracking and an embedded revocation list (`REVOKED_KEY_IDS`) to instantly invalidate compromised keys.
+  * Strict Schema & Monotonic Sequence Validation: Enforced comprehensive manifest schema validation including patch ID, monotonic feed sequence numbers (anti-rollback), component scope, rule match logic, and expiration timestamps.
+  * Staged Rollout Pipeline: Supported four distinct deployment modes (`shadow`, `staged`, `active`, `revoked`). High-confidence verified vendor patches promote directly to active status, while lower-confidence or community rules run safely in shadow telemetry mode.
 - Phase 3 (v3.4.0) — PR-J: Central Intelligence Control Plane (CentralThreatControlPlane.php, ThreatIntelService.php):
   * Central Threat Control Plane Engine (CentralThreatControlPlane.php): Implemented incremental delta synchronization against WebCare Pro Central Intelligence service (`sync_incremental_feed()`), pulling compact delta updates instead of downloading the entire raw upstream NVD database.
   * Durable Synchronization Checkpoints: Maintained monotonic sequence tracking and `last_mod_timestamp` checkpoints (`webcareproscan_cve_delta_checkpoint`) with anti-rollback protection to safely reject replayed or rolled-back feeds.
