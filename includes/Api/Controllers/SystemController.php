@@ -362,6 +362,13 @@ final class SystemController extends AbstractApiController {
      */
     public static function export_diagnostic_bundle(): \WP_REST_Response {
         $bundle = \WebCareProScanner\System\SystemDoctor::build_redacted_diagnostic_bundle();
+        if (is_wp_error($bundle)) {
+            return new \WP_REST_Response([
+                'success' => false,
+                'message' => $bundle->get_error_message(),
+                'code'    => $bundle->get_error_code(),
+            ], 500);
+        }
         return new \WP_REST_Response(['success' => true, 'bundle' => $bundle], 200);
     }
 
@@ -378,6 +385,13 @@ final class SystemController extends AbstractApiController {
             $result = \WebCareProScanner\Firewall\RescueAssistantManager::resume_strict_firewall();
         } else {
             $result = \WebCareProScanner\Firewall\RescueAssistantManager::pause_strict_firewall_15m();
+            if (is_wp_error($result)) {
+                return new \WP_REST_Response([
+                    'success' => false,
+                    'message' => $result->get_error_message(),
+                    'code'    => $result->get_error_code(),
+                ], 403);
+            }
         }
 
         return new \WP_REST_Response($result, 200);

@@ -38,6 +38,13 @@ final class RequestPipeline {
      */
     public static function process_incoming_request(): void {
         try {
+            // 0. Safe Mode check: if active, switch heuristic evaluators to observe-only
+            $is_safe_mode = false;
+            if (class_exists(RescueAssistantManager::class)) {
+                $pause_status = RescueAssistantManager::get_pause_status();
+                $is_safe_mode = !empty($pause_status['paused']);
+            }
+
             // 1. Evaluate Always-On Core & Conditional Pipeline via RequestContext
             if (class_exists(RequestContext::class) && class_exists(SettingsManager::class)) {
                 $ctx = RequestContext::from_globals();
@@ -46,29 +53,50 @@ final class RequestPipeline {
                 $verdict = self::evaluate_pipeline($ctx, $settings);
                 if ($verdict !== null && $verdict->get_action_value() !== 'allow') {
                     $action_val = $verdict->get_action_value();
-                    // Terminal or challenging action triggered
-                    $rule = [
-                        'id'              => $verdict->ruleId,
-                        'name'            => $verdict->category,
-                        'category'        => $verdict->category,
-                        'description'     => $verdict->reason,
-                        'match_type'      => $action_val,
-                        'match_value'     => $verdict->ruleId,
-                        'payload'         => "Client IP: {$ctx->ip} URI: {$ctx->uri}",
-                        'sync_cloudflare' => $verdict->syncCloudflare,
-                        'ban_ttl'         => $action_val === 'block_and_ban' ? max(60, $verdict->banTtl) : $verdict->banTtl,
-                    ];
 
-                    if ($action_val === 'challenge_pow' && class_exists('\\WebCareProScanner\\Firewall\\BotReconDefense')) {
-                        if (!\WebCareProScanner\Firewall\BotReconDefense::has_valid_clearance_cookie($ctx->ip, $ctx->userAgent)) {
-                            FirewallEngine::log_incident($rule, 'challenged');
-                            \WebCareProScanner\Firewall\BotReconDefense::render_pow_challenge($ctx->ip, $verdict->reason);
-                        }
-                    } elseif (in_array($action_val, ['block', 'block_and_ban', 'rate_limit'], true) || $verdict->is_terminal()) {
-                        ViolationResponder::handle_rule_violation($rule, $settings, $ctx->ip, $verdict->statusCode);
-                        return;
+                    // If Safe Mode is active, downgrade heuristic/conditional blocks to observe-only ('detected')
+                    // while retaining zero-tolerance exploit blocks (RCE/SQLi)
+                    $is_critical_exploit = in_array($verdict->ruleId, ['WAF-RCE', 'WAF-SQLI', 'WAF-FILE-INCLUSION', 'WAF-ARBITRARY-FILE-WRITE'], true)
+                        || str_contains($verdict->category, 'SQL Injection')
+                        || str_contains($verdict->category, 'Command Injection');
+
+                    if ($is_safe_mode && !$is_critical_exploit) {
+                        FirewallEngine::log_incident([
+                            'id'              => $verdict->ruleId,
+                            'name'            => $verdict->category . ' [Safe Mode Observed]',
+                            'category'        => $verdict->category,
+                            'description'     => $verdict->reason,
+                            'match_type'      => 'Safe Mode Observe',
+                            'match_value'     => $verdict->ruleId,
+                            'payload'         => "Client IP: {$ctx->ip} URI: {$ctx->uri}",
+                            'sync_cloudflare' => false,
+                            'ban_ttl'         => 0,
+                        ], 'detected');
                     } else {
-                        FirewallEngine::log_incident($rule, 'detected');
+                        // Terminal or challenging action triggered
+                        $rule = [
+                            'id'              => $verdict->ruleId,
+                            'name'            => $verdict->category,
+                            'category'        => $verdict->category,
+                            'description'     => $verdict->reason,
+                            'match_type'      => $action_val,
+                            'match_value'     => $verdict->ruleId,
+                            'payload'         => "Client IP: {$ctx->ip} URI: {$ctx->uri}",
+                            'sync_cloudflare' => $verdict->syncCloudflare,
+                            'ban_ttl'         => $action_val === 'block_and_ban' ? max(60, $verdict->banTtl) : $verdict->banTtl,
+                        ];
+
+                        if ($action_val === 'challenge_pow' && class_exists('\\WebCareProScanner\\Firewall\\BotReconDefense')) {
+                            if (!\WebCareProScanner\Firewall\BotReconDefense::has_valid_clearance_cookie($ctx->ip, $ctx->userAgent)) {
+                                FirewallEngine::log_incident($rule, 'challenged');
+                                \WebCareProScanner\Firewall\BotReconDefense::render_pow_challenge($ctx->ip, $verdict->reason);
+                            }
+                        } elseif (in_array($action_val, ['block', 'block_and_ban', 'rate_limit'], true) || $verdict->is_terminal()) {
+                            ViolationResponder::handle_rule_violation($rule, $settings, $ctx->ip, $verdict->statusCode);
+                            return;
+                        } else {
+                            FirewallEngine::log_incident($rule, 'detected');
+                        }
                     }
                 }
             }

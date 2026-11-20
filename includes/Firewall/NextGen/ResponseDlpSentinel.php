@@ -19,6 +19,13 @@ class ResponseDlpSentinel implements SecurityModuleInterface {
 
     const OPTION_EVENTS = 'webcareproscan_dlp_events';
 
+    /**
+     * Optional testing flag to simulate DLP exception.
+     *
+     * @var bool
+     */
+    public static bool $throw_mock_exception = false;
+
     public function get_id(): string {
         return 'response-dlp-sentinel';
     }
@@ -230,6 +237,10 @@ class ResponseDlpSentinel implements SecurityModuleInterface {
         int &$nodes = 0,
         array &$visited = []
     ) {
+        if (self::$throw_mock_exception) {
+            throw new \RuntimeException('Mock DLP exception for fail-closed testing.');
+        }
+
         $nodes++;
         if ($depth > self::MAX_RECURSION_DEPTH || $nodes > self::MAX_RECURSION_NODES) {
             throw new \RuntimeException('DLP recursion limit exceeded (depth > 20 or nodes > 5000); failing closed.');

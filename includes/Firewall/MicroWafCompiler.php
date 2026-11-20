@@ -737,19 +737,23 @@ class MicroWafCompiler {
             : ['direct_scripts_blocked' => [], 'ajax_actions_enforced' => [], 'rest_routes_enforced' => [], 'custom_rules_enforced' => [], 'visual_rules_enforced' => []];
         $modular_json_escaped = addcslashes((string) wp_json_encode($mod_compiled), "\\'");
 
+        $safe_mode_marker_literal = class_exists('\\WebCareProScanner\\Firewall\\Core\\WafVaultManager')
+            ? var_export(\WebCareProScanner\Firewall\Core\WafVaultManager::get_safe_mode_marker_path(), true)
+            : "dirname(__DIR__) . '/webcare-waf/.rescue_pause_until'";
+
+        $preload_allow_literal = class_exists('\\WebCareProScanner\\Firewall\\Core\\WafVaultManager')
+            ? var_export(\WebCareProScanner\Firewall\Core\WafVaultManager::get_preload_allow_path(), true)
+            : "dirname(__DIR__) . '/webcare-waf/.rescue_allow.json'";
+
         $out .= "        \$mod_rescue_paused = false;\n";
-        $out .= "        foreach ([__DIR__ . '/.rescue_pause_until', dirname(__DIR__) . '/.rescue_pause_until'] as \$rp_file) {\n";
-        $out .= "            if (file_exists(\$rp_file) && (int) trim((string) @file_get_contents(\$rp_file)) > time()) {\n";
-        $out .= "                \$mod_rescue_paused = true;\n";
-        $out .= "                break;\n";
-        $out .= "            }\n";
+        $out .= "        \$rp_file = {$safe_mode_marker_literal};\n";
+        $out .= "        if (file_exists(\$rp_file) && (int) trim((string) @file_get_contents(\$rp_file)) > time()) {\n";
+        $out .= "            \$mod_rescue_paused = true;\n";
         $out .= "        }\n";
         $out .= "        \$mod_trusted = [];\n";
-        $out .= "        foreach ([__DIR__ . '/.rescue_allow.json', dirname(__DIR__) . '/.rescue_allow.json'] as \$ra_file) {\n";
-        $out .= "            if (file_exists(\$ra_file)) {\n";
-        $out .= "                \$mod_trusted = json_decode((string) @file_get_contents(\$ra_file), true) ?: [];\n";
-        $out .= "                break;\n";
-        $out .= "            }\n";
+        $out .= "        \$ra_file = {$preload_allow_literal};\n";
+        $out .= "        if (file_exists(\$ra_file)) {\n";
+        $out .= "            \$mod_trusted = json_decode((string) @file_get_contents(\$ra_file), true) ?: [];\n";
         $out .= "        }\n";
         $out .= "        \$mod_rules = json_decode('{$modular_json_escaped}', true) ?: [];\n";
         $out .= "        \$vis_exempt_ids = [];\n";

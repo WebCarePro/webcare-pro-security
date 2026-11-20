@@ -20,6 +20,36 @@ final class WafVaultManager {
     private const VAULT_DIR_NAME = 'webcare-waf/vault';
 
     /**
+     * Get the canonical path to the emergency safe mode marker.
+     *
+     * @return string
+     */
+    public static function get_safe_mode_marker_path(): string {
+        $base = defined('WP_CONTENT_DIR') ? WP_CONTENT_DIR : ABSPATH . 'wp-content';
+        return wp_normalize_path(rtrim($base, '/\\') . '/webcare-waf/.rescue_pause_until');
+    }
+
+    /**
+     * Get the canonical path to the preload rescue allowlist file.
+     *
+     * @return string
+     */
+    public static function get_preload_allow_path(): string {
+        $base = defined('WP_CONTENT_DIR') ? WP_CONTENT_DIR : ABSPATH . 'wp-content';
+        return wp_normalize_path(rtrim($base, '/\\') . '/webcare-waf/.rescue_allow.json');
+    }
+
+    /**
+     * Get the WAF vault directory path without mutating permissions or creating directories.
+     *
+     * @return string
+     */
+    public static function get_vault_dir_readonly(): string {
+        $base = defined('WP_CONTENT_DIR') ? WP_CONTENT_DIR : ABSPATH . 'wp-content';
+        return wp_normalize_path(rtrim($base, '/\\') . '/' . self::VAULT_DIR_NAME);
+    }
+
+    /**
      * Get and ensure the hardened WAF vault directory path.
      *
      * @return string

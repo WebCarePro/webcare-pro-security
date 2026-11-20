@@ -69,33 +69,53 @@ class RescueAssistantManager {
 
     /**
      * Path to marker files read cleanly by the 0ms Preload Micro-WAF before WordPress loads.
+     * Enforces canonical storage in WP_CONTENT_DIR . '/webcare-waf/' via WafVaultManager.
      */
-    private static function get_uploads_base(): string {
-        $uploads = wp_upload_dir();
-        $dir     = wp_normalize_path(untrailingslashit($uploads['basedir']) . '/webcare-pro-security');
-        if (!is_dir($dir)) {
-            wp_mkdir_p($dir);
+    public static function get_marker_path(): string {
+        if (class_exists('\\WebCareProScanner\\Firewall\\Core\\WafVaultManager')) {
+            return \WebCareProScanner\Firewall\Core\WafVaultManager::get_safe_mode_marker_path();
         }
-        return $dir;
+        $base = defined('WP_CONTENT_DIR') ? WP_CONTENT_DIR : ABSPATH . 'wp-content';
+        return wp_normalize_path(rtrim($base, '/\\') . '/webcare-waf/.rescue_pause_until');
     }
 
     /**
      * Write lightweight runtime marker file using native WP_Filesystem when direct, with fallback for cron/early hooks.
+     *
+     * @param string $path
+     * @param string $content
+     * @return bool True on success, false on failure
      */
-    private static function write_marker_file(string $path, string $content): void {
+    private static function write_marker_file(string $path, string $content): bool {
+        $dir = dirname($path);
+        if (!is_dir($dir)) {
+            wp_mkdir_p($dir);
+            @chmod($dir, 0750);
+        }
+
         if (!function_exists('WP_Filesystem')) {
             require_once ABSPATH . 'wp-admin/includes/file.php';
         }
         global $wp_filesystem;
         if (empty($wp_filesystem)) {
-            WP_Filesystem();
+            \WP_Filesystem();
         }
-        if ($wp_filesystem && ($wp_filesystem->method ?? '') === 'direct') {
-            $wp_filesystem->put_contents($path, $content, defined('FS_CHMOD_FILE') ? FS_CHMOD_FILE : 0644);
-            return;
+
+        if ($wp_filesystem && $wp_filesystem->method === 'direct') {
+            $written = $wp_filesystem->put_contents($path, $content, FS_CHMOD_FILE);
+            if ($written) {
+                @chmod($path, 0600);
+                return true;
+            }
         }
-        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents -- Atomic marker file for zero-DB Preload Micro-WAF runtime coordination.
-        @file_put_contents($path, $content, LOCK_EX);
+
+        $res = @file_put_contents($path, $content);
+        if ($res !== false) {
+            @chmod($path, 0600);
+            return true;
+        }
+
+        return false;
     }
 
     /**
@@ -135,15 +155,32 @@ class RescueAssistantManager {
     /**
      * Pause strict WAF enforcement for 15 minutes (Monitor-Only Test Mode with automatic cron re-arm).
      */
-    public static function pause_strict_firewall_15m(): array {
-        $until = time() + (15 * MINUTE_IN_SECONDS);
-        update_option(self::OPTION_PAUSED_UNTIL, $until, false);
+    public static function pause_strict_firewall_15m(): array|\WP_Error {
+        if (!current_user_can('manage_options')) {
+            return new \WP_Error('waf_safe_mode_unauthorized', __('Only administrators can activate Safe Mode.', 'webcare-pro-security'));
+        }
 
-        $marker = self::get_uploads_base() . '/.rescue_pause_until';
-        self::write_marker_file($marker, (string) $until);
+        $until = time() + (15 * MINUTE_IN_SECONDS);
+        $marker = self::get_marker_path();
+        $written = self::write_marker_file($marker, (string) $until);
+
+        if (!$written) {
+            return new \WP_Error('waf_safe_mode_write_failed', __('Failed to write Safe Mode marker file to storage.', 'webcare-pro-security'));
+        }
+
+        update_option(self::OPTION_PAUSED_UNTIL, $until, false);
 
         wp_clear_scheduled_hook(self::CRON_REARM_HOOK);
         wp_schedule_single_event($until, self::CRON_REARM_HOOK);
+
+        if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+            \WebCareProScanner\System\AuditLogger::log('safe_mode_enabled', [
+                'user_id'      => get_current_user_id(),
+                'ip'           => class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine') ? \WebCareProScanner\Firewall\FirewallEngine::get_client_ip() : ($_SERVER['REMOTE_ADDR'] ?? ''),
+                'paused_until' => gmdate('c', $until),
+                'ttl_seconds'  => 15 * MINUTE_IN_SECONDS,
+            ]);
+        }
 
         if (class_exists('\\WebCareProScanner\\System\\WebCareActivityLogger')) {
             \WebCareProScanner\System\WebCareActivityLogger::notice('waf_rescue_pause_15m', 'firewall', [
@@ -168,9 +205,16 @@ class RescueAssistantManager {
         delete_option(self::OPTION_PAUSED_UNTIL);
         wp_clear_scheduled_hook(self::CRON_REARM_HOOK);
 
-        $marker = self::get_uploads_base() . '/.rescue_pause_until';
+        $marker = self::get_marker_path();
         if (file_exists($marker)) {
             wp_delete_file($marker);
+        }
+
+        if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+            \WebCareProScanner\System\AuditLogger::log('safe_mode_disabled', [
+                'user_id' => get_current_user_id(),
+                'ip'      => class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine') ? \WebCareProScanner\Firewall\FirewallEngine::get_client_ip() : ($_SERVER['REMOTE_ADDR'] ?? ''),
+            ]);
         }
 
         if (class_exists('\\WebCareProScanner\\System\\WebCareActivityLogger')) {
@@ -306,7 +350,10 @@ class RescueAssistantManager {
                 $preload_allow['uris'][] = strtolower((string) $t['value']);
             }
         }
-        self::write_marker_file(self::get_uploads_base() . '/.rescue_allow.json', (string) wp_json_encode($preload_allow));
+        $preload_file = class_exists('\\WebCareProScanner\\Firewall\\Core\\WafVaultManager')
+            ? \WebCareProScanner\Firewall\Core\WafVaultManager::get_preload_allow_path()
+            : (defined('WP_CONTENT_DIR') ? WP_CONTENT_DIR : ABSPATH . 'wp-content') . '/webcare-waf/.rescue_allow.json';
+        self::write_marker_file($preload_file, (string) wp_json_encode($preload_allow));
 
         // If a Modular WAF rule was triggered, switch it to monitor mode cleanly
         if (str_starts_with($rule_id, 'MOD-') && class_exists('\\WebCareProScanner\\Firewall\\Modular\\ModularFirewallSynthesizer')) {

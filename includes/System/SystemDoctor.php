@@ -99,9 +99,9 @@ final class SystemDoctor {
             'required'    => __('Enabled in php.ini', 'webcare-pro-security'),
         ];
 
-        // 4. WAF Vault Permissions (webcare-waf/ 0750 dir, 0600 files)
+        // 4. WAF Vault Permissions (webcare-waf/ 0750 dir, 0600 files) - READ-ONLY inspection
         $vault_dir = class_exists(WafVaultManager::class)
-            ? WafVaultManager::get_vault_dir()
+            ? WafVaultManager::get_vault_dir_readonly()
             : (defined('WP_CONTENT_DIR') ? WP_CONTENT_DIR : ABSPATH . 'wp-content') . '/webcare-waf';
 
         $vault_dir_exists = is_dir($vault_dir);
@@ -193,7 +193,7 @@ final class SystemDoctor {
         $cron_disabled = defined('DISABLE_WP_CRON') && DISABLE_WP_CRON;
         $alternate_cron = defined('ALTERNATE_WP_CRON') && ALTERNATE_WP_CRON;
         $cron_due_count = 0;
-        $crons = _get_cron_array();
+        $crons = function_exists('_get_cron_array') ? _get_cron_array() : [];
         $now = time();
         if (is_array($crons)) {
             foreach ($crons as $timestamp => $hooks) {
@@ -280,10 +280,11 @@ final class SystemDoctor {
 
     /**
      * Build and return a full, DLP-redacted diagnostic bundle JSON.
+     * Fail-closed: returns \WP_Error if DLP is unavailable or fails.
      *
-     * @return array<string, mixed>
+     * @return array<string, mixed>|\WP_Error
      */
-    public static function build_redacted_diagnostic_bundle(): array {
+    public static function build_redacted_diagnostic_bundle(): array|\WP_Error {
         global $wpdb, $wp_version;
 
         $raw_bundle = [
@@ -317,9 +318,17 @@ final class SystemDoctor {
         $has_leak = false;
         $matched_pattern = '';
         if (class_exists(ResponseDlpSentinel::class)) {
-            return ResponseDlpSentinel::redact_data_recursive($raw_bundle, $has_leak, $matched_pattern);
+            try {
+                $redacted = ResponseDlpSentinel::redact_data_recursive($raw_bundle, $has_leak, $matched_pattern);
+                if (is_array($redacted)) {
+                    return $redacted;
+                }
+            } catch (\Throwable $e) {
+                return new \WP_Error('dlp_redaction_failed', __('Diagnostic export failed: DLP redaction error.', 'webcare-pro-security'));
+            }
         }
 
-        return $raw_bundle;
+        // Fail-closed invariant: Never return raw un-redacted diagnostic bundle when DLP is unavailable or fails
+        return new \WP_Error('dlp_unavailable', __('Diagnostic export unavailable: DLP protection component is not loaded.', 'webcare-pro-security'));
     }
 }
