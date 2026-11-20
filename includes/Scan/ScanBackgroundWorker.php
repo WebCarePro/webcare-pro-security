@@ -76,8 +76,8 @@ final class ScanBackgroundWorker {
         $token = "{$scan_id}:{$now}:{$random_nonce}:{$signature}";
 
         $ajax_url = admin_url('admin-ajax.php');
-        wp_remote_post($ajax_url, [
-            'timeout'   => 0.01,
+        wp_safe_remote_post($ajax_url, [
+            'timeout'   => 1,
             'blocking'  => false,
             // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- Standard WordPress core filter for local loopback requests
             'sslverify' => apply_filters('https_local_ssl_verify', false),

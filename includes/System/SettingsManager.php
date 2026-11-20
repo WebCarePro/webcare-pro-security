@@ -118,6 +118,9 @@ class SettingsManager {
             'waf_blocked_ips'          => '',
             'waf_block_fake_bots'      => true,
             'waf_block_ai_scrapers'    => false,
+            'waf_ai_allow_search_citations'     => true,  // Allow verified search/citation assistants (OAI-SearchBot, PerplexityBot, Claude-SearchBot)
+            'waf_ai_throttle_training_scrapers' => true,  // Rate-limit bulk training harvesters (GPTBot, CCBot, Bytespider, ClaudeBot)
+            'waf_ai_challenge_stealth_agents'   => true,  // Challenge stealth headless AI agents with invisible WebCrypto PoW
             'waf_dynamic_robots_ai'    => false,
             'waf_block_404_scanners'   => true, // Smart 404 scanner rate limiter
             'waf_404_threshold'        => 10,   // Max 404s before temporary ban (e.g. 10)
@@ -805,6 +808,9 @@ class SettingsManager {
         $clean['waf_blocked_ips']         = sanitize_textarea_field($merged['waf_blocked_ips'] ?? '');
         $clean['waf_block_fake_bots']     = !empty($merged['waf_block_fake_bots']);
         $clean['waf_block_ai_scrapers']   = !empty($merged['waf_block_ai_scrapers']);
+        $clean['waf_ai_allow_search_citations']     = isset($merged['waf_ai_allow_search_citations']) ? !empty($merged['waf_ai_allow_search_citations']) : true;
+        $clean['waf_ai_throttle_training_scrapers'] = isset($merged['waf_ai_throttle_training_scrapers']) ? !empty($merged['waf_ai_throttle_training_scrapers']) : true;
+        $clean['waf_ai_challenge_stealth_agents']   = isset($merged['waf_ai_challenge_stealth_agents']) ? !empty($merged['waf_ai_challenge_stealth_agents']) : true;
         $clean['waf_dynamic_robots_ai']   = !empty($merged['waf_dynamic_robots_ai']);
         $clean['waf_block_404_scanners']   = !empty($merged['waf_block_404_scanners']);
         $clean['waf_404_threshold']        = max(3, min(100, (int) ($merged['waf_404_threshold'] ?? 10)));
@@ -1394,6 +1400,9 @@ class SettingsManager {
             'waf_block_php_injection'          => 'Remote Code Execution & PHP Injection Defense',
             'waf_block_fake_bots'              => 'Fake Search Engine Bots Defense',
             'waf_block_ai_scrapers'            => 'AI Scrapers & LLM Crawler Blocker',
+            'waf_ai_allow_search_citations'     => 'Allow AI Search Engine Citations (Perplexity, OAI-Search, Claude)',
+            'waf_ai_throttle_training_scrapers' => 'Rate-Limit Bulk AI Training Harvesters (GPTBot, CCBot, Bytespider)',
+            'waf_ai_challenge_stealth_agents'   => 'Challenge Stealth Headless AI Agents (WebCrypto PoW)',
             'waf_block_404_scanners'           => 'Aggressive 404 Scanner Protection',
             'waf_block_empty_post_ua_referer'  => 'Empty User-Agent / Referer POST Protection',
             'waf_block_empty_user_agent'       => 'Empty / Missing User-Agent Shield',

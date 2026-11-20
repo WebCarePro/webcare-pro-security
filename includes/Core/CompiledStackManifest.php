@@ -126,14 +126,17 @@ final class CompiledStackManifest {
             RouteClass::PublicGet->value => [
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
                 'WebCareProScanner\\Firewall\\BotReconDefense',
+                'WebCareProScanner\\Firewall\\Evaluators\\AiAgentBehaviorEvaluator',
             ],
             RouteClass::PublicMutation->value => [
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
                 'WebCareProScanner\\Firewall\\BotReconDefense',
+                'WebCareProScanner\\Firewall\\Evaluators\\AiAgentBehaviorEvaluator',
                 'WebCareProScanner\\Firewall\\NextGen\\RuntimeSqlRaspEngine',
             ],
             RouteClass::Commerce->value => [
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
+                'WebCareProScanner\\Firewall\\Evaluators\\AiAgentBehaviorEvaluator',
                 'WebCareProScanner\\Firewall\\Core\\CommerceSessionGuard',
                 'WebCareProScanner\\Firewall\\Core\\CommerceVelocityGuard',
             ],

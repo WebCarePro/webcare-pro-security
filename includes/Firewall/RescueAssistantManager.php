@@ -253,21 +253,29 @@ class RescueAssistantManager {
      * Persist a permanent trusted-action exemption + unblock client IP if provided.
      */
     public static function trust_and_allow_action(array $params): array {
-        $type    = sanitize_key($params['type'] ?? 'uri');
-        $value   = sanitize_text_field(trim((string) ($params['value'] ?? '')));
-        $rule_id = sanitize_text_field(trim((string) ($params['rule_id'] ?? '')));
-        $label   = sanitize_text_field(trim((string) ($params['label'] ?? '')));
-        $ip      = sanitize_text_field(trim((string) ($params['ip'] ?? '')));
+        $type      = sanitize_key($params['type'] ?? 'uri');
+        $value     = sanitize_text_field(trim((string) ($params['value'] ?? '')));
+        $rule_id   = sanitize_text_field(trim((string) ($params['rule_id'] ?? '')));
+        $label     = sanitize_text_field(trim((string) ($params['label'] ?? '')));
+        $ip        = sanitize_text_field(trim((string) ($params['ip'] ?? '')));
+        $param_key = sanitize_text_field(trim((string) ($params['param_key'] ?? '')));
+        $user_role = sanitize_key(trim((string) ($params['user_role'] ?? '')));
 
         if ($value === '' && $rule_id === '') {
             return ['success' => false, 'message' => __('Action target or rule identifier is required.', 'webcare-pro-security')];
         }
 
         $trusted = self::get_trusted_actions();
-        $key     = strtolower($type . ':' . ($value ?: $rule_id));
+        $key     = strtolower($type . ':' . ($value ?: $rule_id) . ($param_key !== '' ? ':' . $param_key : '') . ($user_role !== '' ? ':' . $user_role : ''));
         $exists  = false;
         foreach ($trusted as $item) {
-            if (strtolower(($item['type'] ?? '') . ':' . (($item['value'] ?? '') ?: ($item['rule_id'] ?? ''))) === $key) {
+            $item_key = strtolower(
+                ($item['type'] ?? '') . ':' .
+                (($item['value'] ?? '') ?: ($item['rule_id'] ?? '')) .
+                (!empty($item['param_key']) ? ':' . $item['param_key'] : '') .
+                (!empty($item['user_role']) ? ':' . $item['user_role'] : '')
+            );
+            if ($item_key === $key) {
                 $exists = true;
                 break;
             }
@@ -279,6 +287,8 @@ class RescueAssistantManager {
                 'type'       => $type,
                 'value'      => $value,
                 'rule_id'    => $rule_id,
+                'param_key'  => $param_key,
+                'user_role'  => $user_role,
                 'label'      => $label ?: ($value ?: $rule_id),
                 'created_at' => gmdate('c'),
             ];

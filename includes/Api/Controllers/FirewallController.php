@@ -475,27 +475,45 @@ final class FirewallController extends AbstractApiController {
     }
 
     /**
-     * 1-Click "Learn From This Log" — Create narrow, route-scoped allowlist rule from a log incident.
+     * 1-Click "Learn From This Log" / "Trust This Customer Action"
+     * Create narrow (route_path + param_key + user_role) scoped allowlist rule from a log incident.
      */
     public static function trust_log_action(\WP_REST_Request $request): \WP_REST_Response {
-        $params = $request->get_json_params() ?: [];
-        $rule_id = sanitize_text_field(trim((string) ($params['rule_id'] ?? '')));
-        $uri     = sanitize_text_field(trim((string) ($params['uri'] ?? '')));
-        $ip      = sanitize_text_field(trim((string) ($params['ip'] ?? '')));
-        $label   = sanitize_text_field(trim((string) ($params['label'] ?? '')));
+        $params     = $request->get_json_params() ?: [];
+        $rule_id    = sanitize_text_field(trim((string) ($params['rule_id'] ?? '')));
+        $uri        = sanitize_text_field(trim((string) ($params['uri'] ?? '')));
+        $ip         = sanitize_text_field(trim((string) ($params['ip'] ?? '')));
+        $label      = sanitize_text_field(trim((string) ($params['label'] ?? '')));
+        $param_key  = sanitize_text_field(trim((string) ($params['param_key'] ?? '')));
+        $user_role  = sanitize_key(trim((string) ($params['user_role'] ?? '')));
 
         if ($uri === '' && $rule_id === '') {
             return new \WP_REST_Response(['success' => false, 'message' => __('Log URI or rule ID is required.', 'webcare-pro-security')], 400);
         }
 
+        // PR 1.4: Zero-tolerance exploit invariant (SQLi, RCE, LFI, Object Injection are never exemptible)
+        $unexemptible_rules = [
+            'WAF-SQLI-INJECTION', 'WAF-SQLI-DEEP-TOKEN-CHAIN', 'WAF-SQLI-HEX-BINARY-ENCODED',
+            'WAF-RCE-INJECTION', 'WAF-PHP-CODE-INJECTION', 'WAF-LFI-TRAVERSAL', 'WAF-PHP-OBJECT-INJECTION',
+            'WAF-POLYGLOT-UPLOAD-TRAP'
+        ];
+        if (in_array($rule_id, $unexemptible_rules, true)) {
+            return new \WP_REST_Response([
+                'success' => false,
+                'message' => __('Security Invariant: Confirmed SQLi/RCE/LFI zero-tolerance exploit rules cannot be exempted.', 'webcare-pro-security')
+            ], 403);
+        }
+
         if (class_exists('\\WebCareProScanner\\Firewall\\RescueAssistantManager')) {
             $clean_path = (string) wp_parse_url($uri, PHP_URL_PATH);
             $trust_res = \WebCareProScanner\Firewall\RescueAssistantManager::trust_and_allow_action([
-                'type'    => $clean_path !== '' ? 'uri' : 'rule',
-                'value'   => $clean_path !== '' ? $clean_path : $rule_id,
-                'rule_id' => $rule_id,
-                'label'   => $label ?: sprintf(__('1-Click Trust from WAF Log (%s)', 'webcare-pro-security'), $rule_id),
-                'ip'      => $ip,
+                'type'       => $clean_path !== '' ? 'uri' : 'rule',
+                'value'      => $clean_path !== '' ? $clean_path : $rule_id,
+                'rule_id'    => $rule_id,
+                'label'      => $label ?: sprintf(__('1-Click Trust from WAF Log (%s)', 'webcare-pro-security'), $rule_id),
+                'ip'         => $ip,
+                'param_key'  => $param_key,
+                'user_role'  => $user_role,
             ]);
             return rest_ensure_response($trust_res);
         }

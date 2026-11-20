@@ -1021,6 +1021,44 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
   // State & Action: 1-Click Allow Action / Route in Rule #36 / Rule #37
   const [allowingTarget, setAllowingTarget] = useState<string | null>(null);
 
+  // 1-Click "Trust This Customer Action" scoped to (route_path + param_key + user_role)
+  const handleTrustCustomerAction = async (log: WafIncident) => {
+    const rawUri = (log.request_uri || '').split('?')[0] || '/';
+    const paramKey = log.matched_param || '';
+    const userRole = log.user_role || (log.username ? 'customer' : '');
+    const ruleId = log.rule_id || '';
+    const key = `${rawUri}:${paramKey || ruleId}`;
+
+    try {
+      setAllowingTarget(key);
+      const res = await apiRequest({
+        path: '/firewall/logs/trust-action',
+        method: 'POST',
+        data: {
+          uri: rawUri,
+          rule_id: ruleId,
+          param_key: paramKey,
+          user_role: userRole,
+          ip: log.ip_address,
+          label: `1-Click Trusted Action for ${log.username || 'Customer'} on ${rawUri}${paramKey ? ` (param: ${paramKey})` : ''}`,
+        }
+      });
+      if (res && res.success) {
+        setActionMessage({
+          type: 'success',
+          text: res.message || `Customer action trusted! Scoped exemption created for ${rawUri}${paramKey ? ` (param: ${paramKey})` : ''}. All SQLi/RCE rules remain 100% active.`
+        });
+      } else {
+        setActionMessage({ type: 'error', text: res?.message || 'Failed to apply scoped exemption.' });
+      }
+    } catch (err: any) {
+      setActionMessage({ type: 'error', text: err?.message || 'Failed to trust customer action.' });
+    } finally {
+      setAllowingTarget(null);
+      setTimeout(() => setActionMessage(null), 5000);
+    }
+  };
+
   const handleAllowlistRuleTarget = async (rule: 36 | 37, target: string, method?: string) => {
     const key = method ? `${method} ${target}` : target;
     try {
@@ -3429,7 +3467,38 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
                                       </div>
                                     );
                                   })()}
-                                  {(log.ban_reason || log.matching_entry) && (
+                                  {(log.action_taken === 'warned' || log.action_taken === 'detected' || log.rule_category === 'Execution Armor' || log.rule_category === 'Content Armor' || (log.rule_id && log.rule_id.startsWith('MOD-'))) && (
+                                     <div style={{ marginTop: '8px' }}>
+                                       <button
+                                         type="button"
+                                         className="webcare-btn-micro"
+                                         onClick={() => handleTrustCustomerAction(log)}
+                                         disabled={allowingTarget === `${(log.request_uri || '').split('?')[0] || '/'}:${log.matched_param || log.rule_id || ''}`}
+                                         style={{
+                                           display: 'inline-flex',
+                                           alignItems: 'center',
+                                           gap: '5px',
+                                           fontSize: '11px',
+                                           fontWeight: 700,
+                                           padding: '4px 10px',
+                                           borderRadius: '5px',
+                                           background: 'rgba(79, 70, 229, 0.1)',
+                                           color: '#4f46e5',
+                                           border: '1px solid rgba(79, 70, 229, 0.3)',
+                                           cursor: 'pointer'
+                                         }}
+                                         title="Create narrow (route + param + role) exemption so legitimate user action is trusted while full exploit protection remains active"
+                                       >
+                                         {allowingTarget === `${(log.request_uri || '').split('?')[0] || '/'}:${log.matched_param || log.rule_id || ''}` ? (
+                                           <Loader2 size={10} className="webcare-spin" />
+                                         ) : (
+                                           <span>🛡️</span>
+                                         )}
+                                         Trust This Customer Action (Scope to Param &amp; Route)
+                                       </button>
+                                     </div>
+                                   )}
+                                   {(log.ban_reason || log.matching_entry) && (
                                     <div style={{ marginTop: '6px', display: 'flex', flexDirection: 'column', gap: '3px' }}>
                                       {log.ban_reason && (
                                         <div style={{ fontSize: '11px', color: '#b45309', background: '#fef3c7', padding: '3px 8px', borderRadius: '4px', display: 'inline-flex', alignItems: 'center', gap: '5px' }}>

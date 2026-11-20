@@ -173,17 +173,39 @@ class BotReconDefense {
             ];
         }
 
-        // 2. Check AI Scrapers Shield
-        if (!empty($settings['waf_block_ai_scrapers'])) {
-            $ai_bot_matched = self::match_ai_scraper($ua_lower);
-            if ($ai_bot_matched) {
-                return [
-                    'id'          => 'BOT-AI-SCRAPER-BLOCKED',
-                    'name'        => 'AI Content Scraper / Harvester Blocked (' . $ai_bot_matched . ')',
-                    'category'    => 'Bot Recon Defense',
-                    'match_type'  => 'User-Agent Signature',
-                    'match_value' => substr($user_agent, 0, 150),
-                ];
+        // 2. Check AI Scrapers & Crawler Policy (3-Switch Controls)
+        $ai_bot_matched = self::match_ai_scraper($ua_lower);
+        if ($ai_bot_matched) {
+            $is_search_citation_bot = (
+                str_contains($ua_lower, 'oai-searchbot') ||
+                str_contains($ua_lower, 'perplexitybot') ||
+                str_contains($ua_lower, 'claude-searchbot')
+            );
+
+            // Switch 1: Allow verified search & citation assistants (OAI-SearchBot, PerplexityBot, Claude-SearchBot)
+            $allow_citations = !empty($settings['waf_ai_allow_search_citations']);
+            if ($is_search_citation_bot && $allow_citations && self::is_read_only_public_crawl()) {
+                // Allowed for search citation indexing
+                return null;
+            }
+
+            // Switch 2: Token-bucket HTTP 429 rate limit or block for bulk training harvesters
+            $throttle_training = !empty($settings['waf_ai_throttle_training_scrapers']);
+            if ($throttle_training || !empty($settings['waf_block_ai_scrapers'])) {
+                // Apply token-bucket rate limiting (max 10 requests / minute)
+                $rate_key = 'webcare_ai_harvester_' . md5($client_ip);
+                $hits = (int) get_transient($rate_key);
+                set_transient($rate_key, $hits + 1, 60);
+
+                if ($hits > 10 || !empty($settings['waf_block_ai_scrapers'])) {
+                    return [
+                        'id'          => 'BOT-AI-SCRAPER-BLOCKED',
+                        'name'        => 'AI Content Scraper / Harvester Rate-Limited (' . $ai_bot_matched . ')',
+                        'category'    => 'Bot Recon Defense',
+                        'match_type'  => 'User-Agent Signature',
+                        'match_value' => substr($user_agent, 0, 150),
+                    ];
+                }
             }
         }
 
@@ -563,16 +585,26 @@ class BotReconDefense {
     public static function filter_dynamic_robots_txt(string $output, bool $public): string {
         $settings = SettingsManager::get_settings();
 
-        if (empty($settings['waf_dynamic_robots_ai'])) {
+        $throttle_training = !empty($settings['waf_ai_throttle_training_scrapers']);
+        $block_ai          = !empty($settings['waf_dynamic_robots_ai']) || !empty($settings['waf_block_ai_scrapers']);
+
+        if (!$throttle_training && !$block_ai) {
             return $output;
         }
 
         $ai_rules = "\n# WebCare Pro Security - AI Content Harvester Rules\n";
-        $scrapers = ['GPTBot', 'ChatGPT-User', 'CCBot', 'Bytespider', 'anthropic-ai', 'ClaudeBot', 'PerplexityBot', 'Diffbot', 'Cohere-ai'];
+        // Bulk training scrapers
+        $training_scrapers = ['GPTBot', 'ChatGPT-User', 'CCBot', 'Bytespider', 'anthropic-ai', 'ClaudeBot', 'Diffbot', 'Cohere-ai'];
 
-        foreach ($scrapers as $bot) {
+        foreach ($training_scrapers as $bot) {
             $ai_rules .= "User-agent: " . $bot . "\n";
             $ai_rules .= "Disallow: /\n\n";
+        }
+
+        // Allow search citations if enabled
+        if (empty($settings['waf_ai_allow_search_citations'])) {
+            $ai_rules .= "User-agent: PerplexityBot\nDisallow: /\n\n";
+            $ai_rules .= "User-agent: OAI-SearchBot\nDisallow: /\n\n";
         }
 
         return $output . $ai_rules;

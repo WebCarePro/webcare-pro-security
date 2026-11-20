@@ -5296,6 +5296,35 @@ class FirewallEngine {
                 }
             }
 
+            // 8. Parameter-Scoped Exemption Check (PR 1.4: route_path + param_key + user_role)
+            $rule_param = trim((string) ($rule['param_key'] ?? ''));
+            if ($rule_param !== '') {
+                // If rule specifies a param_key, check if that param exists in GET or POST
+                $param_present = isset($_GET[$rule_param]) || isset($_POST[$rule_param]) || isset($_REQUEST[$rule_param]);
+                if (!$param_present) {
+                    continue; // Specified parameter not present in incoming request
+                }
+            }
+
+            // 9. User Role Constraint Check (e.g. 'administrator', 'editor', 'customer')
+            $rule_roles = !empty($rule['user_roles']) && is_array($rule['user_roles']) ? $rule['user_roles'] : (!empty($rule['user_role']) ? [(string) $rule['user_role']] : []);
+            if (!empty($rule_roles)) {
+                $role_matched = false;
+                if (function_exists('is_user_logged_in') && is_user_logged_in() && function_exists('wp_get_current_user')) {
+                    $current_user = wp_get_current_user();
+                    $user_roles = (array) ($current_user->roles ?? []);
+                    foreach ($rule_roles as $req_role) {
+                        if (in_array(strtolower(trim($req_role)), $user_roles, true)) {
+                            $role_matched = true;
+                            break;
+                        }
+                    }
+                }
+                if (!$role_matched) {
+                    continue; // User role condition not satisfied
+                }
+            }
+
             // If we reached here, all specified conditions matched!
             return $rule;
         }
