@@ -325,5 +325,57 @@ final class SystemController extends AbstractApiController {
             'permission_callback' => $permission,
         ]);
 
+        register_rest_route($namespace, '/system/doctor', [
+            'methods'             => 'GET',
+            'callback'            => [self::class, 'get_system_doctor'],
+            'permission_callback' => $permission,
+        ]);
+
+        register_rest_route($namespace, '/system/diagnostic-export', [
+            'methods'             => 'GET',
+            'callback'            => [self::class, 'export_diagnostic_bundle'],
+            'permission_callback' => $permission,
+        ]);
+
+        register_rest_route($namespace, '/system/safe-mode', [
+            'methods'             => 'POST',
+            'callback'            => [self::class, 'toggle_safe_mode'],
+            'permission_callback' => $permission,
+        ]);
+
+    }
+
+    /**
+     * Run doctor diagnostics and return health report.
+     */
+    public static function get_system_doctor(): \WP_REST_Response {
+        $report = \WebCareProScanner\System\SystemDoctor::run_diagnostics();
+        return new \WP_REST_Response(['success' => true, 'report' => $report], 200);
+    }
+
+    /**
+     * Export DLP-redacted diagnostic bundle JSON.
+     */
+    public static function export_diagnostic_bundle(): \WP_REST_Response {
+        $bundle = \WebCareProScanner\System\SystemDoctor::build_redacted_diagnostic_bundle();
+        return new \WP_REST_Response(['success' => true, 'bundle' => $bundle], 200);
+    }
+
+    /**
+     * Toggle 15-Minute Safe Mode (Observe-Only Pause or Immediate Resume).
+     */
+    public static function toggle_safe_mode(\WP_REST_Request $request): \WP_REST_Response {
+        $action = sanitize_key((string) ($request->get_param('action') ?? 'pause'));
+        if (!class_exists(\WebCareProScanner\Firewall\RescueAssistantManager::class)) {
+            return new \WP_REST_Response(['success' => false, 'message' => __('Rescue assistant manager not available.', 'webcare-pro-security')], 500);
+        }
+
+        if ($action === 'resume') {
+            $result = \WebCareProScanner\Firewall\RescueAssistantManager::resume_strict_firewall();
+        } else {
+            $result = \WebCareProScanner\Firewall\RescueAssistantManager::pause_strict_firewall_15m();
+        }
+
+        return new \WP_REST_Response($result, 200);
     }
 }

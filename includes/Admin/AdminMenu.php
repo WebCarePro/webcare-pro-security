@@ -82,7 +82,7 @@ class AdminMenu {
         );
 
         // =========================================================================
-        // PRIMARY VISIBLE MENU PILLARS (Clean 7 SOC Pillars)
+        // PRIMARY VISIBLE MENU PILLARS (Strictly Consolidated 6 SOC Pillars)
         // =========================================================================
 
         // 1. Submenu: Dashboard
@@ -95,79 +95,69 @@ class AdminMenu {
             [__CLASS__, 'render_app_container']
         );
 
-        // 2. Submenu: Security Scanner
+        // 2. Submenu: Firewall & Logs
         add_submenu_page(
             'webcare-pro-security',
-            __('Security Scan & Findings', 'webcare-pro-security'),
-            __('Security Scanner', 'webcare-pro-security'),
-            'manage_options',
-            'webcare-pro-scan',
-            [__CLASS__, 'render_app_container']
-        );
-
-        // 3. Submenu: Firewall & WAF
-        add_submenu_page(
-            'webcare-pro-security',
-            __('Web Application Firewall & Traffic Defense', 'webcare-pro-security'),
-            __('Firewall & WAF', 'webcare-pro-security'),
+            __('Web Application Firewall, Rules & Traffic Defense', 'webcare-pro-security'),
+            __('Firewall & Logs', 'webcare-pro-security'),
             'manage_options',
             'webcare-pro-firewall',
             [__CLASS__, 'render_app_container']
         );
 
-        // 4. Submenu: Modular WAF
+        // 3. Submenu: Scanner & CVEs
         add_submenu_page(
             'webcare-pro-security',
-            __('Modular Intelligence Firewall', 'webcare-pro-security'),
-            __('Modular WAF', 'webcare-pro-security'),
+            __('Deep Security Scanner & Vulnerability Findings', 'webcare-pro-security'),
+            __('Scanner & CVEs', 'webcare-pro-security'),
             'manage_options',
-            'webcare-pro-modular-waf',
+            'webcare-pro-scan',
             [__CLASS__, 'render_app_container']
         );
 
-        // 4. Submenu: Identity & Access
+        // 4. Submenu: Login & Access
         add_submenu_page(
             'webcare-pro-security',
             __('Zero-Trust Identity, 2FA & Access Control', 'webcare-pro-security'),
-            __('Identity & Access', 'webcare-pro-security'),
+            __('Login & Access', 'webcare-pro-security'),
             'manage_options',
             'webcare-pro-auth',
             [__CLASS__, 'render_app_container']
         );
 
-        // 5. Submenu: Quarantine & Vault
+        // 5. Submenu: Vault & Backups
         add_submenu_page(
             'webcare-pro-security',
-            __('Quarantine Vault & Safety Recoveries', 'webcare-pro-security'),
-            __('Quarantine & Vault', 'webcare-pro-security'),
+            __('Quarantine Vault, Database Backups & Storage', 'webcare-pro-security'),
+            __('Vault & Backups', 'webcare-pro-security'),
             'manage_options',
             'webcare-pro-vault',
             [__CLASS__, 'render_app_container']
         );
 
-        // 6. Submenu: System Forensics & Diagnostics
+        // 6. Submenu: Settings & Doctor
         add_submenu_page(
             'webcare-pro-security',
-            __('System Forensics & Deep Diagnostics', 'webcare-pro-security'),
-            __('System Forensics', 'webcare-pro-security'),
-            'manage_options',
-            'webcare-pro-forensics',
-            [__CLASS__, 'render_app_container']
-        );
-
-        // 7. Submenu: Settings & AI
-        add_submenu_page(
-            'webcare-pro-security',
-            __('Scanner Settings, AI Copilot & Governance', 'webcare-pro-security'),
-            __('Settings & AI', 'webcare-pro-security'),
+            __('Security Settings, Doctor Diagnostics & Governance', 'webcare-pro-security'),
+            __('Settings & Doctor', 'webcare-pro-security'),
             'manage_options',
             'webcare-pro-settings',
             [__CLASS__, 'render_app_container']
         );
 
         // =========================================================================
-        // COMPANION SUB-PAGES (Accessible via Mega-Menu & Contextual Sub-Nav Hub)
+        // COMPANION SUB-PAGES (Accessible via Tabs, Direct Deep-Links & Mega-Menu)
         // =========================================================================
+
+        // Sub-Page: Modular Intelligence Firewall (Redirects to Firewall & Logs)
+        add_submenu_page(
+            null,
+            __('Modular Intelligence Firewall', 'webcare-pro-security'),
+            __('Modular WAF', 'webcare-pro-security'),
+            'manage_options',
+            'webcare-pro-modular-waf',
+            [__CLASS__, 'render_app_container']
+        );
 
         // Sub-Page: Virtual Patching & 0-Day Exploit Studio
         add_submenu_page(
