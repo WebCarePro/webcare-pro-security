@@ -342,27 +342,29 @@ final class ScanController extends AbstractApiController {
         $table_scans = $wpdb->prefix . 'webcareproscan_scans';
         $now_exact = self::now_fractional_mysql();
         $start_micro = microtime(true);
+        $generation_token = wp_generate_password(32, false);
 
-        // Pre-insert scan record to obtain unique scan_id
+        // Pre-insert scan record with unique generation_token to obtain scan_id
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
         $wpdb->insert($table_scans, [
-            'status'        => 'running',
-            'scan_target'   => $target,
-            'trigger_type'  => 'manual',
-            'scanned_files' => 0,
-            'total_files'   => 0,
-            'issues_found'  => 0,
-            'risk_score'    => 0,
-            'duration'      => 0,
-            'duration_ms'   => 0,
-            'created_at'    => current_time('mysql'),
-            'created_at_gmt'=> gmdate('Y-m-d H:i:s'),
-            'started_at'    => $now_exact,
+            'status'           => 'running',
+            'generation_token' => $generation_token,
+            'scan_target'      => $target,
+            'trigger_type'     => 'manual',
+            'scanned_files'    => 0,
+            'total_files'      => 0,
+            'issues_found'     => 0,
+            'risk_score'       => 0,
+            'duration'         => 0,
+            'duration_ms'      => 0,
+            'created_at'       => current_time('mysql'),
+            'created_at_gmt'   => gmdate('Y-m-d H:i:s'),
+            'started_at'       => $now_exact,
         ]);
         $scan_id = (int) $wpdb->insert_id;
 
-        // Acquire lock
-        if (!ScanLock::acquire($scan_id)) {
+        // Acquire lock using generation_token as cryptographic lease token
+        if (!ScanLock::acquire($scan_id, $generation_token)) {
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
             $wpdb->delete($table_scans, ['id' => $scan_id]);
             return new \WP_Error(
@@ -372,8 +374,8 @@ final class ScanController extends AbstractApiController {
             );
         }
         $lease_token = ScanLock::get_active_lease_token($scan_id);
-        if (empty($lease_token)) {
-            ScanLock::force_release($scan_id);
+        if (empty($lease_token) || !hash_equals($lease_token, $generation_token)) {
+            ScanLock::force_release($scan_id, $generation_token);
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
             $wpdb->delete($table_scans, ['id' => $scan_id]);
             return new \WP_Error(
@@ -536,6 +538,20 @@ final class ScanController extends AbstractApiController {
             }
 
             foreach ($findings as $f) {
+                // Assert ownership + non-cancelled validation immediately before finding insert
+                if (get_transient("webcareproscan_scan_cancelled_{$scan_id}")) {
+                    ScanLock::release_batch_lock();
+                    return new \WP_Error('scan_aborted', __('Scan was aborted. Halting finding inserts.', 'webcare-pro-security'), ['status' => 409]);
+                }
+
+                $scan_check_sql = "SELECT id FROM `{$table_scans}` WHERE id = %d AND status = 'running' AND generation_token = %s";
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
+                $valid_scan = $wpdb->get_var($wpdb->prepare($scan_check_sql, $scan_id, $lease_token));
+                if (!$valid_scan) {
+                    ScanLock::release_batch_lock();
+                    return new \WP_Error('scan_ownership_lost', __('Scan ownership lost or superseded. Aborting worker immediately.', 'webcare-pro-security'), ['status' => 409]);
+                }
+
                 $item = $f->to_array();
                 $matched_rule = \WebCareProScanner\Findings\WhitelistManager::match_finding($item);
                 $status = ($matched_rule !== null) ? 'ignored' : 'open';
@@ -568,29 +584,36 @@ final class ScanController extends AbstractApiController {
         $is_finished = ($remaining === 0);
 
 
-        $tot_sql = "SELECT total_files FROM `{$table_scans}` WHERE id = %d";
+        $tot_sql = "SELECT total_files, status FROM `{$table_scans}` WHERE id = %d";
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
         $scan_row = $wpdb->get_row(
             // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
             $wpdb->prepare($tot_sql, $scan_id),
             ARRAY_A
         );
-        if (!$scan_row) {
-            // Self-healing: recreate running scan row if missing
+        $is_cancelled = (bool) get_transient("webcareproscan_scan_cancelled_{$scan_id}");
+        if (!$scan_row && !$is_cancelled) {
+            // Self-healing: recreate running scan row only if missing and NOT aborted/cancelled
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
             $wpdb->insert($table_scans, [
-                'id'            => $scan_id,
-                'status'        => 'running',
-                'scan_type'     => 'full',
-                'scanned_files' => 0,
-                'total_files'   => max(1, $remaining),
-                'issues_found'  => 0,
-                'risk_score'    => 0,
-                'created_at'    => current_time('mysql'),
-                'created_at_gmt'=> gmdate('Y-m-d H:i:s'),
+                'id'               => $scan_id,
+                'status'           => 'running',
+                'generation_token' => $lease_token,
+                'scan_type'        => 'full',
+                'scanned_files'    => 0,
+                'total_files'      => max(1, $remaining),
+                'issues_found'     => 0,
+                'risk_score'       => 0,
+                'created_at'       => current_time('mysql'),
+                'created_at_gmt'   => gmdate('Y-m-d H:i:s'),
             ]);
-            $scan_row = ['total_files' => max(1, $remaining)];
+            $scan_row = ['total_files' => max(1, $remaining), 'status' => 'running'];
+        } elseif (!$scan_row || $is_cancelled || ($scan_row['status'] ?? '') !== 'running') {
+            // Scan is cancelled or row no longer running — abort worker immediately
+            ScanLock::release_batch_lock();
+            return new \WP_Error('scan_aborted', __('Scan was aborted or completed. Stopping progress update.', 'webcare-pro-security'), ['status' => 409]);
         }
+
         $scan_total = (int) ($scan_row['total_files'] ?? 0);
         $scanned_so_far = max(0, $scan_total - $remaining);
         $iss_sql = "SELECT COUNT(*) FROM `{$table_issues}` WHERE scan_id = %d AND status = 'open'";
@@ -600,11 +623,16 @@ final class ScanController extends AbstractApiController {
             $wpdb->prepare($iss_sql, $scan_id)
         );
 
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-        $wpdb->update($table_scans, [
-            'scanned_files' => $scanned_so_far,
-            'issues_found'  => $current_issues_total,
-        ], ['id' => $scan_id]);
+        // Conditional progress update: WHERE id = %d AND status = 'running' AND generation_token = %s
+        $update_progress_sql = "UPDATE `{$table_scans}` SET scanned_files = %d, issues_found = %d WHERE id = %d AND status = 'running' AND generation_token = %s";
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
+        $rows_affected = $wpdb->query(
+            $wpdb->prepare($update_progress_sql, $scanned_so_far, $current_issues_total, $scan_id, $lease_token)
+        );
+        if ($rows_affected === 0) {
+            ScanLock::release_batch_lock();
+            return new \WP_Error('scan_ownership_lost', __('Scan progress update rejected: scan aborted or generation token mismatch.', 'webcare-pro-security'), ['status' => 409]);
+        }
 
         $start_micro = get_transient("webcareproscan_scan_start_micro_{$scan_id}");
         $elapsed_sec = ($start_micro && is_numeric($start_micro)) ? max(0.1, microtime(true) - (float) $start_micro) : 0.0;
@@ -1071,6 +1099,20 @@ final class ScanController extends AbstractApiController {
             }
 
             foreach ($correlated as $f) {
+                // Assert ownership + non-cancelled validation immediately before finding insert
+                if (get_transient("webcareproscan_scan_cancelled_{$scan_id}")) {
+                    ScanLock::release($scan_id, $lease_token);
+                    return new \WP_Error('scan_aborted', __('Scan was aborted. Halting finding inserts.', 'webcare-pro-security'), ['status' => 409]);
+                }
+
+                $scan_check_sql = "SELECT id FROM `{$table_scans}` WHERE id = %d AND status = 'running' AND generation_token = %s";
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
+                $valid_scan = $wpdb->get_var($wpdb->prepare($scan_check_sql, $scan_id, $lease_token));
+                if (!$valid_scan) {
+                    ScanLock::release($scan_id, $lease_token);
+                    return new \WP_Error('scan_ownership_lost', __('Scan ownership lost or superseded. Aborting worker immediately.', 'webcare-pro-security'), ['status' => 409]);
+                }
+
                 $item = $f->to_array();
                 $norm_path = self::normalize_finding_path($item['file_path'] ?? '');
                 $line_no = (int) ($item['line_number'] ?? 0);
@@ -1187,12 +1229,14 @@ final class ScanController extends AbstractApiController {
 
             $started_at_db = !empty($scan_row['started_at']) ? $scan_row['started_at'] : ($scan_row['created_at'] ?? $completed_at_exact);
 
-            if (!$scan_row) {
-                // Self-healing: recreate missing scan record so results are guaranteed to persist
+            $is_cancelled = (bool) get_transient("webcareproscan_scan_cancelled_{$scan_id}");
+            if (!$scan_row && !$is_cancelled) {
+                // Self-healing: recreate missing scan record so results are guaranteed to persist ONLY if not aborted
                 // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
                 $wpdb->insert($table_scans, [
                     'id'            => $scan_id,
                     'status'        => 'completed',
+                    'generation_token' => $lease_token,
                     'scan_target'   => $target ?: 'full',
                     'trigger_type'  => 'manual',
                     'scanned_files' => (int) ($scan_row['scanned_files'] ?? ($scan_row['total_files'] ?? count($all_scan_issues))),
@@ -1206,17 +1250,20 @@ final class ScanController extends AbstractApiController {
                     'started_at'    => $started_at_db,
                     'completed_at'  => $completed_at_exact,
                 ]);
+            } elseif (!$scan_row || $is_cancelled || ($scan_row['status'] ?? '') !== 'running') {
+                ScanLock::release($scan_id, $lease_token);
+                return new \WP_Error('scan_aborted', __('Scan was cancelled or aborted before finalization.', 'webcare-pro-security'), ['status' => 409]);
             } else {
-                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-                $wpdb->update($table_scans, [
-                    'status'        => 'completed',
-                    'issues_found'  => $open_issues_count,
-                    'risk_score'    => $summary['score'],
-                    'duration'      => $duration_sec,
-                    'duration_ms'   => $duration_ms,
-                    'started_at'    => $started_at_db,
-                    'completed_at'  => $completed_at_exact,
-                ], ['id' => $scan_id]);
+                // Conditional finalization update: WHERE id = %d AND status = 'running' AND generation_token = %s
+                $fin_sql = "UPDATE `{$table_scans}` SET status = 'completed', issues_found = %d, risk_score = %d, duration = %d, duration_ms = %d, started_at = %s, completed_at = %s WHERE id = %d AND status = 'running' AND generation_token = %s";
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
+                $rows_affected = $wpdb->query(
+                    $wpdb->prepare($fin_sql, $open_issues_count, $summary['score'], $duration_sec, $duration_ms, $started_at_db, $completed_at_exact, $scan_id, $lease_token)
+                );
+                if ($rows_affected === 0) {
+                    ScanLock::release($scan_id, $lease_token);
+                    return new \WP_Error('scan_ownership_lost', __('Scan finalization rejected: scan aborted or generation token mismatch.', 'webcare-pro-security'), ['status' => 409]);
+                }
             }
 
             $completed_scan_row = [
@@ -2272,7 +2319,22 @@ final class ScanController extends AbstractApiController {
         $now_exact = self::now_fractional_mysql();
 
         if ($scan_id) {
-            $aborted = ScanLock::force_release($scan_id);
+            // Retrieve generation_token for targeted release and cancellation marking
+            $gen_sql = "SELECT generation_token FROM `{$table_scans}` WHERE id = %d";
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
+            $gen_token = $wpdb->get_var($wpdb->prepare($gen_sql, $scan_id));
+
+            // Set durable cancellation marker transient
+            set_transient("webcareproscan_scan_cancelled_{$scan_id}", true, 3600);
+
+            // Atomically mark status = 'aborted' before releasing lock
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            $wpdb->update($table_scans, [
+                'status'       => 'aborted',
+                'completed_at' => $now_exact,
+            ], ['id' => $scan_id]);
+
+            $aborted = ScanLock::force_release($scan_id, is_string($gen_token) ? $gen_token : null);
             if (class_exists('\\WebCareProScanner\\Scan\\ScanBackgroundWorker')) {
                 \WebCareProScanner\Scan\ScanBackgroundWorker::unschedule_continuation();
             }
@@ -2303,12 +2365,12 @@ final class ScanController extends AbstractApiController {
                 'last_file' => $last_file,
             ]);
 
+            // Update final status to aborted and record duration
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
             $wpdb->update($table_scans, [
                 'status'       => 'aborted',
                 'duration'     => $duration_sec,
                 'duration_ms'  => $duration_ms,
-                'completed_at' => $now_exact,
             ], ['id' => $scan_id]);
             \WebCareProScanner\Scan\ScanQueueManager::cleanup($scan_id);
         }

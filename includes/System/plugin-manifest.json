@@ -1,6 +1,6 @@
 {
   "version": "3.21.0",
-  "generated_at": "2026-11-20T21:44:44.227Z",
+  "generated_at": "2026-11-20T22:19:49.736Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -204,8 +204,8 @@
       "size": 42693
     },
     "includes/Api/Controllers/ScanController.php": {
-      "sha256": "2884c67d5e18d1e014581127b9ebb8ca698e45f2aae08401b5024c52d5d8161d",
-      "size": 289083
+      "sha256": "9ce85605d7824e5c8e21e46511915901430c1a2f8890d37a502af4d60884fd26",
+      "size": 294787
     },
     "includes/Api/Controllers/SystemController.php": {
       "sha256": "a31c499f7a6a948e1fd8d1690d87d5ba8977209b6c1a26f4090047a566b51b6b",
@@ -380,8 +380,8 @@
       "size": 14628
     },
     "includes/Database/Migration.php": {
-      "sha256": "2428968e8a236e50e8445496b9fb458bef09b3b759c6f724067b9b4ebd3cd452",
-      "size": 8171
+      "sha256": "326852ffe4440747db5f97a4ae3c87fc4d74bb547b5628a04c49e9aa15a00f87",
+      "size": 8226
     },
     "includes/Database/OptionScanner.php": {
       "sha256": "22a72471e0b666c23b9a2d8eed2685c87c39aacdcf2e995eaa7dfeec17eb62ed",
@@ -824,8 +824,8 @@
       "size": 1192
     },
     "includes/Quarantine/QuarantineManager.php": {
-      "sha256": "9656491217d5465ebbc5853aac5e8567b524989a77da21d21fac48a36a0be664",
-      "size": 34869
+      "sha256": "822d07a722b5b09c64feb9aa185e6822a7d1113abbec32ba57634b859b85732d",
+      "size": 35859
     },
     "includes/Quarantine/ReinfectionWatchdog.php": {
       "sha256": "15a66c5701f26bbf4aef407442f347aa315049f27c8c82d566c6353afcf31cbb",
@@ -864,8 +864,8 @@
       "size": 245
     },
     "includes/Scan/ScanLock.php": {
-      "sha256": "f2a4a8792652af51e20675ec2397ae27891a30d0c4c0d6335495b8d68c23c48e",
-      "size": 15548
+      "sha256": "e9e0c8a68b3ea19682833c40476fd8aba836c29873fc9648f9cd2f3a122f8804",
+      "size": 17069
     },
     "includes/Scan/ScanManager.php": {
       "sha256": "f3590463fa1a7e5f5641a05a407534115ca448a4265820e8ed129419808849d1",

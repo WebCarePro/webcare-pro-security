@@ -19,6 +19,7 @@ class Migration {
         $sql1 = "CREATE TABLE $scans_table (
             id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
             status varchar(50) NOT NULL DEFAULT 'pending',
+            generation_token varchar(64) DEFAULT NULL,
             scan_target varchar(50) NOT NULL DEFAULT 'plugins_themes',
             trigger_type varchar(20) NOT NULL DEFAULT 'manual',
             scanned_files int(11) NOT NULL DEFAULT 0,

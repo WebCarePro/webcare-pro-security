@@ -46,16 +46,17 @@ class ScanLock {
      * Attempt to acquire a scan lock atomically.
      * Combines MySQL advisory lock (GET_LOCK) with serialized option-based state tracking.
      *
-     * @param int $scan_id
+     * @param int         $scan_id
+     * @param string|null $generation_token Optional cryptographic generation token.
      * @return bool True if acquired, false if another scan is actively locked or advisory lock fails.
      */
-    public static function acquire($scan_id): bool {
+    public static function acquire($scan_id, ?string $generation_token = null): bool {
         $scan_id = (int) $scan_id;
         if ($scan_id <= 0) {
             return false;
         }
 
-        return (bool) self::execute_with_mutation_mutex(static function () use ($scan_id) {
+        return (bool) self::execute_with_mutation_mutex(static function () use ($scan_id, $generation_token) {
             // Check option-based tracking for active scan timeout and scan ID match
             $existing = get_option(self::LOCK_OPTION);
             if ($existing && is_array($existing)) {
@@ -69,9 +70,11 @@ class ScanLock {
             }
 
             // Atomically persist lease option
-            $lease_token = (!empty($existing['lease_token']) && is_array($existing) && (int) ($existing['scan_id'] ?? 0) === $scan_id)
-                ? (string) $existing['lease_token']
-                : wp_generate_password(24, false);
+            $lease_token = (!empty($generation_token))
+                ? $generation_token
+                : ((!empty($existing['lease_token']) && is_array($existing) && (int) ($existing['scan_id'] ?? 0) === $scan_id)
+                    ? (string) $existing['lease_token']
+                    : wp_generate_password(24, false));
 
             $lease_payload = [
                 'scan_id'     => $scan_id,
@@ -264,6 +267,9 @@ class ScanLock {
      * Reserved for emergency resets, aborts, and test teardowns, with audit logging.
      * Serializes option deletion under MySQL advisory mutex and returns success/failure.
      *
+     * Inside the mutation mutex, verifies the currently held lock matches $scan_id (and $generation_token when supplied)
+     * before deleting LOCK_OPTION. Returns false if a newer scan already owns the lease.
+     *
      * Note on connection-scoped advisory mutexes:
      * MySQL advisory locks (GET_LOCK / RELEASE_LOCK) are connection-scoped. If another active
      * PHP worker process currently holds BATCH_LOCK_NAME on its own database connection,
@@ -272,13 +278,33 @@ class ScanLock {
      * Concurrency safety is preserved because every subsequent batch request strictly re-validates
      * the scan lease token under the serialized ADVISORY_LOCK_NAME mutex before attempting batch execution.
      *
-     * @param int|null $scan_id Optional scan ID for audit context.
+     * @param int|null    $scan_id          Optional scan ID for owner verification.
+     * @param string|null $generation_token Optional generation token for exact lease generation match.
      * @return bool True if lock was definitively released and verified deleted from storage.
      */
-    public static function force_release(?int $scan_id = null): bool {
+    public static function force_release(?int $scan_id = null, ?string $generation_token = null): bool {
         global $wpdb;
 
-        $deleted = (bool) self::execute_with_mutation_mutex(static function () {
+        $deleted = (bool) self::execute_with_mutation_mutex(static function () use ($scan_id, $generation_token) {
+            $existing = get_option(self::LOCK_OPTION);
+            if ($existing && is_array($existing)) {
+                $held_scan = (int) ($existing['scan_id'] ?? 0);
+                $held_token = (string) ($existing['lease_token'] ?? '');
+
+                // If scan_id specified and does not match the active lease owner, reject deletion
+                if ($scan_id !== null && $scan_id > 0 && $held_scan !== $scan_id) {
+                    return false;
+                }
+
+                // If generation_token specified and does not match, reject deletion
+                if (!empty($generation_token) && !hash_equals($held_token, $generation_token)) {
+                    return false;
+                }
+            } elseif ($scan_id !== null) {
+                // No active lock exists to release
+                return true;
+            }
+
             delete_option(self::LOCK_OPTION);
             $persisted = get_option(self::LOCK_OPTION);
             return $persisted === false;
@@ -303,7 +329,7 @@ class ScanLock {
         if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
             \WebCareProScanner\System\AuditLogger::log(
                 'scan_lock_force_release_failed',
-                sprintf('Failed to forcefully clear scan lock due to mutex acquisition timeout or storage persistence failure (Scan ID: %s).', $scan_id ? (string) $scan_id : 'any'),
+                sprintf('Failed to forcefully clear scan lock due to mutex acquisition timeout, storage persistence failure, or ownership mismatch (Scan ID: %s).', $scan_id ? (string) $scan_id : 'any'),
                 'critical'
             );
         }

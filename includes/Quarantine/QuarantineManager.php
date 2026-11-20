@@ -53,6 +53,26 @@ class QuarantineManager {
     public function quarantine_file($file_path, $scan_id = null, $issue_id = null) {
         global $wpdb;
 
+        // If a scan_id is provided, verify active lease ownership and ensure scan is not aborted
+        if ($scan_id !== null && (int) $scan_id > 0) {
+            $scan_int_id = (int) $scan_id;
+            if (get_transient("webcareproscan_scan_cancelled_{$scan_int_id}")) {
+                return [
+                    'success' => false,
+                    'message' => 'Action Blocked: Scan was cancelled or aborted. Quarantine mutations are prohibited.',
+                ];
+            }
+            if (class_exists('\\WebCareProScanner\\Scan\\ScanLock')) {
+                $locked_scan = \WebCareProScanner\Scan\ScanLock::get_locked_scan_id();
+                if ($locked_scan !== null && $locked_scan !== $scan_int_id) {
+                    return [
+                        'success' => false,
+                        'message' => 'Action Blocked: Scan lease ownership lost or superseded by another active scan.',
+                    ];
+                }
+            }
+        }
+
         // Ensure path is normalized, exists, and is not a symlink
         if (is_link($file_path)) {
             return ['success' => false, 'message' => 'Security violation: Symlinks cannot be quarantined.'];
