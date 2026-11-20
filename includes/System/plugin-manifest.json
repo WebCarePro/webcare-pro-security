@@ -1,6 +1,6 @@
 {
   "version": "3.21.0",
-  "generated_at": "2026-11-20T23:16:20.724Z",
+  "generated_at": "2026-11-20T23:30:06.116Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -348,8 +348,8 @@
       "size": 4446
     },
     "includes/Core/CompiledStackManifest.php": {
-      "sha256": "d34c19d25080b5b4c4fca9b340d0133d6e838b37d9690194c6ffc603f1e52c24",
-      "size": 18725
+      "sha256": "0587f4dd69028ecf9ce98e25f823100a49ad9f0eadaa419b15c5e1e12ac27a5b",
+      "size": 19250
     },
     "includes/Core/ModuleRegistry.php": {
       "sha256": "0ecddd5325ff7b92d552f29054ef2d549181a8cfa00f175864e1c7494a5ff828",
@@ -552,8 +552,8 @@
       "size": 3700
     },
     "includes/Firewall/Core/RequestPipeline.php": {
-      "sha256": "f85aa23ddbb142030a584d80155a529dd59855d4fe7d0e4ce14325727d78ba44",
-      "size": 12211
+      "sha256": "8228265524d43d572caff3bd6ea34e5aeda01c30995bb0b368959030480da236",
+      "size": 13840
     },
     "includes/Firewall/Core/TransientRateLimiter.php": {
       "sha256": "f4ded40968ea08e8e113b53c98e60979930a6b722e0e76f989df16656d15499e",
@@ -600,8 +600,8 @@
       "size": 2449
     },
     "includes/Firewall/FirewallEngine.php": {
-      "sha256": "751817ac51a868adbcfb0cc24e158ddc786d9ed06034f92678ae4d53a978dd43",
-      "size": 324762
+      "sha256": "6fc1355e34ec8360e9b66fdccb83c4b1e256beb19bf6412eac93a1a4a085f48e",
+      "size": 324966
     },
     "includes/Firewall/FormSpamProtectionEngine.php": {
       "sha256": "d450cf8289cddf53554c6a084cd4776f6a6333f7c7afdad8d65c39e9fc79bfb6",

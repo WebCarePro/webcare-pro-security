@@ -101,8 +101,13 @@ final class RequestPipeline {
                 }
             }
 
-            // 2. Delegate to comprehensive engine inspection
-            FirewallEngine::inspect_incoming_request();
+            // 2. Delegate to comprehensive engine inspection with duplicate execution guard
+            FirewallEngine::$executed_under_pipeline = true;
+            try {
+                FirewallEngine::inspect_incoming_request();
+            } finally {
+                FirewallEngine::$executed_under_pipeline = false;
+            }
         } catch (\Throwable $e) {
             // Fail-closed invariant: Log critical failure
             if (class_exists(FirewallEngine::class)) {
@@ -157,10 +162,41 @@ final class RequestPipeline {
             return null;
         }
 
+        $ecosystems = is_array($manifest['ecosystems'] ?? null) ? $manifest['ecosystems'] : [];
+
         foreach ($route_evaluators as $evaluator_class) {
             $meta = $manifest['evaluators'][$evaluator_class] ?? null;
             $failure_policy = $meta['failure_policy'] ?? \WebCareProScanner\Contracts\EvaluatorFailurePolicy::DegradedLog->value;
             $is_req = !empty($meta['required']) || in_array($evaluator_class, self::MANDATORY_EVALUATORS, true);
+
+            // Dual-Axis Evaluator Selection:
+            // Optional evaluators run ONLY when:
+            // 1. Stack capability matches (if declared in capabilities)
+            // 2. Canonical route class matches (if declared in route_classes)
+            if (!$is_req && is_array($meta)) {
+                $required_caps = $meta['capabilities'] ?? [];
+                if (!empty($required_caps) && is_array($required_caps)) {
+                    $has_all_caps = true;
+                    foreach ($required_caps as $cap) {
+                        if (empty($ecosystems[$cap])) {
+                            $has_all_caps = false;
+                            break;
+                        }
+                    }
+                    if (!$has_all_caps) {
+                        // Ecosystem capability missing on this site; skip without error
+                        continue;
+                    }
+                }
+
+                $target_routes = $meta['route_classes'] ?? [];
+                if (!empty($target_routes) && is_array($target_routes)) {
+                    if (!in_array($route_class->value, $target_routes, true)) {
+                        // Current route class does not match evaluator scope; skip
+                        continue;
+                    }
+                }
+            }
 
             if (!class_exists($evaluator_class)) {
                 if ($is_req || $failure_policy === \WebCareProScanner\Contracts\EvaluatorFailurePolicy::FailClosedRoute->value) {

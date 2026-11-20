@@ -321,11 +321,16 @@ final class CompiledStackManifest {
                     $ref = new \ReflectionClass($class_name);
                     if (!$ref->isAbstract()) {
                         $instance = new $class_name();
+                        $target_routes = [];
+                        foreach ($instance->get_route_classes() as $rc) {
+                            $target_routes[] = $rc instanceof RouteClass ? $rc->value : (string) $rc;
+                        }
                         $metadata[$class_name] = [
                             'module_id'      => $instance->get_module_id(),
                             'required'       => $instance->is_required(),
                             'failure_policy' => $instance->get_failure_policy()->value,
                             'capabilities'   => $instance->get_required_capabilities(),
+                            'route_classes'  => $target_routes,
                         ];
                     }
                 } catch (\Throwable $e) {
@@ -335,6 +340,7 @@ final class CompiledStackManifest {
                         'required'       => false,
                         'failure_policy' => \WebCareProScanner\Contracts\EvaluatorFailurePolicy::DegradedLog->value,
                         'capabilities'   => [],
+                        'route_classes'  => [],
                     ];
                 }
             } else {
@@ -344,6 +350,7 @@ final class CompiledStackManifest {
                     'required'       => false,
                     'failure_policy' => \WebCareProScanner\Contracts\EvaluatorFailurePolicy::DegradedLog->value,
                     'capabilities'   => [],
+                    'route_classes'  => [],
                 ];
             }
         }
@@ -432,5 +439,7 @@ final class CompiledStackManifest {
         add_action('deactivated_plugin', [__CLASS__, 'compile']);
         add_action('switch_theme', [__CLASS__, 'compile']);
         add_action('upgrader_process_complete', [__CLASS__, 'compile']);
+        add_action('deleted_plugin', [__CLASS__, 'compile']);
+        add_action('delete_theme', [__CLASS__, 'compile']);
     }
 }

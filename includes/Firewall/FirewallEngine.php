@@ -21,6 +21,7 @@ class FirewallEngine {
     public static $last_incident_id = null;
     public static $last_ref_code = null;
     public static array $wc_session_cache = [];
+    public static bool $executed_under_pipeline = false;
 
     /**
      * Generate a short, unambiguous Customer Support Reference Code (#WEBCARE-XXXX).
@@ -2220,7 +2221,8 @@ class FirewallEngine {
 
         // In complementary mode, Wordfence/Sucuri handles generic attacks;
         // WebCare WAF Lite focuses on WordPress virtual patching and deep injection protection
-        $rule_triggered = self::evaluate_rules($settings, $is_complementary);
+        // Skip redundant evaluate_rules execution if already evaluated under RequestPipeline orchestrator
+        $rule_triggered = self::$executed_under_pipeline ? null : self::evaluate_rules($settings, $is_complementary);
 
         if ($rule_triggered) {
             self::handle_rule_violation($rule_triggered, $settings, $client_ip, 403);
