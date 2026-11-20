@@ -27,6 +27,7 @@ class CloudflareIpListSynchronizer {
     public const OPTION_TOKEN_SCOPE      = 'webcare_cf_token_scope';
     public const OPTION_ACCOUNT_LIST_ID  = 'webcare_cf_account_list_id';
     public const OPTION_ACTIVE_EDGE_BANS = 'webcare_cf_active_edge_bans';
+    public const OPTION_PENDING_OPERATIONS = 'webcare_cf_pending_operations';
     public const LIST_NAME               = 'webcare_threat_blocklist';
     public const CRON_HOOK               = 'webcare_cloudflare_ip_sync_cron';
 
@@ -462,15 +463,7 @@ class CloudflareIpListSynchronizer {
         }
 
         if (!$acquired) {
-            // Fallback: mutate directly if lock cannot be acquired after timeout
-            $queue = get_option(self::OPTION_BAN_QUEUE, []);
-            $queue = is_array($queue) ? $queue : [];
-            $queue = $callback($queue);
-            $queue = is_array($queue) ? $queue : [];
-            if (count($queue) > 500) {
-                $queue = array_slice($queue, -500, null, true);
-            }
-            update_option(self::OPTION_BAN_QUEUE, $queue, false);
+            // Finding 1.7 / Master Plan PR-A: Never mutate un-atomically when mutex acquisition fails
             return false;
         }
 
@@ -616,6 +609,9 @@ class CloudflareIpListSynchronizer {
         }
 
         try {
+            // 0. Reconcile pending async bulk operations first
+            $this->reconcile_pending_operations();
+
             // 1. Prune expired temporary edge bans (with acknowledgement check)
             $this->prune_expired_bans();
 
@@ -760,6 +756,17 @@ class CloudflareIpListSynchronizer {
             // Write permission error or failure on account list: downgrade scope to zone and retry immediately (CF-02)
             set_transient(self::OPTION_TOKEN_SCOPE, 'zone', 6 * 3600);
             return $this->sync_via_zone_access_rules($targets, $source_entries);
+        }
+
+        // Track operation_id if returned by Cloudflare async bulk list API
+        if (!empty($post_res['result']['operation_id'])) {
+            self::record_pending_operation(
+                (string) $post_res['result']['operation_id'],
+                $account_id,
+                $list_id,
+                'create',
+                array_column($targets, 'target')
+            );
         }
 
         $active_bans = get_option(self::OPTION_ACTIVE_EDGE_BANS, []);
@@ -1041,6 +1048,9 @@ class CloudflareIpListSynchronizer {
      * Immediately unban an IP address from Cloudflare Edge (Zone Access Rules and Account Custom List)
      * and clear it from active ledgers and pending queues.
      *
+     * Invariant: Never removes local ledger entry before remote edge deletion is confirmed or completed.
+     * Tracks async operation_id on Account List DELETE and retains local ledger in 'pending_unban' state.
+     *
      * @param string $ip
      * @return bool
      */
@@ -1056,23 +1066,27 @@ class CloudflareIpListSynchronizer {
         }
 
         // 2. Remove from pending batch queue if queued
-        $queue = get_option(self::OPTION_BAN_QUEUE, []);
-        if (is_array($queue) && isset($queue[$ip])) {
+        self::mutate_ban_queue(static function (array $queue) use ($ip): array {
             unset($queue[$ip]);
-            update_option(self::OPTION_BAN_QUEUE, $queue, false);
-        }
+            return $queue;
+        });
 
-        // 3. Remove from active edge bans ledger
+        // 3. Inspect active edge bans ledger
         $active_bans = get_option(self::OPTION_ACTIVE_EDGE_BANS, []);
         $meta = is_array($active_bans) ? ($active_bans[$ip] ?? null) : null;
-        if (is_array($active_bans) && isset($active_bans[$ip])) {
-            unset($active_bans[$ip]);
-            update_option(self::OPTION_ACTIVE_EDGE_BANS, $active_bans, false);
+
+        // If not in active edge bans ledger, nothing further on edge to remove
+        if ($meta === null) {
+            return true;
         }
 
-        // 4. Remove from Cloudflare Edge
         $settings = SettingsManager::get_settings();
         if (empty($settings['cloudflare_api_token'])) {
+            // No API token configured: safe to drop from local ledger immediately
+            if (is_array($active_bans) && isset($active_bans[$ip])) {
+                unset($active_bans[$ip]);
+                update_option(self::OPTION_ACTIVE_EDGE_BANS, $active_bans, false);
+            }
             return true;
         }
 
@@ -1080,39 +1094,253 @@ class CloudflareIpListSynchronizer {
         $scope = $sync->detect_api_scope();
         $zone_id = $settings['cloudflare_zone_id'] ?? '';
 
-        // If it was tracked in Account list
-        if ($scope === 'account' && !empty($meta['item_id'])) {
+        // If tracked in Account List
+        if ($scope === 'account') {
             $accounts_res = CloudflareService::request('accounts');
             if (!empty($accounts_res['success']) && !empty($accounts_res['result'][0]['id'])) {
                 $account_id = (string) $accounts_res['result'][0]['id'];
                 $list_id = $sync->ensure_account_list($account_id);
-                if (!empty($list_id)) {
-                    CloudflareService::request(
-                        "accounts/{$account_id}/rules/lists/{$list_id}/items",
-                        'DELETE',
-                        ['items' => [['id' => $meta['item_id']]]]
-                    );
-                }
-            }
-        }
 
-        // Delete from Zone IP Access Rules (by direct rule ID if known, or by searching value)
-        if (!empty($zone_id)) {
-            if (!empty($meta['item_id']) && ($meta['mode'] ?? '') === 'zone') {
-                CloudflareService::request("zones/{$zone_id}/firewall/access_rules/rules/{$meta['item_id']}", 'DELETE');
-            } else {
-                $search = CloudflareService::request("zones/{$zone_id}/firewall/access_rules/rules?configuration.value=" . rawurlencode($ip));
-                if (!empty($search['success']) && !empty($search['result']) && is_array($search['result'])) {
-                    foreach ($search['result'] as $r) {
-                        if (!empty($r['id'])) {
-                            CloudflareService::request("zones/{$zone_id}/firewall/access_rules/rules/{$r['id']}", 'DELETE');
+                if (!empty($list_id)) {
+                    $item_id = (string) ($meta['item_id'] ?? '');
+
+                    // If item_id is missing, query the list first to resolve the exact item_id
+                    if (empty($item_id)) {
+                        $list_items_res = CloudflareService::request("accounts/{$account_id}/rules/lists/{$list_id}/items?search=" . rawurlencode($ip));
+                        if (!empty($list_items_res['success']) && !empty($list_items_res['result']) && is_array($list_items_res['result'])) {
+                            foreach ($list_items_res['result'] as $l_item) {
+                                if (($l_item['ip'] ?? '') === $ip && !empty($l_item['id'])) {
+                                    $item_id = (string) $l_item['id'];
+                                    break;
+                                }
+                            }
                         }
+                    }
+
+                    if (!empty($item_id)) {
+                        $del_res = CloudflareService::request(
+                            "accounts/{$account_id}/rules/lists/{$list_id}/items",
+                            'DELETE',
+                            ['items' => [['id' => $item_id]]]
+                        );
+
+                        if (!empty($del_res['success'])) {
+                            $operation_id = (string) ($del_res['result']['operation_id'] ?? '');
+
+                            if (!empty($operation_id)) {
+                                // Async operation returned: poll operation status
+                                $op_status = self::poll_bulk_operation($account_id, $operation_id);
+
+                                if ($op_status === 'completed') {
+                                    // Verify item is actually removed from list
+                                    $verify_res = CloudflareService::request("accounts/{$account_id}/rules/lists/{$list_id}/items?search=" . rawurlencode($ip));
+                                    $still_present = false;
+                                    if (!empty($verify_res['success']) && !empty($verify_res['result']) && is_array($verify_res['result'])) {
+                                        foreach ($verify_res['result'] as $v_item) {
+                                            if (($v_item['ip'] ?? '') === $ip) {
+                                                $still_present = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+
+                                    if (!$still_present) {
+                                        unset($active_bans[$ip]);
+                                        update_option(self::OPTION_ACTIVE_EDGE_BANS, $active_bans, false);
+                                        return true;
+                                    }
+                                }
+
+                                // Mark state as pending_unban and record pending operation
+                                $meta['state']        = 'pending_unban';
+                                $meta['operation_id'] = $operation_id;
+                                $meta['item_id']      = $item_id;
+                                $active_bans[$ip]     = $meta;
+                                update_option(self::OPTION_ACTIVE_EDGE_BANS, $active_bans, false);
+
+                                self::record_pending_operation($operation_id, $account_id, $list_id, 'delete', [$ip]);
+                                return false;
+                            }
+
+                            // Synchronous completion without operation_id
+                            unset($active_bans[$ip]);
+                            update_option(self::OPTION_ACTIVE_EDGE_BANS, $active_bans, false);
+                            return true;
+                        }
+
+                        // API call failed: retain local ledger entry and record error
+                        $meta['unban_status']     = 'unban_retry';
+                        $meta['last_unban_error'] = $del_res['errors'][0]['message'] ?? 'DELETE request rejected';
+                        $active_bans[$ip]         = $meta;
+                        update_option(self::OPTION_ACTIVE_EDGE_BANS, $active_bans, false);
+                        return false;
                     }
                 }
             }
         }
 
+        // Zone IP Access Rules
+        if (!empty($zone_id)) {
+            $item_id = (string) ($meta['item_id'] ?? '');
+            $mode = (string) ($meta['mode'] ?? '');
+
+            if (!empty($item_id) && $mode === 'zone') {
+                $del_res = CloudflareService::request("zones/{$zone_id}/firewall/access_rules/rules/{$item_id}", 'DELETE');
+                $http_code = (int) ($del_res['http_code'] ?? 0);
+                $is_already_gone = ($http_code === 404 || ($del_res['errors'][0]['code'] ?? 0) === 10002);
+
+                if (!empty($del_res['success']) || $is_already_gone) {
+                    unset($active_bans[$ip]);
+                    update_option(self::OPTION_ACTIVE_EDGE_BANS, $active_bans, false);
+                    return true;
+                }
+
+                $meta['unban_status']     = 'unban_retry';
+                $meta['last_unban_error'] = $del_res['errors'][0]['message'] ?? 'Zone rule DELETE failed';
+                $active_bans[$ip]         = $meta;
+                update_option(self::OPTION_ACTIVE_EDGE_BANS, $active_bans, false);
+                return false;
+            }
+
+            $search = CloudflareService::request("zones/{$zone_id}/firewall/access_rules/rules?configuration.value=" . rawurlencode($ip));
+            if (!empty($search['success']) && !empty($search['result']) && is_array($search['result'])) {
+                $all_deleted = true;
+                foreach ($search['result'] as $r) {
+                    if (!empty($r['id'])) {
+                        $dr = CloudflareService::request("zones/{$zone_id}/firewall/access_rules/rules/{$r['id']}", 'DELETE');
+                        if (empty($dr['success']) && (int) ($dr['http_code'] ?? 0) !== 404) {
+                            $all_deleted = false;
+                        }
+                    }
+                }
+                if ($all_deleted) {
+                    unset($active_bans[$ip]);
+                    update_option(self::OPTION_ACTIVE_EDGE_BANS, $active_bans, false);
+                    return true;
+                }
+
+                $meta['unban_status'] = 'unban_retry';
+                $active_bans[$ip] = $meta;
+                update_option(self::OPTION_ACTIVE_EDGE_BANS, $active_bans, false);
+                return false;
+            }
+
+            // Not found in zone rules
+            unset($active_bans[$ip]);
+            update_option(self::OPTION_ACTIVE_EDGE_BANS, $active_bans, false);
+            return true;
+        }
+
         return true;
+    }
+
+    /**
+     * Poll a bulk operation status from Cloudflare Account API.
+     *
+     * @param string $account_id
+     * @param string $operation_id
+     * @return string 'completed' | 'running' | 'failed' | 'pending'
+     */
+    public static function poll_bulk_operation(string $account_id, string $operation_id): string {
+        $res = CloudflareService::request("accounts/{$account_id}/rules/lists/bulk_operations/{$operation_id}");
+        if (!empty($res['success']) && !empty($res['result']['status'])) {
+            return (string) $res['result']['status'];
+        }
+
+        return 'failed';
+    }
+
+    /**
+     * Record a pending async bulk operation in local database ledger.
+     *
+     * @param string $operation_id
+     * @param string $account_id
+     * @param string $list_id
+     * @param string $type 'create' | 'delete'
+     * @param array<string> $ips
+     */
+    public static function record_pending_operation(
+        string $operation_id,
+        string $account_id,
+        string $list_id,
+        string $type,
+        array $ips
+    ): void {
+        $ops = get_option(self::OPTION_PENDING_OPERATIONS, []);
+        $ops = is_array($ops) ? $ops : [];
+
+        $ops[$operation_id] = [
+            'operation_id' => $operation_id,
+            'account_id'   => $account_id,
+            'list_id'      => $list_id,
+            'type'         => $type,
+            'ips'          => $ips,
+            'status'       => 'running',
+            'created_at'   => time(),
+            'updated_at'   => time(),
+        ];
+
+        update_option(self::OPTION_PENDING_OPERATIONS, $ops, false);
+    }
+
+    /**
+     * Reconcile all pending async bulk operations.
+     * Called during periodic sync cron.
+     */
+    public function reconcile_pending_operations(): void {
+        $ops = get_option(self::OPTION_PENDING_OPERATIONS, []);
+        if (empty($ops) || !is_array($ops)) {
+            return;
+        }
+
+        $active_bans = get_option(self::OPTION_ACTIVE_EDGE_BANS, []);
+        $active_bans = is_array($active_bans) ? $active_bans : [];
+        $ops_modified = false;
+        $bans_modified = false;
+
+        foreach ($ops as $op_id => $op_meta) {
+            $status = (string) ($op_meta['status'] ?? 'running');
+            if ($status === 'completed' || $status === 'failed') {
+                // Drop operations older than 24 hours
+                if (time() - (int) ($op_meta['updated_at'] ?? 0) > 86400) {
+                    unset($ops[$op_id]);
+                    $ops_modified = true;
+                }
+                continue;
+            }
+
+            $account_id = (string) ($op_meta['account_id'] ?? '');
+            $list_id    = (string) ($op_meta['list_id'] ?? '');
+            $type       = (string) ($op_meta['type'] ?? 'delete');
+            $ips        = (array) ($op_meta['ips'] ?? []);
+
+            $current_status = self::poll_bulk_operation($account_id, $op_id);
+
+            if ($current_status === 'completed') {
+                if ($type === 'delete') {
+                    foreach ($ips as $ip) {
+                        unset($active_bans[$ip]);
+                        $bans_modified = true;
+                    }
+                }
+                $op_meta['status'] = 'completed';
+                $op_meta['updated_at'] = time();
+                $ops[$op_id] = $op_meta;
+                $ops_modified = true;
+            } elseif ($current_status === 'failed') {
+                $op_meta['status'] = 'failed';
+                $op_meta['updated_at'] = time();
+                $ops[$op_id] = $op_meta;
+                $ops_modified = true;
+            }
+        }
+
+        if ($ops_modified) {
+            update_option(self::OPTION_PENDING_OPERATIONS, $ops, false);
+        }
+        if ($bans_modified) {
+            update_option(self::OPTION_ACTIVE_EDGE_BANS, $active_bans, false);
+        }
     }
 
     /**

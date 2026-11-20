@@ -16,6 +16,14 @@ if (!defined('ABSPATH')) {
 class CloudflareService {
 
     const API_BASE = 'https://api.cloudflare.com/client/v4';
+
+    /**
+     * Optional mock request handler callable for test environments.
+     * Signature: ?callable(string $endpoint, string $method, ?array $body, ?string $token): ?array
+     *
+     * @var callable|null
+     */
+    public static $mock_request_handler = null;
     const WEBCARE_RULE_TAG = '[WebCare Pro Security]';
     const WEBCARE_LEGACY_RULE_TAG = '[WebCare Pro Security & Firewall]';
 
@@ -48,6 +56,13 @@ class CloudflareService {
      * @return array
      */
     public static function request(string $endpoint, string $method = 'GET', ?array $body = null, ?string $override_token = null): array {
+        if (is_callable(self::$mock_request_handler)) {
+            $mocked = (self::$mock_request_handler)($endpoint, $method, $body, $override_token);
+            if (is_array($mocked)) {
+                return $mocked;
+            }
+        }
+
         $settings = SettingsManager::get_settings();
         $token = $override_token ?: ($settings['cloudflare_api_token'] ?? '');
 
