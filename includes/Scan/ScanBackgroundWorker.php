@@ -71,8 +71,8 @@ final class ScanBackgroundWorker {
     public static function trigger_loopback_tick(int $scan_id): void {
         $now = time();
         $random_nonce = function_exists('wp_generate_password') ? wp_generate_password(16, false) : bin2hex(random_bytes(8));
-        $salt = class_exists(\WebCareProScanner\Core\SecretVault::class)
-            ? \WebCareProScanner\Core\SecretVault::get_key()
+        $salt = class_exists(\WebCareProScanner\Security\SecretVault::class)
+            ? \WebCareProScanner\Security\SecretVault::get_key()
             : (defined('AUTH_KEY') && AUTH_KEY !== '' ? AUTH_KEY : '');
         if ($salt === '') {
             return;
@@ -116,8 +116,8 @@ final class ScanBackgroundWorker {
             wp_send_json_error(['message' => 'Expired loopback token.'], 403);
         }
 
-        $salt = class_exists(\WebCareProScanner\Core\SecretVault::class)
-            ? \WebCareProScanner\Core\SecretVault::get_key()
+        $salt = class_exists(\WebCareProScanner\Security\SecretVault::class)
+            ? \WebCareProScanner\Security\SecretVault::get_key()
             : (defined('AUTH_KEY') && AUTH_KEY !== '' ? AUTH_KEY : '');
         if ($salt === '') {
             wp_send_json_error(['message' => 'Secret vault unavailable.'], 403);

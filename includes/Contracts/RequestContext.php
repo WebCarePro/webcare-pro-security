@@ -36,6 +36,9 @@ class RequestContext {
     /** @var string */
     public string $cookieHeader = '';
 
+    /** @var array<string, mixed> */
+    public array $cookies = [];
+
     /** @var array<string, string> */
     public array $headers = [];
 
@@ -226,6 +229,8 @@ class RequestContext {
 
         // Ecommerce session cookie detection (WooCommerce, EDD, SureCart)
         if (!empty($_COOKIE) && is_array($_COOKIE)) {
+            // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Pre-dispatch cookie snapshot
+            $ctx->cookies = wp_unslash($_COOKIE);
             foreach (array_keys($_COOKIE) as $ck) {
                 $ck_str = (string) $ck;
                 if (

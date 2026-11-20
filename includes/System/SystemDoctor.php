@@ -160,8 +160,8 @@ final class SystemDoctor {
             $path = CompiledStackManifest::get_manifest_path();
             $stored_hmac = (string) get_option(CompiledStackManifest::OPTION_MANIFEST_HMAC, '');
             if (file_exists($path) && $stored_hmac !== '') {
-                $secret_key = class_exists('\\WebCareProScanner\\Core\\SecretVault')
-                    ? \WebCareProScanner\Core\SecretVault::get_key()
+                $secret_key = class_exists('\\WebCareProScanner\\Security\\SecretVault')
+                    ? \WebCareProScanner\Security\SecretVault::get_key()
                     : (defined('AUTH_KEY') && AUTH_KEY !== '' ? AUTH_KEY : '');
                 if ($secret_key !== '') {
                     $content = (string) @file_get_contents($path);

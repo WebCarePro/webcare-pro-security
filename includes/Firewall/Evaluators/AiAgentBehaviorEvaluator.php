@@ -6,12 +6,12 @@ namespace WebCareProScanner\Firewall\Evaluators;
 use WebCareProScanner\Contracts\RequestContext;
 use WebCareProScanner\Contracts\WafEvaluatorInterface;
 use WebCareProScanner\Contracts\WafVerdict;
-use WebCareProScanner\Core\SecretVault;
 use WebCareProScanner\Firewall\AdaptiveRateLimiter;
 use WebCareProScanner\Firewall\BotReconDefense;
 use WebCareProScanner\Firewall\Core\ClientIpResolver;
 use WebCareProScanner\Firewall\Core\CommerceSessionGuard;
 use WebCareProScanner\Firewall\FirewallEngine;
+use WebCareProScanner\Security\SecretVault;
 use WebCareProScanner\System\SettingsManager;
 
 if (!defined('ABSPATH')) {
