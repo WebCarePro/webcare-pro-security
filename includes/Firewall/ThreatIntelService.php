@@ -244,6 +244,11 @@ class ThreatIntelService {
             }
         }
 
+        // 3. Central Intelligence Control Plane: Ingest compact incremental CVE & KEV delta feed
+        $central_delta = class_exists(CentralThreatControlPlane::class)
+            ? CentralThreatControlPlane::sync_incremental_feed()
+            : ['success' => false, 'new_cves' => 0, 'kev_updates' => 0];
+
         // Save IP blacklist
         update_option(self::OPTION_IPS, $blacklisted_ips, false);
 
@@ -257,9 +262,10 @@ class ThreatIntelService {
             'last_sync_ts'          => time(),
             'total_ips'             => count($blacklisted_ips),
             'blacklisted_ips_count' => count($blacklisted_ips),
-            'total_cves'            => count($cve_catalog),
-            'cves_count'            => count($cve_catalog),
+            'total_cves'            => count($cve_catalog) + (int) ($central_delta['new_cves'] ?? 0),
+            'cves_count'            => count($cve_catalog) + (int) ($central_delta['new_cves'] ?? 0),
             'downloaded_ips'        => $downloaded_ips_count,
+            'delta_sync'            => $central_delta,
             'status'                => 'active',
         ];
         update_option(self::OPTION_META, $meta, false);

@@ -182,13 +182,19 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
         // Validates HMAC-signed webcare_render_ts (ts:sig) to verify genuine human elapsed submit time
         if ($ctx->method === 'POST') {
             $render_field = (string) ($ctx->formParams['webcare_render_ts'] ?? ($ctx->params['webcare_render_ts'] ?? ''));
-            $post_ts = self::verify_render_timestamp($render_field);
-            if ($post_ts > 0.0) {
-                $elapsed_ms = (microtime(true) - $post_ts) * 1000;
-                if ($elapsed_ms > 0 && $elapsed_ms < 250.0) {
-                    $risk_score += 35;
-                    $signals[] = 'sub_250ms_form_velocity';
+            if ($render_field !== '') {
+                $post_ts = self::verify_render_timestamp($render_field);
+                if ($post_ts > 0.0) {
+                    $elapsed_ms = (microtime(true) - $post_ts) * 1000;
+                    if ($elapsed_ms > 0 && $elapsed_ms < 250.0) {
+                        $risk_score += 35;
+                        $signals[] = 'sub_250ms_form_velocity';
+                    }
                 }
+            } else {
+                // Automated bot POST without render timestamp
+                $risk_score += 25;
+                $signals[] = 'missing_render_timestamp';
             }
         }
 

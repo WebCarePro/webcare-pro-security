@@ -1,4 +1,9 @@
 ﻿v:3.21.0 - 2026-11-21
+- Phase 3 (v3.4.0) — PR-J: Central Intelligence Control Plane (CentralThreatControlPlane.php, ThreatIntelService.php):
+  * Central Threat Control Plane Engine (CentralThreatControlPlane.php): Implemented incremental delta synchronization against WebCare Pro Central Intelligence service (`sync_incremental_feed()`), pulling compact delta updates instead of downloading the entire raw upstream NVD database.
+  * Durable Synchronization Checkpoints: Maintained monotonic sequence tracking and `last_mod_timestamp` checkpoints (`webcareproscan_cve_delta_checkpoint`) with anti-rollback protection to safely reject replayed or rolled-back feeds.
+  * CISA KEV (Known Exploited Vulnerabilities) Ingestion: Factored active in-the-wild exploitation signals (`webcareproscan_cisa_kev_catalog`) into risk scoring, distinguishing active KEV exploitation from unproven theoretical CVE disclosures.
+  * Full Component Inventory Evaluation: Correlated delta feeds against all installed components (Core, active and inactive plugins, MU plugins, drop-ins, and themes) with zero false-positives for missing components.
 - Phase 2 (v3.3.0) — PR-I: Context-Pure AI Evaluator, Cached Bot Verification & API-Native Abuse Controls (AiAgentBehaviorEvaluator.php, BotReconDefense.php, RequestContext.php):
   * Context-Pure AI Evaluator: Migrated 100% of remaining superglobal accesses (`$_SERVER`, `$_COOKIE`, `$_POST`, `$_GET`) inside `AiAgentBehaviorEvaluator` to `$ctx` immutable properties (`$ctx->headers`, `$ctx->cookies`, `$ctx->formParams`, `$ctx->queryParams`, `$ctx->server`), ensuring clean testability and zero state leak.
   * Zero-DNS-Bottleneck Bot Verification: Integrated authoritative vendor-published IP CIDRs (`CRAWLER_CIDR_RANGES`) as first-pass check for Googlebot, Bingbot, and AI search citation crawlers (`oai-searchbot`, `perplexitybot`, `claude-searchbot`) before FCrDNS reverse-DNS lookups, eliminating DNS timeouts and container network latency.
