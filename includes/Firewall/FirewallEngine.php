@@ -1365,7 +1365,13 @@ class FirewallEngine {
 
         // Rule #34: Oversized Request Buffer & DoS Guard (Earliest execution check)
         if (!empty($settings['waf_block_oversized_requests'])) {
-            $is_upload_endpoint = (strpos($request_uri, 'async-upload.php') !== false || strpos($request_uri, '/wp-json/wp/v2/media') !== false);
+            $is_upload_endpoint = (
+                strpos($request_uri, 'async-upload.php') !== false ||
+                strpos($request_uri, 'update.php') !== false ||
+                strpos($request_uri, 'plugin-install.php') !== false ||
+                strpos($request_uri, 'theme-install.php') !== false ||
+                strpos($request_uri, '/wp-json/wp/v2/media') !== false
+            );
             $is_admin_area = is_admin() || strpos($request_uri, '/wp-admin/') !== false;
             $is_commerce_safe = !empty($settings['waf_ecommerce_safe_mode']) && self::is_commerce_or_membership_request($request_uri);
             $is_exempt_endpoint = $is_upload_endpoint || $is_admin_area || $is_builder_session;
@@ -3007,6 +3013,11 @@ class FirewallEngine {
             }
         }
 
+        // Safe translation wrapper that guards against premature _load_textdomain_just_in_time notices
+        // when blocks execute during early plugins_loaded priority 0 before WordPress core fires 'init'.
+        $can_translate = function_exists('did_action') && did_action('init');
+        $t = static fn(string $text) => $can_translate ? esc_html__($text, 'webcare-pro-security') : $text;
+
         // 1. E-Commerce & Checkout AJAX handler (WooCommerce, SureCart, EDD)
         // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Low-level firewall intercept inspects query parameters to determine structured JSON error formatting
         $is_wc_ajax = !empty($_GET['wc-ajax']) || !empty($_GET['wc-api']);
@@ -3016,13 +3027,13 @@ class FirewallEngine {
             /* translators: 1: Security notice label, 2: Security explanation, 3: Support reference code label, 4: Support reference code */
             $ajax_msg = sprintf(
                 '<div class="woocommerce-error" role="alert"><strong>%1$s</strong> %2$s<br/><span style="font-size:12px;opacity:0.9;">%3$s <strong>%4$s</strong></span>%5$s</div>',
-                $is_warning ? esc_html__('Security Warning:', 'webcare-pro-security') : esc_html__('Security Notice:', 'webcare-pro-security'),
+                $is_warning ? $t('Security Warning:') : $t('Security Notice:'),
                 $is_warning
-                    ? esc_html__('Unusual activity detected. If you continue sending repeated invalid requests, your session may be temporarily held.', 'webcare-pro-security')
-                    : esc_html__('Your connection was temporarily held to protect this site.', 'webcare-pro-security'),
-                esc_html__('Customer Support Reference Code:', 'webcare-pro-security'),
+                    ? $t('Unusual activity detected. If you continue sending repeated invalid requests, your session may be temporarily held.')
+                    : $t('Your connection was temporarily held to protect this site.'),
+                $t('Customer Support Reference Code:'),
                 esc_html($ref_code),
-                !empty($contact_url) ? sprintf('<br/><a href="%s" target="_blank" style="display:inline-block;margin-top:6px;font-weight:700;text-decoration:underline;">%s &rarr;</a>', esc_url($contact_url), esc_html__('Contact Store Support', 'webcare-pro-security')) : ''
+                !empty($contact_url) ? sprintf('<br/><a href="%s" target="_blank" style="display:inline-block;margin-top:6px;font-weight:700;text-decoration:underline;">%s &rarr;</a>', esc_url($contact_url), $t('Contact Store Support')) : ''
             );
             echo wp_json_encode([
                 'result'        => 'failure',
@@ -3034,8 +3045,8 @@ class FirewallEngine {
                 'is_warning'    => $is_warning,
                 'contact_url'   => $contact_url,
                 'error'         => $is_warning
-                    ? esc_html__('Security warning active. Continued unauthorized attempts will result in an IP ban.', 'webcare-pro-security')
-                    : esc_html__('Security checkpoint active. Please quote reference code to support.', 'webcare-pro-security'),
+                    ? $t('Security warning active. Continued unauthorized attempts will result in an IP ban.')
+                    : $t('Security checkpoint active. Please quote reference code to support.'),
             ]);
             exit;
         }
@@ -3054,8 +3065,8 @@ class FirewallEngine {
             echo wp_json_encode([
                 'code'          => $is_warning ? 'webcareproscan_warning_checkpoint' : 'webcareproscan_access_denied',
                 'message'       => $is_warning
-                    ? esc_html__('Security Warning: Unusual activity detected. Continued unauthorized requests will result in an automated IP lockout.', 'webcare-pro-security')
-                    : esc_html__('Your connection was temporarily held to protect this website against automated abusive traffic or invalid requests.', 'webcare-pro-security'),
+                    ? $t('Security Warning: Unusual activity detected. Continued unauthorized requests will result in an automated IP lockout.')
+                    : $t('Your connection was temporarily held to protect this website against automated abusive traffic or invalid requests.'),
                 'data'          => [
                     'status'      => 403,
                     'is_warning'  => $is_warning,
@@ -3101,19 +3112,19 @@ class FirewallEngine {
         $btn_bg      = $is_warning ? '#d97706' : '#4f46e5';
 
         $headline = $is_warning
-            ? esc_html__('Security Notice: Action Warning', 'webcare-pro-security')
-            : esc_html__('Protected by WebCare Pro Security', 'webcare-pro-security');
+            ? $t('Security Notice: Action Warning')
+            : $t('Protected by WebCare Pro Security');
 
         /* translators: %s: Site name */
-        $subheadline = sprintf(esc_html__('Automated safety checkpoint on %s', 'webcare-pro-security'), esc_html($site_name));
+        $subheadline = sprintf($can_translate ? esc_html__('Automated safety checkpoint on %s', 'webcare-pro-security') : 'Automated safety checkpoint on %s', esc_html($site_name));
 
         $primary_desc = $is_warning
-            ? esc_html__('Unusual activity was detected from your connection. If you continue sending repeated invalid requests, your IP address will be temporarily banned.', 'webcare-pro-security')
-            : esc_html__('Your connection was temporarily held to protect this website against automated abusive traffic or repeated invalid requests.', 'webcare-pro-security');
+            ? $t('Unusual activity was detected from your connection. If you continue sending repeated invalid requests, your IP address will be temporarily banned.')
+            : $t('Your connection was temporarily held to protect this website against automated abusive traffic or repeated invalid requests.');
 
         $appeal_text = $is_warning
-            ? esc_html__('Are you a legitimate visitor or customer experiencing an issue? You can reach out directly with this code and we will resolve it immediately.', 'webcare-pro-security')
-            : esc_html__('Are you a legitimate customer having trouble checking out or logging in? Share this code with the site owner or support team to restore access in 1 click.', 'webcare-pro-security');
+            ? $t('Are you a legitimate visitor or customer experiencing an issue? You can reach out directly with this code and we will resolve it immediately.')
+            : $t('Are you a legitimate customer having trouble checking out or logging in? Share this code with the site owner or support team to restore access in 1 click.');
 
         // Strike counter indicator for progressive warnings
         $strike_html = '';
@@ -3129,11 +3140,11 @@ class FirewallEngine {
                 '<div style="width:%6$d%%; height:100%%; background:#f59e0b; border-radius:3px;"></div>' .
                 '</div>' .
                 '</div>',
-                esc_html__('Security Warning Level:', 'webcare-pro-security'),
+                $t('Security Warning Level:'),
                 $strike_current,
                 $strike_max,
                 $strike_remain,
-                esc_html__('attempt(s) remaining before temporary 15-min pause', 'webcare-pro-security'),
+                $t('attempt(s) remaining before temporary 15-min pause'),
                 $pct
             );
         }
@@ -3183,29 +3194,29 @@ class FirewallEngine {
             $strike_html,
             $primary_desc,
             $ref_border,
-            esc_html__('Customer Support Reference Code', 'webcare-pro-security'),
+            $t('Customer Support Reference Code'),
             $ref_color,
             esc_html($ref_code),
-            esc_html__('Quote to Support', 'webcare-pro-security'),
+            $t('Quote to Support'),
             $appeal_text,
-            esc_html__('Incident ID', 'webcare-pro-security'),
+            $t('Incident ID'),
             esc_html($incident_id),
-            esc_html__('Client IP', 'webcare-pro-security'),
+            $t('Client IP'),
             esc_html($client_ip),
-            esc_html__('Defense Category', 'webcare-pro-security'),
+            $t('Defense Category'),
             $rule_cat,
-            esc_html__('Timestamp', 'webcare-pro-security'),
+            $t('Timestamp'),
             esc_html(gmdate('Y-m-d H:i:s \U\T\C')),
             esc_url($contact_url),
             $btn_bg,
-            esc_html__('Contact Site Support', 'webcare-pro-security'),
+            $t('Contact Site Support'),
             esc_url(home_url('/')),
-            esc_html__('Return to Home', 'webcare-pro-security'),
-            esc_html__('WebCare Pro Security Suite • Zero-Trust Perimeter Defense', 'webcare-pro-security')
+            $t('Return to Home'),
+            $t('WebCare Pro Security Suite • Zero-Trust Perimeter Defense')
         );
 
         // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-        wp_die($message, esc_html__('403 Forbidden - Security Shield Block', 'webcare-pro-security'), [
+        wp_die($message, $t('403 Forbidden - Security Shield Block'), [
             'response'  => 403,
             'code'      => 'webcareproscan_access_denied',
             'back_link' => false,
