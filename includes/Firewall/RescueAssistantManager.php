@@ -242,37 +242,125 @@ class RescueAssistantManager {
 
     /**
      * Check whether the current request or rule matches any permanently trusted Rescue exemption.
+     * Enforces strict canonical route equality (or explicit /* prefix match), stored method,
+     * exact parameter key matching, and user role validation.
+     * Zero-tolerance exploit signatures (SQLi, RCE, arbitrary file inclusions) are NEVER bypassed.
+     *
+     * @param string $rule_id
+     * @param string $clean_uri
+     * @param string $ajax_action
+     * @param string $rest_query
+     * @param string $method HTTP method (default '')
+     * @param string $param_key Target parameter key (default '')
+     * @return bool
      */
-    public static function is_rule_or_request_trusted(string $rule_id, string $clean_uri, string $ajax_action = '', string $rest_query = ''): bool {
+    public static function is_rule_or_request_trusted(
+        string $rule_id,
+        string $clean_uri,
+        string $ajax_action = '',
+        string $rest_query = '',
+        string $method = '',
+        string $param_key = ''
+    ): bool {
+        // Zero-tolerance exploit signatures must NEVER be exempted by customer allowlists
+        $zero_tolerance_rules = [
+            'WAF-RCE', 'WAF-SQLI', 'WAF-FILE-INCLUSION', 'WAF-ARBITRARY-FILE-WRITE',
+            'WAF-SYSTEM-COMMAND-EXEC', 'WAF-POLYGLOT-UPLOAD-TRAP', 'WAF-XXE-INJECTION',
+        ];
+        if (in_array(strtoupper($rule_id), $zero_tolerance_rules, true)) {
+            return false;
+        }
+
         $trusted = self::get_trusted_actions();
         if (empty($trusted)) {
             return false;
         }
 
         $rule_lc   = strtolower($rule_id);
-        $uri_lc    = strtolower($clean_uri);
+        $uri_lc    = strtolower(rtrim($clean_uri, '/'));
         $act_lc    = strtolower($ajax_action);
-        $rest_lc   = strtolower($rest_query);
+        $rest_lc   = strtolower(rtrim($rest_query, '/'));
+        $method_uc = strtoupper($method ?: ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
+        $pkey_lc   = strtolower($param_key);
+
+        $current_user_roles = [];
+        if (function_exists('wp_get_current_user')) {
+            $user = wp_get_current_user();
+            if ($user && !empty($user->roles)) {
+                $current_user_roles = array_map('strtolower', (array) $user->roles);
+            }
+        }
 
         foreach ($trusted as $item) {
-            if (!empty($item['rule_id']) && strtolower((string) $item['rule_id']) === $rule_lc && empty($item['value'])) {
+            $item_rule = strtolower((string) ($item['rule_id'] ?? ''));
+            $item_type = strtolower((string) ($item['type'] ?? ''));
+            $val       = strtolower(trim((string) ($item['value'] ?? '')));
+            $req_role  = strtolower(trim((string) ($item['user_role'] ?? '')));
+            $req_pkey  = strtolower(trim((string) ($item['param_key'] ?? '')));
+            $req_meth  = strtoupper(trim((string) ($item['method'] ?? '')));
+
+            // 1. Role validation: if allowlist specifies a role, current user must hold it
+            if ($req_role !== '') {
+                if (!in_array($req_role, $current_user_roles, true)) {
+                    continue;
+                }
+            }
+
+            // 2. Method validation: if allowlist specifies a method, incoming request must match
+            if ($req_meth !== '' && $req_meth !== $method_uc) {
+                continue;
+            }
+
+            // 3. Parameter key validation: if allowlist specifies a param_key, check parameter context
+            if ($req_pkey !== '') {
+                if ($pkey_lc !== '' && $pkey_lc !== $req_pkey) {
+                    continue;
+                }
+            }
+
+            // 4. Rule-only exemption
+            if ($item_rule !== '' && $item_rule === $rule_lc && $val === '') {
                 return true;
             }
-            $type = $item['type'] ?? '';
-            $val  = strtolower(trim((string) ($item['value'] ?? '')));
+
             if ($val === '') {
                 continue;
             }
-            if ($type === 'ajax' && $act_lc !== '' && $act_lc === $val) {
+
+            // 5. AJAX action check: exact match
+            if ($item_type === 'ajax' && $act_lc !== '' && $act_lc === $val) {
                 return true;
             }
-            if ($type === 'rest' && (str_contains($uri_lc, $val) || ($rest_lc !== '' && str_starts_with($rest_lc, $val)))) {
-                return true;
+
+            // 6. REST route check: canonical match or explicit wildcard /*
+            if ($item_type === 'rest') {
+                $rest_target = $rest_lc !== '' ? $rest_lc : $uri_lc;
+                $val_clean = rtrim($val, '/');
+                if (str_ends_with($val, '/*')) {
+                    $prefix = rtrim(substr($val, 0, -2), '/');
+                    if (str_starts_with($rest_target, $prefix)) {
+                        return true;
+                    }
+                } elseif ($rest_target === $val_clean) {
+                    return true;
+                }
             }
-            if ($type === 'uri' && str_contains($uri_lc, $val)) {
-                return true;
+
+            // 7. URI check: canonical exact match or explicit wildcard /*
+            if ($item_type === 'uri') {
+                $val_clean = rtrim($val, '/');
+                if (str_ends_with($val, '/*')) {
+                    $prefix = rtrim(substr($val, 0, -2), '/');
+                    if (str_starts_with($uri_lc, $prefix)) {
+                        return true;
+                    }
+                } elseif ($uri_lc === $val_clean) {
+                    return true;
+                }
             }
-            if ($type === 'rule' && $rule_lc !== '' && $rule_lc === $val) {
+
+            // 8. Rule identifier exact match
+            if ($item_type === 'rule' && $rule_lc !== '' && $rule_lc === $val) {
                 return true;
             }
         }
@@ -283,14 +371,15 @@ class RescueAssistantManager {
     /**
      * Check incoming HTTP request against Rescue permanently trusted actions inside FirewallEngine.
      */
-    public static function is_incoming_request_trusted(string $request_uri, string $rule_id = ''): bool {
+    public static function is_incoming_request_trusted(string $request_uri, string $rule_id = '', string $param_key = ''): bool {
         $clean_uri = strtolower((string) strtok($request_uri, '?'));
         // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Pre-dispatch check against admin-approved trusted action list
         $ajax_act  = isset($_REQUEST['action']) ? sanitize_key(wp_unslash($_REQUEST['action'])) : '';
         // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Pre-dispatch check against admin-approved trusted route list
         $rest_q    = isset($_GET['rest_route']) ? strtolower(sanitize_text_field(wp_unslash($_GET['rest_route']))) : '';
+        $method    = isset($_SERVER['REQUEST_METHOD']) ? (string) $_SERVER['REQUEST_METHOD'] : 'GET';
 
-        return self::is_rule_or_request_trusted($rule_id, $clean_uri, $ajax_act, $rest_q);
+        return self::is_rule_or_request_trusted($rule_id, $clean_uri, $ajax_act, $rest_q, $method, $param_key);
     }
 
     /**
@@ -304,18 +393,20 @@ class RescueAssistantManager {
         $ip        = sanitize_text_field(trim((string) ($params['ip'] ?? '')));
         $param_key = sanitize_text_field(trim((string) ($params['param_key'] ?? '')));
         $user_role = sanitize_key(trim((string) ($params['user_role'] ?? '')));
+        $method    = strtoupper(sanitize_key(trim((string) ($params['method'] ?? ''))));
 
         if ($value === '' && $rule_id === '') {
             return ['success' => false, 'message' => __('Action target or rule identifier is required.', 'webcare-pro-security')];
         }
 
         $trusted = self::get_trusted_actions();
-        $key     = strtolower($type . ':' . ($value ?: $rule_id) . ($param_key !== '' ? ':' . $param_key : '') . ($user_role !== '' ? ':' . $user_role : ''));
+        $key     = strtolower($type . ':' . ($value ?: $rule_id) . ($method !== '' ? ':' . $method : '') . ($param_key !== '' ? ':' . $param_key : '') . ($user_role !== '' ? ':' . $user_role : ''));
         $exists  = false;
         foreach ($trusted as $item) {
             $item_key = strtolower(
                 ($item['type'] ?? '') . ':' .
                 (($item['value'] ?? '') ?: ($item['rule_id'] ?? '')) .
+                (!empty($item['method']) ? ':' . $item['method'] : '') .
                 (!empty($item['param_key']) ? ':' . $item['param_key'] : '') .
                 (!empty($item['user_role']) ? ':' . $item['user_role'] : '')
             );
@@ -331,6 +422,7 @@ class RescueAssistantManager {
                 'type'       => $type,
                 'value'      => $value,
                 'rule_id'    => $rule_id,
+                'method'     => $method,
                 'param_key'  => $param_key,
                 'user_role'  => $user_role,
                 'label'      => $label ?: ($value ?: $rule_id),

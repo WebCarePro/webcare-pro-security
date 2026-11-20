@@ -254,15 +254,102 @@ class ModernApiShield implements SecurityModuleInterface, WafEvaluatorInterface 
     }
 
     /**
+     * Lex a GraphQL query string into a stream of non-string, non-comment tokens in a single pass.
+     * State machine transitions cleanly through:
+     * - NORMAL: unquoted syntax
+     * - STRING: double-quoted strings "..." (respecting \" and \\ escapes)
+     * - BLOCK_STRING: triple-quoted block strings """...""" (respecting \""" escapes)
+     * - COMMENT: single-line comments # ...
+     *
+     * Invariants guaranteed:
+     * - # inside a string literal is strictly string data (never treated as comment start)
+     * - " inside a comment is strictly comment data (never starts a string)
+     * - Replaces all string literals and comments with safe placeholders, leaving syntax/keywords intact.
+     *
+     * @param string $query Raw GraphQL query
+     * @return string Stripped query containing only executable syntax and identifiers
+     */
+    public static function lex_graphql_syntax(string $query): string {
+        $len = strlen($query);
+        $out = '';
+        $state = 'NORMAL'; // 'NORMAL' | 'STRING' | 'BLOCK_STRING' | 'COMMENT'
+        $i = 0;
+
+        while ($i < $len) {
+            $ch = $query[$i];
+
+            if ($state === 'NORMAL') {
+                if ($ch === '"') {
+                    // Check for block string """
+                    if ($i + 2 < $len && $query[$i + 1] === '"' && $query[$i + 2] === '"') {
+                        $state = 'BLOCK_STRING';
+                        $out .= '""';
+                        $i += 3;
+                        continue;
+                    }
+                    $state = 'STRING';
+                    $out .= '""';
+                    $i++;
+                    continue;
+                }
+                if ($ch === '#') {
+                    $state = 'COMMENT';
+                    $i++;
+                    continue;
+                }
+                $out .= $ch;
+                $i++;
+                continue;
+            }
+
+            if ($state === 'STRING') {
+                if ($ch === '\\') {
+                    // Skip escaped character in string
+                    $i += 2;
+                    continue;
+                }
+                if ($ch === '"') {
+                    $state = 'NORMAL';
+                    $i++;
+                    continue;
+                }
+                $i++;
+                continue;
+            }
+
+            if ($state === 'BLOCK_STRING') {
+                if ($ch === '\\' && $i + 3 < $len && $query[$i + 1] === '"' && $query[$i + 2] === '"' && $query[$i + 3] === '"') {
+                    // Escaped triple quotes \"""
+                    $i += 4;
+                    continue;
+                }
+                if ($ch === '"' && $i + 2 < $len && $query[$i + 1] === '"' && $query[$i + 2] === '"') {
+                    $state = 'NORMAL';
+                    $i += 3;
+                    continue;
+                }
+                $i++;
+                continue;
+            }
+
+            if ($state === 'COMMENT') {
+                if ($ch === "\r" || $ch === "\n") {
+                    $state = 'NORMAL';
+                    $out .= $ch;
+                }
+                $i++;
+                continue;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
      * Detect unauthenticated introspection keywords outside quoted strings, block strings, and comments.
      */
     public static function contains_introspection(string $query): bool {
-        // Strip block strings """...""" first
-        $no_block_strings = (string) preg_replace('/"""[\s\S]*?"""/', '""', $query);
-        // Strip single line comments # ...
-        $no_comments = (string) preg_replace('/#[^\r\n]*/', '', $no_block_strings);
-        // Strip standard quoted strings "..."
-        $stripped = (string) preg_replace('/"(?:\\\\.|[^"\\\\])*"/', '""', $no_comments);
+        $stripped = self::lex_graphql_syntax($query);
         return preg_match('/\b__(?:schema|type)\b/', $stripped) === 1;
     }
 
@@ -272,12 +359,7 @@ class ModernApiShield implements SecurityModuleInterface, WafEvaluatorInterface 
      * @return array{max_depth: int, alias_count: int}
      */
     public static function measure_query_complexity(string $query): array {
-        // Strip block strings """...""" first
-        $no_block_strings = (string) preg_replace('/"""[\s\S]*?"""/', '""', $query);
-        // Strip single line comments # ...
-        $no_comments = (string) preg_replace('/#[^\r\n]*/', '', $no_block_strings);
-        // Strip standard quoted strings "..."
-        $stripped    = (string) preg_replace('/"(?:\\\\.|[^"\\\\])*"/', '""', $no_comments);
+        $stripped = self::lex_graphql_syntax($query);
 
         $depth     = 0;
         $max_depth = 0;
