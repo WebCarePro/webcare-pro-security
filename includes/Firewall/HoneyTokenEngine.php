@@ -3,6 +3,7 @@ namespace WebCareProScanner\Firewall;
 
 use WebCareProScanner\System\SettingsManager;
 use WebCareProScanner\System\AuditLogger;
+use WebCareProScanner\Notifications\NotificationDispatcher;
 
 if (!defined('ABSPATH')) {
     exit;
