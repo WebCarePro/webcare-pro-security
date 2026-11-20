@@ -243,10 +243,15 @@ class ModernApiShield implements SecurityModuleInterface, WafEvaluatorInterface 
     }
 
     /**
-     * Detect unauthenticated introspection keywords outside quoted strings.
+     * Detect unauthenticated introspection keywords outside quoted strings, block strings, and comments.
      */
     public static function contains_introspection(string $query): bool {
-        $stripped = (string) preg_replace('/"(?:\\\\.|[^"\\\\])*"/', '""', $query);
+        // Strip block strings """...""" first
+        $no_block_strings = (string) preg_replace('/"""[\s\S]*?"""/', '""', $query);
+        // Strip single line comments # ...
+        $no_comments = (string) preg_replace('/#[^\r\n]*/', '', $no_block_strings);
+        // Strip standard quoted strings "..."
+        $stripped = (string) preg_replace('/"(?:\\\\.|[^"\\\\])*"/', '""', $no_comments);
         return preg_match('/\b__(?:schema|type)\b/', $stripped) === 1;
     }
 
@@ -256,7 +261,11 @@ class ModernApiShield implements SecurityModuleInterface, WafEvaluatorInterface 
      * @return array{max_depth: int, alias_count: int}
      */
     public static function measure_query_complexity(string $query): array {
-        $no_comments = (string) preg_replace('/#[^\r\n]*/', '', $query);
+        // Strip block strings """...""" first
+        $no_block_strings = (string) preg_replace('/"""[\s\S]*?"""/', '""', $query);
+        // Strip single line comments # ...
+        $no_comments = (string) preg_replace('/#[^\r\n]*/', '', $no_block_strings);
+        // Strip standard quoted strings "..."
         $stripped    = (string) preg_replace('/"(?:\\\\.|[^"\\\\])*"/', '""', $no_comments);
 
         $depth     = 0;

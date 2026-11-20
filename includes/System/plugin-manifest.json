@@ -1,6 +1,6 @@
 {
   "version": "3.1.0",
-  "generated_at": "2026-11-20T17:29:12.917Z",
+  "generated_at": "2026-11-20T17:38:59.321Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -644,8 +644,8 @@
       "size": 13968
     },
     "includes/Firewall/NextGen/ModernApiShield.php": {
-      "sha256": "f9ed96385c9bff45ed65cd04c1f16c34fdbbcf39c68f19e38ae7c55253bc9083",
-      "size": 11485
+      "sha256": "7ec2856fce4f6e8fecb1ebb794241faf740f3e88bcc932e3de5eb536548c9d7a",
+      "size": 12061
     },
     "includes/Firewall/NextGen/ResponseDlpSentinel.php": {
       "sha256": "70d96df5874d9d032d1f1061e3fbeed012381227e3752df6cbb36d1500472388",
