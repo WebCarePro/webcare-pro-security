@@ -139,9 +139,10 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
         $signals = [];
 
         // Heuristic 1: HTTPS Sec-Fetch-* Absence (+35 risk)
-        $is_https = function_exists('is_ssl') ? is_ssl() : (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off');
+        $is_https = function_exists('is_ssl') ? is_ssl() : (!empty($ctx->server['HTTPS']) && strtolower((string) $ctx->server['HTTPS']) !== 'off');
 
-        $has_sec_fetch = isset($_SERVER['HTTP_SEC_FETCH_SITE']) || isset($_SERVER['HTTP_SEC_FETCH_MODE']) || isset($_SERVER['HTTP_SEC_FETCH_DEST']);
+        $has_sec_fetch = isset($ctx->headers['sec-fetch-site']) || isset($ctx->headers['sec-fetch-mode']) || isset($ctx->headers['sec-fetch-dest'])
+            || isset($ctx->server['HTTP_SEC_FETCH_SITE']) || isset($ctx->server['HTTP_SEC_FETCH_MODE']) || isset($ctx->server['HTTP_SEC_FETCH_DEST']);
         if ($is_https && !$has_sec_fetch && $ua !== '') {
             // Modern desktop & mobile browsers (Chrome, Edge, Safari, Firefox) support Fetch Metadata.
             // Exclude common iOS & Android in-app WebViews (Instagram, Facebook, TikTok, Line, LinkedIn, Snapchat, etc.) which often omit Sec-Fetch-*
@@ -159,9 +160,9 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
         }
 
         // Heuristic 2: Sec-CH-UA vs User-Agent Contradiction (+40 risk)
-        $sec_ch_ua = isset($_SERVER['HTTP_SEC_CH_UA']) ? (string) wp_unslash($_SERVER['HTTP_SEC_CH_UA']) : '';
-        $sec_ch_mobile = isset($_SERVER['HTTP_SEC_CH_UA_MOBILE']) ? (string) wp_unslash($_SERVER['HTTP_SEC_CH_UA_MOBILE']) : '';
-        $sec_ch_platform = isset($_SERVER['HTTP_SEC_CH_UA_PLATFORM']) ? strtolower((string) wp_unslash($_SERVER['HTTP_SEC_CH_UA_PLATFORM'])) : '';
+        $sec_ch_ua = (string) ($ctx->headers['sec-ch-ua'] ?? ($ctx->server['HTTP_SEC_CH_UA'] ?? ''));
+        $sec_ch_mobile = (string) ($ctx->headers['sec-ch-ua-mobile'] ?? ($ctx->server['HTTP_SEC_CH_UA_MOBILE'] ?? ''));
+        $sec_ch_platform = strtolower((string) ($ctx->headers['sec-ch-ua-platform'] ?? ($ctx->server['HTTP_SEC_CH_UA_PLATFORM'] ?? '')));
 
         if ($sec_ch_ua !== '' && $ua !== '') {
             $ua_lower = strtolower($ua);
@@ -180,7 +181,7 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
         // Heuristic 3: Sub-250ms Form-Submit Velocity (+35 risk)
         // Validates HMAC-signed webcare_render_ts (ts:sig) to verify genuine human elapsed submit time
         if ($ctx->method === 'POST') {
-            $render_field = isset($_POST['webcare_render_ts']) ? (string) wp_unslash($_POST['webcare_render_ts']) : '';
+            $render_field = (string) ($ctx->formParams['webcare_render_ts'] ?? ($ctx->params['webcare_render_ts'] ?? ''));
             $post_ts = self::verify_render_timestamp($render_field);
             if ($post_ts > 0.0) {
                 $elapsed_ms = (microtime(true) - $post_ts) * 1000;
@@ -196,18 +197,36 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
         // Threshold raised to > 30 hits/60s (or > 15 if missing Accept-Language) to avoid false positives on CDN/Cloudflare-cached static stores.
         $session_key = 'ai_hit_' . substr(hash('xxh128', $ctx->ip . ($ctx->userAgent ?: '')), 0, 16);
         $hits = self::increment_session_hits($session_key, 60);
-        $has_accept_lang = !empty($_SERVER['HTTP_ACCEPT_LANGUAGE']);
+        $has_accept_lang = !empty($ctx->headers['accept-language']) || !empty($ctx->server['HTTP_ACCEPT_LANGUAGE']);
         if ($hits > 30 || (!$has_accept_lang && $hits > 15)) {
             $risk_score += 25;
             $signals[] = 'zero_asset_high_velocity';
         }
 
-        // Action Decision: If risk score >= 60, challenge legitimate browser with invisible WebCrypto PoW
+        // Action Decision: If risk score >= 60, evaluate API-native 429 vs browser WebCrypto PoW
         if ($risk_score >= 60) {
             $can_translate = function_exists('did_action') && did_action('init');
             $challenge_fmt = $can_translate
                 ? __('Browser integrity validation required (signals: %s).', 'webcare-pro-security')
                 : 'Browser integrity validation required (signals: %s).';
+
+            // Check if this is an API / REST / AJAX call
+            $is_api_or_rest = str_contains($ctx->uri, '/wp-json/') || str_contains($ctx->uri, 'rest_route=') || (function_exists('wp_doing_ajax') && wp_doing_ajax());
+            if ($is_api_or_rest) {
+                // Return API-native 429 rate limit verdict instead of rendering HTML PoW challenge
+                return new WafVerdict(
+                    'rate_limit',
+                    'WAF-AI-AGENT-API-RATELIMIT',
+                    'Automated high-velocity API access pattern restricted.',
+                    [
+                        'category'    => 'AI Threat Defense',
+                        'risk_score'  => $risk_score,
+                        'signals'     => $signals,
+                        'status_code' => 429,
+                    ]
+                );
+            }
+
             return WafVerdict::challenge(
                 'WAF-AI-AGENT-STEPUP',
                 sprintf(
@@ -237,8 +256,8 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
         }
 
         // 2. Cookie check for logged-in user: Must validate cryptographic auth cookie to prevent forgery
-        if (!empty($_COOKIE)) {
-            foreach ($_COOKIE as $name => $val) {
+        if (!empty($ctx->cookies)) {
+            foreach ($ctx->cookies as $name => $val) {
                 if (str_starts_with((string) $name, 'wordpress_logged_in_')) {
                     if (function_exists('wp_validate_auth_cookie')) {
                         $user_id = wp_validate_auth_cookie((string) $val, 'logged_in');
@@ -255,13 +274,11 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
             return true;
         }
 
-        // 4. AJAX or WooCommerce JSON endpoints (never return an HTML PoW challenge to legitimate AJAX/JSON callers)
-        if (function_exists('wp_doing_ajax') && wp_doing_ajax()) {
-            return true;
-        }
+        // 4. AJAX or WooCommerce JSON endpoints (strictly validate wc-ajax against known WooCommerce actions or require valid WC session)
+        $wc_ajax_act = !empty($ctx->queryParams['wc-ajax'])
+            ? sanitize_key((string) $ctx->queryParams['wc-ajax'])
+            : (!empty($ctx->formParams['wc-ajax']) ? sanitize_key((string) $ctx->formParams['wc-ajax']) : '');
 
-        // Strictly validate wc-ajax against known WooCommerce actions or require valid WC session to prevent unauthenticated bot bypass
-        $wc_ajax_act = !empty($_GET['wc-ajax']) ? sanitize_key(wp_unslash($_GET['wc-ajax'])) : (!empty($_POST['wc-ajax']) ? sanitize_key(wp_unslash($_POST['wc-ajax'])) : '');
         if ($wc_ajax_act !== '') {
             $allowed_wc_ajax = [
                 'get_refreshed_fragments', 'apply_coupon', 'remove_coupon', 'update_shipping_method',
@@ -270,9 +287,6 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
             if (in_array($wc_ajax_act, $allowed_wc_ajax, true) || (class_exists(CommerceSessionGuard::class) && CommerceSessionGuard::has_active_shopper_session())) {
                 return true;
             }
-        }
-        if (str_contains($ctx->uri, '/wp-json/') || str_contains($ctx->uri, 'rest_route=')) {
-            return true;
         }
 
         return false;

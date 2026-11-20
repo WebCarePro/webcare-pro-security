@@ -121,7 +121,10 @@ class RequestContext {
         array $cookies = [],
         array $headers = [],
         array $files = [],
-        array $server = []
+        array $server = [],
+        array $queryParams = [],
+        array $formParams = [],
+        array $jsonParams = []
     ) {
         $this->ip = $ip;
         $this->method = strtoupper($method);
@@ -147,24 +150,28 @@ class RequestContext {
         $this->cleanUri = $raw_clean;
         $this->query = $q_pos === false ? '' : substr($uri, $q_pos + 1);
         $this->userAgent = $userAgent;
-        $this->cookies = $cookies;
+        $this->cookies = !empty($cookies) ? $cookies : (isset($_COOKIE) && is_array($_COOKIE) ? $_COOKIE : []);
         $this->headers = $headers;
         $this->files = $files;
-        $this->server = $server;
+        $this->server = !empty($server) ? $server : (isset($_SERVER) && is_array($_SERVER) ? $_SERVER : []);
 
-        $this->queryParams = [];
-        if ($this->query !== '') {
+        $this->queryParams = $queryParams;
+        if (empty($this->queryParams) && $this->query !== '') {
             $parsed_q = [];
             parse_str($this->query, $parsed_q);
             if (is_array($parsed_q)) {
                 $this->queryParams = $parsed_q;
             }
         }
-        $this->formParams = [];
-        $this->jsonParams = [];
+        if (empty($this->queryParams) && isset($_GET) && is_array($_GET)) {
+            $this->queryParams = $_GET;
+        }
+
+        $this->formParams = !empty($formParams) ? $formParams : (isset($_POST) && is_array($_POST) ? $_POST : []);
+        $this->jsonParams = $jsonParams;
         $this->rawBodyMetadata = [];
 
-        $this->params = !empty($params) ? $params : $this->queryParams;
+        $this->params = !empty($params) ? $params : array_merge($this->queryParams, $this->formParams, $this->jsonParams);
     }
 
     /**

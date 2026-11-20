@@ -36,6 +36,9 @@ class BotReconDefense {
         'duckduckbot' => ['duckduckgo.com'],
         'yandex'      => ['yandex.ru', 'yandex.net', 'yandex.com'],
         'baiduspider' => ['baidu.com', 'baidu.jp'],
+        'oai-searchbot'  => ['openai.com'],
+        'perplexitybot' => ['perplexity.ai'],
+        'claude-searchbot' => ['anthropic.com'],
     ];
 
     /**
@@ -91,6 +94,21 @@ class BotReconDefense {
             '13.66.139.0/24',
             '13.66.144.0/24',
             '52.167.144.0/24',
+        ],
+        'oai-searchbot' => [
+            // OpenAI published search crawler IP ranges
+            '20.171.206.0/24',
+            '20.171.207.0/24',
+            '40.83.2.0/24',
+        ],
+        'perplexitybot' => [
+            // Perplexity search citation crawler IP ranges
+            '151.101.0.0/16',
+            '199.232.0.0/16',
+        ],
+        'claude-searchbot' => [
+            // Anthropic Claude search citation IP ranges
+            '160.79.104.0/23',
         ],
     ];
 
@@ -383,32 +401,34 @@ class BotReconDefense {
 
         $is_genuine = false;
 
-        // 1. Primary Check: Forward-Confirmed Reverse DNS (FCrDNS) - standard search engine recommendation
-        $hostname = @gethostbyaddr($ip);
-        if (!empty($hostname) && $hostname !== $ip) {
-            $hostname_lower = strtolower($hostname);
-
-            // Check if hostname ends with authorized domain suffix
-            $domain_matches = false;
-            foreach ($allowed_domains as $domain) {
-                if ($hostname_lower === $domain || str_ends_with($hostname_lower, '.' . $domain)) {
-                    $domain_matches = true;
-                    break;
-                }
-            }
-
-            if ($domain_matches) {
-                // 2. Forward DNS Lookup confirmation
-                $resolved_ip = @gethostbyname($hostname);
-                if ($resolved_ip === $ip) {
-                    $is_genuine = true;
-                }
-            }
+        // 1. Authoritative Vendor CIDR check first (zero DNS latency & zero timeout risk)
+        if (self::is_search_bot_in_official_cidrs($ip, $bot_key)) {
+            $is_genuine = true;
         }
 
-        // 2. Fallback CIDR check: Only if external DNS PTR timed out or is unresolvable in container/NAT environment
-        if (!$is_genuine && self::is_search_bot_in_official_cidrs($ip, $bot_key)) {
-            $is_genuine = true;
+        // 2. Secondary Check: Forward-Confirmed Reverse DNS (FCrDNS) if not in published CIDR ranges
+        if (!$is_genuine) {
+            $hostname = @gethostbyaddr($ip);
+            if (!empty($hostname) && $hostname !== $ip) {
+                $hostname_lower = strtolower($hostname);
+
+                // Check if hostname ends with authorized domain suffix
+                $domain_matches = false;
+                foreach ($allowed_domains as $domain) {
+                    if ($hostname_lower === $domain || str_ends_with($hostname_lower, '.' . $domain)) {
+                        $domain_matches = true;
+                        break;
+                    }
+                }
+
+                if ($domain_matches) {
+                    // Forward DNS Lookup confirmation
+                    $resolved_ip = @gethostbyname($hostname);
+                    if ($resolved_ip === $ip) {
+                        $is_genuine = true;
+                    }
+                }
+            }
         }
 
         // Cache verdict for 24 hours
