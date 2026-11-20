@@ -6,7 +6,11 @@ namespace WebCareProScanner\Firewall\Evaluators;
 use WebCareProScanner\Contracts\RequestContext;
 use WebCareProScanner\Contracts\WafEvaluatorInterface;
 use WebCareProScanner\Contracts\WafVerdict;
+use WebCareProScanner\Core\SecretVault;
+use WebCareProScanner\Firewall\AdaptiveRateLimiter;
+use WebCareProScanner\Firewall\BotReconDefense;
 use WebCareProScanner\Firewall\Core\ClientIpResolver;
+use WebCareProScanner\Firewall\Core\CommerceSessionGuard;
 use WebCareProScanner\Firewall\FirewallEngine;
 use WebCareProScanner\System\SettingsManager;
 
@@ -74,18 +78,23 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
             return null;
         }
 
+        // 1b. Exemption: Logged in WordPress users, active WooCommerce shoppers, and JSON/AJAX API requests
+        if (self::is_exempt_session($ctx)) {
+            return null;
+        }
+
         // 2. Exemption: Already solved WebCrypto PoW in current session
         $ua = $ctx->userAgent;
-        if (class_exists('\\WebCareProScanner\\Firewall\\BotReconDefense')) {
-            if (\WebCareProScanner\Firewall\BotReconDefense::has_valid_clearance_cookie($ctx->ip, $ua)) {
+        if (class_exists(BotReconDefense::class)) {
+            if (BotReconDefense::has_valid_clearance_cookie($ctx->ip, $ua)) {
                 return null;
             }
         }
 
-        // 3. Exemption: Verified search engine crawlers (Google, Bing, DuckDuckGo) or allowed citation bots
-        if (class_exists('\\WebCareProScanner\\Firewall\\BotReconDefense')) {
+        // 3. Exemption: Genuine reverse-DNS verified search engine crawlers (Google, Bing, DuckDuckGo) or allowed citation bots
+        if (class_exists(BotReconDefense::class)) {
             $ua_lower = strtolower($ua);
-            if (\WebCareProScanner\Firewall\BotReconDefense::detect_claimed_search_bot($ua_lower) !== null) {
+            if (BotReconDefense::is_genuine_search_engine($ctx->ip, $ua)) {
                 return null;
             }
             if (!empty($settings['waf_ai_allow_search_citations'])) {
@@ -103,11 +112,7 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
         $signals = [];
 
         // Heuristic 1: HTTPS Sec-Fetch-* Absence (+35 risk)
-        $is_https = (
-            (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off')
-            || (isset($_SERVER['SERVER_PORT']) && (int) $_SERVER['SERVER_PORT'] === 443)
-            || (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower((string) $_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https')
-        );
+        $is_https = function_exists('is_ssl') ? is_ssl() : (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off');
 
         $has_sec_fetch = isset($_SERVER['HTTP_SEC_FETCH_SITE']) || isset($_SERVER['HTTP_SEC_FETCH_MODE']) || isset($_SERVER['HTTP_SEC_FETCH_DEST']);
         if ($is_https && !$has_sec_fetch && $ua !== '') {
@@ -143,9 +148,10 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
         }
 
         // Heuristic 3: Sub-250ms Form-Submit Velocity (+35 risk)
-        // Checks public POST forms where WebCare hidden timestamp token or WooCommerce checkout is submitted faster than humanly possible
+        // Validates HMAC-signed webcare_render_ts (ts:sig) to verify genuine human elapsed submit time
         if ($ctx->method === 'POST') {
-            $post_ts = isset($_POST['webcare_render_ts']) ? (float) $_POST['webcare_render_ts'] : 0.0;
+            $render_field = isset($_POST['webcare_render_ts']) ? (string) wp_unslash($_POST['webcare_render_ts']) : '';
+            $post_ts = self::verify_render_timestamp($render_field);
             if ($post_ts > 0.0) {
                 $elapsed_ms = (microtime(true) - $post_ts) * 1000;
                 if ($elapsed_ms > 0 && $elapsed_ms < 250.0) {
@@ -156,11 +162,10 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
         }
 
         // Heuristic 4: Zero-Asset Crawl Pattern (+25 risk)
-        // High-frequency hits against PHP endpoints without any CSS/JS/image asset requests from the same session
-        $session_key = 'webcare_sess_hits_' . md5($ctx->ip . ($ctx->userAgent ?: ''));
-        $hits = (int) get_transient($session_key);
-        set_transient($session_key, $hits + 1, 60);
-        if ($hits > 15 && empty($_COOKIE['wordpress_logged_in_'])) {
+        // High-frequency hits against PHP endpoints using fast APCu memory counter without hitting MySQL wp_options
+        $session_key = 'ai_hit_' . substr(hash('xxh128', $ctx->ip . ($ctx->userAgent ?: '')), 0, 16);
+        $hits = self::increment_session_hits($session_key, 60);
+        if ($hits > 15) {
             $risk_score += 25;
             $signals[] = 'zero_asset_high_velocity';
         }
@@ -184,5 +189,128 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
         }
 
         return null;
+    }
+
+    /**
+     * Check if request belongs to an authenticated user, verified shopper, or machine API/AJAX call.
+     */
+    private static function is_exempt_session(RequestContext $ctx): bool {
+        // 1. Logged-in WordPress user
+        if (function_exists('is_user_logged_in') && is_user_logged_in()) {
+            return true;
+        }
+
+        // 2. Cookie check for logged-in user (WordPress appends COOKIEHASH to 'wordpress_logged_in_')
+        if (!empty($_COOKIE)) {
+            foreach ($_COOKIE as $name => $val) {
+                if (str_starts_with((string) $name, 'wordpress_logged_in_')) {
+                    return true;
+                }
+            }
+        }
+
+        // 3. Active WooCommerce or Membership shopper session
+        if (class_exists(CommerceSessionGuard::class) && CommerceSessionGuard::has_active_shopper_session()) {
+            return true;
+        }
+
+        // 4. AJAX or WooCommerce JSON endpoints (never return an HTML PoW challenge to JSON callers)
+        if (function_exists('wp_doing_ajax') && wp_doing_ajax()) {
+            return true;
+        }
+        if (isset($_GET['wc-ajax']) || isset($_POST['wc-ajax'])) {
+            return true;
+        }
+        if (str_contains($ctx->uri, '/wp-json/') || str_contains($ctx->uri, 'rest_route=')) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Verify HMAC-signed render timestamp (ts:sig).
+     *
+     * @param string $field Raw field value in format "timestamp:signature".
+     * @return float Verified timestamp or 0.0 on mismatch.
+     */
+    public static function verify_render_timestamp(string $field): float {
+        if ($field === '' || !str_contains($field, ':')) {
+            return 0.0;
+        }
+
+        $parts = explode(':', $field, 2);
+        if (count($parts) !== 2) {
+            return 0.0;
+        }
+
+        [$ts_str, $sig] = $parts;
+        $ts = (float) $ts_str;
+        if ($ts <= 0.0) {
+            return 0.0;
+        }
+
+        $secret = class_exists(SecretVault::class)
+            ? SecretVault::get_key()
+            : (defined('AUTH_KEY') && AUTH_KEY !== '' ? AUTH_KEY : '');
+        if ($secret === '') {
+            return 0.0;
+        }
+
+        $expected = hash_hmac('sha256', "render_ts:{$ts_str}", $secret);
+        if (!hash_equals($expected, $sig)) {
+            return 0.0;
+        }
+
+        return $ts;
+    }
+
+    /**
+     * Generate an HMAC-signed render timestamp string for hidden form inputs.
+     *
+     * @return string "timestamp:signature"
+     */
+    public static function generate_render_timestamp(): string {
+        $now = (string) microtime(true);
+        $secret = class_exists(SecretVault::class)
+            ? SecretVault::get_key()
+            : (defined('AUTH_KEY') && AUTH_KEY !== '' ? AUTH_KEY : '');
+        $sig = $secret !== '' ? hash_hmac('sha256', "render_ts:{$now}", $secret) : '';
+        return "{$now}:{$sig}";
+    }
+
+    /**
+     * Memory-efficient session hit counter using APCu with local memory fallback (zero MySQL writes).
+     *
+     * @param string $key Cache key.
+     * @param int $ttl Time to live in seconds.
+     * @return int Current hit count.
+     */
+    private static function increment_session_hits(string $key, int $ttl = 60): int {
+        // 1. Fast APCu in-memory counter
+        if (function_exists('apcu_inc') && ini_get('apc.enabled') && (php_sapi_name() !== 'cli' || ini_get('apc.enable_cli'))) {
+            $success = false;
+            $val = apcu_inc($key, 1, $success, $ttl);
+            if ($success) {
+                return (int) $val;
+            }
+            if (function_exists('apcu_store')) {
+                apcu_store($key, 1, $ttl);
+                return 1;
+            }
+        }
+
+        // 2. External Object Cache (Redis / Memcached) if configured
+        if (function_exists('wp_using_ext_object_cache') && wp_using_ext_object_cache()) {
+            $val = wp_cache_get($key, 'webcare_ai_sess');
+            $count = $val !== false ? ((int) $val + 1) : 1;
+            wp_cache_set($key, $count, 'webcare_ai_sess', $ttl);
+            return $count;
+        }
+
+        // 3. Static in-memory execution cache fallback (avoids hitting wp_options)
+        static $in_mem_counts = [];
+        $in_mem_counts[$key] = ($in_mem_counts[$key] ?? 0) + 1;
+        return $in_mem_counts[$key];
     }
 }

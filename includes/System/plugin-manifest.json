@@ -1,6 +1,6 @@
 {
   "version": "3.0.0",
-  "generated_at": "2026-11-20T01:23:50.223Z",
+  "generated_at": "2026-11-20T01:39:23.274Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -568,8 +568,8 @@
       "size": 16339
     },
     "includes/Firewall/Evaluators/AiAgentBehaviorEvaluator.php": {
-      "sha256": "2ccc261c70ef5afadce492e74138db57933ffd9e7b3a14629d49ef6d33ac2d80",
-      "size": 8290
+      "sha256": "c09aba11079f0dbc6b4ec040b24d6803d5ea19d6b8d9ea4b30e0d2405ede6603",
+      "size": 12706
     },
     "includes/Firewall/Evaluators/AuthPolicyEvaluator.php": {
       "sha256": "07f6c8b1e346564c1bcab1d8dc59bb53d189db5c87506fca514ca53c243e35b2",
@@ -848,8 +848,8 @@
       "size": 11696
     },
     "includes/Scan/ScanBackgroundWorker.php": {
-      "sha256": "fed2848c9cde068355f287bcc5c553ed44a87ff5fa63485376a4680686594dd5",
-      "size": 12896
+      "sha256": "21c58838591c7dac4dfbf13fe4402fb62b323481c70bbf18deb56bdc5dbb77a8",
+      "size": 13501
     },
     "includes/Scan/ScanInterruptionForensics.php": {
       "sha256": "3335b39b22d8110593ff14cc3bb8ebb6298c4d9b6bcb8e54f2521baf87b2698c",
@@ -1016,8 +1016,8 @@
       "size": 119850
     },
     "includes/System/SystemDoctor.php": {
-      "sha256": "3efbcb7d0a9eff2dae1d851501fabac4ff9dd87377e518cda1dee35fccbae5ad",
-      "size": 15408
+      "sha256": "736309bfa00c55d89bdea18d47431f4d2f29a04ce908cfb52314674222a474e5",
+      "size": 16321
     },
     "includes/System/SystemReadinessChecker.php": {
       "sha256": "18ff82f64e622f407d5c3067dd78541d6d7444fef5e5cd3f634e9516b939fb0c",

@@ -71,17 +71,25 @@ final class ScanBackgroundWorker {
     public static function trigger_loopback_tick(int $scan_id): void {
         $now = time();
         $random_nonce = function_exists('wp_generate_password') ? wp_generate_password(16, false) : bin2hex(random_bytes(8));
-        $salt = function_exists('wp_salt') ? wp_salt('auth') : 'webcare_scan_loopback_salt';
+        $salt = class_exists(\WebCareProScanner\Core\SecretVault::class)
+            ? \WebCareProScanner\Core\SecretVault::get_key()
+            : (defined('AUTH_KEY') && AUTH_KEY !== '' ? AUTH_KEY : '');
+        if ($salt === '') {
+            return;
+        }
+
         $signature = hash_hmac('sha256', "scan_tick|{$scan_id}|{$now}|{$random_nonce}", $salt);
         $token = "{$scan_id}:{$now}:{$random_nonce}:{$signature}";
 
         $ajax_url = admin_url('admin-ajax.php');
         wp_safe_remote_post($ajax_url, [
-            'timeout'   => 1,
-            'blocking'  => false,
+            'timeout'             => 1,
+            'blocking'            => false,
+            // Strictly allow internal/loopback IP resolution for admin-ajax on Docker / localhost / private IP VPS
+            'reject_unsafe_urls'  => false,
             // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- Standard WordPress core filter for local loopback requests
-            'sslverify' => apply_filters('https_local_ssl_verify', false),
-            'body'      => [
+            'sslverify'           => apply_filters('https_local_ssl_verify', false),
+            'body'                => [
                 'action' => self::AJAX_ACTION,
                 'token'  => $token,
             ],
@@ -108,7 +116,13 @@ final class ScanBackgroundWorker {
             wp_send_json_error(['message' => 'Expired loopback token.'], 403);
         }
 
-        $salt = function_exists('wp_salt') ? wp_salt('auth') : 'webcare_scan_loopback_salt';
+        $salt = class_exists(\WebCareProScanner\Core\SecretVault::class)
+            ? \WebCareProScanner\Core\SecretVault::get_key()
+            : (defined('AUTH_KEY') && AUTH_KEY !== '' ? AUTH_KEY : '');
+        if ($salt === '') {
+            wp_send_json_error(['message' => 'Secret vault unavailable.'], 403);
+        }
+
         $expected_sig = hash_hmac('sha256', "scan_tick|{$scan_id}|{$timestamp}|{$rand_nonce}", $salt);
         if (!hash_equals($expected_sig, $sig)) {
             wp_send_json_error(['message' => 'Invalid loopback signature.'], 403);

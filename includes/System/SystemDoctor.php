@@ -57,7 +57,9 @@ final class SystemDoctor {
             'status'      => $php_pass ? 'pass' : 'fail',
             'severity'    => 'critical',
             'message'     => $php_pass
+                /* translators: %s: Current PHP version */
                 ? sprintf(__('PHP %s meets strict WebCare Pro 8.3+ floor with modern read-only classes and native typing.', 'webcare-pro-security'), $php_ver)
+                /* translators: %s: Current PHP version */
                 : sprintf(__('PHP %s is below required PHP 8.3+ floor. Upgrade your PHP environment.', 'webcare-pro-security'), $php_ver),
             'current'     => $php_ver,
             'required'    => '>= 8.3.0',
@@ -66,7 +68,7 @@ final class SystemDoctor {
         // 2. WordPress 7.0+ Core Version
         global $wp_version;
         $core_ver = (string) ($wp_version ?? '0.0.0');
-        $wp_pass = version_compare($core_ver, '6.7.0', '>=');
+        $wp_pass = version_compare($core_ver, '7.0.0', '>=');
         $checks['wordpress_core'] = [
             'id'          => 'wordpress_core',
             'title'       => __('WordPress Core Compatibility', 'webcare-pro-security'),
@@ -74,7 +76,9 @@ final class SystemDoctor {
             'status'      => $wp_pass ? 'pass' : 'warn',
             'severity'    => 'high',
             'message'     => $wp_pass
+                /* translators: %s: Current WordPress core version */
                 ? sprintf(__('WordPress %s detected with modern HTML Tag Processor & Script Module APIs.', 'webcare-pro-security'), $core_ver)
+                /* translators: %s: Current WordPress core version */
                 : sprintf(__('WordPress %s detected. WordPress 7.0+ recommended for complete Abilities & Interactivity support.', 'webcare-pro-security'), $core_ver),
             'current'     => $core_ver,
             'required'    => '>= 7.0.0 (Recommended)',
@@ -104,19 +108,32 @@ final class SystemDoctor {
         $vault_writable = $vault_dir_exists && wp_is_writable($vault_dir);
         $vault_perms = $vault_dir_exists ? (decoct(fileperms($vault_dir) & 0777)) : 'none';
 
-        // Check file perms if files exist
+        // Check file perms if files exist across vault directory, nested logs, and micro-waf
         $file_perms_ok = true;
         $checked_files = 0;
+        $waf_parent_dir = dirname($vault_dir);
+
+        $target_files = [];
         if ($vault_dir_exists) {
-            $files = @glob($vault_dir . '/*.{json,jsonl}', GLOB_BRACE) ?: [];
-            foreach ($files as $f) {
-                $checked_files++;
-                $p = fileperms($f) & 0777;
-                // Allow 0600, 0640 or 0660 depending on webserver group, but warn if world-readable (0644/0666/0777)
-                if (($p & 0004) !== 0 || ($p & 0002) !== 0) {
-                    $file_perms_ok = false;
-                    break;
-                }
+            $root_json = @glob($vault_dir . '/*.{json,jsonl}', GLOB_BRACE) ?: [];
+            $nested_json = @glob($vault_dir . '/logs/*.{json,jsonl}', GLOB_BRACE) ?: [];
+            $target_files = array_merge($root_json, $nested_json);
+        }
+        $micro_waf_file = $waf_parent_dir . '/webcare-micro-waf.php';
+        if (file_exists($micro_waf_file)) {
+            $target_files[] = $micro_waf_file;
+        }
+
+        foreach ($target_files as $f) {
+            if (!file_exists($f)) {
+                continue;
+            }
+            $checked_files++;
+            $p = fileperms($f) & 0777;
+            // Allow 0600, 0640 or 0660 depending on webserver group, but warn if world-readable (0644/0666/0777)
+            if (($p & 0004) !== 0 || ($p & 0002) !== 0) {
+                $file_perms_ok = false;
+                break;
             }
         }
 
@@ -128,8 +145,10 @@ final class SystemDoctor {
             'status'      => $vault_status,
             'severity'    => 'critical',
             'message'     => $vault_status === 'pass'
+                /* translators: %s: Vault directory basename */
                 ? sprintf(__('Vault directory %s is writable (0750) with 0600 isolated file permissions.', 'webcare-pro-security'), basename($vault_dir))
-                : sprintf(__('Vault permissions issue detected (%s). Ensure web server user owns %s with 0750 permissions.', 'webcare-pro-security'), $vault_perms, $vault_dir),
+                /* translators: 1: Permission octal string, 2: Directory path */
+                : sprintf(__('Vault permissions issue detected (%1$s). Ensure web server user owns %2$s with 0750 permissions.', 'webcare-pro-security'), $vault_perms, $vault_dir),
             'current'     => sprintf('Dir: 0%s, Files checked: %d (%s)', $vault_perms, $checked_files, $file_perms_ok ? 'Isolated' : 'World-readable risk'),
             'required'    => '0750 directory / 0600 files',
         ];
