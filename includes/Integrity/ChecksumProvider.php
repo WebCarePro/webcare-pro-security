@@ -49,11 +49,11 @@ class ChecksumProvider {
 
         global $wp_version, $wp_local_package;
 
-        $locale = empty($wp_local_package) ? 'en_US' : $wp_local_package;
-        $version = $wp_version;
+        $locale = empty($wp_local_package) ? 'en_US' : (string) $wp_local_package;
+        $version = (string) ($wp_version ?? '7.0.0');
         
         // Strip out extra version info for alpha/beta
-        $version = preg_replace('/-.*$/', '', $version);
+        $version = (string) preg_replace('/-.*$/', '', $version);
 
         $cache_key = "webcareproscan_core_chk_{$version}_{$locale}";
         $cached = get_transient($cache_key);

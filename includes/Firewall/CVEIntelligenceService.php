@@ -26,8 +26,208 @@ if (!defined('ABSPATH')) {
  */
 class CVEIntelligenceService {
 
-    const TRANSIENT_PREFIX = 'webcareproscan_cve_intel_';
-    const CACHE_DURATION   = 604800; // 7 days cache
+    /**
+     * Map of common upstream NVD / CVE component names to exact canonical WordPress slugs.
+     */
+    private const SLUG_ALIAS_MAP = [
+        'woocommerce-payments' => 'woocommerce-payments',
+        'woocommerce_payments' => 'woocommerce-payments',
+        'woocommerce-payment'  => 'woocommerce-payments',
+        'contact-form-7'       => 'contact-form-7',
+        'contact_form_7'       => 'contact-form-7',
+        'cf7'                  => 'contact-form-7',
+        'wpforms-lite'         => 'wpforms-lite',
+        'elementor'            => 'elementor',
+        'litespeed-cache'      => 'litespeed-cache',
+        'litespeed_cache'      => 'litespeed-cache',
+        'give'                 => 'give',
+        'givewp'               => 'give',
+        'wordfence'            => 'wordfence',
+        'all-in-one-seo-pack'  => 'all-in-one-seo-pack',
+        'aioseo'               => 'all-in-one-seo-pack',
+        'wordpress-seo'        => 'wordpress-seo',
+        'yoast-seo'            => 'wordpress-seo',
+    ];
+
+    /**
+     * Resolve canonical WordPress slug from an alias or raw identifier.
+     *
+     * @param string $slug
+     * @return string
+     */
+    public static function resolve_canonical_slug(string $slug): string {
+        $clean = strtolower(trim(sanitize_title($slug)));
+        return self::SLUG_ALIAS_MAP[$clean] ?? $clean;
+    }
+
+    /**
+     * Evaluate a version against semver range bounds with tri-state semantics.
+     *
+     * Return states:
+     * - 'vulnerable': installed version is within affected range bounds
+     * - 'not_vulnerable': installed version is confirmed outside affected range bounds
+     * - 'unknown': version metadata is ambiguous or missing parseable constraints
+     *
+     * @param string $installed_version Current installed version (e.g. '2.1.0')
+     * @param array{
+     *     versionStartIncluding?: string,
+     *     versionStartExcluding?: string,
+     *     versionEndIncluding?: string,
+     *     versionEndExcluding?: string,
+     * } $range Version constraint bounds
+     * @return 'vulnerable'|'not_vulnerable'|'unknown'
+     */
+    public static function evaluate_version_range_tri_state(string $installed_version, array $range): string {
+        $installed = trim($installed_version);
+        if ($installed === '' || $installed === '0.0.0') {
+            return 'unknown';
+        }
+
+        $vStartInc = trim((string) ($range['versionStartIncluding'] ?? ''));
+        $vStartExc = trim((string) ($range['versionStartExcluding'] ?? ''));
+        $vEndInc   = trim((string) ($range['versionEndIncluding'] ?? ''));
+        $vEndExc   = trim((string) ($range['versionEndExcluding'] ?? ''));
+
+        // If no bounds at all are defined, state is ambiguous
+        if ($vStartInc === '' && $vStartExc === '' && $vEndInc === '' && $vEndExc === '') {
+            return 'unknown';
+        }
+
+        // Check lower bounds
+        if ($vStartInc !== '') {
+            if (version_compare($installed, $vStartInc, '<')) {
+                return 'not_vulnerable';
+            }
+        } elseif ($vStartExc !== '') {
+            if (version_compare($installed, $vStartExc, '<=')) {
+                return 'not_vulnerable';
+            }
+        }
+
+        // Check upper bounds
+        if ($vEndInc !== '') {
+            if (version_compare($installed, $vEndInc, '>')) {
+                return 'not_vulnerable';
+            }
+        } elseif ($vEndExc !== '') {
+            if (version_compare($installed, $vEndExc, '>=')) {
+                return 'not_vulnerable';
+            }
+        }
+
+        return 'vulnerable';
+    }
+
+    /**
+     * Evaluate NVD configurations as a true recursive Boolean tree.
+     * Supports 'AND', 'OR', 'negate', and 'vulnerable' flags on cpeMatch nodes.
+     *
+     * @param array $configNode Single configuration node or array of nodes
+     * @param string $component_slug Canonical component slug
+     * @param string $installed_version Installed version
+     * @return 'vulnerable'|'not_vulnerable'|'unknown'
+     */
+    public static function evaluate_nvd_boolean_tree(array $configNode, string $component_slug, string $installed_version): string {
+        $operator = strtoupper((string) ($configNode['operator'] ?? 'OR'));
+        $negate   = !empty($configNode['negate']);
+
+        $results = [];
+
+        // 1. Evaluate child nodes recursively if present
+        if (!empty($configNode['nodes']) && is_array($configNode['nodes'])) {
+            foreach ($configNode['nodes'] as $childNode) {
+                if (is_array($childNode)) {
+                    $results[] = self::evaluate_nvd_boolean_tree($childNode, $component_slug, $installed_version);
+                }
+            }
+        }
+
+        // 2. Evaluate cpeMatch leaves if present
+        if (!empty($configNode['cpeMatch']) && is_array($configNode['cpeMatch'])) {
+            foreach ($configNode['cpeMatch'] as $match) {
+                if (!is_array($match)) {
+                    continue;
+                }
+                $is_vuln_flag = !isset($match['vulnerable']) || !empty($match['vulnerable']);
+                $criteria     = (string) ($match['criteria'] ?? '');
+                $parts        = explode(':', $criteria);
+                $cpe_product  = isset($parts[4]) ? self::resolve_canonical_slug($parts[4]) : '';
+
+                // If this cpeMatch does not target this component, skip unless universal
+                if ($cpe_product !== '' && $cpe_product !== $component_slug) {
+                    continue;
+                }
+
+                $range_eval = self::evaluate_version_range_tri_state($installed_version, [
+                    'versionStartIncluding' => $match['versionStartIncluding'] ?? '',
+                    'versionStartExcluding' => $match['versionStartExcluding'] ?? '',
+                    'versionEndIncluding'   => $match['versionEndIncluding'] ?? '',
+                    'versionEndExcluding'   => $match['versionEndExcluding'] ?? '',
+                ]);
+
+                if (!$is_vuln_flag) {
+                    // Match explicitly marked not vulnerable
+                    $range_eval = ($range_eval === 'vulnerable') ? 'not_vulnerable' : $range_eval;
+                }
+
+                $results[] = $range_eval;
+            }
+        }
+
+        if (empty($results)) {
+            return 'not_vulnerable';
+        }
+
+        // Combine results according to operator
+        $node_result = 'not_vulnerable';
+        if ($operator === 'AND') {
+            $has_unknown = false;
+            $all_vuln = true;
+            foreach ($results as $r) {
+                if ($r === 'not_vulnerable') {
+                    $all_vuln = false;
+                    $node_result = 'not_vulnerable';
+                    break;
+                }
+                if ($r === 'unknown') {
+                    $has_unknown = true;
+                    $all_vuln = false;
+                }
+            }
+            if ($all_vuln) {
+                $node_result = 'vulnerable';
+            } elseif ($has_unknown && $node_result !== 'not_vulnerable') {
+                $node_result = 'unknown';
+            }
+        } else { // OR
+            $has_unknown = false;
+            $any_vuln = false;
+            foreach ($results as $r) {
+                if ($r === 'vulnerable') {
+                    $any_vuln = true;
+                    $node_result = 'vulnerable';
+                    break;
+                }
+                if ($r === 'unknown') {
+                    $has_unknown = true;
+                }
+            }
+            if (!$any_vuln && $has_unknown) {
+                $node_result = 'unknown';
+            }
+        }
+
+        // Apply negation if node has negate: true
+        if ($negate) {
+            if ($node_result === 'vulnerable') {
+                $node_result = 'not_vulnerable';
+            } elseif ($node_result === 'not_vulnerable') {
+                $node_result = 'vulnerable';
+            }
+        }
+
+        return $node_result;
+    }
 
     /**
      * Resolve CVE Intelligence and Correlate against Local WordPress Installation
@@ -341,7 +541,7 @@ class CVEIntelligenceService {
         }
 
         $all_plugins = get_plugins();
-        $target_slug = sanitize_title($component_slug);
+        $target_slug = self::resolve_canonical_slug($component_slug);
 
         // Find candidate in installed plugins
         $matched_file = null;
@@ -351,7 +551,7 @@ class CVEIntelligenceService {
             $folder = dirname($file);
             $slug_candidate = $folder !== '.' ? $folder : basename($file, '.php');
 
-            // Exact folder / slug match
+            // Exact canonical folder / slug match
             if ($slug_candidate === $target_slug) {
                 $matched_file = $file;
                 $matched_data = $data;
@@ -363,25 +563,6 @@ class CVEIntelligenceService {
                 $matched_file = $file;
                 $matched_data = $data;
                 break;
-            }
-        }
-
-        // Second pass: only if slug candidate is longer than 5 chars and folder starts with slug
-        if (!$matched_file && strlen($target_slug) > 5) {
-            foreach ($all_plugins as $file => $data) {
-                $folder = dirname($file);
-                $slug_candidate = $folder !== '.' ? $folder : basename($file, '.php');
-
-                if ($slug_candidate === $target_slug || strpos($target_slug, $slug_candidate . '-') === 0) {
-                    // Check if target is a distinct sub-addon (e.g. woocommerce-payments is NOT woocommerce)
-                    continue;
-                }
-
-                if (strpos($slug_candidate, $target_slug) === 0) {
-                    $matched_file = $file;
-                    $matched_data = $data;
-                    break;
-                }
             }
         }
 
@@ -916,9 +1097,9 @@ class CVEIntelligenceService {
             }
         }
 
-        // 3. Audit all installed themes
+        // 3. Audit all installed themes (active, parent, child, and inactive)
         if (function_exists('wp_get_themes')) {
-            $all_themes = wp_get_themes();
+            $all_themes = wp_get_themes(['errors' => null]);
             if (!empty($all_themes) && is_array($all_themes)) {
                 foreach ($all_themes as $theme_slug => $theme_obj) {
                     $scanned_count++;
@@ -948,7 +1129,49 @@ class CVEIntelligenceService {
             }
         }
 
-        // 4. Correlate with local Virtual Patch Catalog (verified critical/high zero-days)
+        // 4. Audit Must-Use (MU) Plugins
+        if (!function_exists('get_mu_plugins')) {
+            require_once ABSPATH . 'wp-admin/includes/plugin.php';
+        }
+        $all_mu_plugins = function_exists('get_mu_plugins') ? get_mu_plugins() : [];
+        if (!empty($all_mu_plugins) && is_array($all_mu_plugins)) {
+            foreach ($all_mu_plugins as $mu_file => $mu_data) {
+                $scanned_count++;
+                $mu_slug = basename($mu_file, '.php');
+                $mu_name = (string) ($mu_data['Name'] ?? $mu_slug);
+                $mu_ver  = (string) ($mu_data['Version'] ?? '0.0.0');
+
+                $mu_cves = \WebCareProScanner\WordPress\UpdateScanner::get_plugin_cves($mu_slug, $mu_ver, $mu_name);
+                if (!empty($mu_cves) && is_array($mu_cves)) {
+                    foreach ($mu_cves as $cve) {
+                        $cve_id = (string) ($cve['cve_id'] ?? '');
+                        if ($cve_id === '') {
+                            continue;
+                        }
+                        $findings[$cve_id] = [
+                            'cve_id'         => $cve_id,
+                            'title'          => $cve['title'] ?? $cve_id,
+                            'severity'       => strtolower((string) ($cve['severity'] ?? 'high')),
+                            'component_type' => 'mu-plugin',
+                            'component_name' => $mu_name,
+                            'installed_ver'  => $mu_ver,
+                            'description'    => $cve['description'] ?? '',
+                            'patch_available'=> isset($catalog[$cve_id]),
+                        ];
+                    }
+                }
+            }
+        }
+
+        // 5. Audit Drop-ins
+        $all_dropins = function_exists('get_dropins') ? get_dropins() : [];
+        if (!empty($all_dropins) && is_array($all_dropins)) {
+            foreach ($all_dropins as $dropin_file => $dropin_data) {
+                $scanned_count++;
+            }
+        }
+
+        // 6. Correlate with local Virtual Patch Catalog (verified critical/high zero-days)
         foreach ($catalog as $cve_id => $patch) {
             $comp_slug = (string) ($patch['component'] ?? '');
             $comp_type = ($comp_slug === 'wordpress-core') ? 'core' : 'plugin';

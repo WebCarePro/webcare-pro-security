@@ -1,6 +1,6 @@
 {
   "version": "3.21.0",
-  "generated_at": "2026-11-20T22:19:49.736Z",
+  "generated_at": "2026-11-20T22:37:55.154Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -560,8 +560,8 @@
       "size": 14039
     },
     "includes/Firewall/CVEIntelligenceService.php": {
-      "sha256": "7bc477ad0c5718965ca212223d567bc9ec36ddab6301e58714e43fcf4d5549c7",
-      "size": 47435
+      "sha256": "31bdd55b813cd139eae2e71186e346e554390775a10cd5606f9a5e8eb8157827",
+      "size": 56558
     },
     "includes/Firewall/DistributedVelocityShield.php": {
       "sha256": "eab849570736089cda62667615aec5a238af550c46409c4f8da3034876919667",
@@ -728,8 +728,8 @@
       "size": 20682
     },
     "includes/Integrity/ChecksumProvider.php": {
-      "sha256": "17754d6988b6700591ffce4433ee12723328c7b21b9f49b3a5f2883117679560",
-      "size": 36542
+      "sha256": "526bca3fa131bb62862a4946078704741d913db320095fd45df8ee08501c30dd",
+      "size": 36582
     },
     "includes/Integrity/CoreIntegrity.php": {
       "sha256": "8809ee4a6ed96bda316e5e7df1325f78f4748c101653c72069da6d7558da2e53",
@@ -1056,8 +1056,8 @@
       "size": 39375
     },
     "includes/WordPress/UpdateScanner.php": {
-      "sha256": "b1fe653c8113de9d0229d858a8f3a436c6c5b1fba0664ef973c4ab1471464c36",
-      "size": 48486
+      "sha256": "4e4373d2758a072aa6ef66421a1fed0584aa59d864b3176c823ec389b18caf3f",
+      "size": 51227
     },
     "includes/WordPress/UserRemediationManager.php": {
       "sha256": "79726aa103672f54dd78c3f94ddebf1a0406c293535d0247495b304db9ceaadf",

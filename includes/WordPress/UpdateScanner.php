@@ -526,9 +526,63 @@ class UpdateScanner {
             ];
         }
 
+        // 4. Must-Use (MU) Plugins Audit
+        $mu_plugins_data = [];
+        if (!function_exists('get_mu_plugins')) {
+            require_once ABSPATH . 'wp-admin/includes/plugin.php';
+        }
+        $all_mu_plugins = function_exists('get_mu_plugins') ? get_mu_plugins() : [];
+        foreach ($all_mu_plugins as $mu_file => $mu_data) {
+            $mu_name = $mu_data['Name'] ?? basename($mu_file);
+            $mu_version = $mu_data['Version'] ?? '0.0.0';
+            $mu_slug = basename($mu_file, '.php');
+
+            $mu_cves = self::get_plugin_cves($mu_slug, $mu_version, $mu_name);
+            $mu_plugins_data[] = [
+                'name'              => $mu_name,
+                'slug'              => $mu_slug,
+                'file'              => $mu_file,
+                'is_active'         => true,
+                'type'              => 'mu-plugin',
+                'origin'            => 'mu-plugin',
+                'is_official'       => false,
+                'installed_version' => $mu_version,
+                'latest_version'    => $mu_version,
+                'is_outdated'       => false,
+                'has_cve'           => !empty($mu_cves),
+                'cves'              => $mu_cves,
+                'cve_count'         => count($mu_cves),
+                'status'            => !empty($mu_cves) ? 'vulnerable' : 'secure',
+            ];
+        }
+
+        // 5. Drop-ins Audit
+        $dropins_data = [];
+        $all_dropins = function_exists('get_dropins') ? get_dropins() : [];
+        foreach ($all_dropins as $dropin_file => $dropin_data) {
+            $dropin_name = $dropin_data['Name'] ?? basename($dropin_file);
+            $dropin_slug = basename($dropin_file, '.php');
+            $dropins_data[] = [
+                'name'              => $dropin_name,
+                'slug'              => $dropin_slug,
+                'file'              => $dropin_file,
+                'is_active'         => true,
+                'type'              => 'dropin',
+                'origin'            => 'dropin',
+                'is_official'       => false,
+                'installed_version' => '1.0.0',
+                'latest_version'    => '1.0.0',
+                'is_outdated'       => false,
+                'has_cve'           => false,
+                'cves'              => [],
+                'cve_count'         => 0,
+                'status'            => 'secure',
+            ];
+        }
+
         // Summary calculations
-        $total_items = 1 + count($plugins_data) + count($themes_data);
-        $all_items = array_merge([$core_data], $plugins_data, $themes_data);
+        $total_items = 1 + count($plugins_data) + count($themes_data) + count($mu_plugins_data) + count($dropins_data);
+        $all_items = array_merge([$core_data], $plugins_data, $themes_data, $mu_plugins_data, $dropins_data);
 
         $outdated_count = count(array_filter($all_items, function($item) {
             return !empty($item['is_outdated']);
@@ -572,9 +626,11 @@ class UpdateScanner {
                 'themes_inspection_incomplete' => !$has_theme_api,
                 'timestamp'                => current_time('mysql'),
             ],
-            'core'    => $core_data,
-            'plugins' => $plugins_data,
-            'themes'  => $themes_data
+            'core'       => $core_data,
+            'plugins'    => $plugins_data,
+            'themes'     => $themes_data,
+            'mu_plugins' => $mu_plugins_data,
+            'dropins'    => $dropins_data,
         ];
     }
 
@@ -585,6 +641,7 @@ class UpdateScanner {
      * @return array
      */
     public static function get_core_cves($version) {
+        $version = (string) ($version ?? '0.0.0');
         $cache_key = 'webcareproscan_cve_core_' . sanitize_key($version);
         $cached = get_transient($cache_key);
         if ($cached !== false && is_array($cached)) {
@@ -821,7 +878,7 @@ class UpdateScanner {
                     'description'       => 'Missing permission validation on AJAX handlers allowing subscriber-level accounts to upload rogue plugin modules.'
                 ]
             ],
-            'woocommerce' => [
+            'woocommerce-payments' => [
                 [
                     'cve_id'            => 'CVE-2023-28121',
                     'title'             => 'WooCommerce Payments - Unauthenticated Privilege Escalation',
@@ -830,7 +887,9 @@ class UpdateScanner {
                     'affected_versions' => '< 5.6.2',
                     'fixed_in'          => '5.6.2',
                     'description'       => 'Authentication bypass in payment request header parsing enabling attackers to impersonate shop administrators.'
-                ],
+                ]
+            ],
+            'woocommerce' => [
                 [
                     'cve_id'            => 'CVE-2021-32640',
                     'title'             => 'WooCommerce - SQL Injection in Order Queries',
