@@ -2016,6 +2016,7 @@ export const App = ({ initialTab }: { initialTab?: NavTab } = {}) => {
         scanStartTimeRef.current = Date.now();
       }
       timer = setInterval(() => {
+        if (typeof document !== 'undefined' && document.hidden) return;
         if (scanStartTimeRef.current) {
           const secs = Math.max(0, Math.floor((Date.now() - scanStartTimeRef.current) / 1000));
           setScanElapsed(secs);
@@ -2936,6 +2937,7 @@ Source Code,${escapeCsv(code)}
 
     // Check periodically for background scheduled scans every 8 seconds if idle
     const activeScanChecker = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       if (!isResumingRef.current) {
         checkAndResumeActiveScan();
       }
@@ -2948,6 +2950,7 @@ Source Code,${escapeCsv(code)}
     if (navTab === 'dashboard') {
       loadDashboardData();
       const pollInterval = setInterval(() => {
+        if (typeof document !== 'undefined' && document.hidden) return;
         loadDashboardData(true);
       }, 15000);
       return () => clearInterval(pollInterval);
@@ -3083,6 +3086,7 @@ Source Code,${escapeCsv(code)}
       let stopDeepAuditPolling = false;
       const deepAuditPollingInterval = setInterval(async () => {
         if (stopDeepAuditPolling) return;
+        if (typeof document !== 'undefined' && document.hidden) return;
         try {
           const activeRes: any = await apiRequest({ path: '/webcare-pro-security/v1/scan/active' });
           if (activeRes?.last_file) {
@@ -3199,6 +3203,7 @@ Source Code,${escapeCsv(code)}
 
       // Start elapsed timer and smooth progress animator
       progressTimer = setInterval(() => {
+        if (typeof document !== 'undefined' && document.hidden) return;
         const currentElapsed = Math.max(1, Math.round((Date.now() - targetedStartTime) / 1000));
         setTargetedElapsed(currentElapsed);
         currentPercent = Math.min(92, currentPercent + (currentPercent < 50 ? 9 : 4));

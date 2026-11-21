@@ -54,6 +54,7 @@ import {
   Lightbulb,
   AlertCircle
 } from 'lucide-react';
+import { useWorkspaceMode } from './hooks/useWorkspaceMode';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { formatRelativeTime, formatTelemetryDateFull } from './timeUtils';
 import { toast } from './utils/dialog';
@@ -329,6 +330,8 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
   onNavigateToDashboard,
   onNavigateToFirewall,
 }) => {
+  const { isSimpleMode } = useWorkspaceMode();
+
   // Data state
   const [logs, setLogs] = useState<WafIncident[]>([]);
   const [stats, setStats] = useState<WafLogStats | null>(null);
@@ -963,6 +966,7 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
   useEffect(() => {
     if (!isLiveAutoRefresh) return;
     const timer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       fetchLogs(true);
       fetchStats();
     }, autoRefreshInterval * 1000);
@@ -2129,6 +2133,80 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
 
       {/* 3. Filter Toolbar & Search Bar */}
       <div className="webcare-waf-toolbar-card">
+        {/* 1-Click Quick-Filter Pills */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            flexWrap: 'wrap',
+            paddingBottom: '12px',
+            marginBottom: '12px',
+            borderBottom: '1px solid var(--webcare-border, #e2e8f0)',
+          }}
+        >
+          <span style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--webcare-text-muted, #64748b)', marginRight: '4px' }}>
+            Quick Filter:
+          </span>
+          {[
+            { id: 'all', label: 'All Incidents', count: stats?.total_incidents, icon: <Shield size={12} /> },
+            { id: 'blocked', label: 'Blocked', count: stats?.blocked_today, icon: <ShieldAlert size={12} /> },
+            { id: 'warned', label: 'Warned', count: undefined, icon: <AlertTriangle size={12} /> },
+            { id: 'challenged', label: 'Challenged', count: undefined, icon: <Zap size={12} /> },
+            { id: 'detected', label: 'Observed / Safe-Passed', count: undefined, icon: <ShieldCheck size={12} /> },
+          ].map((pill) => {
+            const isActive = selectedAction === pill.id;
+            return (
+              <button
+                key={pill.id}
+                type="button"
+                onClick={() => {
+                  setSelectedAction(pill.id);
+                  setPage(1);
+                }}
+                className={`webcare-btn-micro ${isActive ? 'webcare-filter-pill-active' : ''}`}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '5px 12px',
+                  borderRadius: '20px',
+                  fontSize: '12px',
+                  fontWeight: isActive ? 700 : 500,
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                  border: isActive
+                    ? '1px solid var(--webcare-primary, #4f46e5)'
+                    : '1px solid var(--webcare-border, #cbd5e1)',
+                  background: isActive
+                    ? 'var(--webcare-primary, #4f46e5)'
+                    : 'var(--webcare-bg-card, #ffffff)',
+                  color: isActive
+                    ? '#ffffff'
+                    : 'var(--webcare-text-primary, #0f172a)',
+                }}
+              >
+                {pill.icon}
+                <span>{pill.label}</span>
+                {typeof pill.count === 'number' && (
+                  <span
+                    style={{
+                      fontSize: '10px',
+                      padding: '1px 6px',
+                      borderRadius: '10px',
+                      background: isActive ? 'rgba(255, 255, 255, 0.25)' : 'var(--webcare-bg-surface, #f1f5f9)',
+                      color: isActive ? '#ffffff' : 'var(--webcare-text-secondary, #475569)',
+                      fontWeight: 700,
+                    }}
+                  >
+                    {pill.count.toLocaleString()}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', justifyContent: 'space-between' }}>
           {/* Left search */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: '260px' }}>
@@ -2409,16 +2487,38 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
             <div style={{ fontSize: '12px', marginTop: '4px' }}>Aggregating payload signatures and client telemetry</div>
           </div>
         ) : logs.length === 0 ? (
-          <div className="webcare-empty-state-clean" style={{ margin: 0 }}>
-            <div className="webcare-empty-state-icon-wrap">
+          <div className="webcare-empty-state-clean" style={{ margin: 0, padding: '48px 24px', textAlign: 'center' }}>
+            <div className="webcare-empty-state-icon-wrap" style={{ margin: '0 auto 16px auto', width: '56px', height: '56px', borderRadius: '50%', background: 'var(--webcare-bg-surface, #f1f5f9)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#4f46e5' }}>
               <ShieldCheck size={36} />
             </div>
-            <h4 className="webcare-empty-state-title">No Incident Logs Matching Filter Criteria</h4>
-            <p className="webcare-empty-state-desc">
-              {searchQuery || selectedCategory !== 'all' || filterIp
-                ? 'Try broadening your search keywords or resetting categorical filters to view historic entries.'
+            <h4 className="webcare-empty-state-title" style={{ fontSize: '16px', fontWeight: 700, margin: '0 0 8px 0', color: 'var(--webcare-text-primary, #0f172a)' }}>
+              {selectedAction !== 'all' || searchQuery || selectedCategory !== 'all' || filterIp || selectedMethod !== 'all' || selectedStatusCode !== 'all'
+                ? 'No Incident Logs Matching Filter Criteria'
+                : 'No WAF Incidents Recorded'}
+            </h4>
+            <p className="webcare-empty-state-desc" style={{ fontSize: '13px', maxWidth: '520px', margin: '0 auto 16px auto', color: 'var(--webcare-text-secondary, #475569)' }}>
+              {selectedAction !== 'all' || searchQuery || selectedCategory !== 'all' || filterIp || selectedMethod !== 'all' || selectedStatusCode !== 'all'
+                ? 'No events match your active search keyword or filter pills. Try resetting your filters to view historic entries.'
                 : 'Zero malicious probes intercepted. Your server application perimeter is clean and actively monitoring web traffic.'}
             </p>
+            {(selectedAction !== 'all' || searchQuery || selectedCategory !== 'all' || filterIp || selectedMethod !== 'all' || selectedStatusCode !== 'all') && (
+              <button
+                type="button"
+                className="webcare-btn webcare-btn-primary"
+                onClick={() => {
+                  setSelectedAction('all');
+                  setSearchQuery('');
+                  setSelectedCategory('all');
+                  setSelectedMethod('all');
+                  setSelectedStatusCode('all');
+                  setFilterIp('');
+                  setPage(1);
+                }}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '13px', padding: '6px 14px' }}
+              >
+                <RefreshCw size={13} /> Reset All Filters
+              </button>
+            )}
           </div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
@@ -2845,7 +2945,50 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
                         {/* Action Taken */}
                         {visibleColumns.action && (
                           <td style={{ padding: '10px 12px' }}>
-                            {log.is_last_hit_for_ip && log.is_banned && (log.cf_synced || log.ban_scope === 'edge_synced') ? (
+                            {isSimpleMode ? (
+                              <span
+                                className={`webcare-badge-pill ${
+                                  log.action_taken === 'blocked' || log.is_banned
+                                    ? 'webcare-badge-danger'
+                                    : log.action_taken === 'warned'
+                                    ? 'webcare-badge-warn'
+                                    : log.action_taken === 'challenged'
+                                    ? 'webcare-badge-info'
+                                    : 'webcare-badge-clean'
+                                }`}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  padding: '3px 8px',
+                                  borderRadius: '4px',
+                                  fontSize: '11px',
+                                  fontWeight: 700,
+                                }}
+                              >
+                                {log.action_taken === 'blocked' || log.is_banned ? (
+                                  <>
+                                    <ShieldAlert size={12} />
+                                    <span>Blocked</span>
+                                  </>
+                                ) : log.action_taken === 'warned' ? (
+                                  <>
+                                    <AlertTriangle size={12} />
+                                    <span>Warning Sent</span>
+                                  </>
+                                ) : log.action_taken === 'challenged' ? (
+                                  <>
+                                    <Zap size={12} />
+                                    <span>Browser Check</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <CheckCircle2 size={12} />
+                                    <span>Allowed Safely</span>
+                                  </>
+                                )}
+                              </span>
+                            ) : log.is_last_hit_for_ip && log.is_banned && (log.cf_synced || log.ban_scope === 'edge_synced') ? (
                               <span
                                 className="webcare-badge-pill webcare-badge-danger"
                                 style={{

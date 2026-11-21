@@ -1235,6 +1235,7 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
   useEffect(() => {
     if (countdownSeconds === null || countdownSeconds <= 0) return;
     const timer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       setCountdownSeconds((prev) => (prev !== null && prev > 0 ? prev - 1 : 0));
     }, 1000);
     return () => clearInterval(timer);
