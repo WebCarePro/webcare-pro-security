@@ -54,6 +54,7 @@ import { generateStandardLogFilename } from './exportUtils';
 import { getScanTargetInfo, ComponentForensicsCard, getFindingDisplayTitle, SafeErrorBoundary } from './App';
 import { formatRelativeTime, formatTelemetryDateFull, formatDateTimeComprehensive } from './timeUtils';
 import { FindingForensicsDrawer } from './components/FindingForensicsDrawer';
+import { toast } from './utils/dialog';
 
 interface ScanLogsPageProps {
   apiRequest: (opts: any) => Promise<any>;
@@ -288,7 +289,7 @@ export const ScanLogsPage: React.FC<ScanLogsPageProps> = ({
       }
 
       if (targetRuns.length === 0) {
-        alert('No scan history records found for the selected scope.');
+        toast.warning('No scan history records found for the selected scope.');
         setIsExportingHistory(false);
         return;
       }
@@ -387,7 +388,7 @@ export const ScanLogsPage: React.FC<ScanLogsPageProps> = ({
       setIsHistoryExportModalOpen(false);
     } catch (err: any) {
       console.error('Failed to export scan history:', err);
-      alert(err?.message || 'Failed to export scan history.');
+      toast.error(err?.message || 'Failed to export scan history.');
     } finally {
       setIsExportingHistory(false);
     }

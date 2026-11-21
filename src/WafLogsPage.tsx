@@ -56,6 +56,7 @@ import {
 } from 'lucide-react';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { formatRelativeTime, formatTelemetryDateFull } from './timeUtils';
+import { toast } from './utils/dialog';
 
 export interface CloudflareEdgeEvent {
   ray_id: string;
@@ -702,12 +703,13 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
       });
       if (res && res.success) {
         setCfWhitelistSuccess(ip);
+        toast.success(`IP ${ip} successfully allowlisted on Cloudflare Edge.`);
         setTimeout(() => setCfWhitelistSuccess(null), 4000);
       } else {
-        alert(res?.message || `Failed to whitelist IP ${ip} on Cloudflare.`);
+        toast.error(res?.message || `Failed to whitelist IP ${ip} on Cloudflare.`);
       }
     } catch (err: any) {
-      alert(`Error whitelisting IP: ` + (err?.message || 'Network error'));
+      toast.error(`Error whitelisting IP: ` + (err?.message || 'Network error'));
     } finally {
       setCfWhitelistingIp(null);
     }
@@ -937,11 +939,12 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
           type: 'success',
           text: `Downloaded ${filename} (${res.count} records).`
         });
+        toast.success(`Downloaded ${filename} (${res.count} records).`);
       } else {
-        alert(res?.message || 'Failed to download daily log file.');
+        toast.error(res?.message || 'Failed to download daily log file.');
       }
     } catch (err: any) {
-      alert(err?.message || 'Error downloading log file.');
+      toast.error(err?.message || 'Error downloading log file.');
     }
   };
 
@@ -1342,7 +1345,7 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
       }
 
       if (targetRecords.length === 0) {
-        alert('No incident logs found matching the selected export scope.');
+        toast.warning('No incident logs found matching the selected export scope.');
         setIsExporting(false);
         return;
       }
@@ -1395,10 +1398,11 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
         type: 'success',
         text: `Successfully exported ${targetRecords.length} WAF log incidents as ${filename}.`
       });
+      toast.success(`Successfully exported ${targetRecords.length} WAF log incidents as ${filename}.`);
       setIsExportModalOpen(false);
     } catch (err: any) {
       console.error('WebCare: WAF log export error', err);
-      alert(err?.message || 'Error occurred during WAF log export.');
+      toast.error(err?.message || 'Error occurred during WAF log export.');
     } finally {
       setIsExporting(false);
     }
@@ -3215,12 +3219,13 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
                                           });
                                           if (res && res.success) {
                                             setActionMessage({ type: 'success', text: `IP ${log.ip_address} successfully pushed to Cloudflare Edge!` });
+                                            toast.success(`IP ${log.ip_address} successfully pushed to Cloudflare Edge!`);
                                             loadLogs();
                                           } else {
-                                            alert(res?.message || 'Failed to sync IP to Cloudflare Edge.');
+                                            toast.error(res?.message || 'Failed to sync IP to Cloudflare Edge.');
                                           }
                                         } catch (e: any) {
-                                          alert(e?.message || 'Error syncing to Cloudflare.');
+                                          toast.error(e?.message || 'Error syncing to Cloudflare.');
                                         }
                                       }}
                                     >

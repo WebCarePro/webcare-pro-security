@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { confirmAction } from './ui/ConfirmModal';
 import {
   X,
   SlidersHorizontal,
@@ -334,8 +335,14 @@ export const ScanOptionsModal: React.FC<ScanOptionsModalProps> = ({
     setActivePreset('custom');
   };
 
-  const handleResetDefaults = () => {
-    if (window.confirm('Reset all scan options to factory-recommended defaults?')) {
+  const handleResetDefaults = async () => {
+    const confirmed = await confirmAction({
+      title: 'Reset Scan Options',
+      message: 'Reset all scan options to factory-recommended defaults?',
+      confirmLabel: 'Reset Defaults',
+      variant: 'warning',
+    });
+    if (confirmed) {
       setSettings(DEFAULT_SCAN_SETTINGS);
       setActivePreset('recommended');
     }
