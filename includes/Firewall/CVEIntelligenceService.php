@@ -200,9 +200,12 @@ class CVEIntelligenceService {
         $results = [];
         $saw_cross_product_cpe = false;
 
-        // 1. Evaluate child nodes recursively if present
-        if (!empty($configNode['nodes']) && is_array($configNode['nodes'])) {
-            foreach ($configNode['nodes'] as $childNode) {
+        // 1. Evaluate child nodes recursively if present (support both NVD 2.0 'nodes' and 'children')
+        $childNodes = !empty($configNode['nodes']) && is_array($configNode['nodes'])
+            ? $configNode['nodes']
+            : (!empty($configNode['children']) && is_array($configNode['children']) ? $configNode['children'] : []);
+        if (!empty($childNodes)) {
+            foreach ($childNodes as $childNode) {
                 if (is_array($childNode)) {
                     $results[] = self::evaluate_nvd_boolean_tree($childNode, $component_slug, $installed_version, $child_in_conjunction);
                 }
@@ -221,11 +224,10 @@ class CVEIntelligenceService {
                 $cpe_product  = isset($parts[4]) ? self::resolve_canonical_slug($parts[4]) : '';
 
                 // If this cpeMatch does not target this component:
-                // For OR nodes, skip leaf unless in conjunction.
-                // For AND nodes, cross-product prerequisite cannot be verified from single component version alone -> mark unknown
+                // For AND nodes or any node under a conjunction, cross-product prerequisite cannot be verified from single component version alone -> mark unknown
                 if ($cpe_product !== '' && $cpe_product !== $component_slug) {
                     $saw_cross_product_cpe = true;
-                    if ($operator === 'AND') {
+                    if ($operator === 'AND' || $in_conjunction) {
                         $results[] = 'unknown';
                     }
                     continue;

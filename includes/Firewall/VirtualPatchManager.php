@@ -342,6 +342,18 @@ class VirtualPatchManager {
         unset($active[$patch_id]);
         update_option(self::OPTION_PATCHES, $active, false);
 
+        // If patch exists in synthesized hotpatches, revoke and disable it so it never reappears
+        $synthesized_opt_key = class_exists('\\WebCareProScanner\\Firewall\\VirtualPatchSynthesizer')
+            ? VirtualPatchSynthesizer::OPTION_SYNTHESIZED_PATCHES
+            : 'webcareproscan_synthesized_virtual_patches';
+        $synth_patches = get_option($synthesized_opt_key, []);
+        if (is_array($synth_patches) && isset($synth_patches[$patch_id])) {
+            $synth_patches[$patch_id]['enabled'] = false;
+            $synth_patches[$patch_id]['stage'] = DeclarativePatchVerifier::STAGE_REVOKED;
+            $synth_patches[$patch_id]['updated_at'] = current_time('mysql');
+            update_option($synthesized_opt_key, $synth_patches, false);
+        }
+
         // Always reconcile Cloudflare edge rules when a patch is removed / deactivated
         $edge_ok = true;
         if (!empty($patch['deployed_to_cloudflare']) || !empty($patch['cf_expression'])) {

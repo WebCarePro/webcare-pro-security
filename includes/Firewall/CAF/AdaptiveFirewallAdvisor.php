@@ -804,7 +804,11 @@ final class AdaptiveFirewallAdvisor {
 		$breaker = class_exists( OriginLoadCircuitBreaker::class ) ? new OriginLoadCircuitBreaker() : null;
 		$origin_survival = $breaker ? $breaker->is_survival_mode_active() : false;
 
-		$optimizer->deploy_to_cloudflare( $zone_id, null, [], $origin_survival );
+		$deploy_res = $optimizer->deploy_to_cloudflare( $zone_id, null, [], $origin_survival );
+
+		if ( ! empty( $deploy_res['success'] ) && get_option( 'webcareproscan_vpatch_pending_cf_sync', false ) ) {
+			delete_option( 'webcareproscan_vpatch_pending_cf_sync' );
+		}
 
 		update_option( 'webcare_cf_last_auto_sync_time', time(), false );
 	}

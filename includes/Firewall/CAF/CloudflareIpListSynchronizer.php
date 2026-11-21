@@ -1363,7 +1363,7 @@ class CloudflareIpListSynchronizer {
 
         foreach ($ops as $op_id => $op_meta) {
             $status = (string) ($op_meta['status'] ?? 'running');
-            if ($status === 'completed' || $status === 'failed') {
+            if ($status === 'completed' || $status === 'failed' || $status === 'failed_terminal') {
                 // Drop operations older than 24 hours
                 if (time() - (int) ($op_meta['updated_at'] ?? 0) > 86400) {
                     unset($ops[$op_id]);
@@ -1377,7 +1377,8 @@ class CloudflareIpListSynchronizer {
             $type       = (string) ($op_meta['type'] ?? 'delete');
             $ips        = (array) ($op_meta['ips'] ?? []);
 
-            $current_status = self::poll_bulk_operation($account_id, $op_id);
+            $poll_id = !empty($op_meta['operation_id']) ? (string) $op_meta['operation_id'] : (string) $op_id;
+            $current_status = self::poll_bulk_operation($account_id, $poll_id);
 
             if ($current_status === 'completed') {
                 if ($type === 'delete') {
@@ -1407,7 +1408,7 @@ class CloudflareIpListSynchronizer {
                             unset($active_bans[$ip]);
                             $bans_modified = true;
                         } else {
-                            // If confirmed present, submit a fresh Cloudflare DELETE request
+                            // If confirmed present, submit a fresh Cloudflare DELETE request if under retry limit
                             if ($verify_state === 'confirmed_present' && $retry_count < 5) {
                                 $delete_item_id = $found_item_id !== '' ? $found_item_id : (string) ($active_bans[$ip]['item_id'] ?? '');
                                 if (!empty($delete_item_id)) {
@@ -1431,11 +1432,10 @@ class CloudflareIpListSynchronizer {
 
                     // Keep delete operation pending for retry if any IP is still confirmed_present or verification_unknown
                     if (!empty($unresolved_deletes)) {
-                        $retry_count++;
-                        $op_meta['retry_count'] = $retry_count;
                         $op_meta['ips'] = $unresolved_deletes;
                         $op_meta['updated_at'] = time();
 
+                        // Transition to failed_terminal only when the 5th attempt has already completed and verification still fails
                         if ($retry_count >= 5) {
                             $op_meta['status'] = 'failed_terminal';
                             if (class_exists('\\WebCareProScanner\\Audit\\AuditLogger')) {
@@ -1443,6 +1443,12 @@ class CloudflareIpListSynchronizer {
                                     'CF_ASYNC_DELETE_FAILED_TERMINAL',
                                     sprintf('Cloudflare async delete reached max retry limit (5) with %d unresolved IP(s): %s', count($unresolved_deletes), implode(', ', $unresolved_deletes))
                                 );
+                            }
+                        } else {
+                            $retry_count++;
+                            $op_meta['retry_count'] = $retry_count;
+                            if (empty($op_meta['status']) || $op_meta['status'] !== 'running') {
+                                $op_meta['status'] = 'running';
                             }
                         }
 
