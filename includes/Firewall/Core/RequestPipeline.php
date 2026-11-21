@@ -162,10 +162,48 @@ final class RequestPipeline {
         // Verify mandatory evaluators are present in runtime and in the active route stack
         foreach (self::MANDATORY_EVALUATORS as $mand_class) {
             if (!class_exists($mand_class)) {
-                throw new \RuntimeException(sprintf('Mandatory firewall evaluator unavailable: %s', $mand_class));
+                if (class_exists(FirewallEngine::class)) {
+                    FirewallEngine::log_incident([
+                        'id'          => 'WAF-REQUIRED-EVALUATOR-MISSING',
+                        'name'        => 'Required Evaluator Missing Fail-Closed',
+                        'category'    => 'System Integrity',
+                        'description' => sprintf('Mandatory firewall evaluator "%s" is unavailable in runtime; route failed closed.', $mand_class),
+                        'match_type'  => 'Missing Evaluator Guard',
+                        'match_value' => $mand_class,
+                        'payload'     => 'Route: ' . $route_class->value,
+                    ], 'blocked');
+                }
+                return new WafVerdict(
+                    'block',
+                    'WAF-REQUIRED-EVALUATOR-MISSING',
+                    sprintf('Mandatory firewall evaluator "%s" is unavailable in runtime.', $mand_class),
+                    [
+                        'category'    => 'System Integrity',
+                        'status_code' => 503,
+                    ]
+                );
             }
             if (!is_array($route_evaluators) || !in_array($mand_class, $route_evaluators, true)) {
-                throw new \RuntimeException(sprintf('Mandatory firewall evaluator missing from route stack: %s', $mand_class));
+                if (class_exists(FirewallEngine::class)) {
+                    FirewallEngine::log_incident([
+                        'id'          => 'WAF-REQUIRED-EVALUATOR-MISSING',
+                        'name'        => 'Required Evaluator Missing Fail-Closed',
+                        'category'    => 'System Integrity',
+                        'description' => sprintf('Mandatory firewall evaluator "%s" missing from route stack; route failed closed.', $mand_class),
+                        'match_type'  => 'Missing Evaluator Guard',
+                        'match_value' => $mand_class,
+                        'payload'     => 'Route: ' . $route_class->value,
+                    ], 'blocked');
+                }
+                return new WafVerdict(
+                    'block',
+                    'WAF-REQUIRED-EVALUATOR-MISSING',
+                    sprintf('Mandatory firewall evaluator "%s" missing from route stack.', $mand_class),
+                    [
+                        'category'    => 'System Integrity',
+                        'status_code' => 503,
+                    ]
+                );
             }
         }
 
@@ -209,9 +247,28 @@ final class RequestPipeline {
                 }
             }
 
-            if (!class_exists($evaluator_class)) {
+            if (!class_exists($evaluator_class) || !empty($meta['missing'])) {
                 if ($is_req || $failure_policy === \WebCareProScanner\Contracts\EvaluatorFailurePolicy::FailClosedRoute->value) {
-                    throw new \RuntimeException(sprintf('Required firewall evaluator class unavailable: %s', $evaluator_class));
+                    if (class_exists(FirewallEngine::class)) {
+                        FirewallEngine::log_incident([
+                            'id'          => 'WAF-REQUIRED-EVALUATOR-MISSING',
+                            'name'        => 'Required Evaluator Missing Fail-Closed',
+                            'category'    => 'System Integrity',
+                            'description' => sprintf('Required firewall evaluator "%s" is missing from runtime; route failed closed.', $evaluator_class),
+                            'match_type'  => 'Missing Evaluator Guard',
+                            'match_value' => $evaluator_class,
+                            'payload'     => 'Route: ' . $route_class->value,
+                        ], 'blocked');
+                    }
+                    return new WafVerdict(
+                        'block',
+                        'WAF-REQUIRED-EVALUATOR-MISSING',
+                        sprintf('Required firewall evaluator "%s" is missing from runtime.', $evaluator_class),
+                        [
+                            'category'    => 'System Integrity',
+                            'status_code' => 503,
+                        ]
+                    );
                 }
                 // Optional heuristic evaluator missing: record degraded log and continue safely
                 if (class_exists(FirewallEngine::class)) {

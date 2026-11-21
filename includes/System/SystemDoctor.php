@@ -255,9 +255,9 @@ final class SystemDoctor {
 
         if (is_array($evaluator_meta)) {
             foreach ($evaluator_meta as $eval_cls => $m) {
-                if (!empty($m['required']) && !class_exists($eval_cls)) {
+                if (!empty($m['missing']) || (!empty($m['required']) && !class_exists($eval_cls))) {
                     $pipeline_intact = false;
-                    $pipeline_issues[] = sprintf(__('Required evaluator %s missing.', 'webcare-pro-security'), $eval_cls);
+                    $pipeline_issues[] = sprintf(__('Required evaluator %s missing or unresolvable in runtime.', 'webcare-pro-security'), $eval_cls);
                 }
             }
         }

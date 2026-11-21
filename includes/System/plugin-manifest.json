@@ -1,6 +1,6 @@
 {
   "version": "3.21.0",
-  "generated_at": "2026-11-21T03:58:26.578Z",
+  "generated_at": "2026-11-21T04:29:52.858Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -348,8 +348,8 @@
       "size": 4446
     },
     "includes/Core/CompiledStackManifest.php": {
-      "sha256": "0587f4dd69028ecf9ce98e25f823100a49ad9f0eadaa419b15c5e1e12ac27a5b",
-      "size": 19250
+      "sha256": "e9684db1eb7c306229e9456b00faa7a738492bff86d3f4d571d936fb24418a84",
+      "size": 21113
     },
     "includes/Core/ModuleRegistry.php": {
       "sha256": "0ecddd5325ff7b92d552f29054ef2d549181a8cfa00f175864e1c7494a5ff828",
@@ -552,16 +552,16 @@
       "size": 7374
     },
     "includes/Firewall/Core/RequestPipeline.php": {
-      "sha256": "ea172396529744ac519f2db8a7827d85d3735f18e3b8d928c3bed9e9860ee57b",
-      "size": 14347
+      "sha256": "ec0e6540cbfeca42a543027974d0afb1ea4f19ce41a4756f91e824206454d8be",
+      "size": 17462
     },
     "includes/Firewall/Core/TransientRateLimiter.php": {
       "sha256": "f4ded40968ea08e8e113b53c98e60979930a6b722e0e76f989df16656d15499e",
       "size": 4429
     },
     "includes/Firewall/Core/ViolationResponder.php": {
-      "sha256": "22508480b52fbad71ff5b699c41151f2634bb58d33fddd09b01195f8ca3fc759",
-      "size": 51361
+      "sha256": "e130a0f9779a2095cc13ce10cb521a31f50c20078e8954a93bdeb8cdf0d3b1a0",
+      "size": 51440
     },
     "includes/Firewall/Core/WafVaultManager.php": {
       "sha256": "5f0e335a1966dfb9f633870929d16c3f37c27f2ea270577cf8aabaf68e909e85",
@@ -700,8 +700,8 @@
       "size": 23267
     },
     "includes/Firewall/VirtualPatchManager.php": {
-      "sha256": "ef22f411400913ab63240606d7f3ed278604b27b363e53ddd21c37e02e4958af",
-      "size": 33178
+      "sha256": "ad9e4409b81d610c31a5a2f304f955c70a662598e9adccfc7abb4ef352d8923d",
+      "size": 33271
     },
     "includes/Firewall/VirtualPatchSynthesizer.php": {
       "sha256": "0d2dbb9e7b3558c92d48b9a76cd3ec53986934f028f5c049e3d953416e9e3981",
@@ -1032,8 +1032,8 @@
       "size": 119850
     },
     "includes/System/SystemDoctor.php": {
-      "sha256": "a1f9cfc8499ebcce6dc004eb5c6afcc31284e23652590b3496fba9f6d9cc9fcf",
-      "size": 18957
+      "sha256": "ff8b64dbdf08b380bd15a74444fb1c4930828868d49d2b3002b8df708c793b1e",
+      "size": 19011
     },
     "includes/System/SystemReadinessChecker.php": {
       "sha256": "18ff82f64e622f407d5c3067dd78541d6d7444fef5e5cd3f634e9516b939fb0c",

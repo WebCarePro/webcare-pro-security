@@ -271,7 +271,7 @@ class VirtualPatchManager {
                 'description' => sprintf(
                     /* translators: 1: patch title, 2: patch ID, 3: deployment message */
                     __('Activated Virtual Shield "%1$s" (%2$s)%3$s', 'webcare-pro-security'),
-                    $patch['title'],
+                    $patch['title'] ?? $patch_id,
                     $patch_id,
                     $cf_msg
                 ),
@@ -283,7 +283,7 @@ class VirtualPatchManager {
             sprintf(
                 /* translators: 1: patch title, 2: patch ID, 3: deployment message */
                 __('Applied Virtual Patch "%1$s" (%2$s)%3$s', 'webcare-pro-security'),
-                $patch['title'],
+                $patch['title'] ?? $patch_id,
                 $patch_id,
                 $cf_msg
             )
@@ -294,7 +294,7 @@ class VirtualPatchManager {
             'message'                => sprintf(
                 /* translators: 1: patch title, 2: deployment message */
                 __('Virtual Patch "%1$s" applied successfully!%2$s', 'webcare-pro-security'),
-                $patch['title'],
+                $patch['title'] ?? $patch_id,
                 $cf_msg
             ),
             'patch'                  => $patch,
@@ -341,7 +341,7 @@ class VirtualPatchManager {
                 'description' => sprintf(
                     /* translators: 1: patch title, 2: patch ID */
                     __('Deactivated Virtual Shield "%1$s" (%2$s)', 'webcare-pro-security'),
-                    $patch['title'],
+                    $patch['title'] ?? $patch_id,
                     $patch_id
                 ),
             ]);
@@ -352,7 +352,7 @@ class VirtualPatchManager {
             sprintf(
                 /* translators: 1: patch title, 2: patch ID */
                 __('Removed Virtual Patch "%1$s" (%2$s)', 'webcare-pro-security'),
-                $patch['title'],
+                $patch['title'] ?? $patch_id,
                 $patch_id
             )
         );
@@ -360,7 +360,7 @@ class VirtualPatchManager {
         return [
             'success' => true,
             /* translators: %s: patch title */
-            'message' => sprintf(__('Virtual Patch "%s" has been deactivated.', 'webcare-pro-security'), $patch['title']),
+            'message' => sprintf(__('Virtual Patch "%s" has been deactivated.', 'webcare-pro-security'), $patch['title'] ?? $patch_id),
         ];
     }
 
@@ -583,7 +583,7 @@ class VirtualPatchManager {
 
         return [
             'id'          => 'VPATCH-' . $patch_id,
-            'name'        => '[Virtual Patch] ' . $patch['title'],
+            'name'        => '[Virtual Patch] ' . ($patch['title'] ?? $patch_id),
             'category'    => 'Virtual Patch (CVE Shield)',
             'detector'    => 'VirtualPatchManager',
             'sig_id'      => 'cve:' . strtolower($patch_id),

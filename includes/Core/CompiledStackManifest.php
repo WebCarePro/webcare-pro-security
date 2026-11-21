@@ -3,8 +3,10 @@ declare(strict_types=1);
 
 namespace WebCareProScanner\Core;
 
+use WebCareProScanner\Contracts\EvaluatorFailurePolicy;
 use WebCareProScanner\Contracts\RouteClass;
 use WebCareProScanner\Contracts\SiteArchetype;
+use WebCareProScanner\Firewall\FirewallEngine;
 use WebCareProScanner\Firewall\MicroWafCompiler;
 use WebCareProScanner\Security\SecretVault;
 
@@ -27,6 +29,21 @@ final class CompiledStackManifest {
 
     public const MANIFEST_FILENAME = 'site-manifest.php';
     public const OPTION_MANIFEST_HMAC = 'webcareproscan_manifest_hmac';
+
+    /**
+     * Authoritative static registry of required evaluators.
+     * Evaluators declared here MUST be present in the runtime. If any required evaluator
+     * class is missing during compilation or execution, the pipeline fails closed.
+     *
+     * @var array<string, array{module_id: string, required: bool, failure_policy: string}>
+     */
+    public const EXPECTED_REQUIRED_EVALUATORS = [
+        'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine' => [
+            'module_id'      => 'exploit-signature-engine',
+            'required'       => true,
+            'failure_policy' => 'fail_closed_route',
+        ],
+    ];
 
     /**
      * In-memory request cache to avoid duplicate file I/O and HMAC checks within the same request.
@@ -311,8 +328,26 @@ final class CompiledStackManifest {
             }
         }
 
+        // Ensure all authoritative expected required evaluators are accounted for
+        foreach (self::EXPECTED_REQUIRED_EVALUATORS as $req_class => $req_meta) {
+            $all_classes[$req_class] = true;
+        }
+
         foreach (array_keys($all_classes) as $class_name) {
+            $expected_req = self::EXPECTED_REQUIRED_EVALUATORS[$class_name] ?? null;
+
             if (!class_exists($class_name)) {
+                // If this is a declared required evaluator, never skip! Record as missing and fail closed.
+                if ($expected_req !== null || (isset($metadata[$class_name]) && !empty($metadata[$class_name]['required']))) {
+                    $metadata[$class_name] = [
+                        'module_id'      => $expected_req['module_id'] ?? sanitize_key(basename(str_replace('\\', '/', $class_name))),
+                        'required'       => true,
+                        'failure_policy' => $expected_req['failure_policy'] ?? \WebCareProScanner\Contracts\EvaluatorFailurePolicy::FailClosedRoute->value,
+                        'capabilities'   => [],
+                        'route_classes'  => [],
+                        'missing'        => true,
+                    ];
+                }
                 continue;
             }
 

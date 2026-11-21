@@ -40,7 +40,7 @@ final class ViolationResponder {
      */
     public static function log_incident(array $rule, string $action, ?string $incident_id = null): ?string {
         global $wpdb;
-        $table = $wpdb->prefix . 'webcareproscan_firewall_logs';
+        $table = ($wpdb !== null && isset($wpdb->prefix)) ? $wpdb->prefix . 'webcareproscan_firewall_logs' : 'wp_webcareproscan_firewall_logs';
 
         $ip = FirewallEngine::get_client_ip();
         $raw_uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '/';
