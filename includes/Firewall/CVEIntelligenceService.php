@@ -183,19 +183,28 @@ class CVEIntelligenceService {
      * @param array $configNode Single configuration node or array of nodes
      * @param string $component_slug Canonical component slug
      * @param string $installed_version Installed version
+     * @param bool $in_conjunction Whether this node is being evaluated under an AND conjunction
      * @return 'vulnerable'|'not_vulnerable'|'unknown'
      */
-    public static function evaluate_nvd_boolean_tree(array $configNode, string $component_slug, string $installed_version): string {
+    public static function evaluate_nvd_boolean_tree(
+        array $configNode,
+        string $component_slug,
+        string $installed_version,
+        bool $in_conjunction = false
+    ): string {
         $operator = strtoupper((string) ($configNode['operator'] ?? 'OR'));
         $negate   = !empty($configNode['negate']);
+        $is_and   = ($operator === 'AND');
+        $child_in_conjunction = $in_conjunction || $is_and;
 
         $results = [];
+        $saw_cross_product_cpe = false;
 
         // 1. Evaluate child nodes recursively if present
         if (!empty($configNode['nodes']) && is_array($configNode['nodes'])) {
             foreach ($configNode['nodes'] as $childNode) {
                 if (is_array($childNode)) {
-                    $results[] = self::evaluate_nvd_boolean_tree($childNode, $component_slug, $installed_version);
+                    $results[] = self::evaluate_nvd_boolean_tree($childNode, $component_slug, $installed_version, $child_in_conjunction);
                 }
             }
         }
@@ -212,9 +221,10 @@ class CVEIntelligenceService {
                 $cpe_product  = isset($parts[4]) ? self::resolve_canonical_slug($parts[4]) : '';
 
                 // If this cpeMatch does not target this component:
-                // For OR nodes, skip leaf.
+                // For OR nodes, skip leaf unless in conjunction.
                 // For AND nodes, cross-product prerequisite cannot be verified from single component version alone -> mark unknown
                 if ($cpe_product !== '' && $cpe_product !== $component_slug) {
+                    $saw_cross_product_cpe = true;
                     if ($operator === 'AND') {
                         $results[] = 'unknown';
                     }
@@ -238,6 +248,11 @@ class CVEIntelligenceService {
         }
 
         if (empty($results)) {
+            // When an OR child under an AND conjunction contains only non-target cross-product leaves,
+            // return 'unknown' rather than falsely declaring 'not_vulnerable'
+            if ($child_in_conjunction && $saw_cross_product_cpe) {
+                return 'unknown';
+            }
             return 'not_vulnerable';
         }
 

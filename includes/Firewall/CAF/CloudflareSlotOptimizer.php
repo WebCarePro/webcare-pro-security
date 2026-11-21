@@ -238,8 +238,10 @@ class CloudflareSlotOptimizer {
         mixed $scoped_patches = [],
         bool $has_custom_ip_list = false,
         bool $origin_survival_active = false,
-        int $slot_budget = self::MAX_WEBCARE_SLOTS
+        int $slot_budget = self::MAX_WEBCARE_SLOTS,
+        array &$included_patch_ids = []
     ): array {
+        $included_patch_ids = [];
         if (is_int($scoped_patches)) {
             $slot_budget = $scoped_patches;
             $scoped_patches = [];
@@ -270,7 +272,7 @@ class CloudflareSlotOptimizer {
 
         // RULE 2 (BLOCK): StackGuard Inactive Plugin Lockdown & Stack-Scoped CVE Virtual Patches
         if ($budget >= 2) {
-            $rule2_expr = $this->compile_rule2_stackguard_expression($snapshot, $scoped_patches);
+            $rule2_expr = $this->compile_rule2_stackguard_expression($snapshot, $scoped_patches, $included_patch_ids);
             $webcare_rules[] = [
                 'action'      => 'block',
                 'description' => self::WEBCARE_RULE_PREFIX . ' Rule 2: StackGuard Inactive Plugin Lockdown & Virtual Patches',
@@ -409,11 +411,12 @@ class CloudflareSlotOptimizer {
             }
 
             return [
-                'success'      => false,
-                'message'      => __('All available Cloudflare Free Plan custom rules are occupied by Visual or user-defined rules. 1 slot is guaranteed reserved for the site owner.', 'webcare-pro-security'),
-                'user_rules'   => count($user_rules),
-                'visual_rules' => count($visual_rules),
-                'slot_budget'  => 0,
+                'success'            => false,
+                'message'            => __('All available Cloudflare Free Plan custom rules are occupied by Visual or user-defined rules. 1 slot is guaranteed reserved for the site owner.', 'webcare-pro-security'),
+                'user_rules'         => count($user_rules),
+                'visual_rules'       => count($visual_rules),
+                'slot_budget'        => 0,
+                'included_patch_ids' => [],
             ];
         }
 
@@ -431,12 +434,14 @@ class CloudflareSlotOptimizer {
         }
 
         // 5. Build packed WebCare Rules (strictly up to $slot_budget, max 4)
+        $included_patch_ids = [];
         $webcare_rules = $this->pack_ruleset_expressions(
             $snapshot,
             $scoped_patches,
             $has_custom_ip_list,
             $origin_survival_active,
-            $slot_budget
+            $slot_budget,
+            $included_patch_ids
         );
 
         // 6. Merge rules with strict Cloudflare `skip` semantics and owner precedence (Finding 1.2):
@@ -544,14 +549,16 @@ class CloudflareSlotOptimizer {
                 'webcare_rules'        => $webcare_rules,
                 'user_rules'           => $user_rules,
                 'reserved_owner_slots' => $reserved_owner_slots,
+                'included_patch_ids'   => $included_patch_ids,
             ];
         }
 
         $error_msg = !empty($res['errors'][0]['message']) ? $res['errors'][0]['message'] : __('Cloudflare API ruleset update rejected.', 'webcare-pro-security');
         return [
-            'success' => false,
-            'message' => $error_msg,
-            'errors'  => $res['errors'] ?? [],
+            'success'            => false,
+            'message'            => $error_msg,
+            'errors'             => $res['errors'] ?? [],
+            'included_patch_ids' => [],
         ];
     }
 
@@ -589,8 +596,9 @@ class CloudflareSlotOptimizer {
      * @param array $scoped_patches Active virtual patches
      * @return string
      */
-    public function compile_rule2_stackguard_expression(StackSnapshot $snapshot, array $scoped_patches = []): string {
+    public function compile_rule2_stackguard_expression(StackSnapshot $snapshot, array $scoped_patches = [], array &$included_patch_ids = []): string {
         $clauses = [];
+        $included_patch_ids = [];
 
         // 1. Inactive Plugin Lockdown: Block bot probes targeting dormant/deactivated plugins
         $inactive_plugins = $snapshot->inactive_plugins;
@@ -643,6 +651,9 @@ class CloudflareSlotOptimizer {
                     break;
                 }
                 $clauses[] = $candidate;
+                if (!empty($patch['patch_id'])) {
+                    $included_patch_ids[] = (string) $patch['patch_id'];
+                }
             }
         }
 

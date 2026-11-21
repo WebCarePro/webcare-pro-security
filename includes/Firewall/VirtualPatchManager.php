@@ -254,7 +254,10 @@ class VirtualPatchManager {
         // Always reconcile Cloudflare edge rules with the full post-update patch collection
         $cf_res = self::deploy_to_cloudflare_edge($patch);
         if ($cf_res['success']) {
-            if ($patch_stage === DeclarativePatchVerifier::STAGE_ACTIVE && $patch_action === 'block' && !empty($patch['cf_expression'])) {
+            $included_ids = (array) ($cf_res['included_patch_ids'] ?? []);
+            $is_included = in_array($patch_id, $included_ids, true);
+
+            if ($patch_stage === DeclarativePatchVerifier::STAGE_ACTIVE && $patch_action === 'block' && !empty($patch['cf_expression']) && $is_included) {
                 $patch['deployed_to_cloudflare'] = true;
                 $patch['cloudflare_rule_id'] = $cf_res['rule_id'] ?? null;
                 $cf_deployed = true;
@@ -262,7 +265,7 @@ class VirtualPatchManager {
                 $active[$patch_id] = $patch;
                 update_option(self::OPTION_PATCHES, $active, false);
             } else {
-                $cf_msg = ' (' . sprintf(__('Local PHP WAF Lite [%s/%s]; Cloudflare Edge: Non-blocking or non-active stage retained at origin', 'webcare-pro-security'), $patch_stage, $patch_action) . ')';
+                $cf_msg = ' (' . sprintf(__('Local PHP WAF Lite [%s/%s]; Cloudflare Edge: Non-blocking, non-active, or omitted from Edge budget', 'webcare-pro-security'), $patch_stage, $patch_action) . ')';
             }
         } else {
             $cf_msg = ' (' . __('Local PHP WAF Lite Active; Cloudflare Edge: ', 'webcare-pro-security') . ($cf_res['message'] ?? 'Not connected') . ')';
@@ -331,7 +334,7 @@ class VirtualPatchManager {
     public static function remove_patch(string $patch_id): array {
         $active = self::get_active_patches();
         if (!isset($active[$patch_id])) {
-            return ['success' => false, 'message' => __('Virtual Patch is not active.', 'webcare-pro-security')];
+            return ['success' => false, 'local_removed' => false, 'edge_reconciled' => false, 'message' => __('Virtual Patch is not active.', 'webcare-pro-security')];
         }
 
         $patch = $active[$patch_id];
@@ -340,8 +343,16 @@ class VirtualPatchManager {
         update_option(self::OPTION_PATCHES, $active, false);
 
         // Always reconcile Cloudflare edge rules when a patch is removed / deactivated
+        $edge_ok = true;
         if (!empty($patch['deployed_to_cloudflare']) || !empty($patch['cf_expression'])) {
-            self::remove_from_cloudflare_edge($patch_id);
+            $edge_ok = self::remove_from_cloudflare_edge($patch_id);
+            if (!$edge_ok) {
+                update_option('webcareproscan_vpatch_pending_cf_sync', true, false);
+                AuditLogger::log_event(
+                    'VPATCH_EDGE_SYNC_PENDING',
+                    sprintf('Deactivated patch %s from origin, but Cloudflare Edge cleanup failed. Flagged for cron retry.', $patch_id)
+                );
+            }
         }
 
         if (class_exists('\\WebCareProScanner\\System\\WebCareActivityLogger')) {
@@ -378,9 +389,11 @@ class VirtualPatchManager {
         );
 
         return [
-            'success' => true,
+            'success'         => true,
+            'local_removed'   => true,
+            'edge_reconciled' => $edge_ok,
             /* translators: %s: patch title */
-            'message' => sprintf(__('Virtual Patch "%s" has been deactivated.', 'webcare-pro-security'), $patch['title'] ?? $patch_id),
+            'message'         => sprintf(__('Virtual Patch "%s" has been deactivated.', 'webcare-pro-security'), $patch['title'] ?? $patch_id),
         ];
     }
 
@@ -547,20 +560,36 @@ class VirtualPatchManager {
                 $key    = (string) ($match['key'] ?? '');
 
                 // Check for read truncation or stream read failure on body predicates
+                $body_read_failed = false;
+                $body_is_truncated = false;
                 if (in_array($source, ['body', 'raw_body', 'json', 'post', 'form'], true) || ($source === '' && $key === '')) {
                     if (class_exists('\\WebCareProScanner\\Firewall\\Core\\RequestBodyReader')) {
-                        if (\WebCareProScanner\Firewall\Core\RequestBodyReader::has_read_failed()) {
+                        $body_read_failed = \WebCareProScanner\Firewall\Core\RequestBodyReader::has_read_failed();
+                        $body_is_truncated = \WebCareProScanner\Firewall\Core\RequestBodyReader::is_truncated();
+
+                        if ($body_read_failed) {
+                            if ($stage === DeclarativePatchVerifier::STAGE_ACTIVE) {
+                                AuditLogger::log_event(
+                                    'VPATCH_BODY_INCOMPLETE_BLOCKED',
+                                    sprintf('Virtual patch %s failed closed (HTTP 400): php://input stream unreadable.', $patch_id)
+                                );
+                                return [
+                                    'id'          => 'WAF-VPATCH-BODY-INCOMPLETE',
+                                    'name'        => '[Virtual Patch] Incomplete Body Read Fail-Closed',
+                                    'category'    => 'Virtual Patch (CVE Shield)',
+                                    'detector'    => 'VirtualPatchManager',
+                                    'sig_id'      => 'cve:' . strtolower($patch_id),
+                                    'action'      => 'block',
+                                    'status_code' => 400,
+                                    'match_type'  => 'Stream Read Failure',
+                                    'match_value' => 'php://input read failure',
+                                ];
+                            }
                             AuditLogger::log_event(
-                                'VPATCH_BODY_READ_FAILED',
+                                'VPATCH_BODY_INCOMPLETE',
                                 sprintf('Virtual patch %s body predicate evaluation skipped due to php://input stream read failure.', $patch_id)
                             );
                             continue;
-                        }
-                        if (\WebCareProScanner\Firewall\Core\RequestBodyReader::is_truncated()) {
-                            AuditLogger::log_event(
-                                'VPATCH_BODY_TRUNCATED',
-                                sprintf('Virtual patch %s body payload exceeded bounded ceiling; evaluating available truncated prefix.', $patch_id)
-                            );
                         }
                     }
                 }
@@ -672,6 +701,31 @@ class VirtualPatchManager {
 
                     // STAGE_ACTIVE: Trigger block or declared action
                     return self::trigger_patch_block($patch_id, $patch, $evidence, 'Declarative Match');
+                }
+
+                // If body was truncated and prefix did NOT match, fail closed for STAGE_ACTIVE
+                if ($body_is_truncated && (in_array($source, ['body', 'raw_body', 'json', 'post', 'form'], true) || ($source === '' && $key === ''))) {
+                    if ($stage === DeclarativePatchVerifier::STAGE_ACTIVE) {
+                        AuditLogger::log_event(
+                            'VPATCH_BODY_TRUNCATED_BLOCKED',
+                            sprintf('Virtual patch %s failed closed (HTTP 413): Payload exceeded bounded limit and prefix did not match.', $patch_id)
+                        );
+                        return [
+                            'id'          => 'WAF-VPATCH-BODY-INCOMPLETE',
+                            'name'        => '[Virtual Patch] Truncated Payload Fail-Closed',
+                            'category'    => 'Virtual Patch (CVE Shield)',
+                            'detector'    => 'VirtualPatchManager',
+                            'sig_id'      => 'cve:' . strtolower($patch_id),
+                            'action'      => 'block',
+                            'status_code' => 413,
+                            'match_type'  => 'Payload Truncation',
+                            'match_value' => 'Body exceeded bounded stream limit',
+                        ];
+                    }
+                    AuditLogger::log_event(
+                        'VPATCH_BODY_INCOMPLETE',
+                        sprintf('Virtual patch %s observe mode: payload exceeded bounded ceiling and prefix did not match.', $patch_id)
+                    );
                 }
 
                 continue;
@@ -840,14 +894,20 @@ class VirtualPatchManager {
             }
         }
 
-        // Append new virtual patch rule
-        $rule_desc = self::CF_TAG . ' ' . $patch['patch_id'] . ': ' . substr($patch['title'], 0, 60);
-        $rules[] = [
-            'action'      => 'block',
-            'expression'  => $patch['cf_expression'],
-            'description' => $rule_desc,
-            'enabled'     => true,
-        ];
+        // Direct fallback parity: Only deploy when stage === STAGE_ACTIVE && action === 'block'
+        $patch_stage = (string) ($patch['stage'] ?? DeclarativePatchVerifier::STAGE_ACTIVE);
+        $patch_action = strtolower((string) ($patch['action'] ?? 'block'));
+        $cf_expr = trim((string) ($patch['cf_expression'] ?? ''));
+
+        if ($patch_stage === DeclarativePatchVerifier::STAGE_ACTIVE && $patch_action === 'block' && $cf_expr !== '') {
+            $rule_desc = self::CF_TAG . ' ' . $patch['patch_id'] . ': ' . substr($patch['title'], 0, 60);
+            $rules[] = [
+                'action'      => 'block',
+                'expression'  => $cf_expr,
+                'description' => $rule_desc,
+                'enabled'     => true,
+            ];
+        }
 
         // Cloudflare Free allows up to 5 custom rules. Check limit
         if (count($rules) > 10) {
@@ -863,9 +923,10 @@ class VirtualPatchManager {
 
         if (!empty($put_res['success'])) {
             return [
-                'success' => true,
-                'rule_id' => $patch['patch_id'],
-                'message' => __('Cloudflare Edge Rule synced successfully.', 'webcare-pro-security'),
+                'success'            => true,
+                'rule_id'            => $patch['patch_id'],
+                'included_patch_ids' => ($patch_stage === DeclarativePatchVerifier::STAGE_ACTIVE && $patch_action === 'block' && $cf_expr !== '') ? [(string) $patch['patch_id']] : [],
+                'message'            => __('Cloudflare Edge Rule synced successfully.', 'webcare-pro-security'),
             ];
         }
 

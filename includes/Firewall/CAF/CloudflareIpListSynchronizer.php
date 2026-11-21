@@ -1382,16 +1382,20 @@ class CloudflareIpListSynchronizer {
             if ($current_status === 'completed') {
                 if ($type === 'delete') {
                     $unresolved_deletes = [];
+                    $retry_count = (int) ($op_meta['retry_count'] ?? 0);
+
                     foreach ($ips as $ip) {
                         // PR-A2: Explicit tri-state verification: 'confirmed_absent', 'confirmed_present', 'verification_unknown'
                         $verify_res = CloudflareService::request("accounts/{$account_id}/rules/lists/{$list_id}/items?search=" . rawurlencode($ip));
                         $verify_state = 'verification_unknown';
+                        $found_item_id = '';
 
                         if (!empty($verify_res['success']) && isset($verify_res['result']) && is_array($verify_res['result'])) {
                             $found = false;
                             foreach ($verify_res['result'] as $v_item) {
                                 if (($v_item['ip'] ?? '') === $ip) {
                                     $found = true;
+                                    $found_item_id = (string) ($v_item['id'] ?? '');
                                     break;
                                 }
                             }
@@ -1403,14 +1407,45 @@ class CloudflareIpListSynchronizer {
                             unset($active_bans[$ip]);
                             $bans_modified = true;
                         } else {
+                            // If confirmed present, submit a fresh Cloudflare DELETE request
+                            if ($verify_state === 'confirmed_present' && $retry_count < 5) {
+                                $delete_item_id = $found_item_id !== '' ? $found_item_id : (string) ($active_bans[$ip]['item_id'] ?? '');
+                                if (!empty($delete_item_id)) {
+                                    $fresh_del_res = CloudflareService::request(
+                                        "accounts/{$account_id}/rules/lists/{$list_id}/items",
+                                        'DELETE',
+                                        ['items' => [['id' => $delete_item_id]]]
+                                    );
+                                    if (!empty($fresh_del_res['success'])) {
+                                        $new_op_id = (string) ($fresh_del_res['result']['operation_id'] ?? '');
+                                        if (!empty($new_op_id)) {
+                                            $op_meta['operation_id'] = $new_op_id;
+                                            $op_meta['status'] = 'running';
+                                        }
+                                    }
+                                }
+                            }
                             $unresolved_deletes[] = $ip;
                         }
                     }
 
                     // Keep delete operation pending for retry if any IP is still confirmed_present or verification_unknown
                     if (!empty($unresolved_deletes)) {
+                        $retry_count++;
+                        $op_meta['retry_count'] = $retry_count;
                         $op_meta['ips'] = $unresolved_deletes;
                         $op_meta['updated_at'] = time();
+
+                        if ($retry_count >= 5) {
+                            $op_meta['status'] = 'failed_terminal';
+                            if (class_exists('\\WebCareProScanner\\Audit\\AuditLogger')) {
+                                \WebCareProScanner\Audit\AuditLogger::log_event(
+                                    'CF_ASYNC_DELETE_FAILED_TERMINAL',
+                                    sprintf('Cloudflare async delete reached max retry limit (5) with %d unresolved IP(s): %s', count($unresolved_deletes), implode(', ', $unresolved_deletes))
+                                );
+                            }
+                        }
+
                         $ops[$op_id] = $op_meta;
                         $ops_modified = true;
                         continue;
