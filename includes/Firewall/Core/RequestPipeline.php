@@ -147,7 +147,11 @@ final class RequestPipeline {
                     'payload'     => $e->getFile() . ':' . $e->getLine(),
                 ], 'blocked');
             }
-            status_header(403);
+            if (function_exists('status_header')) {
+                status_header(503);
+            } elseif (!headers_sent()) {
+                header('HTTP/1.1 503 Service Unavailable');
+            }
             exit;
         } finally {
             self::$is_processing = false;

@@ -21,7 +21,6 @@ class FirewallEngine {
     public static $last_incident_id = null;
     public static $last_ref_code = null;
     public static array $wc_session_cache = [];
-    public static bool $executed_under_pipeline = false;
 
     /**
      * Generate a short, unambiguous Customer Support Reference Code (#WEBCARE-XXXX).

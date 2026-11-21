@@ -128,7 +128,8 @@ class LearningModeEngine {
         // phpcs:enable WordPress.Security.NonceVerification.Recommended, WordPress.Security.NonceVerification.Missing
 
         // 4. WP-Admin screen routes
-        if (is_admin() || strpos($uri, '/wp-admin/') !== false) {
+        $is_admin = function_exists('is_admin') ? is_admin() : (strpos($uri, '/wp-admin/') !== false);
+        if ($is_admin || strpos($uri, '/wp-admin/') !== false) {
             $script = isset($_SERVER['SCRIPT_NAME']) ? basename(sanitize_text_field(wp_unslash($_SERVER['SCRIPT_NAME']))) : 'admin.php';
             // phpcs:ignore WordPress.Security.NonceVerification.Recommended
             $page = isset($_GET['page']) ? sanitize_key(wp_unslash($_GET['page'])) : '';
