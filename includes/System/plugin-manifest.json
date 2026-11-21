@@ -1,6 +1,6 @@
 {
-  "version": "3.3.7",
-  "generated_at": "2026-11-21T17:23:46.063Z",
+  "version": "3.3.8",
+  "generated_at": "2026-11-21T17:32:23.572Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -476,8 +476,8 @@
       "size": 31579
     },
     "includes/Firewall/CAF/CloudflareIpListSynchronizer.php": {
-      "sha256": "1e3ef487bf5bfc41079de52d2f1f705ffc5f421eb55f02bbae16d6ea305134fa",
-      "size": 75148
+      "sha256": "3f5f9862cbc341c6047fce200443839eef22006dd5a34a9676452eb488696c60",
+      "size": 75292
     },
     "includes/Firewall/CAF/CloudflareSlotOptimizer.php": {
       "sha256": "06a1ce29432bf9fef44c893c9030e50c5b3f9cb1eff8efcedf9b5de84d36f71b",
@@ -1104,15 +1104,15 @@
       "size": 28
     },
     "package.json": {
-      "sha256": "b6db97325fc80392d43bf30155d798bf3b6c21bfe08ca2771aaced795139ce1b",
+      "sha256": "f5e3dac8e76b0e102b96b9b3b3946c31b71dd9da1d0a77dbda6fe04aed9ac0f2",
       "size": 437
     },
     "README.md": {
-      "sha256": "582721f689939fa1bb6587a3f579889b9956433cbd034e93e5b9430335923844",
+      "sha256": "f36338cfc7bafc6c9d618cab667721792a1d92ccdafd67f5f5922be51eec5efa",
       "size": 28899
     },
     "readme.txt": {
-      "sha256": "9ac674e3c4fc1e14286f410f6f830b0e7771e62adbca3a64d86abddd834f8530",
+      "sha256": "c1d15099d7ef11325a587b7f376720740f12d139cf00d18aec5dd6e6bf357317",
       "size": 15155
     },
     "uninstall.php": {
@@ -1120,7 +1120,7 @@
       "size": 15530
     },
     "webcare-pro-security.php": {
-      "sha256": "8c29ca0bfeddd224647c9c00769dc266ad37a75d1ca6a7f2edc87274279a9f2c",
+      "sha256": "b81ac46e4c8affa1aa8d1d19bffa3895f2d27339bd7348d79612b25f700ebc61",
       "size": 8333
     }
   }

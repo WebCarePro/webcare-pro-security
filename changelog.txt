@@ -1,4 +1,7 @@
-﻿v:3.3.7 - 2026-11-21
+﻿v:3.3.8 - 2026-11-21
+- Preserve Direct Verification State on DELETE Request Failure (v3.3.8):
+  * P2 — Anti-Stale Operation ID Invariant on Failed DELETE Retries (CloudflareIpListSynchronizer.php): When a consolidated batch DELETE request fails while processing an `awaiting_list_verification` operation, explicitly preserves `$op_meta['status'] = 'awaiting_list_verification'` and unsets `operation_id` instead of falling back to `'running'`. Guarantees subsequent reconciliation ticks continue executing direct list search verification without ever falling back to polling stale, completed ledger operation keys.
+- v:3.3.7 - 2026-11-21
 - Awaiting List Verification State & Strict Revoked Stage Verification (v3.3.7):
   * P2 — Dedicated `awaiting_list_verification` State for Missing Operation IDs (CloudflareIpListSynchronizer.php): When a Cloudflare batch DELETE succeeds without returning an `operation_id`, the operation transitions to an explicit `awaiting_list_verification` state. On the next reconciliation tick, bulk-operation polling is cleanly bypassed (preventing fallback polling against stale, completed operation IDs), and direct IP list search verification is executed immediately.
   * P2 — Strict Revoked Stage Persistence Verification (VirtualPatchManager.php): In `remove_patch()`, enhanced local persistence verification to confirm that synthesized patches are not only disabled (`enabled === false`) but also strictly persisted with `stage === STAGE_REVOKED`, guaranteeing complete deactivation invariant enforcement before reporting successful local removal.

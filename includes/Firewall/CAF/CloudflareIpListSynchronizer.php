@@ -1459,8 +1459,9 @@ class CloudflareIpListSynchronizer {
                                     }
                                 }
                             } else {
-                                $op_meta['status'] = 'running';
+                                $op_meta['status'] = 'awaiting_list_verification';
                                 $op_meta['last_error'] = 'Cloudflare batch DELETE request failed';
+                                unset($op_meta['operation_id']); // Ensure it never falls back to polling a stale ledger key
                             }
                         } else {
                             // Already submitted 5 attempts, and verification still confirmed items present
