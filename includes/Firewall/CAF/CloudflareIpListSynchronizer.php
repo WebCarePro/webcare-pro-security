@@ -249,7 +249,12 @@ class CloudflareIpListSynchronizer {
 
         $now = time();
         $random_nonce = function_exists('wp_generate_password') ? wp_generate_password(16, false) : bin2hex(random_bytes(8));
-        $salt = function_exists('wp_salt') ? wp_salt('auth') : 'webcare_cf_fallback_salt';
+        $salt = class_exists(\WebCareProScanner\Security\SecretVault::class)
+            ? \WebCareProScanner\Security\SecretVault::get_key()
+            : (function_exists('wp_salt') ? wp_salt('auth') : '');
+        if ($salt === '') {
+            return;
+        }
         $signature = hash_hmac('sha256', "cf_flush|{$now}|{$random_nonce}", $salt);
         $token = "{$now}:{$random_nonce}:{$signature}";
 
@@ -1640,24 +1645,29 @@ class CloudflareIpListSynchronizer {
         [$timestamp, $rand_nonce, $sig] = $parts;
         $now = time();
         if (abs($now - (int) $timestamp) > 300) {
-            wp_send_json_error(['message' => 'Expired loopback token.'], 403);
+            \wp_send_json_error(['message' => 'Expired loopback token.'], 403);
         }
 
-        $salt = function_exists('wp_salt') ? wp_salt('auth') : 'webcare_cf_fallback_salt';
+        $salt = class_exists(\WebCareProScanner\Security\SecretVault::class)
+            ? \WebCareProScanner\Security\SecretVault::get_key()
+            : (function_exists('wp_salt') ? wp_salt('auth') : '');
+        if ($salt === '') {
+            \wp_send_json_error(['message' => 'Secret vault unavailable.'], 403);
+        }
         $expected_sig = hash_hmac('sha256', "cf_flush|{$timestamp}|{$rand_nonce}", $salt);
         if (!hash_equals($expected_sig, $sig)) {
-            wp_send_json_error(['message' => 'Invalid loopback signature.'], 403);
+            \wp_send_json_error(['message' => 'Invalid loopback signature.'], 403);
         }
 
         // Prevent replay attacks by tracking nonce transient
         $replay_transient = 'webcare_cf_lb_nonce_' . md5($rand_nonce);
         if (get_transient($replay_transient)) {
-            wp_send_json_error(['message' => 'Replayed loopback token.'], 403);
+            \wp_send_json_error(['message' => 'Replayed loopback token.'], 403);
         }
         set_transient($replay_transient, 1, 300);
 
         $sync = new self();
         $sync->process_sync_queue();
-        wp_send_json_success(['flushed' => true]);
+        \wp_send_json_success(['flushed' => true]);
     }
 }

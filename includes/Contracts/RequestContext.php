@@ -15,6 +15,9 @@ class RequestContext {
     /** @var string */
     public string $ip = '127.0.0.1';
 
+    /** @var string Immutable raw TCP connecting peer IP before any reverse-proxy normalization */
+    public string $connectingPeerIp = '';
+
     /** @var string */
     public string $method = 'GET';
 
@@ -214,7 +217,18 @@ class RequestContext {
         $ctx->userAgent    = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';
         $ctx->referer      = isset($_SERVER['HTTP_REFERER']) ? esc_url_raw(wp_unslash($_SERVER['HTTP_REFERER'])) : '';
         $ctx->cookieHeader = isset($_SERVER['HTTP_COOKIE']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_COOKIE'])) : '';
-        $remote_peer     = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '';
+
+        // Resolve immutable raw connecting peer IP before checking Cloudflare headers
+        $remote_peer = '';
+        if (class_exists('\\WebCareProScanner\\Firewall\\Core\\ClientIpResolver')) {
+            $remote_peer = \WebCareProScanner\Firewall\Core\ClientIpResolver::get_connecting_peer_ip();
+        } elseif (class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine') && FirewallEngine::$connecting_peer_ip !== null) {
+            $remote_peer = FirewallEngine::$connecting_peer_ip;
+        } else {
+            $remote_peer = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '';
+        }
+        $ctx->connectingPeerIp = $remote_peer;
+
         $is_cf_peer      = class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine')
             && \WebCareProScanner\Firewall\FirewallEngine::is_cloudflare_ip($remote_peer);
         $ctx->country    = $is_cf_peer && isset($_SERVER['HTTP_CF_IPCOUNTRY']) ? strtoupper(sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_IPCOUNTRY']))) : '';

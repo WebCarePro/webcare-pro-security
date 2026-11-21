@@ -20,15 +20,63 @@ final class TransientRateLimiter {
     /**
      * Check and record a rate limit attempt.
      *
+     * Atomic concurrency implementation:
+     * 1. APCu: uses atomic `apcu_inc` with `apcu_add` window initialization.
+     * 2. Persistent Object Cache (Redis/Memcached): uses atomic `wp_cache_incr` with `wp_cache_add`.
+     * 3. Transient fallback: bounded sliding transient.
+     *
      * @param string $key Identifier for the rate limit bucket.
      * @param int    $limit Max requests allowed within window.
      * @param int    $window_seconds Window duration in seconds.
-     * @return array{allowed: bool, retry_after: int, current: int}
+     * @return array{allowed: bool, retry_after: int, current: int, limit: int}
      */
     public static function check_rate_limit(string $key, int $limit, int $window_seconds): array {
+        $now = time();
+        $window_idx = (int) floor($now / $window_seconds);
+        $window_start = $window_idx * $window_seconds;
+        $elapsed = max(0, $now - $window_start);
+        $remaining_window_ttl = max(1, $window_seconds - $elapsed);
+        $cache_key = 'webcareproscan_trl_' . substr(md5($key), 0, 20) . '_w' . $window_idx;
+
+        $is_apcu = function_exists('apcu_inc') && function_exists('apcu_add') && ini_get('apc.enabled') && (php_sapi_name() !== 'cli' || ini_get('apc.enable_cli'));
+
+        if ($is_apcu) {
+            apcu_add($cache_key, 0, $window_seconds);
+            $success = false;
+            $count = apcu_inc($cache_key, 1, $success);
+            if (!$success || $count === false) {
+                apcu_store($cache_key, 1, $window_seconds);
+                $count = 1;
+            }
+
+            $allowed = ($count <= $limit);
+            return [
+                'allowed'     => $allowed,
+                'retry_after' => $allowed ? 0 : $remaining_window_ttl,
+                'current'     => (int) $count,
+                'limit'       => $limit,
+            ];
+        }
+
+        if (function_exists('wp_using_ext_object_cache') && wp_using_ext_object_cache()) {
+            wp_cache_add($cache_key, 0, 'webcareproscan_rl', $window_seconds);
+            $count = wp_cache_incr($cache_key, 1, 'webcareproscan_rl');
+            if ($count === false) {
+                wp_cache_set($cache_key, 1, 'webcareproscan_rl', $window_seconds);
+                $count = 1;
+            }
+
+            $allowed = ($count <= $limit);
+            return [
+                'allowed'     => $allowed,
+                'retry_after' => $allowed ? 0 : $remaining_window_ttl,
+                'current'     => (int) $count,
+                'limit'       => $limit,
+            ];
+        }
+
         $transient_name = 'webcareproscan_rl_' . substr(md5($key), 0, 24);
         $data = get_transient($transient_name);
-        $now = time();
 
         if ($data === false || !is_array($data) || empty($data['reset'])) {
             $data = [

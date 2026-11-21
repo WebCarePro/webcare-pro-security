@@ -137,6 +137,11 @@ class AdaptiveRateLimiter {
     /**
      * Check velocity budget using Sliding-Window Counter for an explicit bucket and IP.
      *
+     * Atomic concurrency implementation:
+     * 1. APCu: uses atomic `apcu_inc` with `apcu_add` window initialization.
+     * 2. Persistent Object Cache (Redis/Memcached): uses atomic `wp_cache_incr` with `wp_cache_add`.
+     * 3. Single-transaction file lock: atomic single `flock(LOCK_EX)` across read->decode->increment->write->unlock.
+     *
      * Formula:
      *   C_{eff} = C_{prev} * (1 - (now - window_start) / window) + C_{curr}
      *
@@ -144,70 +149,80 @@ class AdaptiveRateLimiter {
      * @param string $ip Client IP
      * @param int $limit Maximum allowed requests in window
      * @param int $window Window duration in seconds
+     * @param string $identity_key Optional multi-dimensional identity key (e.g. session token, username hash) for NAT fairness
      * @return array ['allowed' => bool, 'remaining' => int, 'retry_after' => int, 'current' => float, 'limit' => int, 'window' => int]
      */
-    public static function check_bucket_velocity(string $bucket, string $ip, int $limit, int $window): array {
+    public static function check_bucket_velocity(string $bucket, string $ip, int $limit, int $window, string $identity_key = ''): array {
         $ip_hash = substr(md5($ip), 0, 16);
-        $cache_key = self::TRANSIENT_PREFIX . $bucket . '_' . $ip_hash;
+        $identity_suffix = $identity_key !== '' ? ('_' . substr(md5($identity_key), 0, 12)) : '';
+        $base_key = self::TRANSIENT_PREFIX . $bucket . '_' . $ip_hash . $identity_suffix;
         $now = time();
 
         $current_window_idx = (int) floor($now / $window);
         $window_start = $current_window_idx * $window;
         $elapsed_in_window = max(0, $now - $window_start);
 
-        $data = null;
-        $is_apcu = function_exists('apcu_fetch') && ini_get('apc.enabled') && (php_sapi_name() !== 'cli' || ini_get('apc.enable_cli'));
-        if ($is_apcu) {
-            $data = apcu_fetch($cache_key);
-        } elseif (wp_using_ext_object_cache()) {
-            $data = wp_cache_get($cache_key, 'webcareproscan_rl');
-        } else {
-            $data = self::file_get_rate_limit($cache_key);
-            if ($data === null) {
-                $data = get_transient($cache_key);
-            }
-        }
+        $curr_key = $base_key . '_w' . $current_window_idx;
+        $prev_key = $base_key . '_w' . ($current_window_idx - 1);
+        $ttl = $window * 2;
 
-        if (!is_array($data) || ($data['window_idx'] ?? 0) !== $current_window_idx) {
-            // New window or expired
-            $prev_count = 0;
-            if (is_array($data) && ($data['window_idx'] ?? 0) === ($current_window_idx - 1)) {
-                $prev_count = (int) ($data['curr'] ?? 0);
+        $is_apcu = function_exists('apcu_inc') && function_exists('apcu_add') && ini_get('apc.enabled') && (php_sapi_name() !== 'cli' || ini_get('apc.enable_cli'));
+
+        if ($is_apcu) {
+            // Atomic APCu counter
+            apcu_add($curr_key, 0, $ttl);
+            $inc_success = false;
+            $curr_count = apcu_inc($curr_key, 1, $inc_success);
+            if (!$inc_success || $curr_count === false) {
+                apcu_store($curr_key, 1, $ttl);
+                $curr_count = 1;
             }
-            $curr_count = 1;
-            $data = [
-                'window_idx' => $current_window_idx,
-                'prev'       => $prev_count,
-                'curr'       => $curr_count,
-            ];
+
+            $prev_raw = apcu_fetch($prev_key);
+            $prev_count = ($prev_raw !== false && is_numeric($prev_raw)) ? (int) $prev_raw : 0;
+        } elseif (wp_using_ext_object_cache()) {
+            // Atomic persistent object cache (Redis/Memcached)
+            wp_cache_add($curr_key, 0, 'webcareproscan_rl', $ttl);
+            $curr_count = wp_cache_incr($curr_key, 1, 'webcareproscan_rl');
+            if ($curr_count === false) {
+                wp_cache_set($curr_key, 1, 'webcareproscan_rl', $ttl);
+                $curr_count = 1;
+            }
+
+            $prev_raw = wp_cache_get($prev_key, 'webcareproscan_rl');
+            $prev_count = ($prev_raw !== false && is_numeric($prev_raw)) ? (int) $prev_raw : 0;
         } else {
-            // Existing current window
-            $data['curr'] = (int) ($data['curr'] ?? 0) + 1;
+            // Atomic single-transaction file lock fallback
+            $counts = self::file_atomic_window_increment($base_key, $current_window_idx, $ttl);
+            if ($counts !== null) {
+                $curr_count = $counts['curr'];
+                $prev_count = $counts['prev'];
+            } else {
+                // Secondary transient fallback under contention
+                $t_data = get_transient($base_key);
+                if (!is_array($t_data) || ($t_data['window_idx'] ?? 0) !== $current_window_idx) {
+                    $prev_count = 0;
+                    if (is_array($t_data) && ($t_data['window_idx'] ?? 0) === ($current_window_idx - 1)) {
+                        $prev_count = (int) ($t_data['curr'] ?? 0);
+                    }
+                    $curr_count = 1;
+                    $t_data = [
+                        'window_idx' => $current_window_idx,
+                        'prev'       => $prev_count,
+                        'curr'       => $curr_count,
+                    ];
+                } else {
+                    $prev_count = (int) ($t_data['prev'] ?? 0);
+                    $curr_count = (int) ($t_data['curr'] ?? 0) + 1;
+                    $t_data['curr'] = $curr_count;
+                }
+                set_transient($base_key, $t_data, $ttl);
+            }
         }
 
         // Sliding window effective count: C_{prev} * (1 - elapsed/W) + C_{curr}
         $prev_weight = max(0.0, 1.0 - ($elapsed_in_window / (float) $window));
-        $effective_count = round(($data['prev'] * $prev_weight) + $data['curr'], 2);
-
-        // Store back
-        $ttl = $window * 2;
-        $has_fast_cache = false;
-        if ($is_apcu && function_exists('apcu_store')) {
-            apcu_store($cache_key, $data, $ttl);
-            $has_fast_cache = true;
-        }
-        if (wp_using_ext_object_cache()) {
-            wp_cache_set($cache_key, $data, 'webcareproscan_rl', $ttl);
-            $has_fast_cache = true;
-        }
-
-        // Fallback to secured file storage first, and only transient as last resort
-        if (!$has_fast_cache) {
-            $file_written = self::file_set_rate_limit($cache_key, $data, $ttl);
-            if (!$file_written) {
-                set_transient($cache_key, $data, $ttl);
-            }
-        }
+        $effective_count = round(($prev_count * $prev_weight) + $curr_count, 2);
 
         $allowed = ($effective_count <= (float) $limit);
         $remaining = max(0, (int) floor($limit - $effective_count));
@@ -311,6 +326,38 @@ class AdaptiveRateLimiter {
             $window = (int) ($settings['window_rest_write'] ?? self::WINDOW_REST_WRITE);
         }
 
+        // Multi-dimensional NAT identity key calculation (CGNAT / Office NAT Safety)
+        $identity_key = '';
+        if ($bucket === self::BUCKET_AUTH) {
+            // phpcs:ignore WordPress.Security.NonceVerification.Missing
+            $submitted_user = isset($_POST['log']) ? sanitize_user(wp_unslash($_POST['log'])) : (isset($_POST['username']) ? sanitize_user(wp_unslash($_POST['username'])) : '');
+            if ($submitted_user !== '') {
+                $identity_key = 'u:' . strtolower(trim($submitted_user));
+            }
+        } elseif ($bucket === self::BUCKET_CHECKOUT || $bucket === self::BUCKET_CART_AJAX) {
+            $wc_cookie_val = '';
+            if (!empty($_COOKIE) && is_array($_COOKIE)) {
+                foreach ($_COOKIE as $c_name => $c_val) {
+                    if (is_string($c_name) && is_string($c_val) && str_starts_with($c_name, 'wp_woocommerce_session_')) {
+                        $wc_cookie_val = $c_val;
+                        break;
+                    }
+                }
+            }
+            if ($wc_cookie_val !== '') {
+                $identity_key = 'wc:' . $wc_cookie_val;
+            }
+        } elseif ($bucket === self::BUCKET_SEARCH_PROBE) {
+            $sess_token = $_COOKIE['PHPSESSID'] ?? ($_COOKIE['woocommerce_cart_hash'] ?? ($_SERVER['HTTP_USER_AGENT'] ?? ''));
+            if ($sess_token !== '') {
+                $identity_key = 's:' . substr((string) $sess_token, 0, 64);
+            }
+        } elseif ($bucket === self::BUCKET_REST_WRITE) {
+            $user_id = function_exists('get_current_user_id') ? (int) get_current_user_id() : 0;
+            $route_path = explode('?', $decoded_uri)[0];
+            $identity_key = 'rest:' . $user_id . ':' . substr($route_path, 0, 48);
+        }
+
         // Customer-Safe Shopper Headroom Policy: Verified shoppers receive increased headroom buffer
         // on dynamic commerce interaction boundaries (Cart AJAX, Search, and Checkout) without granting blanket immunity.
         if (
@@ -322,7 +369,7 @@ class AdaptiveRateLimiter {
             }
         }
 
-        $result = self::check_bucket_velocity($bucket, $client_ip, $limit, $window);
+        $result = self::check_bucket_velocity($bucket, $client_ip, $limit, $window, $identity_key);
         if ($result['allowed']) {
             return true;
         }
@@ -330,10 +377,23 @@ class AdaptiveRateLimiter {
         $count = $result['current'];
         $retry_after = (int) ($settings['retry_after_seconds'] ?? 30);
 
-        // Record in differential threat score engine
+        // Record in differential threat score engine with category-specific tags & 60s cooldown deduplication
         if (class_exists('\\WebCareProScanner\\Firewall\\CAF\\ThreatScoreTracker')) {
-            $event_tag = ($bucket === self::BUCKET_AUTH) ? 'auth_fail' : 'probe_404';
-            ThreatScoreTracker::record_event($client_ip, $event_tag, 10.0);
+            $event_tag = match ($bucket) {
+                self::BUCKET_AUTH         => 'auth_velocity',
+                self::BUCKET_CHECKOUT     => 'checkout_velocity',
+                self::BUCKET_CART_AJAX    => 'commerce_velocity',
+                self::BUCKET_SEARCH_PROBE => 'search_velocity',
+                default                   => 'global_velocity',
+            };
+            $threat_weight = ($bucket === self::BUCKET_AUTH) ? 10.0 : 3.0;
+
+            // Per-IP + per-bucket escalation cooldown (max 1 threat score increment per 60s)
+            $cooldown_key = 'webcareproscan_rl_ts_cd_' . md5($client_ip . '_' . $bucket);
+            if (!get_transient($cooldown_key)) {
+                set_transient($cooldown_key, 1, 60);
+                ThreatScoreTracker::record_event($client_ip, $event_tag, $threat_weight);
+            }
         }
 
 
@@ -488,85 +548,44 @@ class AdaptiveRateLimiter {
     }
 
     /**
-     * Read rate-limit data from sharded file buffer.
+     * Atomically increment sliding-window counter in a single-transaction file lock.
      *
-     * @param string $cache_key
-     * @return array|null
-     */
-    private static function file_get_rate_limit(string $cache_key): ?array {
-        $dir = self::get_rate_limit_storage_dir();
-        if (empty($dir)) {
-            return null;
-        }
-        $shard = substr(md5($cache_key), 0, 2);
-        $file = $dir . "/rl_{$shard}.php";
-        if (!file_exists($file)) {
-            return null;
-        }
-
-        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
-        $fp = @fopen($file, 'r');
-        if (!$fp) {
-            return null;
-        }
-
-        $locked = @flock($fp, LOCK_SH | LOCK_NB);
-        if (!$locked) {
-            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
-            @fclose($fp);
-            return null;
-        }
-
-        $raw = '';
-        while (!feof($fp)) {
-            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fread
-            $raw .= fread($fp, 8192);
-        }
-        @flock($fp, LOCK_UN);
-        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
-        @fclose($fp);
-
-        if (str_starts_with($raw, "<?php exit; ?>\n")) {
-            $json = substr($raw, 15);
-            $store = json_decode($json, true);
-            if (is_array($store) && isset($store[$cache_key])) {
-                $item = $store[$cache_key];
-                if (($item['exp'] ?? 0) > time()) {
-                    return $item['data'] ?? null;
-                }
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Store rate-limit data into sharded file buffer.
+     * Holds ONE exclusive lock across fread -> decode -> increment -> rewind -> ftruncate -> fwrite -> fflush -> unlock.
      *
-     * @param string $cache_key
-     * @param array  $data
-     * @param int    $ttl
-     * @return bool
+     * @param string $base_key
+     * @param int $current_window_idx
+     * @param int $ttl
+     * @return array{curr: int, prev: int}|null
      */
-    private static function file_set_rate_limit(string $cache_key, array $data, int $ttl): bool {
+    private static function file_atomic_window_increment(string $base_key, int $current_window_idx, int $ttl): ?array {
         if (!self::ensure_storage_dir()) {
-            return false;
+            return null;
         }
 
         $dir = self::get_rate_limit_storage_dir();
-        $shard = substr(md5($cache_key), 0, 2);
+        $shard = substr(md5($base_key), 0, 2);
         $file = $dir . "/rl_{$shard}.php";
 
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
         $fp = @fopen($file, 'c+');
         if (!$fp) {
-            return false;
+            return null;
         }
 
-        $locked = @flock($fp, LOCK_EX | LOCK_NB);
+        // Bounded blocking wait (up to 50ms) to safely arbitrate concurrent requests
+        $locked = false;
+        for ($i = 0; $i < 5; $i++) {
+            if (@flock($fp, LOCK_EX | LOCK_NB)) {
+                $locked = true;
+                break;
+            }
+            usleep(10000); // 10ms
+        }
+
         if (!$locked) {
             // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
             @fclose($fp);
-            return false;
+            return null;
         }
 
         $raw = '';
@@ -591,14 +610,30 @@ class AdaptiveRateLimiter {
             }
         }
 
-        $store[$cache_key] = [
-            'data' => $data,
+        $existing = $store[$base_key]['data'] ?? null;
+        $prev_count = 0;
+        $curr_count = 1;
+
+        if (is_array($existing) && ($existing['window_idx'] ?? 0) === $current_window_idx) {
+            $prev_count = (int) ($existing['prev'] ?? 0);
+            $curr_count = (int) ($existing['curr'] ?? 0) + 1;
+        } elseif (is_array($existing) && ($existing['window_idx'] ?? 0) === ($current_window_idx - 1)) {
+            $prev_count = (int) ($existing['curr'] ?? 0);
+            $curr_count = 1;
+        }
+
+        $store[$base_key] = [
+            'data' => [
+                'window_idx' => $current_window_idx,
+                'prev'       => $prev_count,
+                'curr'       => $curr_count,
+            ],
             'exp'  => $now + $ttl,
         ];
 
         $payload = "<?php exit; ?>\n" . json_encode($store);
-        ftruncate($fp, 0);
         rewind($fp);
+        ftruncate($fp, 0);
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
         fwrite($fp, $payload);
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fflush
@@ -606,6 +641,10 @@ class AdaptiveRateLimiter {
         @flock($fp, LOCK_UN);
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
         @fclose($fp);
-        return true;
+
+        return [
+            'curr' => $curr_count,
+            'prev' => $prev_count,
+        ];
     }
 }

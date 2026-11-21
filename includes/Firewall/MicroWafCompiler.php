@@ -349,7 +349,8 @@ class MicroWafCompiler {
             array_values(array_unique($whitelisted_ips)),
             $wl_require_admin,
             array_values(array_unique($whitelisted_urls)),
-            $auth_salt
+            $auth_salt,
+            !empty($settings['cloudflare_enabled'])
         );
 
         // Write compiled file atomically
@@ -420,7 +421,8 @@ class MicroWafCompiler {
         array $whitelisted_ips = [],
         bool $wl_require_admin = true,
         array $whitelisted_urls = [],
-        string $auth_salt = ''
+        string $auth_salt = '',
+        bool $cf_enabled = false
     ): string {
         // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_var_export -- Compiling static array representation for OPcache.
         $ips_export = var_export($blocked_ips, true);
@@ -434,6 +436,7 @@ class MicroWafCompiler {
         $proxies_export = var_export($trusted_proxies, true);
         $waf_preload_bool_str = $waf_preload_enforced ? 'true' : 'false';
         $wl_req_admin_bool_str = $wl_require_admin ? 'true' : 'false';
+        $cf_enabled_bool_str = $cf_enabled ? 'true' : 'false';
         $fail2ban_escaped = addslashes($fail2ban_log);
         $bypass_escaped = addslashes($bypass_token);
         $htaccess_escaped = addslashes($htaccess_path);
@@ -473,6 +476,7 @@ class MicroWafCompiler {
         $out .= "        \$whitelisted_urls = " . $wl_urls_export . ";\n";
         $out .= "        \$wl_require_admin = {$wl_req_admin_bool_str};\n";
         $out .= "        \$waf_preload_enforced = {$waf_preload_bool_str};\n";
+        $out .= "        \$cf_enabled = {$cf_enabled_bool_str};\n";
         $out .= "        \$trusted_proxies = " . $proxies_export . ";\n";
         $out .= "        \$signatures  = " . $sigs_export . ";\n\n";
 
@@ -602,7 +606,7 @@ class MicroWafCompiler {
         $out .= "            }\n";
         $out .= "            if (\$resolved_proxy_client !== '') {\n";
         $out .= "                \$ip = \$resolved_proxy_client;\n";
-        $out .= "            } elseif (isset(\$_SERVER['HTTP_CF_CONNECTING_IP']) && filter_var(\$_SERVER['HTTP_CF_CONNECTING_IP'], FILTER_VALIDATE_IP)) {\n";
+        $out .= "            } elseif (\$cf_enabled && isset(\$_SERVER['HTTP_CF_CONNECTING_IP']) && filter_var(\$_SERVER['HTTP_CF_CONNECTING_IP'], FILTER_VALIDATE_IP)) {\n";
         $out .= "                \$ip = trim(\$_SERVER['HTTP_CF_CONNECTING_IP']);\n";
         $out .= "                if (stripos(\$ip, '::ffff:') === 0) {\n";
         $out .= "                    \$mapped_cf2 = substr(\$ip, 7);\n";

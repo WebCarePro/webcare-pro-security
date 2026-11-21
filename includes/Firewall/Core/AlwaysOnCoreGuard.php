@@ -597,18 +597,32 @@ final class AlwaysOnCoreGuard implements WafEvaluatorInterface {
             );
         }
 
-        // Check Cloud Threat Intelligence Botnet / Malicious IP Blacklist
+        // Check Cloud Threat Intelligence Botnet / Malicious IP Blacklist (Degrades safely on external network/API failure)
         if (!empty($settings['threat_intel_enabled']) && !empty($settings['threat_intel_block_blacklisted_ips'])) {
-            if (class_exists(ThreatIntelService::class) && ThreatIntelService::is_ip_blacklisted($client_ip)) {
-                return new WafVerdict(
-                    'block',
-                    'THREAT-INTEL-BOTNET',
-                    'Connection blocked by Global Botnet / Malicious IP Blacklist reputation.',
-                    [
-                        'category'    => 'Threat Intelligence',
-                        'status_code' => 403,
-                    ]
-                );
+            try {
+                if (class_exists(ThreatIntelService::class) && ThreatIntelService::is_ip_blacklisted($client_ip)) {
+                    return new WafVerdict(
+                        'block',
+                        'THREAT-INTEL-BOTNET',
+                        'Connection blocked by Global Botnet / Malicious IP Blacklist reputation.',
+                        [
+                            'category'    => 'Threat Intelligence',
+                            'status_code' => 403,
+                        ]
+                    );
+                }
+            } catch (\Throwable $ti_err) {
+                if (class_exists(FirewallEngine::class)) {
+                    FirewallEngine::log_incident([
+                        'id'          => 'WAF-THREAT-INTEL-DEGRADED',
+                        'name'        => 'Threat Intel Lookup Degraded',
+                        'category'    => 'System Integrity',
+                        'description' => 'Optional Threat Intelligence lookup failed; degraded safely without aborting request: ' . $ti_err->getMessage(),
+                        'match_type'  => 'Degraded Log',
+                        'match_value' => $client_ip,
+                        'payload'     => $ti_err->getFile() . ':' . $ti_err->getLine(),
+                    ], 'detected');
+                }
             }
         }
 

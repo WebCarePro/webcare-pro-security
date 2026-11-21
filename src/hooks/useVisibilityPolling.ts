@@ -7,6 +7,9 @@ import { useEffect, useRef } from '@wordpress/element';
  * ticks when the document is hidden (`document.hidden === true`), and immediately
  * executing a catch-up poll when the user focuses or switches back to the tab.
  *
+ * Hardened with Promise rejection handling and an in-flight overlap guard so
+ * rapid visibility toggles or slow network responses never fire overlapping requests.
+ *
  * @param callback Async function or function to execute on each tick
  * @param intervalMs Interval in milliseconds (pass null or 0 to disable)
  * @param enabled Whether polling is active
@@ -18,6 +21,7 @@ export function useVisibilityPolling(
 ): void {
   const savedCallback = useRef(callback);
   savedCallback.current = callback;
+  const inFlightRef = useRef<boolean>(false);
 
   useEffect(() => {
     if (!enabled || !intervalMs || intervalMs <= 0) {
@@ -30,18 +34,30 @@ export function useVisibilityPolling(
       if (typeof document !== 'undefined' && document.hidden) {
         return;
       }
-      try {
-        savedCallback.current();
-      } catch (err) {
-        console.warn('Visibility polling error:', err);
+      if (inFlightRef.current) {
+        return;
       }
+
+      inFlightRef.current = true;
+      Promise.resolve()
+        .then(() => savedCallback.current())
+        .catch((err) => {
+          if (process.env.NODE_ENV !== 'production') {
+            console.warn('[WebCare] Visibility polling callback failed:', err);
+          }
+        })
+        .finally(() => {
+          if (isMounted) {
+            inFlightRef.current = false;
+          }
+        });
     };
 
     const intervalId = setInterval(executeTick, intervalMs);
 
     const handleVisibilityChange = () => {
       if (typeof document !== 'undefined' && !document.hidden && isMounted) {
-        // Trigger immediate catch-up tick on tab return
+        // Trigger immediate catch-up tick on tab return if not already in-flight
         executeTick();
       }
     };
@@ -52,6 +68,7 @@ export function useVisibilityPolling(
 
     return () => {
       isMounted = false;
+      inFlightRef.current = false;
       clearInterval(intervalId);
       if (typeof document !== 'undefined') {
         document.removeEventListener('visibilitychange', handleVisibilityChange);
@@ -67,3 +84,4 @@ export function useVisibilityPolling(
 export function isDocumentVisible(): boolean {
   return typeof document === 'undefined' || !document.hidden;
 }
+

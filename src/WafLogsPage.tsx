@@ -52,7 +52,10 @@ import {
   Plus,
   HelpCircle,
   Lightbulb,
-  AlertCircle
+  AlertCircle,
+  UserCheck,
+  ShoppingBag,
+  Bot
 } from 'lucide-react';
 import { useWorkspaceMode } from './hooks/useWorkspaceMode';
 import { ConfirmDialog } from './components/ConfirmDialog';
@@ -1173,19 +1176,21 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
     setTimeout(() => setActionMessage(null), 5000);
   };
 
-  // Action: Unblock IP (remove from blocklist & clear active lockouts)
-  const handleUnblockIp = async (ip: string, e?: React.MouseEvent) => {
+  // Action: Unblock IP (remove from blocklist & clear active lockouts, with optional temporary duration in seconds)
+  const handleUnblockIp = async (ip: string, e?: React.MouseEvent, durationSeconds: number = 0) => {
     if (e) e.stopPropagation();
     try {
       const res = await apiRequest({
         path: '/firewall/logs/unblock-ip',
         method: 'POST',
-        data: { ip }
+        data: { ip, duration: durationSeconds }
       });
       if (res && res.success) {
         setActionMessage({
           type: 'success',
-          text: res.message || `IP ${ip} has been unblocked. Standard WAF protection remains active.`
+          text: res.message || (durationSeconds > 0
+            ? `IP ${ip} temporarily unblocked for ${Math.round(durationSeconds / 60)} minutes. Standard WAF protection remains active.`
+            : `IP ${ip} has been unblocked. Standard WAF protection remains active.`)
         });
       }
     } catch (err: any) {
@@ -3270,6 +3275,156 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
                                   </button>
                                 </div>
                               </div>
+
+                              {/* "Was This a Real Customer?" Guided Recovery Card */}
+                              {(() => {
+                                const ua = (log.user_agent || '').toLowerCase();
+                                const uri = (log.request_uri || '').toLowerCase();
+                                const isShop = uri.includes('cart') || uri.includes('checkout') || uri.includes('wc-ajax') || uri.includes('shop') || uri.includes('my-account');
+                                const isSearchEngine = ua.includes('googlebot') || ua.includes('bingbot') || ua.includes('duckduckbot') || ua.includes('yandex') || ua.includes('baiduspider');
+                                const isKnownBot = isSearchEngine || ua.includes('bot') || ua.includes('spider') || ua.includes('crawler') || ua.includes('curl') || ua.includes('python');
+
+                                let visitorType = 'Unknown Automated Client / Guest';
+                                let visitorIcon = <Bot size={16} color="#64748b" />;
+                                let visitorDesc = 'Unauthenticated client browsing store assets.';
+
+                                if (log.is_authenticated || log.username) {
+                                  visitorType = `Logged-in User (${log.username || 'Authenticated'})`;
+                                  visitorIcon = <UserCheck size={16} color="#10b981" />;
+                                  visitorDesc = `Verified registered WordPress user${log.user_role ? ` (${log.user_role})` : ''}.`;
+                                } else if (isShop) {
+                                  visitorType = 'Active WooCommerce Shopper';
+                                  visitorIcon = <ShoppingBag size={16} color="#4f46e5" />;
+                                  visitorDesc = 'Visitor attempting store actions (cart, checkout, or account).';
+                                } else if (isSearchEngine) {
+                                  visitorType = 'Search Engine Indexer';
+                                  visitorIcon = <Globe size={16} color="#0284c7" />;
+                                  visitorDesc = 'Legitimate search engine crawler.';
+                                } else if (!isKnownBot) {
+                                  visitorType = 'Human Browser / Potential Customer';
+                                  visitorIcon = <HelpCircle size={16} color="#f59e0b" />;
+                                  visitorDesc = 'Standard desktop or mobile browser requesting site pages.';
+                                }
+
+                                const isZeroToleranceExploit = forensics.severity === 'Critical' && (
+                                  forensics.attackType.includes('SQL') ||
+                                  forensics.attackType.includes('RCE') ||
+                                  forensics.attackType.includes('Command') ||
+                                  forensics.attackType.includes('Traversal')
+                                );
+
+                                return (
+                                  <div style={{
+                                    padding: '14px 16px',
+                                    borderRadius: '8px',
+                                    background: 'var(--webcare-bg-surface-elevated, #f8fafc)',
+                                    border: '1px solid var(--webcare-border, #e2e8f0)',
+                                    marginBottom: '14px'
+                                  }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <HelpCircle size={16} color="#4f46e5" />
+                                        <strong style={{ fontSize: '13px', color: 'var(--webcare-text-primary, #0f172a)' }}>
+                                          Was this a real customer?
+                                        </strong>
+                                        <span style={{ fontSize: '11px', color: 'var(--webcare-text-muted, #64748b)' }}>
+                                          Guided Incident Review &amp; Safe 1-Click Recovery
+                                        </span>
+                                      </div>
+                                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '11px', fontWeight: 700, color: 'var(--webcare-text-secondary, #475569)' }}>
+                                        {visitorIcon}
+                                        <span>{visitorType}</span>
+                                      </div>
+                                    </div>
+
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '12px', marginBottom: '12px', fontSize: '12px' }}>
+                                      <div style={{ lineHeight: 1.6, color: 'var(--webcare-text-secondary, #475569)' }}>
+                                        <div style={{ fontWeight: 700, color: 'var(--webcare-text-primary, #0f172a)', marginBottom: '3px' }}>
+                                          Visitor &amp; Intent:
+                                        </div>
+                                        <div>{visitorDesc}</div>
+                                        <div style={{ marginTop: '4px' }}>
+                                          <strong>Target URI:</strong> <code style={{ fontSize: '11px' }}>{(log.request_uri || '').split('?')[0] || '/'}</code>
+                                        </div>
+                                      </div>
+
+                                      <div style={{ lineHeight: 1.6, color: 'var(--webcare-text-secondary, #475569)' }}>
+                                        <div style={{ fontWeight: 700, color: 'var(--webcare-text-primary, #0f172a)', marginBottom: '3px' }}>
+                                          What happened:
+                                        </div>
+                                        <div>{forensics.plainEnglish}</div>
+                                        <div style={{ marginTop: '4px' }}>
+                                          <strong>Trigger:</strong> <span>{log.rule_name || log.rule_category}</span>
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    {/* 1-Click Recovery Action Buttons */}
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px', paddingTop: '10px', borderTop: '1px solid var(--webcare-border, #e2e8f0)' }}>
+                                      <div style={{ fontSize: '11.5px', color: 'var(--webcare-text-muted, #64748b)' }}>
+                                        {isZeroToleranceExploit ? (
+                                          <span style={{ color: '#dc2626', fontWeight: 600 }}>
+                                            ⚠️ Confirmed SQLi/RCE exploit pattern detected. Scoped exemption disabled; temporary unblock will still challenge exploits.
+                                          </span>
+                                        ) : (
+                                          <span>
+                                            🛡️ Scoped exemption creates a safe route-and-param rule. Core SQLi/RCE zero-tolerance protection remains 100% active.
+                                          </span>
+                                        )}
+                                      </div>
+
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                        <button
+                                          type="button"
+                                          className="webcare-btn-micro"
+                                          onClick={(e) => handleUnblockIp(log.ip_address, e, 900)}
+                                          style={{
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '5px',
+                                            fontWeight: 700,
+                                            padding: '5px 10px',
+                                            background: 'rgba(16, 185, 129, 0.1)',
+                                            color: '#059669',
+                                            border: '1px solid rgba(16, 185, 129, 0.3)'
+                                          }}
+                                          title="Unblock this IP address for 15 minutes to let the customer finish checkout or verify access"
+                                        >
+                                          <Clock size={12} />
+                                          Temporarily Unblock IP (15 min)
+                                        </button>
+
+                                        {!isZeroToleranceExploit && (
+                                          <button
+                                            type="button"
+                                            className="webcare-btn-micro"
+                                            onClick={() => handleTrustCustomerAction(log)}
+                                            disabled={allowingTarget === `${(log.request_uri || '').split('?')[0] || '/'}:${log.matched_param || log.rule_id || ''}`}
+                                            style={{
+                                              display: 'inline-flex',
+                                              alignItems: 'center',
+                                              gap: '5px',
+                                              fontWeight: 700,
+                                              padding: '5px 10px',
+                                              background: 'rgba(79, 70, 229, 0.1)',
+                                              color: '#4f46e5',
+                                              border: '1px solid rgba(79, 70, 229, 0.3)'
+                                            }}
+                                            title="Trust this specific customer action permanently across its URI and parameter without lowering SQLi/RCE defenses"
+                                          >
+                                            {allowingTarget === `${(log.request_uri || '').split('?')[0] || '/'}:${log.matched_param || log.rule_id || ''}` ? (
+                                              <Loader2 size={12} className="webcare-spin" />
+                                            ) : (
+                                              <ShieldCheck size={12} />
+                                            )}
+                                            Trust This Customer Action
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })()}
 
                               {/* Plain-English Incident Analysis Banner for WP Admins & Non-Technical Users */}
                               <div style={{

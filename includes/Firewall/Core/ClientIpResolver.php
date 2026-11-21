@@ -22,6 +22,39 @@ class ClientIpResolver {
     private static ?string $real_ip = null;
 
     /**
+     * Immutable TCP connecting peer IP before any normalization occurs.
+     */
+    private static ?string $connecting_peer_ip = null;
+
+    /**
+     * Get the immutable direct TCP connecting peer IP.
+     *
+     * @return string
+     */
+    public static function get_connecting_peer_ip(): string {
+        if (self::$connecting_peer_ip !== null) {
+            return self::$connecting_peer_ip;
+        }
+        if (class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine') && \WebCareProScanner\Firewall\FirewallEngine::$connecting_peer_ip !== null) {
+            self::$connecting_peer_ip = \WebCareProScanner\Firewall\FirewallEngine::$connecting_peer_ip;
+            return self::$connecting_peer_ip;
+        }
+        $raw = isset($_SERVER['REMOTE_ADDR']) ? trim(sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR']))) : '';
+        self::$connecting_peer_ip = filter_var($raw, FILTER_VALIDATE_IP) ? $raw : '127.0.0.1';
+        return self::$connecting_peer_ip;
+    }
+
+    /**
+     * Reset internal static cache (for testing environments).
+     *
+     * @return void
+     */
+    public static function reset_cache(): void {
+        self::$real_ip = null;
+        self::$connecting_peer_ip = null;
+    }
+
+    /**
      * Synchronize and normalize $_SERVER['REMOTE_ADDR'] to the resolved real visitor IP.
      *
      * Ensures downstream WordPress core, plugins, audit loggers, and WooCommerce observe
@@ -32,6 +65,11 @@ class ClientIpResolver {
     public static function normalize_server_remote_addr(): void {
         if (empty($_SERVER['REMOTE_ADDR'])) {
             return;
+        }
+
+        // Capture immutable direct connecting peer IP before $_SERVER['REMOTE_ADDR'] is mutated
+        if (self::$connecting_peer_ip === null) {
+            self::get_connecting_peer_ip();
         }
 
         $real_ip = self::get_client_ip();

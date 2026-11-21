@@ -247,13 +247,18 @@ class ThreatScoreTracker {
      */
     private static function get_event_weight(string $event_type): float {
         return match ($event_type) {
-            'critical_exploit' => self::WEIGHT_CRITICAL_EXPLOIT,
-            'honeypot'         => self::WEIGHT_HONEYPOT,
-            'dormant_surface'  => self::WEIGHT_DORMANT_SURF,
-            'auth_fail'        => self::WEIGHT_AUTH_VIOLATE,
-            'probe_404'        => self::WEIGHT_PROBE_404,
-            'header_anomaly'   => self::WEIGHT_HEADER_ANOMALY,
-            default            => 5.0,
+            'critical_exploit'   => self::WEIGHT_CRITICAL_EXPLOIT,
+            'honeypot'           => self::WEIGHT_HONEYPOT,
+            'dormant_surface'    => self::WEIGHT_DORMANT_SURF,
+            'auth_fail',
+            'auth_velocity'      => self::WEIGHT_AUTH_VIOLATE,
+            'checkout_velocity',
+            'commerce_velocity',
+            'search_velocity'    => 3.0,
+            'global_velocity'    => 5.0,
+            'probe_404'          => self::WEIGHT_PROBE_404,
+            'header_anomaly'     => self::WEIGHT_HEADER_ANOMALY,
+            default              => 5.0,
         };
     }
 

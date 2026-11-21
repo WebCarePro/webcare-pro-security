@@ -693,11 +693,18 @@ final class FirewallController extends AbstractApiController {
     public static function unblock_firewall_ip(\WP_REST_Request $request) {
         $params = $request->get_json_params() ?: [];
         $ip = sanitize_text_field(trim($params['ip'] ?? ''));
+        $duration = (int) ($params['duration'] ?? 0);
         if (empty($ip)) {
             return new \WP_Error('invalid_ip', 'Valid IP address is required', ['status' => 400]);
         }
 
         $unblocked = \WebCareProScanner\Firewall\FirewallEngine::remove_blocked_ip($ip);
+
+        // Optional temporary bypass immunity (e.g. 15 minutes = 900s, 24 hours = 86400s)
+        if ($duration > 0) {
+            set_transient('webcareproscan_temp_allow_' . md5($ip), 1, $duration);
+        }
+
         if ($unblocked && class_exists('\WebCareProScanner\System\WebCareActivityLogger')) {
             $current_user = wp_get_current_user();
             $user_login = ($current_user && $current_user->exists()) ? $current_user->user_login : 'admin';
@@ -708,15 +715,21 @@ final class FirewallController extends AbstractApiController {
                 'firewall',
                 [
                     'ip'          => $ip,
-                    'description' => sprintf('IP %s unblocked from firewall by %s from IP %s.', $ip, $user_login, $client_ip),
+                    'duration'    => $duration > 0 ? sprintf('%d seconds', $duration) : 'immediate',
+                    'description' => sprintf('IP %s unblocked from firewall by %s from IP %s%s.', $ip, $user_login, $client_ip, $duration > 0 ? sprintf(' (granted %d min temporary access)', (int) round($duration / 60)) : ''),
                 ]
             );
         }
 
+        $msg = $duration > 0
+            /* translators: 1: unblocked IP address, 2: duration in minutes */
+            ? sprintf(__('IP %1$s has been unblocked with a temporary %2$d-minute access pass. Standard WAF exploit protection remains active.', 'webcare-pro-security'), $ip, (int) round($duration / 60))
+            /* translators: %s: unblocked IP address */
+            : sprintf(__('IP %s has been unblocked. Standard WAF protection remains active.', 'webcare-pro-security'), $ip);
+
         return rest_ensure_response([
             'success' => $unblocked,
-            /* translators: %s: unblocked IP address */
-            'message' => sprintf(__('IP %s has been unblocked. Standard WAF protection remains active.', 'webcare-pro-security'), $ip),
+            'message' => $msg,
             'locked_ips' => \WebCareProScanner\Firewall\FirewallEngine::get_all_locked_ips(),
         ]);
     }
