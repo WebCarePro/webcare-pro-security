@@ -1,6 +1,6 @@
 {
   "version": "3.21.0",
-  "generated_at": "2026-11-21T02:14:11.647Z",
+  "generated_at": "2026-11-21T02:18:48.898Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -572,8 +572,8 @@
       "size": 56674
     },
     "includes/Firewall/DeclarativePatchVerifier.php": {
-      "sha256": "48d93fb446bd15b576528aa30fb8b341c02b5cfaaf1732b55a50bcd53fff76ef",
-      "size": 9404
+      "sha256": "a22d33ab723925a869a107bef108ade0a6fa9bf1543ca12fd18a3225e45ba88e",
+      "size": 9621
     },
     "includes/Firewall/DistributedVelocityShield.php": {
       "sha256": "eab849570736089cda62667615aec5a238af550c46409c4f8da3034876919667",

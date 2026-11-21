@@ -40,10 +40,14 @@ final class DeclarativePatchVerifier {
 
     /**
      * Set test public keys for unit testing isolation.
+     * Guarded strictly to execution under unit test runners to prevent runtime override on live sites.
      *
      * @param array<string, string>|null $keys
      */
     public static function set_test_public_keys(?array $keys): void {
+        if (!defined('WEBCARE_TESTING') && !defined('PHPUNIT_COMPOSER_INSTALL')) {
+            return;
+        }
         self::$test_public_keys = $keys;
     }
 
