@@ -947,7 +947,7 @@ class FirewallEngine {
 
         // Fast-path: Check custom user IP blocklist immediately to drop hostile banned bots
         // and prevent redundant downstream processing / repeated rate-limit escalations
-        if (!empty($settings['waf_blocked_ips'])) {
+        if (!self::$executed_under_pipeline && !empty($settings['waf_blocked_ips'])) {
             $matching_entry = self::get_matching_blocked_entry($client_ip, $settings['waf_blocked_ips']);
             if ($matching_entry !== null) {
                 // Immunity check: Ensure legitimate search engine crawlers (Googlebot, Bingbot)
@@ -1090,7 +1090,7 @@ class FirewallEngine {
         $custom_allow_matched = false;
         // Modular Intelligence Firewall & Custom Firewall Rules Runtime Enforcement
         // Evaluated ahead of rate-limiter/PoW gates so explicit Custom rules return exact configured verdicts immediately.
-        if (class_exists('\\WebCareProScanner\\Firewall\\Modular\\ModularFirewallSynthesizer')) {
+        if (!self::$executed_under_pipeline && class_exists('\\WebCareProScanner\\Firewall\\Modular\\ModularFirewallSynthesizer')) {
             $modular_violation = \WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer::evaluate_runtime_modular_rules();
             if ($modular_violation !== null) {
                 $mod_action = (string) ($modular_violation['action_type'] ?? '');
@@ -1242,7 +1242,7 @@ class FirewallEngine {
         }
 
         // Emergency Containment Mode Enforcement
-        if (class_exists('\\WebCareProScanner\\Security\\EmergencyContainmentManager') && \WebCareProScanner\Security\EmergencyContainmentManager::is_active()) {
+        if (!self::$executed_under_pipeline && class_exists('\\WebCareProScanner\\Security\\EmergencyContainmentManager') && \WebCareProScanner\Security\EmergencyContainmentManager::is_active()) {
             if (!self::is_authenticated_administrator()) {
                 if (\WebCareProScanner\Security\EmergencyContainmentManager::is_maintenance_enabled()) {
                     \WebCareProScanner\Security\EmergencyContainmentManager::render_containment_screen();
@@ -1279,7 +1279,7 @@ class FirewallEngine {
         }
 
         // Atomic Upgrade Lock Route Shield: Block unauthenticated access to update endpoints while updates run
-        if (class_exists('\\WebCareProScanner\\SupplyChain\\UpdateGatekeeperEngine')) {
+        if (!self::$executed_under_pipeline && class_exists('\\WebCareProScanner\\SupplyChain\\UpdateGatekeeperEngine')) {
             $active_lock = \WebCareProScanner\SupplyChain\UpdateGatekeeperEngine::get_active_lock();
             if ($active_lock !== null) {
                 $is_admin = self::is_authenticated_administrator();
@@ -1360,7 +1360,7 @@ class FirewallEngine {
         $is_central_mgmt = self::is_verified_central_management_request($request_uri, $settings);
 
         // Rule #34: Oversized Request Buffer & DoS Guard (Earliest execution check)
-        if (!empty($settings['waf_block_oversized_requests'])) {
+        if (!self::$executed_under_pipeline && !empty($settings['waf_block_oversized_requests'])) {
             $is_upload_endpoint = (
                 strpos($request_uri, 'async-upload.php') !== false ||
                 strpos($request_uri, 'update.php') !== false ||
@@ -1423,7 +1423,7 @@ class FirewallEngine {
         }
 
         // Rule #32: Strict Host & Forwarded Host Header Allowlist Guard
-        if (!empty($settings['waf_enforce_host_allowlist'])) {
+        if (!self::$executed_under_pipeline && !empty($settings['waf_enforce_host_allowlist'])) {
             $is_valid_host = self::validate_host_headers($settings);
             if (!$is_valid_host) {
                 $presented_host = isset($_SERVER['HTTP_HOST']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_HOST'])) : 'unknown';
@@ -1544,7 +1544,7 @@ class FirewallEngine {
         }
 
         // Check HTTP Request Method Whitelist / Block Unsafe Methods (TRACE, TRACK, CONNECT, DEBUG)
-        if (!empty($settings['waf_block_unsafe_http_methods'])) {
+        if (!self::$executed_under_pipeline && !empty($settings['waf_block_unsafe_http_methods'])) {
             $http_method = strtoupper(isset($_SERVER['REQUEST_METHOD']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_METHOD'])) : 'GET');
             $unsafe_methods = ['TRACE', 'TRACK', 'CONNECT', 'DEBUG'];
             if (in_array($http_method, $unsafe_methods, true)) {
@@ -1566,7 +1566,7 @@ class FirewallEngine {
         // Legitimate WordPress HTTP PUT mutations only occur within authenticated REST API routes.
         // Direct unauthenticated PUT requests targeting PHP files, uploads, or static paths are blocked.
         $raw_method = strtoupper(isset($_SERVER['REQUEST_METHOD']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_METHOD'])) : 'GET');
-        if ($raw_method === 'PUT') {
+        if (!self::$executed_under_pipeline && $raw_method === 'PUT') {
             $is_rest_put = (defined('REST_REQUEST') && REST_REQUEST) || (strpos($request_uri, '/wp-json/') !== false) || (strpos($request_uri, 'rest_route=') !== false);
             if (!$is_rest_put && !self::is_authenticated_administrator() && !self::is_authenticated_editor_or_builder()) {
                 $rule_triggered = [
@@ -1593,7 +1593,7 @@ class FirewallEngine {
         // Blocks unauthenticated guests attempting to smuggle PUT/DELETE/PATCH mutations via _method or X-HTTP-Method-Override
         // phpcs:ignore WordPress.Security.NonceVerification.Recommended, WordPress.Security.NonceVerification.Missing, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- Pre-flight method inspection
         $override_method = isset($_REQUEST['_method']) ? $_REQUEST['_method'] : (isset($_SERVER['HTTP_X_HTTP_METHOD_OVERRIDE']) ? $_SERVER['HTTP_X_HTTP_METHOD_OVERRIDE'] : (isset($_SERVER['HTTP_X_METHOD_OVERRIDE']) ? $_SERVER['HTTP_X_METHOD_OVERRIDE'] : ''));
-        if (!empty($override_method)) {
+        if (!self::$executed_under_pipeline && !empty($override_method)) {
             $override_clean = strtoupper(is_string($override_method) ? sanitize_text_field(wp_unslash($override_method)) : 'ARRAY');
             if (in_array($override_clean, ['PUT', 'DELETE', 'PATCH', 'TRACE', 'CONNECT', 'ARRAY'], true)) {
                 $is_logged_in = (function_exists('is_user_logged_in') && is_user_logged_in()) || self::is_authenticated_administrator() || self::is_authenticated_editor_or_builder();
@@ -1841,7 +1841,7 @@ class FirewallEngine {
         }
 
         // Rule 18 / Smart Rule #53: Sensitive Log, .env.* & Byte-Range Exfiltration Instant Ban
-        if (!empty($settings['waf_block_sensitive_file_probes'])) {
+        if (!self::$executed_under_pipeline && !empty($settings['waf_block_sensitive_file_probes'])) {
             $sensitive_violation = self::check_sensitive_file_probe($request_uri, $settings, $skip_operational_heuristics);
             if ($sensitive_violation !== null) {
                 $sensitive_violation['payload'] .= " IP: {$client_ip}";
@@ -1850,7 +1850,7 @@ class FirewallEngine {
         }
 
         // Rule 19: Direct Execution Deny for wp-content/uploads/ PHP Scripts
-        if (!empty($settings['waf_block_uploads_php_exec'])) {
+        if (!self::$executed_under_pipeline && !empty($settings['waf_block_uploads_php_exec'])) {
             $clean_path = strtolower(wp_parse_url($request_uri, PHP_URL_PATH) ?: $request_uri);
             if (preg_match('/\/wp-content\/uploads\/.*\.php([0-9]|s|tml)?(\/|\?|$)/i', $clean_path) || preg_match('/\/wp-content\/uploads\/.*\.php([0-9]|s|tml)?/i', $request_uri)) {
                 $rule_triggered = [
@@ -2012,7 +2012,7 @@ class FirewallEngine {
         }
 
         // Rule 20: External wp-cron.php Abuse & Flooding Blocker
-        if (!empty($settings['waf_block_external_cron'])) {
+        if (!self::$executed_under_pipeline && !empty($settings['waf_block_external_cron'])) {
             $clean_path = strtolower(wp_parse_url($request_uri, PHP_URL_PATH) ?: $request_uri);
             if (strpos($clean_path, 'wp-cron.php') !== false) {
                 $is_loopback = self::is_server_origin_or_loopback($client_ip);
@@ -2036,7 +2036,7 @@ class FirewallEngine {
         }
 
         // Rule 23: Lockdown install.php & upgrade.php on Already Installed Sites
-        if (!empty($settings['waf_block_install_php'])) {
+        if (!self::$executed_under_pipeline && !empty($settings['waf_block_install_php'])) {
             $clean_path = strtolower(wp_parse_url($request_uri, PHP_URL_PATH) ?: $request_uri);
             if (strpos($clean_path, 'wp-admin/install.php') !== false || strpos($clean_path, 'wp-admin/upgrade.php') !== false) {
                 if (function_exists('is_blog_installed') && is_blog_installed()) {
@@ -2060,7 +2060,7 @@ class FirewallEngine {
         }
 
         // Check custom user IP blocklist
-        if (!empty($settings['waf_blocked_ips'])) {
+        if (!self::$executed_under_pipeline && !empty($settings['waf_blocked_ips'])) {
             $matching_entry = self::get_matching_blocked_entry($client_ip, $settings['waf_blocked_ips']);
             if ($matching_entry !== null) {
                 // Immunity check: Ensure legitimate search engine crawlers (Googlebot, Bingbot)
@@ -2155,7 +2155,7 @@ class FirewallEngine {
         // Check active temporary 404 Scanner Lockout
         $lockout_transient = 'webcareproscan_404_lock_' . md5($client_ip);
         $lockout_data = get_transient($lockout_transient);
-        if (!$skip_operational_heuristics && $lockout_data !== false) {
+        if (!self::$executed_under_pipeline && !$skip_operational_heuristics && $lockout_data !== false) {
             $rule_triggered = [
                 'id'          => 'RATE-LIMIT-404-LOCKOUT',
                 'name'        => '404 Scanner Rate Limit Exceeded',
@@ -2175,7 +2175,7 @@ class FirewallEngine {
         }
 
         // Check Cloud Threat Intelligence Botnet / Malicious IP Blacklist
-        if (!empty($settings['threat_intel_enabled']) && !empty($settings['threat_intel_block_blacklisted_ips'])) {
+        if (!self::$executed_under_pipeline && !empty($settings['threat_intel_enabled']) && !empty($settings['threat_intel_block_blacklisted_ips'])) {
             if (ThreatIntelService::is_ip_blacklisted($client_ip)) {
                 $rule_triggered = [
                     'id'          => 'THREAT-INTEL-BOTNET',
@@ -2199,7 +2199,7 @@ class FirewallEngine {
         }
 
         // Check Active Virtual Patches (Tier 1: In-Memory WAF Lite Shield)
-        if (class_exists('\\WebCareProScanner\\Firewall\\VirtualPatchManager')) {
+        if (!self::$executed_under_pipeline && class_exists('\\WebCareProScanner\\Firewall\\VirtualPatchManager')) {
             $request_uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '/';
             $vpatch_rule = VirtualPatchManager::evaluate_request($client_ip, $request_uri);
             if ($vpatch_rule !== null) {

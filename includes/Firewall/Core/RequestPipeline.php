@@ -141,6 +141,7 @@ final class RequestPipeline {
      * Mandatory evaluators that must always be present in the runtime.
      */
     private const MANDATORY_EVALUATORS = [
+        'WebCareProScanner\\Firewall\\Core\\AlwaysOnCoreGuard',
         'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
     ];
 
@@ -198,7 +199,7 @@ final class RequestPipeline {
                 return new WafVerdict(
                     'block',
                     'WAF-REQUIRED-EVALUATOR-MISSING',
-                    sprintf('Mandatory firewall evaluator "%s" missing from route stack.', $mand_class),
+                    sprintf('Mandatory firewall evaluator "%s" missing from route stack; route failed closed.', $mand_class),
                     [
                         'category'    => 'System Integrity',
                         'status_code' => 503,

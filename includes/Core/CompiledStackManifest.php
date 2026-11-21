@@ -38,6 +38,11 @@ final class CompiledStackManifest {
      * @var array<string, array{module_id: string, required: bool, failure_policy: string}>
      */
     public const EXPECTED_REQUIRED_EVALUATORS = [
+        'WebCareProScanner\\Firewall\\Core\\AlwaysOnCoreGuard' => [
+            'module_id'      => 'always-on-core-guard',
+            'required'       => true,
+            'failure_policy' => 'fail_closed_route',
+        ],
         'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine' => [
             'module_id'      => 'exploit-signature-engine',
             'required'       => true,
@@ -141,45 +146,54 @@ final class CompiledStackManifest {
         // Build route-to-evaluator mappings
         $routes = [
             RouteClass::PublicGet->value => [
+                'WebCareProScanner\\Firewall\\Core\\AlwaysOnCoreGuard',
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
                 'WebCareProScanner\\Firewall\\BotReconDefense',
                 'WebCareProScanner\\Firewall\\Evaluators\\AiAgentBehaviorEvaluator',
             ],
             RouteClass::PublicMutation->value => [
+                'WebCareProScanner\\Firewall\\Core\\AlwaysOnCoreGuard',
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
                 'WebCareProScanner\\Firewall\\BotReconDefense',
                 'WebCareProScanner\\Firewall\\Evaluators\\AiAgentBehaviorEvaluator',
                 'WebCareProScanner\\Firewall\\NextGen\\RuntimeSqlRaspEngine',
             ],
             RouteClass::Commerce->value => [
+                'WebCareProScanner\\Firewall\\Core\\AlwaysOnCoreGuard',
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
                 'WebCareProScanner\\Firewall\\Evaluators\\AiAgentBehaviorEvaluator',
                 'WebCareProScanner\\Firewall\\Core\\CommerceSessionGuard',
                 'WebCareProScanner\\Firewall\\Core\\CommerceVelocityGuard',
             ],
             RouteClass::Membership->value => [
+                'WebCareProScanner\\Firewall\\Core\\AlwaysOnCoreGuard',
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
                 'WebCareProScanner\\Auth\\SessionSentinel',
                 'WebCareProScanner\\Firewall\\NextGen\\RuntimeSqlRaspEngine',
             ],
             RouteClass::AuthLogin->value => [
+                'WebCareProScanner\\Firewall\\Core\\AlwaysOnCoreGuard',
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
                 'WebCareProScanner\\Auth\\WebAuthnManager',
             ],
             RouteClass::RestApi->value => [
+                'WebCareProScanner\\Firewall\\Core\\AlwaysOnCoreGuard',
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
                 'WebCareProScanner\\Firewall\\NextGen\\RuntimeSqlRaspEngine',
                 'WebCareProScanner\\Firewall\\NextGen\\ResponseDlpSentinel',
             ],
             RouteClass::GraphQL->value => [
+                'WebCareProScanner\\Firewall\\Core\\AlwaysOnCoreGuard',
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
                 'WebCareProScanner\\Firewall\\NextGen\\ModernApiShield',
             ],
             RouteClass::AdminAjax->value => [
+                'WebCareProScanner\\Firewall\\Core\\AlwaysOnCoreGuard',
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
                 'WebCareProScanner\\Firewall\\NextGen\\RuntimeSqlRaspEngine',
             ],
             RouteClass::AdminUi->value => [
+                'WebCareProScanner\\Firewall\\Core\\AlwaysOnCoreGuard',
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
             ],
         ];
@@ -197,10 +211,14 @@ final class CompiledStackManifest {
                                 $sanitized_evals[] = $eval_cls;
                             }
                         }
-                        // Non-negotiable invariant: Always preserve ExploitSignatureEngine in every route stack
+                        // Non-negotiable invariant: Always preserve AlwaysOnCoreGuard & ExploitSignatureEngine in every route stack
                         $core_exploit_engine = 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine';
+                        $always_on_guard     = 'WebCareProScanner\\Firewall\\Core\\AlwaysOnCoreGuard';
                         if (!in_array($core_exploit_engine, $sanitized_evals, true)) {
                             array_unshift($sanitized_evals, $core_exploit_engine);
+                        }
+                        if (!in_array($always_on_guard, $sanitized_evals, true)) {
+                            array_unshift($sanitized_evals, $always_on_guard);
                         }
                         $routes[$r_key] = $sanitized_evals;
                     }
