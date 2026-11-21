@@ -1661,89 +1661,91 @@ class FirewallEngine {
         // 1. Validate against the complete unified STRIPE_WEBHOOK_IPS and PAYPAL_WEBHOOK_CIDRS lists.
         // 2. Block and ban immediately if the header is syntactically forged (e.g., Stripe-Signature missing t=... and v1=...)
         //    or sent to a non-webhook endpoint (e.g., wp-login.php, admin-ajax.php, xmlrpc.php) to spoof commerce immunity.
-        // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash
-        $raw_stripe_sig = isset($_SERVER['HTTP_STRIPE_SIGNATURE']) ? (string) $_SERVER['HTTP_STRIPE_SIGNATURE'] : '';
-        // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash
-        $raw_paypal_sig = isset($_SERVER['HTTP_PAYPAL_TRANSMISSION_SIG']) ? (string) $_SERVER['HTTP_PAYPAL_TRANSMISSION_SIG'] : '';
-        $has_stripe_sig = ($raw_stripe_sig !== '');
-        $has_paypal_sig = ($raw_paypal_sig !== '');
+        if (!self::$executed_under_pipeline) {
+            // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash
+            $raw_stripe_sig = isset($_SERVER['HTTP_STRIPE_SIGNATURE']) ? (string) $_SERVER['HTTP_STRIPE_SIGNATURE'] : '';
+            // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash
+            $raw_paypal_sig = isset($_SERVER['HTTP_PAYPAL_TRANSMISSION_SIG']) ? (string) $_SERVER['HTTP_PAYPAL_TRANSMISSION_SIG'] : '';
+            $has_stripe_sig = ($raw_stripe_sig !== '');
+            $has_paypal_sig = ($raw_paypal_sig !== '');
 
-        if (($has_stripe_sig || $has_paypal_sig) && !self::is_server_origin_or_loopback($client_ip) && !self::is_authenticated_administrator()) {
-            $is_genuine_webhook_origin = false;
-            if ($has_stripe_sig) {
-                $default_stripe_cidrs = array_map(
-                    static function (string $ip): string {
-                        return strpos($ip, '/') === false ? $ip . '/32' : $ip;
-                    },
-                    array_values(array_unique(array_merge(self::STRIPE_WEBHOOK_IPS, [
-                        '54.241.31.102',
-                        '54.241.34.107',
-                    ])))
-                );
-                $stripe_cidrs = apply_filters('webcareproscan_stripe_webhook_cidrs', $default_stripe_cidrs);
-                foreach ((array) $stripe_cidrs as $stripe_cidr) {
-                    if (self::ip_in_range($client_ip, $stripe_cidr)) {
-                        $is_genuine_webhook_origin = true;
-                        break;
+            if (($has_stripe_sig || $has_paypal_sig) && !self::is_server_origin_or_loopback($client_ip) && !self::is_authenticated_administrator()) {
+                $is_genuine_webhook_origin = false;
+                if ($has_stripe_sig) {
+                    $default_stripe_cidrs = array_map(
+                        static function (string $ip): string {
+                            return strpos($ip, '/') === false ? $ip . '/32' : $ip;
+                        },
+                        array_values(array_unique(array_merge(self::STRIPE_WEBHOOK_IPS, [
+                            '54.241.31.102',
+                            '54.241.34.107',
+                        ])))
+                    );
+                    $stripe_cidrs = apply_filters('webcareproscan_stripe_webhook_cidrs', $default_stripe_cidrs);
+                    foreach ((array) $stripe_cidrs as $stripe_cidr) {
+                        if (self::ip_in_range($client_ip, $stripe_cidr)) {
+                            $is_genuine_webhook_origin = true;
+                            break;
+                        }
                     }
                 }
-            }
-            if (!$is_genuine_webhook_origin && $has_paypal_sig) {
-                $default_paypal_cidrs = array_values(array_unique(array_merge(self::PAYPAL_WEBHOOK_CIDRS, [
-                    '185.177.189.0/24',
-                    '3.253.0.0/16',
-                    '52.212.0.0/15',
-                ])));
-                $paypal_cidrs = apply_filters('webcareproscan_paypal_webhook_cidrs', $default_paypal_cidrs);
-                foreach ((array) $paypal_cidrs as $paypal_cidr) {
-                    if (self::ip_in_range($client_ip, $paypal_cidr)) {
-                        $is_genuine_webhook_origin = true;
-                        break;
+                if (!$is_genuine_webhook_origin && $has_paypal_sig) {
+                    $default_paypal_cidrs = array_values(array_unique(array_merge(self::PAYPAL_WEBHOOK_CIDRS, [
+                        '185.177.189.0/24',
+                        '3.253.0.0/16',
+                        '52.212.0.0/15',
+                    ])));
+                    $paypal_cidrs = apply_filters('webcareproscan_paypal_webhook_cidrs', $default_paypal_cidrs);
+                    foreach ((array) $paypal_cidrs as $paypal_cidr) {
+                        if (self::ip_in_range($client_ip, $paypal_cidr)) {
+                            $is_genuine_webhook_origin = true;
+                            break;
+                        }
                     }
                 }
-            }
 
-            if (!$is_genuine_webhook_origin) {
-                // Check if header format itself is a forged spoof or if the target URI is not a webhook endpoint
-                $req_uri_lower = strtolower($request_uri);
-                $is_dedicated_webhook_uri = (
-                    strpos($req_uri_lower, 'wc-api=') !== false
-                    || strpos($req_uri_lower, '/wc-api/') !== false
-                    || strpos($req_uri_lower, '/wp-json/wc-stripe') !== false
-                    || strpos($req_uri_lower, '/wp-json/stripe') !== false
-                    || strpos($req_uri_lower, '/wp-json/paypal') !== false
-                    || strpos($req_uri_lower, '/wp-json/woocommerce') !== false
-                    || strpos($req_uri_lower, 'webhook') !== false
-                );
+                if (!$is_genuine_webhook_origin) {
+                    // Check if header format itself is a forged spoof or if the target URI is not a webhook endpoint
+                    $req_uri_lower = strtolower($request_uri);
+                    $is_dedicated_webhook_uri = (
+                        strpos($req_uri_lower, 'wc-api=') !== false
+                        || strpos($req_uri_lower, '/wc-api/') !== false
+                        || strpos($req_uri_lower, '/wp-json/wc-stripe') !== false
+                        || strpos($req_uri_lower, '/wp-json/stripe') !== false
+                        || strpos($req_uri_lower, '/wp-json/paypal') !== false
+                        || strpos($req_uri_lower, '/wp-json/woocommerce') !== false
+                        || strpos($req_uri_lower, 'webhook') !== false
+                    );
 
-                $is_malformed_sig = false;
-                if ($has_stripe_sig && !preg_match('/\bt=\d+\b.*?\bv1=[a-f0-9]{64}\b/i', $raw_stripe_sig)) {
-                    $is_malformed_sig = true;
-                }
-                if ($has_paypal_sig && strlen(trim($raw_paypal_sig)) < 32) {
-                    $is_malformed_sig = true;
-                }
+                    $is_malformed_sig = false;
+                    if ($has_stripe_sig && !preg_match('/\bt=\d+\b.*?\bv1=[a-f0-9]{64}\b/i', $raw_stripe_sig)) {
+                        $is_malformed_sig = true;
+                    }
+                    if ($has_paypal_sig && strlen(trim($raw_paypal_sig)) < 32) {
+                        $is_malformed_sig = true;
+                    }
 
-                // Block immediately if header is malformed or sent to a non-webhook URI (or during red-team drill)
-                if ($is_malformed_sig || !$is_dedicated_webhook_uri || $is_drill_request) {
-                    $sig_type = $has_stripe_sig ? 'Stripe-Signature' : 'PayPal-Transmission-Sig';
-                    $rule_triggered = [
-                        'id'          => 'WAF-FORGED-WEBHOOK-TRAP',
-                        'name'        => 'Forged Payment Gateway Webhook Trap (Rule #52)',
-                        'category'    => 'Execution Armor',
-                        'detector'    => 'FirewallEngine',
-                        'sig_id'      => 'sig:proto:forged_webhook_signature',
-                        'description' => sprintf(
-                            /* translators: 1: Header name, 2: Spoofed IP address */
-                            esc_html__('Forged %1$s webhook header presented by unauthorized non-gateway IP (%2$s).', 'webcare-pro-security'),
-                            esc_html($sig_type),
-                            esc_html($client_ip)
-                        ),
-                        'match_type'  => 'Webhook Origin Spoofing',
-                        'match_value' => $client_ip,
-                        'payload'     => "Header: {$sig_type} URI: {$request_uri} Spoofed IP: {$client_ip}",
-                    ];
-                    self::handle_rule_violation($rule_triggered, $settings, $client_ip, 403);
+                    // Block immediately if header is malformed or sent to a non-webhook URI (or during red-team drill)
+                    if ($is_malformed_sig || !$is_dedicated_webhook_uri || $is_drill_request) {
+                        $sig_type = $has_stripe_sig ? 'Stripe-Signature' : 'PayPal-Transmission-Sig';
+                        $rule_triggered = [
+                            'id'          => 'WAF-FORGED-WEBHOOK-TRAP',
+                            'name'        => 'Forged Payment Gateway Webhook Trap (Rule #52)',
+                            'category'    => 'Execution Armor',
+                            'detector'    => 'FirewallEngine',
+                            'sig_id'      => 'sig:proto:forged_webhook_signature',
+                            'description' => sprintf(
+                                /* translators: 1: Header name, 2: Spoofed IP address */
+                                esc_html__('Forged %1$s webhook header presented by unauthorized non-gateway IP (%2$s).', 'webcare-pro-security'),
+                                esc_html($sig_type),
+                                esc_html($client_ip)
+                            ),
+                            'match_type'  => 'Webhook Origin Spoofing',
+                            'match_value' => $client_ip,
+                            'payload'     => "Header: {$sig_type} URI: {$request_uri} Spoofed IP: {$client_ip}",
+                        ];
+                        self::handle_rule_violation($rule_triggered, $settings, $client_ip, 403);
+                    }
                 }
             }
         }
@@ -1871,7 +1873,7 @@ class FirewallEngine {
 
         // Rule 8: Multi-Dimensional $_FILES Payload Pre-Flight Inspection
         // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Pre-flight upload inspection across all incoming POSTs
-        if (!empty($_FILES) && !empty($settings['waf_block_malicious_uploads'])) {
+        if (!self::$executed_under_pipeline && !empty($_FILES) && !empty($settings['waf_block_malicious_uploads'])) {
             $files_overflow = false;
             // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Pre-flight upload inspection across all incoming POSTs
             $all_uploaded_files = self::flatten_uploaded_files($_FILES, 4, 50, $files_overflow);
@@ -2211,7 +2213,7 @@ class FirewallEngine {
         }
 
         // Rule #43: Affiliate Ecosystem Shield & Click-Fraud Armor (Only loaded if enabled & affiliate suite detected)
-        if (!empty($settings['waf_affiliate_shield_enabled']) && class_exists(AffiliateSecurityEngine::class)) {
+        if (!self::$executed_under_pipeline && !empty($settings['waf_affiliate_shield_enabled']) && class_exists(AffiliateSecurityEngine::class)) {
             $request_uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '/';
             AffiliateSecurityEngine::inspect_request($client_ip, $request_uri, $settings);
         }

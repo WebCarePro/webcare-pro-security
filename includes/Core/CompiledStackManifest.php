@@ -58,6 +58,11 @@ final class CompiledStackManifest {
     private static ?array $request_cache = null;
 
     /**
+     * Tracks whether auto-heal recompile has already been attempted in the current request.
+     */
+    private static bool $recompiled_this_request = false;
+
+    /**
      * Get the absolute path to the compiled site manifest.
      */
     public static function get_manifest_path(): string {
@@ -156,6 +161,7 @@ final class CompiledStackManifest {
                 'WebCareProScanner\\Firewall\\Core\\AlwaysOnCoreGuard',
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
                 'WebCareProScanner\\Firewall\\Evaluators\\ProtocolAndBotEvaluator',
+                'WebCareProScanner\\Firewall\\Evaluators\\CommerceAndUploadEvaluator',
                 'WebCareProScanner\\Firewall\\BotReconDefense',
                 'WebCareProScanner\\Firewall\\Evaluators\\AiAgentBehaviorEvaluator',
                 'WebCareProScanner\\Firewall\\NextGen\\RuntimeSqlRaspEngine',
@@ -164,6 +170,7 @@ final class CompiledStackManifest {
                 'WebCareProScanner\\Firewall\\Core\\AlwaysOnCoreGuard',
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
                 'WebCareProScanner\\Firewall\\Evaluators\\ProtocolAndBotEvaluator',
+                'WebCareProScanner\\Firewall\\Evaluators\\CommerceAndUploadEvaluator',
                 'WebCareProScanner\\Firewall\\Evaluators\\AiAgentBehaviorEvaluator',
                 'WebCareProScanner\\Firewall\\Core\\CommerceSessionGuard',
                 'WebCareProScanner\\Firewall\\Core\\CommerceVelocityGuard',
@@ -186,6 +193,7 @@ final class CompiledStackManifest {
                 'WebCareProScanner\\Firewall\\Core\\AlwaysOnCoreGuard',
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
                 'WebCareProScanner\\Firewall\\Evaluators\\ProtocolAndBotEvaluator',
+                'WebCareProScanner\\Firewall\\Evaluators\\CommerceAndUploadEvaluator',
                 'WebCareProScanner\\Firewall\\NextGen\\RuntimeSqlRaspEngine',
                 'WebCareProScanner\\Firewall\\NextGen\\ResponseDlpSentinel',
             ],
@@ -199,6 +207,7 @@ final class CompiledStackManifest {
                 'WebCareProScanner\\Firewall\\Core\\AlwaysOnCoreGuard',
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
                 'WebCareProScanner\\Firewall\\Evaluators\\ProtocolAndBotEvaluator',
+                'WebCareProScanner\\Firewall\\Evaluators\\CommerceAndUploadEvaluator',
                 'WebCareProScanner\\Firewall\\Evaluators\\AuthAndAjaxSurfaceEvaluator',
                 'WebCareProScanner\\Firewall\\NextGen\\RuntimeSqlRaspEngine',
             ],
@@ -206,6 +215,7 @@ final class CompiledStackManifest {
                 'WebCareProScanner\\Firewall\\Core\\AlwaysOnCoreGuard',
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
                 'WebCareProScanner\\Firewall\\Evaluators\\ProtocolAndBotEvaluator',
+                'WebCareProScanner\\Firewall\\Evaluators\\CommerceAndUploadEvaluator',
                 'WebCareProScanner\\Firewall\\Evaluators\\AuthAndAjaxSurfaceEvaluator',
             ],
         ];
@@ -239,10 +249,12 @@ final class CompiledStackManifest {
         }
 
         $manifest_data = [
-            'compiled_at'     => time(),
-            'compiled_at_gmt' => gmdate('Y-m-d H:i:s'),
-            'archetype'       => $archetype->value,
-            'ecosystems'      => [
+            'plugin_version'           => defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '0.0.0',
+            'required_evaluators_hash' => hash('sha256', implode('|', array_keys(self::EXPECTED_REQUIRED_EVALUATORS))),
+            'compiled_at'              => time(),
+            'compiled_at_gmt'          => gmdate('Y-m-d H:i:s'),
+            'archetype'                => $archetype->value,
+            'ecosystems'               => [
                 'woocommerce' => $has_woo,
                 'commerce'    => $has_commerce,
                 'lms'         => $has_lms,
@@ -492,6 +504,28 @@ final class CompiledStackManifest {
 
         $data = @include $path;
         $result = is_array($data) ? $data : [];
+
+        // Upgrade-Safe Stale-Manifest Auto-Heal:
+        // If manifest version or required evaluators registry does not match current code, auto-recompile once.
+        if (!self::$recompiled_this_request && !empty($result)) {
+            $current_version = defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '0.0.0';
+            $current_hash    = hash('sha256', implode('|', array_keys(self::EXPECTED_REQUIRED_EVALUATORS)));
+
+            $manifest_version = (string) ($result['plugin_version'] ?? '');
+            $manifest_hash    = (string) ($result['required_evaluators_hash'] ?? '');
+
+            if ($manifest_version !== $current_version || $manifest_hash !== $current_hash) {
+                self::$recompiled_this_request = true;
+                $compile_res = self::compile();
+                if (!empty($compile_res['success'])) {
+                    $fresh_data = @include $path;
+                    if (is_array($fresh_data)) {
+                        $result = $fresh_data;
+                    }
+                }
+            }
+        }
+
         self::$request_cache = $result;
         return $result;
     }
