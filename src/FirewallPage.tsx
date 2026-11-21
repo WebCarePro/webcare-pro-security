@@ -73,6 +73,7 @@ import { CloudflareSlotVisualizer } from './components/CloudflareSlotVisualizer'
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { InlineConfirmPopover } from './components/InlineConfirmPopover';
 import { formatRelativeTime, formatTelemetryDateFull } from './timeUtils';
+import { useWorkspaceMode } from './hooks/useWorkspaceMode';
 
 interface ServerTelemetry {
   linux_uname: string;
@@ -256,6 +257,7 @@ export const FirewallPage = ({
   initialAiDefenseSubTab = 'ghost',
   onSubTabChange,
 }: FirewallPageProps) => {
+  const { isSimpleMode, setMode } = useWorkspaceMode();
   const [status, setStatus] = useState<FirewallStatus | null>(null);
   const [logs, setLogs] = useState<FirewallLog[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -414,6 +416,14 @@ export const FirewallPage = ({
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
+  // Auto-fallback to owner-essential 'stream' if user switches into Simple Mode while on an engineer tab
+  useEffect(() => {
+    const engineerTabs = ['caf', 'cloudflare', 'drill', 'supply_chain', 'behavioral', 'server_sec', 'intel', 'vpatch', 'ai_defense'];
+    if (isSimpleMode && engineerTabs.includes(activeTab)) {
+      handleSwitchTab('stream');
+    }
+  }, [isSimpleMode, activeTab]);
+
   const handleSwitchTab = (tab: 'stream' | 'rules' | 'caf' | 'drill' | 'supply_chain' | 'behavioral' | 'server_sec' | 'intel' | 'cloudflare' | 'vpatch' | 'ai_defense') => {
     setActiveTab(tab);
     try {
@@ -424,6 +434,109 @@ export const FirewallPage = ({
     if (onSubTabChange) {
       onSubTabChange(tab);
     }
+  };
+
+  // Safe Mode (15-Minute Test Mode) State & Handlers
+  const [safeModePaused, setSafeModePaused] = useState<boolean>(false);
+  const [safeModeSecondsLeft, setSafeModeSecondsLeft] = useState<number>(0);
+  const [safeModeLoading, setSafeModeLoading] = useState<boolean>(false);
+  const [applyingPreset, setApplyingPreset] = useState<string | null>(null);
+
+  const fetchSafeModeStatus = async () => {
+    try {
+      const res = await apiRequest({ path: '/rescue/status?minutes=15', method: 'GET' });
+      if (res?.success) {
+        setSafeModePaused(Boolean(res?.pause_status?.paused));
+        setSafeModeSecondsLeft(Number(res?.pause_status?.seconds_remaining || 0));
+      }
+    } catch (_) {}
+  };
+
+  useEffect(() => {
+    fetchSafeModeStatus();
+    const interval = setInterval(() => {
+      if (!document.hidden) {
+        fetchSafeModeStatus();
+      }
+    }, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    if (!safeModePaused || safeModeSecondsLeft <= 0) return;
+    const ticker = setInterval(() => {
+      setSafeModeSecondsLeft(prev => {
+        if (prev <= 1) {
+          clearInterval(ticker);
+          fetchSafeModeStatus();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(ticker);
+  }, [safeModePaused, safeModeSecondsLeft]);
+
+  const handleToggleSafeMode = async () => {
+    setSafeModeLoading(true);
+    try {
+      if (safeModePaused) {
+        const res = await apiRequest({ path: '/rescue/resume', method: 'POST' });
+        if (res?.success) {
+          setSafeModePaused(false);
+          setSafeModeSecondsLeft(0);
+          showFirewallNotice('success', res.message || 'Strict firewall protection resumed.');
+        } else {
+          showFirewallNotice('error', res?.message || 'Failed to resume strict firewall.');
+        }
+      } else {
+        const res = await apiRequest({ path: '/rescue/pause-15m', method: 'POST' });
+        if (res?.success) {
+          setSafeModePaused(true);
+          setSafeModeSecondsLeft(res.seconds_remaining || 900);
+          showFirewallNotice('success', res.message || 'Safe Mode activated for 15 minutes.');
+        } else {
+          showFirewallNotice('error', res?.message || 'Failed to activate Safe Mode.');
+        }
+      }
+    } catch (err: any) {
+      showFirewallNotice('error', err?.message || 'Error updating Safe Mode.');
+    } finally {
+      setSafeModeLoading(false);
+    }
+  };
+
+  const handleApplyPresetProfile = async (profileId: 'balanced' | 'ecommerce_hardened' | 'high_security_paranoid') => {
+    setApplyingPreset(profileId);
+    try {
+      const res = await apiRequest({
+        path: '/caf/apply-profile',
+        method: 'POST',
+        data: { profile_id: profileId, lock_dormant_surface: true },
+      });
+      if (res?.success) {
+        showFirewallNotice('success', res.message || `Security preset "${profileId}" applied successfully.`);
+        fetchFirewallData();
+      } else {
+        showFirewallNotice('error', res?.message || 'Failed to apply security preset.');
+      }
+    } catch (err: any) {
+      showFirewallNotice('error', err?.message || 'Error communicating with security preset API.');
+    } finally {
+      setApplyingPreset(null);
+    }
+  };
+
+  const handleQuickUnblockNavigation = () => {
+    handleSwitchTab('rules');
+    setTimeout(() => {
+      const el = document.getElementById('webcare-blocked-ips-section');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else {
+        setBlocklistModalOpen(true);
+      }
+    }, 150);
   };
 
   // Cloudflare Edge State
@@ -2734,251 +2847,579 @@ export const FirewallPage = ({
         </div>
       </div>
 
-      {/* Navigation Sub-Tabs & Dropdown */}
-      <div className="webcare-tabs-bar" style={{ alignItems: 'center', position: 'relative' }}>
-        <button
-          type="button"
-          className={`webcare-tab-link ${activeTab === 'stream' ? 'is-active' : ''}`}
-          onClick={() => { setIsMoreMenuOpen(false); handleSwitchTab('stream'); }}
-        >
-          <Activity size={16} /> Live Incident Stream ({logs.length})
-        </button>
-
-        <button
-          type="button"
-          className={`webcare-tab-link ${activeTab === 'rules' ? 'is-active' : ''}`}
-          onClick={() => { setIsMoreMenuOpen(false); handleSwitchTab('rules'); }}
-        >
-          <Sliders size={16} /> Firewall Rules &amp; Controls
-        </button>
-
-        <button
-          type="button"
-          className={`webcare-tab-link ${activeTab === 'caf' ? 'is-active' : ''}`}
-          onClick={() => { setIsMoreMenuOpen(false); handleSwitchTab('caf'); }}
-        >
-          <Sparkles size={16} color="#0284c7" />
-          <span>Adaptive Firewall (CAF)</span>
-          <span className="webcare-badge-pill webcare-badge-info" style={{ fontSize: '10px', padding: '1px 6px', marginLeft: '4px' }}>
-            StackGuard
-          </span>
-        </button>
-
-        <button
-          type="button"
-          className={`webcare-tab-link ${activeTab === 'cloudflare' ? 'is-active' : ''}`}
-          onClick={() => { setIsMoreMenuOpen(false); handleSwitchTab('cloudflare'); }}
-        >
-          <Cloud
-            size={16}
+        {/* Site Owner Quick Controls (Simple Mode Only) */}
+        {isSimpleMode && (
+          <div
+            className="webcare-card"
             style={{
-              color: cfStatus?.configured ? '#F38020' : '#94a3b8',
-              strokeWidth: 2.5
+              padding: '18px 20px',
+              marginBottom: '20px',
+              background: 'var(--webcare-bg-panel, #ffffff)',
+              border: '1px solid var(--webcare-border, #e2e8f0)',
+              borderRadius: '10px',
+              boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.05)',
             }}
-          />
-          <span>Cloudflare Edge Defense</span>
-          {cfStatus?.configured && (
-            <span style={{ color: '#10b981', fontSize: '11px', fontWeight: 700, marginLeft: '2px' }}>
-              ● Connected
-            </span>
-          )}
-        </button>
-
-        <button
-          type="button"
-          className={`webcare-tab-link ${activeTab === 'behavioral' ? 'is-active' : ''}`}
-          onClick={() => { setIsMoreMenuOpen(false); handleSwitchTab('behavioral'); }}
-        >
-          <Sliders size={16} /> Behavioral WAF &amp; Bot Traps
-        </button>
-
-        <button
-          type="button"
-          className={`webcare-tab-link ${activeTab === 'ai_defense' ? 'is-active' : ''}`}
-          onClick={() => { setIsMoreMenuOpen(false); handleSwitchTab('ai_defense'); }}
-        >
-          <Sparkles size={16} /> 2026 AI Defense &amp; Decoy Traps
-        </button>
-
-        {/* More Security Tools Dropdown */}
-        <div ref={moreMenuRef} style={{ position: 'relative', display: 'inline-block' }}>
-          <button
-            type="button"
-            className={`webcare-tab-link ${['drill', 'supply_chain', 'server_sec', 'intel', 'vpatch'].includes(activeTab) ? 'is-active' : ''}`}
-            onClick={() => setIsMoreMenuOpen(!isMoreMenuOpen)}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-            aria-expanded={isMoreMenuOpen}
           >
-            <Layers size={16} />
-            <span>
-              {activeTab === 'drill' && 'Red Team Attack Drill'}
-              {activeTab === 'supply_chain' && 'Supply-Chain & SBOM'}
-              {activeTab === 'server_sec' && 'Server Security'}
-              {activeTab === 'intel' && 'Cloud Threat Intel'}
-              {activeTab === 'vpatch' && 'Virtual Patching'}
-              {!['drill', 'supply_chain', 'server_sec', 'intel', 'vpatch'].includes(activeTab) && 'Advanced Modules'}
-            </span>
-            <ChevronDown size={14} style={{ transform: isMoreMenuOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s ease' }} />
-          </button>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--webcare-text-heading, #0f172a)' }}>
+                  <ShieldCheck size={18} color="#4f46e5" />
+                  Site Owner Security Center
+                </h3>
+                <p style={{ margin: '3px 0 0', fontSize: '12.5px', color: 'var(--webcare-text-muted, #64748b)' }}>
+                  Essential protection profiles, AI crawler policies, and 1-click rescue tools.
+                </p>
+              </div>
 
-          {isMoreMenuOpen && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <button
+                  type="button"
+                  onClick={handleToggleSafeMode}
+                  disabled={safeModeLoading}
+                  className="webcare-btn"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '7px 14px',
+                    fontSize: '12.5px',
+                    fontWeight: 600,
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    background: safeModePaused ? '#d97706' : 'var(--webcare-surface, #f8fafc)',
+                    color: safeModePaused ? '#ffffff' : 'var(--webcare-text, #0f172a)',
+                    border: `1px solid ${safeModePaused ? '#b45309' : 'var(--webcare-border, #cbd5e1)'}`,
+                  }}
+                  title="Pause strict heuristic blocking for 15 minutes to test plugin compatibility or fix lockouts."
+                >
+                  {safeModeLoading ? (
+                    <Loader2 size={14} className="webcare-spin-icon" />
+                  ) : (
+                    <Clock size={14} color={safeModePaused ? '#ffffff' : '#d97706'} />
+                  )}
+                  <span>
+                    {safeModePaused
+                      ? `Safe Mode Active (${Math.floor(safeModeSecondsLeft / 60)}m ${safeModeSecondsLeft % 60}s) — Click to Resume`
+                      : '15-Min Safe Mode'}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleQuickUnblockNavigation}
+                  className="webcare-btn"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '7px 14px',
+                    fontSize: '12.5px',
+                    fontWeight: 600,
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    background: 'var(--webcare-surface, #f8fafc)',
+                    color: 'var(--webcare-text, #0f172a)',
+                    border: '1px solid var(--webcare-border, #cbd5e1)',
+                  }}
+                >
+                  <Ban size={14} color="#dc2626" />
+                  <span>Blocked IPs &amp; Unblock</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Plain-English Security Preset Cards */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '12px', marginBottom: '18px' }}>
+              {/* Balanced Preset */}
+              <div
+                style={{
+                  padding: '14px',
+                  borderRadius: '8px',
+                  background: 'var(--webcare-surface, #f8fafc)',
+                  border: '1px solid var(--webcare-border, #e2e8f0)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'space-between',
+                  gap: '10px',
+                }}
+              >
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+                    <span style={{ fontWeight: 700, fontSize: '13.5px', color: 'var(--webcare-text-heading, #0f172a)' }}>
+                      Balanced Protection
+                    </span>
+                    <span className="webcare-badge-pill webcare-badge-info" style={{ fontSize: '10px', padding: '1px 6px' }}>
+                      Recommended
+                    </span>
+                  </div>
+                  <p style={{ margin: 0, fontSize: '12px', color: 'var(--webcare-text-muted, #64748b)', lineHeight: 1.4 }}>
+                    Standard OWASP protection, zero-day shields, and silent background defense for blogs and portfolios.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleApplyPresetProfile('balanced')}
+                  disabled={applyingPreset !== null}
+                  className="webcare-btn-micro"
+                  style={{
+                    alignSelf: 'flex-start',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '5px',
+                    padding: '4px 10px',
+                    fontSize: '11.5px',
+                    fontWeight: 600,
+                    background: '#4f46e5',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: '5px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {applyingPreset === 'balanced' ? <Loader2 size={12} className="webcare-spin-icon" /> : <Check size={12} />}
+                  <span>Apply Balanced</span>
+                </button>
+              </div>
+
+              {/* E-Commerce Safe Preset */}
+              <div
+                style={{
+                  padding: '14px',
+                  borderRadius: '8px',
+                  background: 'var(--webcare-surface, #f8fafc)',
+                  border: '1px solid var(--webcare-border, #e2e8f0)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'space-between',
+                  gap: '10px',
+                }}
+              >
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+                    <span style={{ fontWeight: 700, fontSize: '13.5px', color: 'var(--webcare-text-heading, #0f172a)' }}>
+                      E-Commerce Safe
+                    </span>
+                    <span className="webcare-badge-pill webcare-badge-clean" style={{ fontSize: '10px', padding: '1px 6px' }}>
+                      Woo &amp; EDD
+                    </span>
+                  </div>
+                  <p style={{ margin: 0, fontSize: '12px', color: 'var(--webcare-text-muted, #64748b)', lineHeight: 1.4 }}>
+                    Hardened carding and coupon protection with zero customer false-positives across checkout sessions.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleApplyPresetProfile('ecommerce_hardened')}
+                  disabled={applyingPreset !== null}
+                  className="webcare-btn-micro"
+                  style={{
+                    alignSelf: 'flex-start',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '5px',
+                    padding: '4px 10px',
+                    fontSize: '11.5px',
+                    fontWeight: 600,
+                    background: '#059669',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: '5px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {applyingPreset === 'ecommerce_hardened' ? <Loader2 size={12} className="webcare-spin-icon" /> : <ShoppingBag size={12} />}
+                  <span>Apply E-Commerce Safe</span>
+                </button>
+              </div>
+
+              {/* Strict Protection Preset */}
+              <div
+                style={{
+                  padding: '14px',
+                  borderRadius: '8px',
+                  background: 'var(--webcare-surface, #f8fafc)',
+                  border: '1px solid var(--webcare-border, #e2e8f0)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'space-between',
+                  gap: '10px',
+                }}
+              >
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+                    <span style={{ fontWeight: 700, fontSize: '13.5px', color: 'var(--webcare-text-heading, #0f172a)' }}>
+                      Strict Protection
+                    </span>
+                    <span className="webcare-badge-pill webcare-badge-warning" style={{ fontSize: '10px', padding: '1px 6px' }}>
+                      Maximum
+                    </span>
+                  </div>
+                  <p style={{ margin: 0, fontSize: '12px', color: 'var(--webcare-text-muted, #64748b)', lineHeight: 1.4 }}>
+                    Strict surface locking, dormant plugin isolation, and aggressive challenge gates for high-risk sites.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleApplyPresetProfile('high_security_paranoid')}
+                  disabled={applyingPreset !== null}
+                  className="webcare-btn-micro"
+                  style={{
+                    alignSelf: 'flex-start',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '5px',
+                    padding: '4px 10px',
+                    fontSize: '11.5px',
+                    fontWeight: 600,
+                    background: '#ea580c',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: '5px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {applyingPreset === 'high_security_paranoid' ? <Loader2 size={12} className="webcare-spin-icon" /> : <Zap size={12} />}
+                  <span>Apply Strict</span>
+                </button>
+              </div>
+            </div>
+
+            {/* 3-Switch AI Crawler Controls Strip */}
             <div
-              className="webcare-dropdown-menu"
               style={{
-                position: 'absolute',
-                top: 'calc(100% + 4px)',
-                left: 0,
-                zIndex: 100,
-                minWidth: '240px',
-                background: 'var(--webcare-bg-panel, #ffffff)',
-                border: '1px solid var(--webcare-border, #e2e8f0)',
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+                gap: '12px',
+                padding: '12px 14px',
+                background: 'rgba(79, 70, 229, 0.035)',
+                border: '1px solid rgba(79, 70, 229, 0.12)',
                 borderRadius: '8px',
-                boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)',
-                padding: '6px 0',
-                display: 'flex',
-                flexDirection: 'column'
               }}
             >
-              <button
-                type="button"
-                onClick={() => { setIsMoreMenuOpen(false); handleSwitchTab('drill'); }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '10px',
-                  padding: '9px 14px',
-                  background: activeTab === 'drill' ? 'rgba(79, 70, 229, 0.08)' : 'transparent',
-                  color: activeTab === 'drill' ? '#4f46e5' : 'inherit',
-                  fontWeight: activeTab === 'drill' ? 600 : 500,
-                  border: 'none',
-                  textAlign: 'left',
-                  cursor: 'pointer',
-                  width: '100%',
-                  fontSize: '13px'
-                }}
-              >
-                <Target size={15} color="#dc2626" />
-                <span>Red Team Attack Drill</span>
-              </button>
+              {/* Switch 1: AI Search Citations */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                <div>
+                  <div style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--webcare-text-heading, #0f172a)' }}>
+                    Allow AI Search Citations
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--webcare-text-muted, #64748b)' }}>
+                    Allow Perplexity, ChatGPT Search, Claude
+                  </div>
+                </div>
+                <label className="webcare-switch" style={{ margin: 0, flexShrink: 0 }}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(wafSettings.waf_ai_allow_search_citations ?? true)}
+                    onChange={(e) => {
+                      const val = e.target.checked;
+                      setWafSettings(prev => ({ ...prev, waf_ai_allow_search_citations: val }));
+                      handleSaveSingleRule('waf_ai_allow_search_citations', val);
+                    }}
+                  />
+                  <span className="webcare-slider"></span>
+                </label>
+              </div>
 
-              <button
-                type="button"
-                onClick={() => { setIsMoreMenuOpen(false); handleSwitchTab('supply_chain'); }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '10px',
-                  padding: '9px 14px',
-                  background: activeTab === 'supply_chain' ? 'rgba(79, 70, 229, 0.08)' : 'transparent',
-                  color: activeTab === 'supply_chain' ? '#4f46e5' : 'inherit',
-                  fontWeight: activeTab === 'supply_chain' ? 600 : 500,
-                  border: 'none',
-                  textAlign: 'left',
-                  cursor: 'pointer',
-                  width: '100%',
-                  fontSize: '13px'
-                }}
-              >
-                <Layers size={15} color="#7c3aed" />
-                <span>Supply-Chain &amp; SBOM</span>
-              </button>
+              {/* Switch 2: Block AI Scrapers */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                <div>
+                  <div style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--webcare-text-heading, #0f172a)' }}>
+                    Block AI Training Harvesters
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--webcare-text-muted, #64748b)' }}>
+                    Block GPTBot, CCBot, Bytespider, ClaudeBot
+                  </div>
+                </div>
+                <label className="webcare-switch" style={{ margin: 0, flexShrink: 0 }}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(wafSettings.waf_block_ai_scrapers)}
+                    onChange={(e) => {
+                      const val = e.target.checked;
+                      setWafSettings(prev => ({ ...prev, waf_block_ai_scrapers: val }));
+                      handleSaveSingleRule('waf_block_ai_scrapers', val);
+                    }}
+                  />
+                  <span className="webcare-slider"></span>
+                </label>
+              </div>
 
-              <button
-                type="button"
-                onClick={() => { setIsMoreMenuOpen(false); handleSwitchTab('server_sec'); }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '10px',
-                  padding: '9px 14px',
-                  background: activeTab === 'server_sec' ? 'rgba(79, 70, 229, 0.08)' : 'transparent',
-                  color: activeTab === 'server_sec' ? '#4f46e5' : 'inherit',
-                  fontWeight: activeTab === 'server_sec' ? 600 : 500,
-                  border: 'none',
-                  textAlign: 'left',
-                  cursor: 'pointer',
-                  width: '100%',
-                  fontSize: '13px'
-                }}
-              >
-                <Server size={15} color="#0284c7" />
-                <span>Server Security (Nginx / Apache)</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => { setIsMoreMenuOpen(false); handleSwitchTab('intel'); }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '10px',
-                  padding: '9px 14px',
-                  background: activeTab === 'intel' ? 'rgba(79, 70, 229, 0.08)' : 'transparent',
-                  color: activeTab === 'intel' ? '#4f46e5' : 'inherit',
-                  fontWeight: activeTab === 'intel' ? 600 : 500,
-                  border: 'none',
-                  textAlign: 'left',
-                  cursor: 'pointer',
-                  width: '100%',
-                  fontSize: '13px'
-                }}
-              >
-                <Globe size={15} color="#059669" />
-                <span>Cloud Threat Intel &amp; Feeds</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => { setIsMoreMenuOpen(false); handleSwitchTab('vpatch'); }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '10px',
-                  padding: '9px 14px',
-                  background: activeTab === 'vpatch' ? 'rgba(79, 70, 229, 0.08)' : 'transparent',
-                  color: activeTab === 'vpatch' ? '#4f46e5' : 'inherit',
-                  fontWeight: activeTab === 'vpatch' ? 600 : 500,
-                  border: 'none',
-                  textAlign: 'left',
-                  cursor: 'pointer',
-                  width: '100%',
-                  fontSize: '13px'
-                }}
-              >
-                <ShieldAlert size={15} color="#ea580c" />
-                <span>Virtual Patching &amp; 0-Day Shield</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => { setIsMoreMenuOpen(false); window.location.href = 'admin.php?page=webcare-pro-modular-waf'; }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '10px',
-                  padding: '9px 14px',
-                  background: 'transparent',
-                  color: 'inherit',
-                  fontWeight: 500,
-                  border: 'none',
-                  textAlign: 'left',
-                  cursor: 'pointer',
-                  width: '100%',
-                  fontSize: '13px'
-                }}
-              >
-                <Radar size={15} color="#7c3aed" />
-                <span>Modular WAF &amp; Custom Rules</span>
-              </button>
+              {/* Switch 3: Challenge Stealth Bots */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                <div>
+                  <div style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--webcare-text-heading, #0f172a)' }}>
+                    Challenge Stealth Headless Agents
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--webcare-text-muted, #64748b)' }}>
+                    Require WebCrypto proof-of-work validation
+                  </div>
+                </div>
+                <label className="webcare-switch" style={{ margin: 0, flexShrink: 0 }}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(wafSettings.waf_ai_challenge_stealth_agents ?? true)}
+                    onChange={(e) => {
+                      const val = e.target.checked;
+                      setWafSettings(prev => ({ ...prev, waf_ai_challenge_stealth_agents: val }));
+                      handleSaveSingleRule('waf_ai_challenge_stealth_agents', val);
+                    }}
+                  />
+                  <span className="webcare-slider"></span>
+                </label>
+              </div>
             </div>
-          )}
-        </div>
+          </div>
+        )}
 
-        <button
-          type="button"
-          className="webcare-tab-link"
-          style={{ marginLeft: 'auto', color: 'var(--webcare-status-info, #4f46e5)', fontWeight: 600 }}
-          onClick={() => {
+        {/* Navigation Sub-Tabs & Dropdown */}
+        <div className="webcare-tabs-bar" style={{ alignItems: 'center', position: 'relative' }}>
+          <button
+            type="button"
+            className={`webcare-tab-link ${activeTab === 'stream' ? 'is-active' : ''}`}
+            onClick={() => { setIsMoreMenuOpen(false); handleSwitchTab('stream'); }}
+          >
+            <Activity size={16} /> Live Incident Stream ({logs.length})
+          </button>
+
+          <button
+            type="button"
+            className={`webcare-tab-link ${activeTab === 'rules' ? 'is-active' : ''}`}
+            onClick={() => { setIsMoreMenuOpen(false); handleSwitchTab('rules'); }}
+          >
+            <Sliders size={16} /> Firewall Rules &amp; Controls
+          </button>
+
+          {!isSimpleMode && (
+            <>
+              <button
+                type="button"
+                className={`webcare-tab-link ${activeTab === 'caf' ? 'is-active' : ''}`}
+                onClick={() => { setIsMoreMenuOpen(false); handleSwitchTab('caf'); }}
+              >
+                <Sparkles size={16} color="#0284c7" />
+                <span>Adaptive Firewall (CAF)</span>
+                <span className="webcare-badge-pill webcare-badge-info" style={{ fontSize: '10px', padding: '1px 6px', marginLeft: '4px' }}>
+                  StackGuard
+                </span>
+              </button>
+
+              <button
+                type="button"
+                className={`webcare-tab-link ${activeTab === 'cloudflare' ? 'is-active' : ''}`}
+                onClick={() => { setIsMoreMenuOpen(false); handleSwitchTab('cloudflare'); }}
+              >
+                <Cloud
+                  size={16}
+                  style={{
+                    color: cfStatus?.configured ? '#F38020' : '#94a3b8',
+                    strokeWidth: 2.5
+                  }}
+                />
+                <span>Cloudflare Edge Defense</span>
+                {cfStatus?.configured && (
+                  <span style={{ color: '#10b981', fontSize: '11px', fontWeight: 700, marginLeft: '2px' }}>
+                    ● Connected
+                  </span>
+                )}
+              </button>
+
+              <button
+                type="button"
+                className={`webcare-tab-link ${activeTab === 'behavioral' ? 'is-active' : ''}`}
+                onClick={() => { setIsMoreMenuOpen(false); handleSwitchTab('behavioral'); }}
+              >
+                <Sliders size={16} /> Behavioral WAF &amp; Bot Traps
+              </button>
+
+              <button
+                type="button"
+                className={`webcare-tab-link ${activeTab === 'ai_defense' ? 'is-active' : ''}`}
+                onClick={() => { setIsMoreMenuOpen(false); handleSwitchTab('ai_defense'); }}
+              >
+                <Sparkles size={16} /> 2026 AI Defense &amp; Decoy Traps
+              </button>
+
+              {/* More Security Tools Dropdown */}
+              <div ref={moreMenuRef} style={{ position: 'relative', display: 'inline-block' }}>
+                <button
+                  type="button"
+                  className={`webcare-tab-link ${['drill', 'supply_chain', 'server_sec', 'intel', 'vpatch'].includes(activeTab) ? 'is-active' : ''}`}
+                  onClick={() => setIsMoreMenuOpen(!isMoreMenuOpen)}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                  aria-expanded={isMoreMenuOpen}
+                >
+                  <Layers size={16} />
+                  <span>
+                    {activeTab === 'drill' && 'Red Team Attack Drill'}
+                    {activeTab === 'supply_chain' && 'Supply-Chain & SBOM'}
+                    {activeTab === 'server_sec' && 'Server Security'}
+                    {activeTab === 'intel' && 'Cloud Threat Intel'}
+                    {activeTab === 'vpatch' && 'Virtual Patching'}
+                    {!['drill', 'supply_chain', 'server_sec', 'intel', 'vpatch'].includes(activeTab) && 'Advanced Modules'}
+                  </span>
+                  <ChevronDown size={14} style={{ transform: isMoreMenuOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s ease' }} />
+                </button>
+
+                {isMoreMenuOpen && (
+                  <div
+                    className="webcare-dropdown-menu"
+                    style={{
+                      position: 'absolute',
+                      top: 'calc(100% + 4px)',
+                      left: 0,
+                      zIndex: 100,
+                      minWidth: '240px',
+                      background: 'var(--webcare-bg-panel, #ffffff)',
+                      border: '1px solid var(--webcare-border, #e2e8f0)',
+                      borderRadius: '8px',
+                      boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)',
+                      padding: '6px 0',
+                      display: 'flex',
+                      flexDirection: 'column'
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => { setIsMoreMenuOpen(false); handleSwitchTab('drill'); }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        padding: '9px 14px',
+                        background: activeTab === 'drill' ? 'rgba(79, 70, 229, 0.08)' : 'transparent',
+                        color: activeTab === 'drill' ? '#4f46e5' : 'inherit',
+                        fontWeight: activeTab === 'drill' ? 600 : 500,
+                        border: 'none',
+                        textAlign: 'left',
+                        cursor: 'pointer',
+                        width: '100%',
+                        fontSize: '13px'
+                      }}
+                    >
+                      <Target size={15} color="#dc2626" />
+                      <span>Red Team Attack Drill</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => { setIsMoreMenuOpen(false); handleSwitchTab('supply_chain'); }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        padding: '9px 14px',
+                        background: activeTab === 'supply_chain' ? 'rgba(79, 70, 229, 0.08)' : 'transparent',
+                        color: activeTab === 'supply_chain' ? '#4f46e5' : 'inherit',
+                        fontWeight: activeTab === 'supply_chain' ? 600 : 500,
+                        border: 'none',
+                        textAlign: 'left',
+                        cursor: 'pointer',
+                        width: '100%',
+                        fontSize: '13px'
+                      }}
+                    >
+                      <Layers size={15} color="#7c3aed" />
+                      <span>Supply-Chain &amp; SBOM</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => { setIsMoreMenuOpen(false); handleSwitchTab('server_sec'); }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        padding: '9px 14px',
+                        background: activeTab === 'server_sec' ? 'rgba(79, 70, 229, 0.08)' : 'transparent',
+                        color: activeTab === 'server_sec' ? '#4f46e5' : 'inherit',
+                        fontWeight: activeTab === 'server_sec' ? 600 : 500,
+                        border: 'none',
+                        textAlign: 'left',
+                        cursor: 'pointer',
+                        width: '100%',
+                        fontSize: '13px'
+                      }}
+                    >
+                      <Server size={15} color="#0284c7" />
+                      <span>Server Security (Nginx / Apache)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => { setIsMoreMenuOpen(false); handleSwitchTab('intel'); }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        padding: '9px 14px',
+                        background: activeTab === 'intel' ? 'rgba(79, 70, 229, 0.08)' : 'transparent',
+                        color: activeTab === 'intel' ? '#4f46e5' : 'inherit',
+                        fontWeight: activeTab === 'intel' ? 600 : 500,
+                        border: 'none',
+                        textAlign: 'left',
+                        cursor: 'pointer',
+                        width: '100%',
+                        fontSize: '13px'
+                      }}
+                    >
+                      <Globe size={15} color="#059669" />
+                      <span>Cloud Threat Intel &amp; Feeds</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => { setIsMoreMenuOpen(false); handleSwitchTab('vpatch'); }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        padding: '9px 14px',
+                        background: activeTab === 'vpatch' ? 'rgba(79, 70, 229, 0.08)' : 'transparent',
+                        color: activeTab === 'vpatch' ? '#4f46e5' : 'inherit',
+                        fontWeight: activeTab === 'vpatch' ? 600 : 500,
+                        border: 'none',
+                        textAlign: 'left',
+                        cursor: 'pointer',
+                        width: '100%',
+                        fontSize: '13px'
+                      }}
+                    >
+                      <ShieldAlert size={15} color="#ea580c" />
+                      <span>Virtual Patching &amp; 0-Day Shield</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => { setIsMoreMenuOpen(false); window.location.href = 'admin.php?page=webcare-pro-modular-waf'; }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        padding: '9px 14px',
+                        background: 'transparent',
+                        color: 'inherit',
+                        fontWeight: 500,
+                        border: 'none',
+                        textAlign: 'left',
+                        cursor: 'pointer',
+                        width: '100%',
+                        fontSize: '13px'
+                      }}
+                    >
+                      <Radar size={15} color="#7c3aed" />
+                      <span>Modular WAF &amp; Custom Rules</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
+          <button
+            type="button"
+            className="webcare-tab-link"
+            style={{ marginLeft: 'auto', color: 'var(--webcare-status-info, #4f46e5)', fontWeight: 600 }}
+            onClick={() => {
             if (onNavigateToWafLogs) {
               onNavigateToWafLogs();
             } else {
@@ -6116,7 +6557,7 @@ export const FirewallPage = ({
           {/* Whitelisted IPs & Allowlisted URLs in ONE Single Column */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', minWidth: 0 }}>
             {/* Blocked IP Addresses & Subnets (Central Blocklist Card) */}
-            <div className="webcare-firewall-card" style={{ padding: '20px' }}>
+            <div id="webcare-blocked-ips-section" className="webcare-firewall-card" style={{ padding: '20px' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <h3 className="webcare-firewall-section-title" style={{ fontSize: '16px', display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
@@ -11022,6 +11463,33 @@ export const FirewallPage = ({
         onConfirm={firewallConfirmDialog.onConfirm || (() => {})}
         onClose={() => setFirewallConfirmDialog((prev) => ({ ...prev, isOpen: false }))}
       />
+
+      {/* Developer Mode Switcher Footer Pill in Simple Mode */}
+      {isSimpleMode && (
+        <div style={{ textAlign: 'center', marginTop: '36px', padding: '16px 0 24px' }}>
+          <button
+            type="button"
+            className="webcare-btn-micro"
+            onClick={() => setMode('developer')}
+            style={{
+              padding: '7px 16px',
+              fontSize: '12px',
+              fontWeight: 600,
+              color: 'var(--webcare-primary, #6366f1)',
+              background: 'var(--webcare-surface, #ffffff)',
+              border: '1px solid var(--webcare-border, #cbd5e1)',
+              borderRadius: '20px',
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              boxShadow: '0 1px 2px rgba(0, 0, 0, 0.05)',
+            }}
+          >
+            <span>Looking for WireFilter, Red Team Drills, or SBOM? Switch to Developer Mode →</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 };
