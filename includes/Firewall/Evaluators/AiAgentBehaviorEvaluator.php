@@ -120,16 +120,12 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
 
         // 3. Exemption: Genuine reverse-DNS verified search engine crawlers (Google, Bing, DuckDuckGo) or allowed citation bots
         if (class_exists(BotReconDefense::class)) {
-            $ua_lower = strtolower($ua);
             if (BotReconDefense::is_genuine_search_engine($ctx->ip, $ua)) {
                 return null;
             }
             if (!empty($settings['waf_ai_allow_search_citations'])) {
-                $citation_bots = ['oai-searchbot', 'perplexitybot', 'claude-searchbot'];
-                foreach ($citation_bots as $cit_bot) {
-                    if (str_contains($ua_lower, $cit_bot)) {
-                        return null;
-                    }
+                if (BotReconDefense::is_verified_ai_citation_bot($ctx->ip, $ua)) {
+                    return null;
                 }
             }
         }
@@ -350,7 +346,11 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
     }
 
     /**
-     * Memory-efficient session hit counter using APCu with local memory fallback (zero MySQL writes).
+     * Memory-efficient session hit counter with cross-request durability.
+     * Hierarchy:
+     * 1. Fast APCu in-memory counter.
+     * 2. Persistent WP Object Cache (Redis / Memcached via wp_cache_add / wp_cache_incr / wp_cache_set).
+     * 3. Bounded transient fallback (never a PHP static array that resets across HTTP requests).
      *
      * @param string $key Cache key.
      * @param int $ttl Time to live in seconds.
@@ -370,17 +370,27 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
             }
         }
 
-        // 2. External Object Cache (Redis / Memcached) if configured
+        // 2. Persistent External Object Cache (Redis / Memcached) if configured
         if (function_exists('wp_using_ext_object_cache') && wp_using_ext_object_cache()) {
-            $val = wp_cache_get($key, 'webcare_ai_sess');
-            $count = $val !== false ? ((int) $val + 1) : 1;
-            wp_cache_set($key, $count, 'webcare_ai_sess', $ttl);
+            if (function_exists('wp_cache_incr')) {
+                $val = wp_cache_incr($key, 1, 'webcare_ai_sess');
+                if ($val !== false) {
+                    return (int) $val;
+                }
+            }
+            $val = function_exists('wp_cache_get') ? wp_cache_get($key, 'webcare_ai_sess') : false;
+            $count = ($val !== false) ? ((int) $val + 1) : 1;
+            if (function_exists('wp_cache_set')) {
+                wp_cache_set($key, $count, 'webcare_ai_sess', $ttl);
+            }
             return $count;
         }
 
-        // 3. Static in-memory execution cache fallback (avoids hitting wp_options)
-        static $in_mem_counts = [];
-        $in_mem_counts[$key] = ($in_mem_counts[$key] ?? 0) + 1;
-        return $in_mem_counts[$key];
+        // 3. Durable bounded transient fallback (cross-request tracking)
+        $transient_key = 'wc_ai_h_' . substr(hash('xxh128', $key), 0, 16);
+        $val = get_transient($transient_key);
+        $count = ($val !== false && is_numeric($val)) ? ((int) $val + 1) : 1;
+        set_transient($transient_key, $count, $ttl);
+        return $count;
     }
 }

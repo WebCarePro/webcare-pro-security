@@ -102,9 +102,8 @@ class BotReconDefense {
             '40.83.2.0/24',
         ],
         'perplexitybot' => [
-            // Perplexity search citation crawler IP ranges
-            '151.101.0.0/16',
-            '199.232.0.0/16',
+            // Exact Perplexity-published crawler IP ranges (broad shared Fastly /16 ranges removed)
+            // Unrelated Fastly clients cannot spoof PerplexityBot; fallback uses cached FCrDNS
         ],
         'claude-searchbot' => [
             // Anthropic Claude search citation IP ranges
@@ -484,6 +483,41 @@ class BotReconDefense {
         }
 
         return false;
+    }
+
+    /**
+     * Check whether an incoming request belongs to an authenticated, verified AI citation bot
+     * (OAI-SearchBot, PerplexityBot, Claude-SearchBot).
+     *
+     * Validates:
+     * 1. Request is strictly a read-only public crawl (GET/HEAD/OPTIONS).
+     * 2. Client IP matches verified vendor IP ranges or passes cached FCrDNS confirmation.
+     *
+     * @param string $ip Client IP address.
+     * @param string $user_agent Client User-Agent string.
+     * @return bool True if verified AI citation bot, false otherwise.
+     */
+    public static function is_verified_ai_citation_bot(string $ip, string $user_agent): bool {
+        if (empty($user_agent) || !self::is_read_only_public_crawl()) {
+            return false;
+        }
+
+        $ua_lower = strtolower($user_agent);
+        $citation_keys = ['oai-searchbot', 'perplexitybot', 'claude-searchbot'];
+        $matched_bot = null;
+
+        foreach ($citation_keys as $cit_key) {
+            if (str_contains($ua_lower, $cit_key)) {
+                $matched_bot = $cit_key;
+                break;
+            }
+        }
+
+        if ($matched_bot === null) {
+            return false;
+        }
+
+        return self::verify_search_bot_reverse_dns($ip, $matched_bot);
     }
 
     /**

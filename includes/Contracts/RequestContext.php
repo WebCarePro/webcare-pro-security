@@ -163,11 +163,8 @@ class RequestContext {
                 $this->queryParams = $parsed_q;
             }
         }
-        if (empty($this->queryParams) && isset($_GET) && is_array($_GET)) {
-            $this->queryParams = $_GET;
-        }
 
-        $this->formParams = !empty($formParams) ? $formParams : (isset($_POST) && is_array($_POST) ? $_POST : []);
+        $this->formParams = $formParams;
         $this->jsonParams = $jsonParams;
         $this->rawBodyMetadata = [];
 

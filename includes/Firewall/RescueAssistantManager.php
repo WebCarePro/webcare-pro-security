@@ -330,9 +330,11 @@ class RescueAssistantManager {
                 continue;
             }
 
-            // 3. Parameter key validation: if allowlist specifies a param_key, check parameter context
+            // 3. Parameter key validation: if allowlist specifies a param_key, check parameter context.
+            // Strict scope requirement: If the allowlist entry requires a param_key, reject the match
+            // if the caller's parameter context is empty or does not match req_pkey.
             if ($req_pkey !== '') {
-                if ($pkey_lc !== '' && $pkey_lc !== $req_pkey) {
+                if ($pkey_lc === '' || $pkey_lc !== $req_pkey) {
                     continue;
                 }
             }
@@ -357,7 +359,8 @@ class RescueAssistantManager {
                 $val_clean = rtrim($val, '/');
                 if (str_ends_with($val, '/*')) {
                     $prefix = rtrim(substr($val, 0, -2), '/');
-                    if (str_starts_with($rest_target, $prefix)) {
+                    // Enforce path-segment boundary on /* wildcards (matches prefix and prefix/... but never prefix-admin)
+                    if ($rest_target === $prefix || str_starts_with($rest_target, $prefix . '/')) {
                         return true;
                     }
                 } elseif ($rest_target === $val_clean) {
@@ -370,7 +373,8 @@ class RescueAssistantManager {
                 $val_clean = rtrim($val, '/');
                 if (str_ends_with($val, '/*')) {
                     $prefix = rtrim(substr($val, 0, -2), '/');
-                    if (str_starts_with($uri_lc, $prefix)) {
+                    // Enforce path-segment boundary on /* wildcards (matches prefix and prefix/... but never prefix-admin)
+                    if ($uri_lc === $prefix || str_starts_with($uri_lc, $prefix . '/')) {
                         return true;
                     }
                 } elseif ($uri_lc === $val_clean) {
@@ -389,14 +393,25 @@ class RescueAssistantManager {
 
     /**
      * Check incoming HTTP request against Rescue permanently trusted actions inside FirewallEngine.
+     * Reads AJAX action strictly from queryParams or formParams (never $_REQUEST).
      */
-    public static function is_incoming_request_trusted(string $request_uri, string $rule_id = '', string $param_key = ''): bool {
+    public static function is_incoming_request_trusted(string $request_uri, string $rule_id = '', string $param_key = '', ?\WebCareProScanner\Contracts\RequestContext $ctx = null): bool {
         $clean_uri = strtolower((string) strtok($request_uri, '?'));
-        // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Pre-dispatch check against admin-approved trusted action list
-        $ajax_act  = isset($_REQUEST['action']) ? sanitize_key(wp_unslash($_REQUEST['action'])) : '';
-        // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Pre-dispatch check against admin-approved trusted route list
-        $rest_q    = isset($_GET['rest_route']) ? strtolower(sanitize_text_field(wp_unslash($_GET['rest_route']))) : '';
-        $method    = isset($_SERVER['REQUEST_METHOD']) ? (string) $_SERVER['REQUEST_METHOD'] : 'GET';
+
+        if ($ctx !== null) {
+            $ajax_act = (string) ($ctx->queryParams['action'] ?? ($ctx->formParams['action'] ?? ''));
+            $rest_q   = strtolower((string) ($ctx->queryParams['rest_route'] ?? ''));
+            $method   = $ctx->method;
+        } else {
+            // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+            $ajax_act = isset($_GET['action'])
+                ? sanitize_key(wp_unslash($_GET['action']))
+                // phpcs:ignore WordPress.Security.NonceVerification.Missing
+                : (isset($_POST['action']) ? sanitize_key(wp_unslash($_POST['action'])) : '');
+            // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+            $rest_q   = isset($_GET['rest_route']) ? strtolower(sanitize_text_field(wp_unslash($_GET['rest_route']))) : '';
+            $method   = isset($_SERVER['REQUEST_METHOD']) ? (string) $_SERVER['REQUEST_METHOD'] : 'GET';
+        }
 
         return self::is_rule_or_request_trusted($rule_id, $clean_uri, $ajax_act, $rest_q, $method, $param_key);
     }
