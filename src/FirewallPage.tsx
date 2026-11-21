@@ -2487,7 +2487,7 @@ export const FirewallPage = ({
     return (
       <div className="webcare-page-container" style={{ padding: '60px 20px', textAlign: 'center', color: '#64748b' }}>
         <Loader2 size={36} className="webcare-spin-icon" style={{ margin: '0 auto 16px auto', color: '#0284c7' }} />
-        <h3 style={{ fontSize: '18px', color: '#1e293b', margin: 0 }}>Initializing WebCare Firewall (WAF Lite)...</h3>
+        <h3 style={{ fontSize: '18px', color: 'var(--webcare-text-primary, #0f172a)', margin: 0 }}>Initializing WebCare Firewall (WAF Lite)...</h3>
       </div>
     );
   }
@@ -8464,9 +8464,9 @@ export const FirewallPage = ({
                 className="webcare-btn"
                 onClick={() => onNavigateToSettings ? onNavigateToSettings('cloudflare') : (window.location.href = 'admin.php?page=webcare-pro-settings&tab=cloudflare')}
                 style={{
-                  background: cfStatus?.configured ? '#f8fafc' : 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
-                  color: cfStatus?.configured ? '#0f172a' : '#ffffff',
-                  border: cfStatus?.configured ? '1px solid #cbd5e1' : 'none',
+                  background: cfStatus?.configured ? 'var(--webcare-bg-surface, #f8fafc)' : 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
+                  color: cfStatus?.configured ? 'var(--webcare-text-primary, #0f172a)' : '#ffffff',
+                  border: cfStatus?.configured ? '1px solid var(--webcare-border, #cbd5e1)' : 'none',
                   padding: '8px 16px',
                   borderRadius: '8px',
                   fontWeight: 600,
@@ -8638,8 +8638,8 @@ export const FirewallPage = ({
                         <pre
                           style={{
                             margin: 0,
-                            background: '#090d16',
-                            color: '#38bdf8',
+                            background: 'var(--webcare-bg-code, #090d16)',
+                            color: 'var(--webcare-text-code, #38bdf8)',
                             padding: '12px 16px',
                             borderRadius: '6px',
                             fontSize: '11.5px',
@@ -8648,7 +8648,7 @@ export const FirewallPage = ({
                             whiteSpace: 'pre-wrap',
                             wordBreak: 'break-all',
                             lineHeight: 1.55,
-                            border: '1px solid #1e293b',
+                            border: '1px solid var(--webcare-border-code, #1e293b)',
                           }}
                         >
                           {rule.expression}
@@ -9685,7 +9685,7 @@ export const FirewallPage = ({
                 type="button"
                 className="webcare-btn"
                 onClick={() => setShowExistingRulesModal(false)}
-                style={{ background: '#0f172a', color: '#fff', border: 'none', padding: '7px 16px', borderRadius: '6px', fontSize: '12.5px', fontWeight: 600 }}
+                style={{ background: 'var(--webcare-primary, #4f46e5)', color: '#fff', border: 'none', padding: '7px 16px', borderRadius: '6px', fontSize: '12.5px', fontWeight: 600 }}
               >
                 Close Inspector
               </button>
@@ -10266,7 +10266,7 @@ export const FirewallPage = ({
                 className="webcare-btn"
                 onClick={() => setShowBannedIpsModal(false)}
                 style={{
-                  background: '#0f172a',
+                  background: 'var(--webcare-primary, #4f46e5)',
                   color: '#fff',
                   border: 'none',
                   padding: '7px 16px',
@@ -11434,7 +11434,7 @@ export const FirewallPage = ({
                 className="webcare-btn"
                 onClick={() => setBlocklistModalOpen(false)}
                 style={{
-                  background: '#0f172a',
+                  background: 'var(--webcare-primary, #4f46e5)',
                   color: '#fff',
                   border: 'none',
                   padding: '7px 16px',

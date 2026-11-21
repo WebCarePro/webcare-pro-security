@@ -1833,7 +1833,7 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
                               style={{
                                 fontSize: '13px',
                                 fontWeight: isActive ? 700 : 500,
-                                color: isActive ? '#0f172a' : '#475569',
+                                color: isActive ? 'var(--webcare-text-title, #0f172a)' : 'var(--webcare-text-secondary, #475569)',
                                 whiteSpace: 'nowrap',
                                 overflow: 'hidden',
                                 textOverflow: 'ellipsis',
@@ -4651,7 +4651,7 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
                           ) : (
                             <AlertTriangle size={14} color="#94a3b8" />
                           )}
-                          <span style={{ color: item.enabled ? '#0f172a' : '#64748b', fontWeight: item.enabled ? 500 : 400 }}>
+                          <span style={{ color: item.enabled ? 'var(--webcare-text-primary, #0f172a)' : 'var(--webcare-text-muted, #64748b)', fontWeight: item.enabled ? 500 : 400 }}>
                             {item.name}
                           </span>
                         </div>
@@ -5809,8 +5809,8 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
             {/* Changelog Snippet */}
             {updaterStatus?.changelog && (
               <div style={{
-                background: '#090d16',
-                border: '1px solid #1e293b',
+                background: 'var(--webcare-bg-code, #090d16)',
+                border: '1px solid var(--webcare-border-code, #1e293b)',
                 borderRadius: '8px',
                 padding: '16px',
                 color: '#f8fafc',
@@ -6007,7 +6007,7 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
             icon: Globe,
             href: 'https://github.com/WebCarePro',
             btnText: 'Visit GitHub Org',
-            btnBg: '#0f172a',
+            btnBg: 'var(--webcare-primary, #4f46e5)',
             btnColor: '#ffffff'
           },
           {
