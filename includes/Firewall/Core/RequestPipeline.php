@@ -33,11 +33,23 @@ if (!defined('ABSPATH')) {
 final class RequestPipeline {
 
     /**
+     * Static re-entrancy guard to prevent recursive pipeline evaluation.
+     */
+    private static bool $is_processing = false;
+
+    /**
      * Inspect incoming request through the firewall pipeline.
-     * Evaluates Always-On Mandatory Core, then conditional manifest evaluators,
-     * and delegates to FirewallEngine::inspect_incoming_request().
+     * Evaluates Always-On Mandatory Core, conditional manifest evaluators,
+     * and pluggable module SDK. Short-circuits on terminal verdicts and profiles
+     * benign traffic.
      */
     public static function process_incoming_request(): void {
+        if (self::$is_processing) {
+            return;
+        }
+
+        self::$is_processing = true;
+
         try {
             // 0. Safe Mode check: if active, switch heuristic evaluators to observe-only
             $is_safe_mode = false;
@@ -52,6 +64,12 @@ final class RequestPipeline {
                 $settings = SettingsManager::get_settings();
 
                 $verdict = self::evaluate_pipeline($ctx, $settings);
+
+                // 2. Pluggable Module SDK: If pipeline returned null, evaluate registered module extensions
+                if ($verdict === null && class_exists('\\WebCareProScanner\\Core\\ModuleRegistry')) {
+                    $verdict = \WebCareProScanner\Core\ModuleRegistry::evaluate_runtime_waf($ctx, $settings);
+                }
+
                 if ($verdict !== null && $verdict->get_action_value() !== 'allow') {
                     $action_val = $verdict->get_action_value();
 
@@ -109,15 +127,12 @@ final class RequestPipeline {
                             FirewallEngine::log_incident($rule, 'detected');
                         }
                     }
+                } else {
+                    // Clean request passed all firewall filters: profile route parameters
+                    if (class_exists('\\WebCareProScanner\\Firewall\\LearningModeEngine')) {
+                        \WebCareProScanner\Firewall\LearningModeEngine::profile_benign_request();
+                    }
                 }
-            }
-
-            // 2. Delegate to comprehensive engine inspection with duplicate execution guard
-            FirewallEngine::$executed_under_pipeline = true;
-            try {
-                FirewallEngine::inspect_incoming_request();
-            } finally {
-                FirewallEngine::$executed_under_pipeline = false;
             }
         } catch (\Throwable $e) {
             // Fail-closed invariant: Log critical failure
@@ -134,6 +149,8 @@ final class RequestPipeline {
             }
             status_header(403);
             exit;
+        } finally {
+            self::$is_processing = false;
         }
     }
 
