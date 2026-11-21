@@ -575,7 +575,7 @@ class MicroWafCompiler {
         $out .= "        \$is_cf_ip = \$webcare_match_ip_list(\$raw_peer, \$cf_cidrs);\n";
         $out .= "        \$is_custom_proxy = !\$is_cf_ip && \$webcare_match_ip_list(\$raw_peer, \$trusted_proxies);\n";
         $out .= "        \$is_local_proxy = !\$is_cf_ip && !\$is_custom_proxy && (defined('WEBCARE_TRUST_LOCAL_PROXY') && WEBCARE_TRUST_LOCAL_PROXY && (\$raw_peer === '127.0.0.1' || \$raw_peer === '::1' || filter_var(\$raw_peer, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false));\n";
-        $out .= "        if (\$is_cf_ip && isset(\$_SERVER['HTTP_CF_CONNECTING_IP']) && filter_var(\$_SERVER['HTTP_CF_CONNECTING_IP'], FILTER_VALIDATE_IP)) {\n";
+        $out .= "        if (\$cf_enabled && \$is_cf_ip && isset(\$_SERVER['HTTP_CF_CONNECTING_IP']) && filter_var(\$_SERVER['HTTP_CF_CONNECTING_IP'], FILTER_VALIDATE_IP)) {\n";
         $out .= "            \$ip = trim(\$_SERVER['HTTP_CF_CONNECTING_IP']);\n";
         $out .= "            if (stripos(\$ip, '::ffff:') === 0) {\n";
         $out .= "                \$mapped_cf = substr(\$ip, 7);\n";
@@ -606,14 +606,6 @@ class MicroWafCompiler {
         $out .= "            }\n";
         $out .= "            if (\$resolved_proxy_client !== '') {\n";
         $out .= "                \$ip = \$resolved_proxy_client;\n";
-        $out .= "            } elseif (\$cf_enabled && isset(\$_SERVER['HTTP_CF_CONNECTING_IP']) && filter_var(\$_SERVER['HTTP_CF_CONNECTING_IP'], FILTER_VALIDATE_IP)) {\n";
-        $out .= "                \$ip = trim(\$_SERVER['HTTP_CF_CONNECTING_IP']);\n";
-        $out .= "                if (stripos(\$ip, '::ffff:') === 0) {\n";
-        $out .= "                    \$mapped_cf2 = substr(\$ip, 7);\n";
-        $out .= "                    if (filter_var(\$mapped_cf2, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {\n";
-        $out .= "                        \$ip = \$mapped_cf2;\n";
-        $out .= "                    }\n";
-        $out .= "                }\n";
         $out .= "            }\n";
         $out .= "        }\n\n";
         $out .= "        // Emergency signed time-bound token bypass (URL query ?webcare_waf_bypass= or X-WebCare-Waf-Bypass header)\n";

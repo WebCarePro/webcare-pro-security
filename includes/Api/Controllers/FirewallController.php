@@ -491,15 +491,11 @@ final class FirewallController extends AbstractApiController {
             return new \WP_REST_Response(['success' => false, 'message' => __('Log URI or rule ID is required.', 'webcare-pro-security')], 400);
         }
 
-        // PR 1.4: Zero-tolerance exploit invariant (SQLi, RCE, LFI, Object Injection are never exemptible)
-        $unexemptible_rules = [
-            'WAF-SQLI-INJECTION', 'WAF-SQLI-DEEP-TOKEN-CHAIN', 'WAF-SQLI-HEX-BINARY-ENCODED',
-            'WAF-RCE-INJECTION', 'WAF-PHP-CODE-INJECTION', 'WAF-LFI-TRAVERSAL', 'WAF-PHP-OBJECT-INJECTION',
-            'WAF-POLYGLOT-UPLOAD-TRAP'
-        ];
-        if (in_array($rule_id, $unexemptible_rules, true)) {
+        // PR 1.4 & v3.23.1: Zero-tolerance exploit invariant (SQLi, RCE, LFI, Object Injection are never exemptible)
+        if (class_exists('\\WebCareProScanner\\Firewall\\RescueAssistantManager') && \WebCareProScanner\Firewall\RescueAssistantManager::is_zero_tolerance_rule($rule_id)) {
             return new \WP_REST_Response([
                 'success' => false,
+                'code'    => 'zero_tolerance_rule',
                 'message' => __('Security Invariant: Confirmed SQLi/RCE/LFI zero-tolerance exploit rules cannot be exempted.', 'webcare-pro-security')
             ], 403);
         }
@@ -515,7 +511,8 @@ final class FirewallController extends AbstractApiController {
                 'param_key'  => $param_key,
                 'user_role'  => $user_role,
             ]);
-            return rest_ensure_response($trust_res);
+            $status_code = !empty($trust_res['success']) ? 200 : ((isset($trust_res['code']) && $trust_res['code'] === 'zero_tolerance_rule') ? 403 : 400);
+            return new \WP_REST_Response($trust_res, $status_code);
         }
 
         return new \WP_REST_Response(['success' => false, 'message' => __('Rescue assistant manager not available.', 'webcare-pro-security')], 500);
@@ -547,7 +544,8 @@ final class FirewallController extends AbstractApiController {
         }
         $params = $request->get_json_params() ?: [];
         $res    = \WebCareProScanner\Firewall\RescueAssistantManager::trust_and_allow_action($params);
-        return new \WP_REST_Response($res, !empty($res['success']) ? 200 : 400);
+        $status_code = !empty($res['success']) ? 200 : ((isset($res['code']) && $res['code'] === 'zero_tolerance_rule') ? 403 : 400);
+        return new \WP_REST_Response($res, $status_code);
     }
 
     /**
@@ -693,14 +691,16 @@ final class FirewallController extends AbstractApiController {
     public static function unblock_firewall_ip(\WP_REST_Request $request) {
         $params = $request->get_json_params() ?: [];
         $ip = sanitize_text_field(trim($params['ip'] ?? ''));
-        $duration = (int) ($params['duration'] ?? 0);
+        $raw_duration = (int) ($params['duration'] ?? 0);
+        // Server-side strict cap: minimum 60s, maximum 900s (15 minutes) if requested
+        $duration = $raw_duration > 0 ? max(60, min(900, $raw_duration)) : 0;
         if (empty($ip)) {
             return new \WP_Error('invalid_ip', 'Valid IP address is required', ['status' => 400]);
         }
 
         $unblocked = \WebCareProScanner\Firewall\FirewallEngine::remove_blocked_ip($ip);
 
-        // Optional temporary bypass immunity (e.g. 15 minutes = 900s, 24 hours = 86400s)
+        // Optional temporary bypass immunity (capped strictly between 60s and 900s)
         if ($duration > 0) {
             set_transient('webcareproscan_temp_allow_' . md5($ip), 1, $duration);
         }

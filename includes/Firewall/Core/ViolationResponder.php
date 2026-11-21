@@ -640,6 +640,41 @@ final class ViolationResponder {
         // caller-supplied definitions or preliminary metadata from bypassing exploit classification.
         $tier = self::get_rule_enforcement_tier($rule);
 
+        // Per-Detector Scoped Customer Trust Suppression (v3.23.1)
+        // Check if an exact scoped customer exemption exists (route + method + role + param_key).
+        // Zero-tolerance exploit rules (SQLi, RCE, LFI, XXE, SSRF, gadget uploads) are NEVER suppressed.
+        if (class_exists('\\WebCareProScanner\\Firewall\\RescueAssistantManager')) {
+            $req_uri_raw = isset($_SERVER['REQUEST_URI']) ? (string) $_SERVER['REQUEST_URI'] : '';
+            $clean_uri   = str_replace(["\0", "\r", "\n"], '', $req_uri_raw);
+            $clean_path  = (string) wp_parse_url($clean_uri, PHP_URL_PATH);
+            $ajax_act    = isset($_REQUEST['action']) ? sanitize_key(wp_unslash($_REQUEST['action'])) : '';
+            $rest_route  = isset($_GET['rest_route']) ? sanitize_text_field(wp_unslash($_GET['rest_route'])) : '';
+            $req_method  = isset($_SERVER['REQUEST_METHOD']) ? (string) $_SERVER['REQUEST_METHOD'] : 'GET';
+            $matched_p   = (string) ($rule['match_value'] ?? ($rule['matched_param'] ?? ''));
+            $user_role   = '';
+            if (function_exists('wp_get_current_user')) {
+                $u = wp_get_current_user();
+                if ($u && !empty($u->roles)) {
+                    $user_role = (string) reset($u->roles);
+                }
+            }
+
+            if (\WebCareProScanner\Firewall\RescueAssistantManager::is_rule_or_request_trusted(
+                $rule_id_str,
+                $clean_path ?: $clean_uri,
+                $ajax_act,
+                $rest_route,
+                $req_method,
+                $user_role,
+                $matched_p
+            )) {
+                $bypass_rule = $rule;
+                $bypass_rule['description'] = ($rule['description'] ?? 'Firewall trigger') . ' [Suppressed via Scoped Customer Trust Exemption]';
+                self::log_incident($bypass_rule, 'bypassed');
+                return;
+            }
+        }
+
         // Honor ModularFirewallSynthesizer runtime exempt rule IDs (WCP-14)
         if (class_exists('\\WebCareProScanner\\Firewall\\Modular\\ModularFirewallSynthesizer')) {
             $modular_exempt_ids = \WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer::get_runtime_exempt_rule_ids();

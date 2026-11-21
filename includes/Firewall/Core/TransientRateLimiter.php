@@ -75,6 +75,52 @@ final class TransientRateLimiter {
             ];
         }
 
+        if (class_exists('\\WebCareProScanner\\Firewall\\AdaptiveRateLimiter')) {
+            $base_key = 'trl_' . substr(md5($key), 0, 16);
+            $counts = \WebCareProScanner\Firewall\AdaptiveRateLimiter::file_atomic_window_increment(
+                $base_key,
+                $window_idx,
+                $window_seconds * 2
+            );
+
+            if ($counts !== null) {
+                $count = (int) $counts['curr'];
+                $allowed = ($count <= $limit);
+                return [
+                    'allowed'     => $allowed,
+                    'retry_after' => $allowed ? 0 : $remaining_window_ttl,
+                    'current'     => $count,
+                    'limit'       => $limit,
+                ];
+            }
+
+            // Controlled fail-safe under file-lock contention: do not allow silent non-atomic downgrades
+            if (class_exists('\\WebCareProScanner\\System\\WebCareActivityLogger')) {
+                \WebCareProScanner\System\WebCareActivityLogger::warning('transient_rl_lock_contention', 'firewall', [
+                    'key'         => $key,
+                    'description' => sprintf('TransientRateLimiter file lock contention for key %s; applied fail-safe policy.', $key),
+                ]);
+            }
+
+            // Sensitive auth/warning strikes fail closed
+            if (str_contains($key, 'warning_strike') || str_contains($key, 'auth')) {
+                return [
+                    'allowed'     => false,
+                    'retry_after' => $remaining_window_ttl,
+                    'current'     => $limit + 1,
+                    'limit'       => $limit,
+                ];
+            }
+
+            return [
+                'allowed'     => true,
+                'retry_after' => 0,
+                'current'     => 1,
+                'limit'       => $limit,
+            ];
+        }
+
+        // Bounded fallback if AdaptiveRateLimiter class is unavailable
         $transient_name = 'webcareproscan_rl_' . substr(md5($key), 0, 24);
         $data = get_transient($transient_name);
 

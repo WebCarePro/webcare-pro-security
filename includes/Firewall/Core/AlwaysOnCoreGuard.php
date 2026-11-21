@@ -102,13 +102,6 @@ final class AlwaysOnCoreGuard implements WafEvaluatorInterface {
             return WafVerdict::allow();
         }
 
-        // Rescue Assistant Integration: Bypass permanently trusted actions
-        if (class_exists(RescueAssistantManager::class)) {
-            if (RescueAssistantManager::is_incoming_request_trusted($ctx->uri)) {
-                return WafVerdict::allow();
-            }
-        }
-
         $client_ip = $ctx->ip;
         $request_uri = $ctx->uri;
         $method = $ctx->method;
@@ -119,6 +112,9 @@ final class AlwaysOnCoreGuard implements WafEvaluatorInterface {
         if ($whitelist_ctx['is_whitelisted'] && $whitelist_ctx['full_bypass']) {
             return WafVerdict::allow();
         }
+
+        // Temporary 15-minute customer unblock pass (exempts IP blocklist & rate-limit blocks only)
+        $is_temp_unblocked = (bool) get_transient('webcareproscan_temp_allow_' . md5($client_ip));
 
         // URL allowlists / support URL safe-pass / targeted allowlist rules
         $url_whitelisted = false;
@@ -192,6 +188,9 @@ final class AlwaysOnCoreGuard implements WafEvaluatorInterface {
                         $is_auth_admin = FirewallEngine::is_authenticated_administrator();
 
                         if ($is_auth_admin) {
+                            $matching_entry = null;
+                        } elseif ($is_temp_unblocked) {
+                            // Temporary 15-minute unblock pass: exempt from operational/custom IP blocklist
                             $matching_entry = null;
                         } elseif ($is_non_exploit_operational_ban && $is_verified_human_session) {
                             // Verified shopper/member operational-ban exemption
@@ -293,7 +292,7 @@ final class AlwaysOnCoreGuard implements WafEvaluatorInterface {
             }
         }
 
-        $skip_operational_heuristics = ($url_whitelisted || $custom_allow_matched || $is_admin_operation || $is_builder_operation);
+        $skip_operational_heuristics = ($url_whitelisted || $custom_allow_matched || $is_admin_operation || $is_builder_operation || $is_temp_unblocked);
 
         // 4. Emergency Containment Mode & Atomic Upgrade Lock
         if (class_exists(EmergencyContainmentManager::class) && EmergencyContainmentManager::is_active()) {

@@ -22,6 +22,7 @@ export function useVisibilityPolling(
   const savedCallback = useRef(callback);
   savedCallback.current = callback;
   const inFlightRef = useRef<boolean>(false);
+  const generationRef = useRef<number>(0);
 
   useEffect(() => {
     if (!enabled || !intervalMs || intervalMs <= 0) {
@@ -39,6 +40,7 @@ export function useVisibilityPolling(
       }
 
       inFlightRef.current = true;
+      const currentGen = ++generationRef.current;
       Promise.resolve()
         .then(() => savedCallback.current())
         .catch((err) => {
@@ -47,7 +49,7 @@ export function useVisibilityPolling(
           }
         })
         .finally(() => {
-          if (isMounted) {
+          if (isMounted && currentGen === generationRef.current) {
             inFlightRef.current = false;
           }
         });

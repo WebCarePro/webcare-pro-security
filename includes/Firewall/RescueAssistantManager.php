@@ -273,20 +273,48 @@ class RescueAssistantManager {
      * @param string $param_key Target parameter key (default '')
      * @return bool
      */
+    /**
+     * Confirmed zero-tolerance exploit rules that can NEVER be exempted by customer allowlists or Rescue Assistant.
+     */
+    public const ZERO_TOLERANCE_RULES = [
+        'WAF-SQLI', 'WAF-SQLI-INJECTION', 'WAF-SQLI-DEEP-TOKEN-CHAIN', 'WAF-SQLI-HEX-BINARY-ENCODED',
+        'WAF-RCE', 'WAF-RCE-INJECTION', 'WAF-RCE-PHP-INJECTION', 'WAF-PHP-CODE-INJECTION',
+        'WAF-LFI-TRAVERSAL', 'WAF-FILE-INCLUSION', 'WAF-ARBITRARY-FILE-WRITE', 'WAF-SYSTEM-COMMAND-EXEC',
+        'WAF-PHP-OBJECT-INJECTION', 'WAF-OBJECT-STREAM-INJECTION', 'WAF-XXE-INJECTION',
+        'WAF-SSRF-METADATA', 'WAF-AJAX-SHORTCODE-GADGET', 'WAF-POLYGLOT-UPLOAD-TRAP'
+    ];
+
+    /**
+     * Check if a given rule identifier is a confirmed zero-tolerance exploit signature.
+     */
+    public static function is_zero_tolerance_rule(string $rule_id): bool {
+        $upper = strtoupper(trim($rule_id));
+        if ($upper === '') {
+            return false;
+        }
+        foreach (self::ZERO_TOLERANCE_RULES as $zt) {
+            if ($upper === $zt || str_starts_with($upper, $zt . '-') || str_starts_with($upper, $zt . '_')) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Check whether a specific rule, URI, AJAX action, or REST route has been trusted.
+     * Evaluates granular scope (rule_id, clean_uri, method, param_key, user_role).
+     */
     public static function is_rule_or_request_trusted(
         string $rule_id,
         string $clean_uri,
         string $ajax_action = '',
         string $rest_query = '',
         string $method = '',
+        string $user_role = '',
         string $param_key = ''
     ): bool {
         // Zero-tolerance exploit signatures must NEVER be exempted by customer allowlists
-        $zero_tolerance_rules = [
-            'WAF-RCE', 'WAF-SQLI', 'WAF-FILE-INCLUSION', 'WAF-ARBITRARY-FILE-WRITE',
-            'WAF-SYSTEM-COMMAND-EXEC', 'WAF-POLYGLOT-UPLOAD-TRAP', 'WAF-XXE-INJECTION',
-        ];
-        if (in_array(strtoupper($rule_id), $zero_tolerance_rules, true)) {
+        if (self::is_zero_tolerance_rule($rule_id)) {
             return false;
         }
 
@@ -413,7 +441,7 @@ class RescueAssistantManager {
             $method   = isset($_SERVER['REQUEST_METHOD']) ? (string) $_SERVER['REQUEST_METHOD'] : 'GET';
         }
 
-        return self::is_rule_or_request_trusted($rule_id, $clean_uri, $ajax_act, $rest_q, $method, $param_key);
+        return self::is_rule_or_request_trusted($rule_id, $clean_uri, $ajax_act, $rest_q, $method, '', $param_key);
     }
 
     /**
@@ -431,6 +459,15 @@ class RescueAssistantManager {
 
         if ($value === '' && $rule_id === '') {
             return ['success' => false, 'message' => __('Action target or rule identifier is required.', 'webcare-pro-security')];
+        }
+
+        // Centralized Zero-Tolerance Invariant: Confirmed exploit rules can NEVER be exempted
+        if ($rule_id !== '' && self::is_zero_tolerance_rule($rule_id)) {
+            return [
+                'success' => false,
+                'code'    => 'zero_tolerance_rule',
+                'message' => __('Security Invariant: Confirmed SQLi/RCE/LFI zero-tolerance exploit rules cannot be exempted.', 'webcare-pro-security'),
+            ];
         }
 
         $trusted = self::get_trusted_actions();

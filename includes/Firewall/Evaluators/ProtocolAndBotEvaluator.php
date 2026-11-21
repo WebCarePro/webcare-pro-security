@@ -206,7 +206,48 @@ final readonly class ProtocolAndBotEvaluator implements WafEvaluatorInterface {
                     $window = (int) ($rl_settings['window_search_probe'] ?? AdaptiveRateLimiter::WINDOW_SEARCH_PROBE);
                 }
 
-                $rate_result = AdaptiveRateLimiter::check_bucket_velocity($bucket, $client_ip, $limit, $window);
+                // Multi-dimensional NAT identity key calculation (CGNAT / Office NAT Safety)
+                $identity_key = '';
+                if ($bucket === AdaptiveRateLimiter::BUCKET_AUTH) {
+                    $submitted_user = (string) ($ctx->formParams['log'] ?? ($ctx->formParams['username'] ?? ''));
+                    if ($submitted_user !== '') {
+                        $identity_key = 'u:' . strtolower(trim($submitted_user));
+                    }
+                } elseif ($bucket === AdaptiveRateLimiter::BUCKET_CHECKOUT || $bucket === AdaptiveRateLimiter::BUCKET_CART_AJAX) {
+                    $wc_cookie_val = '';
+                    if (!empty($_COOKIE) && is_array($_COOKIE)) {
+                        foreach ($_COOKIE as $c_name => $c_val) {
+                            if (is_string($c_name) && is_string($c_val) && str_starts_with($c_name, 'wp_woocommerce_session_')) {
+                                $wc_cookie_val = $c_val;
+                                break;
+                            }
+                        }
+                    }
+                    if ($wc_cookie_val !== '') {
+                        $identity_key = 'wc:' . $wc_cookie_val;
+                    }
+                } elseif ($bucket === AdaptiveRateLimiter::BUCKET_SEARCH_PROBE) {
+                    $sess_token = $_COOKIE['PHPSESSID'] ?? ($_COOKIE['woocommerce_cart_hash'] ?? $ctx->userAgent);
+                    if ($sess_token !== '') {
+                        $identity_key = 's:' . substr((string) $sess_token, 0, 64);
+                    }
+                } elseif ($bucket === AdaptiveRateLimiter::BUCKET_REST_WRITE) {
+                    $user_id = function_exists('get_current_user_id') ? (int) get_current_user_id() : 0;
+                    $route_path = explode('?', $decoded_uri)[0];
+                    $identity_key = 'rest:' . $user_id . ':' . substr($route_path, 0, 48);
+                }
+
+                // Dual-Layer Rate Limiting: Check individual identity budget AND aggregate per-IP ceiling
+                $rate_result = AdaptiveRateLimiter::check_bucket_velocity($bucket, $client_ip, $limit, $window, $identity_key);
+                if (!empty($rate_result['allowed']) && $identity_key !== '') {
+                    $ip_multiplier = ($bucket === AdaptiveRateLimiter::BUCKET_AUTH) ? 4 : 5;
+                    $ip_ceiling = $limit * $ip_multiplier;
+                    $ip_result = AdaptiveRateLimiter::check_bucket_velocity($bucket, $client_ip, $ip_ceiling, $window, '');
+                    if (empty($ip_result['allowed'])) {
+                        $rate_result = $ip_result;
+                        $limit = $ip_ceiling;
+                    }
+                }
                 if (empty($rate_result['allowed'])) {
                     return WafVerdict::rate_limit(
                         'WAF-RATE-LIMIT-THROTTLED',

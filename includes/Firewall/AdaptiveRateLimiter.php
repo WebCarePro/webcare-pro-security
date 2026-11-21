@@ -198,25 +198,37 @@ class AdaptiveRateLimiter {
                 $curr_count = $counts['curr'];
                 $prev_count = $counts['prev'];
             } else {
-                // Secondary transient fallback under contention
-                $t_data = get_transient($base_key);
-                if (!is_array($t_data) || ($t_data['window_idx'] ?? 0) !== $current_window_idx) {
-                    $prev_count = 0;
-                    if (is_array($t_data) && ($t_data['window_idx'] ?? 0) === ($current_window_idx - 1)) {
-                        $prev_count = (int) ($t_data['curr'] ?? 0);
-                    }
-                    $curr_count = 1;
-                    $t_data = [
-                        'window_idx' => $current_window_idx,
-                        'prev'       => $prev_count,
-                        'curr'       => $curr_count,
-                    ];
-                } else {
-                    $prev_count = (int) ($t_data['prev'] ?? 0);
-                    $curr_count = (int) ($t_data['curr'] ?? 0) + 1;
-                    $t_data['curr'] = $curr_count;
+                // Controlled fail-safe policy under storage contention (P1)
+                // Never silently downgrade to a non-atomic transient counter.
+                if (class_exists('\\WebCareProScanner\\System\\WebCareActivityLogger')) {
+                    \WebCareProScanner\System\WebCareActivityLogger::warning('rate_limit_lock_contention', 'firewall', [
+                        'bucket'      => $bucket,
+                        'ip'          => $ip,
+                        'description' => sprintf('Rate limit lock contention on bucket %s for IP %s; applied fail-safe policy.', $bucket, $ip),
+                    ]);
                 }
-                set_transient($base_key, $t_data, $ttl);
+
+                // Sensitive authentication bucket fails closed (429) to prevent brute-force exploitation
+                if ($bucket === self::BUCKET_AUTH) {
+                    return [
+                        'allowed'     => false,
+                        'remaining'   => 0,
+                        'retry_after' => max(5, $window - $elapsed_in_window),
+                        'current'     => $limit + 1,
+                        'limit'       => $limit,
+                        'window'      => $window,
+                    ];
+                }
+
+                // Ordinary shopper/public traffic: allow-with-degraded-log
+                return [
+                    'allowed'     => true,
+                    'remaining'   => 1,
+                    'retry_after' => 0,
+                    'current'     => 1,
+                    'limit'       => $limit,
+                    'window'      => $window,
+                ];
             }
         }
 
@@ -369,7 +381,23 @@ class AdaptiveRateLimiter {
             }
         }
 
+        // Dual-Layer Rate Limiting (P1): When a granular identity key is present,
+        // enforce BOTH the individual identity budget AND an aggregate per-IP ceiling to prevent identity rotation bypass.
         $result = self::check_bucket_velocity($bucket, $client_ip, $limit, $window, $identity_key);
+        if (!$result['allowed']) {
+            $count = $result['current'];
+        } elseif ($identity_key !== '') {
+            // Check Aggregate Per-IP ceiling (generous shared-NAT ceiling: 4x for auth, 5x for commerce/search)
+            $ip_multiplier = ($bucket === self::BUCKET_AUTH) ? 4 : 5;
+            $ip_ceiling = $limit * $ip_multiplier;
+            $ip_result = self::check_bucket_velocity($bucket, $client_ip, $ip_ceiling, $window, '');
+            if (!$ip_result['allowed']) {
+                $result = $ip_result;
+                $count = $ip_result['current'];
+                $limit = $ip_ceiling;
+            }
+        }
+
         if ($result['allowed']) {
             return true;
         }
@@ -388,10 +416,9 @@ class AdaptiveRateLimiter {
             };
             $threat_weight = ($bucket === self::BUCKET_AUTH) ? 10.0 : 3.0;
 
-            // Per-IP + per-bucket escalation cooldown (max 1 threat score increment per 60s)
+            // Per-IP + per-bucket escalation cooldown (max 1 threat score increment per 60s, atomic)
             $cooldown_key = 'webcareproscan_rl_ts_cd_' . md5($client_ip . '_' . $bucket);
-            if (!get_transient($cooldown_key)) {
-                set_transient($cooldown_key, 1, 60);
+            if (self::atomic_cooldown_set($cooldown_key, 60)) {
                 ThreatScoreTracker::record_event($client_ip, $event_tag, $threat_weight);
             }
         }
@@ -557,7 +584,7 @@ class AdaptiveRateLimiter {
      * @param int $ttl
      * @return array{curr: int, prev: int}|null
      */
-    private static function file_atomic_window_increment(string $base_key, int $current_window_idx, int $ttl): ?array {
+    public static function file_atomic_window_increment(string $base_key, int $current_window_idx, int $ttl): ?array {
         if (!self::ensure_storage_dir()) {
             return null;
         }
@@ -591,7 +618,14 @@ class AdaptiveRateLimiter {
         $raw = '';
         while (!feof($fp)) {
             // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fread
-            $raw .= fread($fp, 8192);
+            $chunk = fread($fp, 8192);
+            if ($chunk === false) {
+                @flock($fp, LOCK_UN);
+                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+                @fclose($fp);
+                return null;
+            }
+            $raw .= $chunk;
         }
 
         $store = [];
@@ -631,11 +665,25 @@ class AdaptiveRateLimiter {
             'exp'  => $now + $ttl,
         ];
 
-        $payload = "<?php exit; ?>\n" . json_encode($store);
+        $encoded_json = json_encode($store);
+        if ($encoded_json === false) {
+            @flock($fp, LOCK_UN);
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+            @fclose($fp);
+            return null;
+        }
+
+        $payload = "<?php exit; ?>\n" . $encoded_json;
         rewind($fp);
         ftruncate($fp, 0);
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
-        fwrite($fp, $payload);
+        $written = fwrite($fp, $payload);
+        if ($written === false || $written < strlen($payload)) {
+            @flock($fp, LOCK_UN);
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+            @fclose($fp);
+            return null;
+        }
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fflush
         fflush($fp);
         @flock($fp, LOCK_UN);
@@ -646,5 +694,32 @@ class AdaptiveRateLimiter {
             'curr' => $curr_count,
             'prev' => $prev_count,
         ];
+    }
+
+    /**
+     * Atomically record an expiration lock / cooldown key without race conditions.
+     * Returns true if lock was acquired (cooldown set), false if already active.
+     */
+    public static function atomic_cooldown_set(string $cooldown_key, int $ttl_seconds = 60): bool {
+        $is_apcu = function_exists('apcu_add') && ini_get('apc.enabled') && (php_sapi_name() !== 'cli' || ini_get('apc.enable_cli'));
+        if ($is_apcu) {
+            return (bool) apcu_add($cooldown_key, 1, $ttl_seconds);
+        }
+
+        if (function_exists('wp_using_ext_object_cache') && wp_using_ext_object_cache()) {
+            return (bool) wp_cache_add($cooldown_key, 1, 'webcareproscan_rl', $ttl_seconds);
+        }
+
+        // For single-server MySQL or file-backed environments: use atomic add_option with expiration timestamp
+        $opt_key = 'wcps_cd_' . substr(md5($cooldown_key), 0, 20);
+        $now = time();
+        $existing = get_option($opt_key, false);
+        if ($existing !== false && is_numeric($existing) && (int) $existing > $now) {
+            return false;
+        }
+
+        // Clean expired and atomically add
+        delete_option($opt_key);
+        return (bool) add_option($opt_key, $now + $ttl_seconds, '', 'no');
     }
 }

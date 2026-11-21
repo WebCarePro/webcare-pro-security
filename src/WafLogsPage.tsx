@@ -3297,9 +3297,9 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
                                   visitorIcon = <ShoppingBag size={16} color="#4f46e5" />;
                                   visitorDesc = 'Visitor attempting store actions (cart, checkout, or account).';
                                 } else if (isSearchEngine) {
-                                  visitorType = 'Search Engine Indexer';
+                                  visitorType = 'Claims to be Search Engine (unverified)';
                                   visitorIcon = <Globe size={16} color="#0284c7" />;
-                                  visitorDesc = 'Legitimate search engine crawler.';
+                                  visitorDesc = 'User-Agent indicates crawler, but remote IP is not verified.';
                                 } else if (!isKnownBot) {
                                   visitorType = 'Human Browser / Potential Customer';
                                   visitorIcon = <HelpCircle size={16} color="#f59e0b" />;
