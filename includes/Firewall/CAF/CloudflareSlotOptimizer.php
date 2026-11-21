@@ -624,6 +624,14 @@ class CloudflareSlotOptimizer {
             });
 
             foreach ($scoped_patches as $patch) {
+                // Strict Stage & Action Parity: Only STAGE_ACTIVE patches with action === 'block'
+                // can ever be compiled into Cloudflare Rule 2 (block) expression
+                $patch_stage = (string) ($patch['stage'] ?? \WebCareProScanner\Firewall\DeclarativePatchVerifier::STAGE_ACTIVE);
+                $patch_action = strtolower((string) ($patch['action'] ?? 'block'));
+                if ($patch_stage !== \WebCareProScanner\Firewall\DeclarativePatchVerifier::STAGE_ACTIVE || $patch_action !== 'block') {
+                    continue;
+                }
+
                 $expr = trim((string) ($patch['cf_expression'] ?? ''));
                 if ($expr === '') {
                     continue;

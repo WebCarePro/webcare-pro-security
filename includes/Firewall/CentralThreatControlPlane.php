@@ -299,13 +299,14 @@ final class CentralThreatControlPlane {
             $component_type = (string) ($cve['component_type'] ?? 'plugin');
             $affected_range = (string) ($cve['affected_version'] ?? '');
 
-            // Correlate against full local inventory using CVEIntelligenceService
+            // Correlate against full local inventory using CVEIntelligenceService (including structured NVD configurations)
             $correlation = CVEIntelligenceService::correlate_component(
                 $component_slug,
                 $title,
                 $description,
                 $component_type,
-                $affected_range
+                $affected_range,
+                (array) ($cve['configurations'] ?? [])
             );
 
             // Factor in distinct CISA KEV (Known Active Exploitation) confidence signal

@@ -1,6 +1,6 @@
 {
-  "version": "3.3.1",
-  "generated_at": "2026-11-21T15:00:41.822Z",
+  "version": "3.3.2",
+  "generated_at": "2026-11-21T15:24:15.315Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -476,12 +476,12 @@
       "size": 31390
     },
     "includes/Firewall/CAF/CloudflareIpListSynchronizer.php": {
-      "sha256": "03ce86328afe0ca06220bf60c85732896a0ec919dbe4a3cca04984c489d39f16",
-      "size": 67218
+      "sha256": "dfbd1302c22ebf44d9a6d2ad8d14d196aeba2632619b809af89e51e97be7cac0",
+      "size": 69095
     },
     "includes/Firewall/CAF/CloudflareSlotOptimizer.php": {
-      "sha256": "c26a77694473ac42487135028d1dbe513597875eb7a997963975a0d8eac0987b",
-      "size": 36342
+      "sha256": "cac3f4c476dc5f0ca6bd32b1adbf95446966789819f648c7261a102c90c9e166",
+      "size": 36921
     },
     "includes/Firewall/CAF/ConflictAvoidanceEngine.php": {
       "sha256": "ef0c3adb3cb5a4938a142b9bbde17d7387fa94767994790ee2180935e0b0eb92",
@@ -508,8 +508,8 @@
       "size": 13336
     },
     "includes/Firewall/CentralThreatControlPlane.php": {
-      "sha256": "eb671e28125a2a18ce9791d073c325c6a986a1f1531c1c9f5387e649feba3631",
-      "size": 15387
+      "sha256": "d76bb798bae301fd43f1f8273ebd593abe09f086139d787fb68e6002e14d2723",
+      "size": 15485
     },
     "includes/Firewall/Core/AffiliateSecurityEngine.php": {
       "sha256": "5f46a331916603afa46022cfd0d6021aefae7dc1a9912e10a6c0cebcc7647959",
@@ -572,8 +572,8 @@
       "size": 14039
     },
     "includes/Firewall/CVEIntelligenceService.php": {
-      "sha256": "519759b719088307309649d258a750e180daceb76b78db46c2bcafca63674035",
-      "size": 62166
+      "sha256": "c1c1f7ceb34c3897cf35e48f722e334a5df80ec755afb2611d0fa336ca86f539",
+      "size": 62456
     },
     "includes/Firewall/DeclarativePatchVerifier.php": {
       "sha256": "a0af425e433b9baf83af8b8f0568dba9880ef70c2eabe29514b552a326212281",
@@ -716,8 +716,8 @@
       "size": 23267
     },
     "includes/Firewall/VirtualPatchManager.php": {
-      "sha256": "15a8de030abd16d740802339f634c86db999265361725c55b6ddace2c5c1acc1",
-      "size": 39402
+      "sha256": "44a214c7e2b0019835e5189ea42b8b337b6d0edacaf8ff2bf4ba95c17b7fb026",
+      "size": 44641
     },
     "includes/Firewall/VirtualPatchSynthesizer.php": {
       "sha256": "0d2dbb9e7b3558c92d48b9a76cd3ec53986934f028f5c049e3d953416e9e3981",
@@ -1044,8 +1044,8 @@
       "size": 24882
     },
     "includes/System/SettingsManager.php": {
-      "sha256": "86053df34d41ce48a101957e8e308a414e7404e1e7847f4f39e90f4151173fce",
-      "size": 119981
+      "sha256": "4dc24d76199b482307a37858807f8b26eda1ceab882dbd66440718ed034ebc81",
+      "size": 120006
     },
     "includes/System/SystemDoctor.php": {
       "sha256": "ff8b64dbdf08b380bd15a74444fb1c4930828868d49d2b3002b8df708c793b1e",
@@ -1104,15 +1104,15 @@
       "size": 28
     },
     "package.json": {
-      "sha256": "ac85831d8e81f16333cace106aa8823b53add9adc643179e93c6f136ed3102df",
+      "sha256": "a1033e8cca3ab18a0d8665f2cdaf59536a5a61f28b2e43259505d5fb60caa94c",
       "size": 437
     },
     "README.md": {
-      "sha256": "f86881fbc1c3685ca7dc2fb2715daa023aea59bda07885c0090a61287bdf631c",
+      "sha256": "656d8d973ab29108dcb8fcac9017a4eb1178a8cbb13251985a3ca3ccf0fbe374",
       "size": 28899
     },
     "readme.txt": {
-      "sha256": "7616e14086d4fd4b6932368a2e68294ff19604eb5e4a796c5b94f8fc092cd2ac",
+      "sha256": "42492128d19c6005b04adb350ad6dcfe80ae99d50d49075cec0958de4e4b36be",
       "size": 15155
     },
     "uninstall.php": {
@@ -1120,7 +1120,7 @@
       "size": 15530
     },
     "webcare-pro-security.php": {
-      "sha256": "5a16787fa4e3b1f7ea8a4be980d044bc7a16e94a067176fdd9f0d951fa6a642a",
+      "sha256": "e9411e548276301796c71284bdf176966726f964edaff5b16362212a526a0cdb",
       "size": 8333
     }
   }

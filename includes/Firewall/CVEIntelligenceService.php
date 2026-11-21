@@ -239,23 +239,29 @@ class CVEIntelligenceService {
         // Combine results according to operator
         $node_result = 'not_vulnerable';
         if ($operator === 'AND') {
+            $has_not_vulnerable = false;
             $has_unknown = false;
-            $all_vuln = true;
+            $all_vulnerable = true;
             foreach ($results as $r) {
                 if ($r === 'not_vulnerable') {
-                    $all_vuln = false;
+                    $has_not_vulnerable = true;
+                    $all_vulnerable = false;
                     $node_result = 'not_vulnerable';
                     break;
                 }
                 if ($r === 'unknown') {
                     $has_unknown = true;
-                    $all_vuln = false;
+                    $all_vulnerable = false;
                 }
             }
-            if ($all_vuln) {
-                $node_result = 'vulnerable';
-            } elseif ($has_unknown && $node_result !== 'not_vulnerable') {
+            if ($has_not_vulnerable) {
+                $node_result = 'not_vulnerable';
+            } elseif ($has_unknown) {
                 $node_result = 'unknown';
+            } elseif ($all_vulnerable) {
+                $node_result = 'vulnerable';
+            } else {
+                $node_result = 'not_vulnerable';
             }
         } else { // OR
             $has_unknown = false;
@@ -282,6 +288,7 @@ class CVEIntelligenceService {
             } elseif ($node_result === 'not_vulnerable') {
                 $node_result = 'vulnerable';
             }
+            // Negating 'unknown' stays 'unknown'
         }
 
         return $node_result;

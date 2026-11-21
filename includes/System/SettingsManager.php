@@ -215,7 +215,7 @@ class SettingsManager {
             // 9. Cloud Threat Intelligence & Community Blacklists (Opt-in required for automated feed sync)
             'threat_intel_enabled'               => false,
             'threat_intel_block_blacklisted_ips' => false,
-            'waf_auto_enforce_virtual_patches'   => true, // Automatically enforce vendor-verified high-confidence virtual patches
+            'waf_auto_enforce_virtual_patches'   => false, // Automatically enforce vendor-verified high-confidence virtual patches (owner opt-in required)
 
             // 10. Multi-Factor Authentication (2FA), Login Hardening & Session Sentinel
             'auth_2fa_enabled'                   => true,

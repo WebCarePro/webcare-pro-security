@@ -186,13 +186,17 @@ class VirtualPatchManager {
 
             $patch = $verify_res['patch'];
             $settings = SettingsManager::get_settings();
-            $owner_opt_in = !isset($settings['waf_auto_enforce_virtual_patches']) || !empty($settings['waf_auto_enforce_virtual_patches']);
-            // If the incoming signed patch already specifies an explicit valid stage, preserve it; otherwise evaluate promotion
-            $declared_stage = (string) ($patch['stage'] ?? '');
-            if ($declared_stage !== '') {
-                $patch['stage'] = $declared_stage;
+            $owner_opt_in = !empty($settings['waf_auto_enforce_virtual_patches']);
+            // If owner has NOT opted into auto-enforcement, force stage to SHADOW
+            if (!$owner_opt_in) {
+                $patch['stage'] = DeclarativePatchVerifier::STAGE_SHADOW;
             } else {
-                $patch['stage'] = DeclarativePatchVerifier::determine_initial_stage($patch, $owner_opt_in);
+                $declared_stage = (string) ($patch['stage'] ?? '');
+                if ($declared_stage !== '') {
+                    $patch['stage'] = $declared_stage;
+                } else {
+                    $patch['stage'] = DeclarativePatchVerifier::determine_initial_stage($patch, $owner_opt_in);
+                }
             }
         } else {
             $catalog = self::get_patch_catalog();
@@ -239,14 +243,20 @@ class VirtualPatchManager {
         $cf_msg = '';
 
         if (!empty($patch['cf_expression'])) {
-            $cf_res = self::deploy_to_cloudflare_edge($patch);
-            if ($cf_res['success']) {
-                $patch['deployed_to_cloudflare'] = true;
-                $patch['cloudflare_rule_id'] = $cf_res['rule_id'] ?? null;
-                $cf_deployed = true;
-                $cf_msg = __(' (Active on Cloudflare Global Edge + PHP WAF Lite)', 'webcare-pro-security');
+            $patch_stage = (string) ($patch['stage'] ?? DeclarativePatchVerifier::STAGE_ACTIVE);
+            $patch_action = strtolower((string) ($patch['action'] ?? 'block'));
+            if ($patch_stage === DeclarativePatchVerifier::STAGE_ACTIVE && $patch_action === 'block') {
+                $cf_res = self::deploy_to_cloudflare_edge($patch);
+                if ($cf_res['success']) {
+                    $patch['deployed_to_cloudflare'] = true;
+                    $patch['cloudflare_rule_id'] = $cf_res['rule_id'] ?? null;
+                    $cf_deployed = true;
+                    $cf_msg = __(' (Active on Cloudflare Global Edge + PHP WAF Lite)', 'webcare-pro-security');
+                } else {
+                    $cf_msg = ' (' . __('Local PHP WAF Lite Active; Cloudflare Edge: ', 'webcare-pro-security') . ($cf_res['message'] ?? 'Not connected') . ')';
+                }
             } else {
-                $cf_msg = ' (' . __('Local PHP WAF Lite Active; Cloudflare Edge: ', 'webcare-pro-security') . ($cf_res['message'] ?? 'Not connected') . ')';
+                $cf_msg = ' (' . sprintf(__('Local PHP WAF Lite [%s/%s]; Cloudflare Edge: Non-blocking or non-active stage retained at origin', 'webcare-pro-security'), $patch_stage, $patch_action) . ')';
             }
         } else {
             $stage_label = !empty($patch['stage']) ? " [{$patch['stage']}]" : '';
@@ -417,21 +427,76 @@ class VirtualPatchManager {
         $raw_body = '';
 
         if (in_array($method, ['POST', 'PUT', 'PATCH'], true)) {
-            $raw_input = @file_get_contents('php://input', false, null, 0, 65536);
-            $raw_body = !empty($raw_input) ? wp_unslash($raw_input) : '';
+            if (class_exists('\\WebCareProScanner\\Firewall\\Core\\RequestBodyReader')) {
+                $raw_body = \WebCareProScanner\Firewall\Core\RequestBodyReader::get_bounded_body(65536);
+            } else {
+                $raw_input = @file_get_contents('php://input', false, null, 0, 65536);
+                $raw_body = !empty($raw_input) ? wp_unslash($raw_input) : '';
+            }
         }
+
+        // Normalize request URI path to prevent query/fragment false positives and path traversal spoofing
+        $parsed_path = (string) (wp_parse_url($request_uri, PHP_URL_PATH) ?? '/');
+        $normalized_req_path = '/' . ltrim($parsed_path, '/');
 
         foreach ($active_patches as $patch_id => &$patch) {
             if (empty($patch['enabled'])) {
                 continue;
             }
 
-            // CAF 2.0: Skip virtual patches for components/plugins not currently installed or active
-            $comp = is_array($patch['component'] ?? null) ? ($patch['component']['slug'] ?? '') : ($patch['component'] ?? '');
-            $target_slug = strtolower((string) ($patch['target'] ?? $comp));
-            if (!empty($target_slug) && !in_array($target_slug, ['core', 'wordpress-core', 'generic', 'server', 'php', 'all-plugins', 'custom', 'test-plugin'], true)) {
-                if (class_exists('\\WebCareProScanner\\Firewall\\CAF\\AdaptiveFirewallAdvisor') &&
-                    !\WebCareProScanner\Firewall\CAF\AdaptiveFirewallAdvisor::is_plugin_slug_active($target_slug)) {
+            // CAF 2.0: Component-Type-Aware Applicability for Core, Plugins, Themes & MU Plugins
+            $comp_slug = is_array($patch['component'] ?? null) ? ($patch['component']['slug'] ?? '') : ($patch['component'] ?? '');
+            $comp_type = is_array($patch['component'] ?? null) ? strtolower((string) ($patch['component']['type'] ?? 'plugin')) : 'plugin';
+            $target_slug = strtolower((string) ($patch['target'] ?? $comp_slug));
+
+            if (!empty($target_slug) && !in_array($target_slug, ['generic', 'server', 'php', 'all-plugins', 'custom', 'test-plugin'], true)) {
+                $is_applicable = false;
+                switch ($comp_type) {
+                    case 'core':
+                        // Core patches always applicable (subject to version checks)
+                        $is_applicable = true;
+                        break;
+                    case 'theme':
+                        $active_stylesheet = function_exists('get_stylesheet') ? strtolower((string) get_stylesheet()) : '';
+                        $active_template   = function_exists('get_template') ? strtolower((string) get_template()) : '';
+                        if ($target_slug === $active_stylesheet || $target_slug === $active_template) {
+                            $is_applicable = true;
+                        } elseif (function_exists('wp_get_themes')) {
+                            $installed_themes = wp_get_themes();
+                            $is_applicable = is_array($installed_themes) && isset($installed_themes[$target_slug]);
+                        }
+                        break;
+                    case 'mu-plugin':
+                        if (function_exists('get_mu_plugins')) {
+                            $mu_plugins = get_mu_plugins();
+                            if (is_array($mu_plugins)) {
+                                foreach (array_keys($mu_plugins) as $mu_file) {
+                                    $mu_slug = strtolower(basename((string) $mu_file, '.php'));
+                                    if ($mu_slug === $target_slug || str_starts_with($mu_slug, $target_slug)) {
+                                        $is_applicable = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        if (!$is_applicable && defined('WPMU_PLUGIN_DIR') && is_dir(WPMU_PLUGIN_DIR)) {
+                            $is_applicable = file_exists(WPMU_PLUGIN_DIR . '/' . $target_slug . '.php')
+                                || is_dir(WPMU_PLUGIN_DIR . '/' . $target_slug);
+                        }
+                        break;
+                    case 'plugin':
+                    default:
+                        if (in_array($target_slug, ['core', 'wordpress-core'], true)) {
+                            $is_applicable = true;
+                        } elseif (class_exists('\\WebCareProScanner\\Firewall\\CAF\\AdaptiveFirewallAdvisor')) {
+                            $is_applicable = \WebCareProScanner\Firewall\CAF\AdaptiveFirewallAdvisor::is_plugin_slug_active($target_slug);
+                        } else {
+                            $is_applicable = true;
+                        }
+                        break;
+                }
+
+                if (!$is_applicable) {
                     continue;
                 }
             }
@@ -451,8 +516,25 @@ class VirtualPatchManager {
                     continue;
                 }
 
-                if ($match_route !== '/' && !str_starts_with($request_uri, $match_route) && stripos($request_uri, $match_route) === false) {
-                    continue;
+                if ($match_route !== '/' && $match_route !== '') {
+                    $route_matched = false;
+                    if (str_ends_with($match_route, '/*')) {
+                        // Wildcard prefix matching on directory boundary (e.g. /checkout/* matches /checkout/pay but not /checkout-admin)
+                        $prefix = rtrim(substr($match_route, 0, -2), '/');
+                        if ($normalized_req_path === $prefix || str_starts_with($normalized_req_path, $prefix . '/')) {
+                            $route_matched = true;
+                        }
+                    } elseif (rtrim($normalized_req_path, '/') === rtrim($match_route, '/')) {
+                        // Exact path equality
+                        $route_matched = true;
+                    } elseif (str_starts_with($normalized_req_path, rtrim($match_route, '/') . '/')) {
+                        // Sub-path match
+                        $route_matched = true;
+                    }
+
+                    if (!$route_matched) {
+                        continue;
+                    }
                 }
 
                 $predicate = (string) ($match['predicate'] ?? '');
@@ -702,32 +784,36 @@ class VirtualPatchManager {
             return ['success' => false, 'message' => __('Cloudflare integration service is unavailable.', 'webcare-pro-security')];
         }
 
-        // Abort immediately if fetching existing ruleset fails (PR-K2 / CF-05: Non-destructive sync)
-        $res = CloudflareService::request("zones/{$zone_id}/rulesets/phases/http_request_firewall_custom/entrypoint");
-        if (empty($res['success'])) {
-            $err = $res['errors'][0]['message'] ?? __('Failed to verify existing Cloudflare ruleset. Aborting sync to prevent overwriting customer rules.', 'webcare-pro-security');
-            return ['success' => false, 'message' => $err];
-        }
-
-        // Delegate synchronization cleanly through CloudflareSlotOptimizer if available
+        // Delegate synchronization cleanly through CloudflareSlotOptimizer as single authoritative fetch + deploy path
         if (class_exists('\\WebCareProScanner\\Firewall\\CAF\\CloudflareSlotOptimizer')) {
             $optimizer = new \WebCareProScanner\Firewall\CAF\CloudflareSlotOptimizer();
             $active_patches = self::get_active_patches();
             $scoped_patches = [];
             foreach ($active_patches as $p) {
-                if (!empty($p['cf_expression']) && !empty($p['enabled'])) {
+                $p_stage = (string) ($p['stage'] ?? DeclarativePatchVerifier::STAGE_ACTIVE);
+                $p_act = strtolower((string) ($p['action'] ?? 'block'));
+                if (!empty($p['cf_expression']) && !empty($p['enabled']) && $p_stage === DeclarativePatchVerifier::STAGE_ACTIVE && $p_act === 'block') {
                     $scoped_patches[] = $p;
                 }
             }
-            if (!empty($patch['cf_expression']) && !isset($active_patches[$patch['patch_id']])) {
+            $target_stage = (string) ($patch['stage'] ?? DeclarativePatchVerifier::STAGE_ACTIVE);
+            $target_act = strtolower((string) ($patch['action'] ?? 'block'));
+            if (!empty($patch['cf_expression']) && !isset($active_patches[$patch['patch_id']]) && $target_stage === DeclarativePatchVerifier::STAGE_ACTIVE && $target_act === 'block') {
                 $scoped_patches[] = $patch;
             }
             return $optimizer->deploy_to_cloudflare($zone_id, null, $scoped_patches);
         }
 
+        // Direct fallback when CloudflareSlotOptimizer is unavailable
+        $fetch_safe = CloudflareService::request("zones/{$zone_id}/rulesets/phases/http_request_firewall_custom/entrypoint");
+        if (empty($fetch_safe['success'])) {
+            $err = $fetch_safe['errors'][0]['message'] ?? __('Failed to verify existing Cloudflare ruleset. Aborting sync to prevent overwriting customer rules.', 'webcare-pro-security');
+            return ['success' => false, 'message' => $err];
+        }
+
         $rules = [];
-        if (!empty($res['result']['rules'])) {
-            foreach ($res['result']['rules'] as $r) {
+        if (!empty($fetch_safe['result']['rules'])) {
+            foreach ($fetch_safe['result']['rules'] as $r) {
                 // Keep other rules
                 $desc = $r['description'] ?? '';
                 if (strpos($desc, self::CF_TAG . ' ' . $patch['patch_id']) === false) {

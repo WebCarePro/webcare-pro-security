@@ -1382,42 +1382,80 @@ class CloudflareIpListSynchronizer {
             if ($current_status === 'completed') {
                 if ($type === 'delete') {
                     foreach ($ips as $ip) {
-                        // PR-A2: For completed async deletes, verify item absence ('confirmed_absent') before removing local active ledger entry
+                        // PR-A2: Explicit tri-state verification: 'confirmed_absent', 'confirmed_present', 'verification_unknown'
                         $verify_res = CloudflareService::request("accounts/{$account_id}/rules/lists/{$list_id}/items?search=" . rawurlencode($ip));
-                        $is_absent = true;
+                        $verify_state = 'verification_unknown';
+
                         if (!empty($verify_res['success']) && isset($verify_res['result']) && is_array($verify_res['result'])) {
+                            $found = false;
                             foreach ($verify_res['result'] as $v_item) {
                                 if (($v_item['ip'] ?? '') === $ip) {
-                                    $is_absent = false;
+                                    $found = true;
                                     break;
                                 }
                             }
+                            $verify_state = $found ? 'confirmed_present' : 'confirmed_absent';
                         }
-                        if ($is_absent) {
+
+                        // Only remove from active ledger on confirmed absence from a successful API verification
+                        if ($verify_state === 'confirmed_absent') {
                             unset($active_bans[$ip]);
                             $bans_modified = true;
                         }
                     }
                 } elseif ($type === 'create') {
-                    // Fetch list items to resolve and persist exact item_id for created items
-                    $list_items_res = CloudflareService::request("accounts/{$account_id}/rules/lists/{$list_id}/items?per_page=100");
-                    if (!empty($list_items_res['success']) && !empty($list_items_res['result']) && is_array($list_items_res['result'])) {
-                        $target_map = array_fill_keys($ips, true);
-                        foreach ($list_items_res['result'] as $l_item) {
-                            $l_ip = (string) ($l_item['ip'] ?? '');
-                            $l_id = (string) ($l_item['id'] ?? '');
-                            if (!empty($l_ip) && !empty($l_id) && isset($target_map[$l_ip])) {
-                                $entry = $active_bans[$l_ip] ?? [];
-                                $entry['target']     = $l_ip;
-                                $entry['mode']       = 'account';
-                                $entry['item_id']    = $l_id;
-                                $entry['state']      = 'active';
-                                $entry['synced_at']  = time();
-                                unset($entry['operation_id']);
-                                $active_bans[$l_ip]  = $entry;
-                                $bans_modified       = true;
-                            }
+                    // Fetch list items with cursor-based pagination to resolve and persist exact item_id for created items
+                    $target_map = array_fill_keys($ips, true);
+                    $resolved_ips = [];
+                    $cursor = '';
+                    $max_pages = 10;
+                    $page_count = 0;
+
+                    do {
+                        $endpoint = "accounts/{$account_id}/rules/lists/{$list_id}/items?per_page=100";
+                        if (!empty($cursor)) {
+                            $endpoint .= '&cursor=' . rawurlencode($cursor);
                         }
+
+                        $list_items_res = CloudflareService::request($endpoint);
+                        $page_count++;
+
+                        if (!empty($list_items_res['success']) && !empty($list_items_res['result']) && is_array($list_items_res['result'])) {
+                            foreach ($list_items_res['result'] as $l_item) {
+                                $l_ip = (string) ($l_item['ip'] ?? '');
+                                $l_id = (string) ($l_item['id'] ?? '');
+                                if (!empty($l_ip) && !empty($l_id) && isset($target_map[$l_ip])) {
+                                    $entry = $active_bans[$l_ip] ?? [];
+                                    $entry['target']     = $l_ip;
+                                    $entry['mode']       = 'account';
+                                    $entry['item_id']    = $l_id;
+                                    $entry['state']      = 'active';
+                                    $entry['synced_at']  = time();
+                                    unset($entry['operation_id']);
+                                    $active_bans[$l_ip]  = $entry;
+                                    $bans_modified       = true;
+                                    $resolved_ips[$l_ip] = true;
+                                }
+                            }
+
+                            // Advance cursor if more items remain and unresolved targets exist
+                            $cursor = (string) ($list_items_res['result_info']['cursors']['after'] ?? '');
+                            if (count($resolved_ips) >= count($ips)) {
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                    } while (!empty($cursor) && $page_count < $max_pages);
+
+                    // If not all IPs were resolved, retain only unresolved IPs for retry
+                    if (count($resolved_ips) < count($ips)) {
+                        $unresolved = array_values(array_filter($ips, static fn($ip) => !isset($resolved_ips[$ip])));
+                        $op_meta['ips'] = $unresolved;
+                        $op_meta['updated_at'] = time();
+                        $ops[$op_id] = $op_meta;
+                        $ops_modified = true;
+                        continue;
                     }
                 }
                 $op_meta['status'] = 'completed';
