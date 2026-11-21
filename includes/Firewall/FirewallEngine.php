@@ -1442,7 +1442,7 @@ class FirewallEngine {
         }
 
         // Rule #33: admin-ajax.php Unauthenticated Request Burst Rate-Limiter
-        if (!$skip_operational_heuristics && !empty($settings['waf_limit_admin_ajax'])) {
+        if (!self::$executed_under_pipeline && !$skip_operational_heuristics && !empty($settings['waf_limit_admin_ajax'])) {
             $clean_path = strtolower(wp_parse_url($request_uri, PHP_URL_PATH) ?: $request_uri);
             if (strpos($clean_path, 'admin-ajax.php') !== false) {
                 $is_logged_in = is_user_logged_in() || self::is_authenticated_administrator() || self::is_authenticated_editor_or_builder();
@@ -1509,12 +1509,12 @@ class FirewallEngine {
         }
 
         // Rule #36: Guest admin-ajax.php & admin-post.php Action Matrix Guard
-        if (!$skip_operational_heuristics) {
+        if (!self::$executed_under_pipeline && !$skip_operational_heuristics) {
             self::check_guest_ajax_policy($request_uri, $settings, $client_ip);
         }
 
         // Check XML-RPC Disabled Guard early at plugins_loaded:0
-        if (!empty($settings['waf_disable_xmlrpc']) && (strpos($request_uri, 'xmlrpc.php') !== false || (isset($_SERVER['SCRIPT_NAME']) && strpos(sanitize_text_field(wp_unslash($_SERVER['SCRIPT_NAME'])), 'xmlrpc.php') !== false))) {
+        if (!self::$executed_under_pipeline && !empty($settings['waf_disable_xmlrpc']) && (strpos($request_uri, 'xmlrpc.php') !== false || (isset($_SERVER['SCRIPT_NAME']) && strpos(sanitize_text_field(wp_unslash($_SERVER['SCRIPT_NAME'])), 'xmlrpc.php') !== false))) {
             // Smart Pass: Exclude verified Automattic Jetpack sync requests
             if (self::is_verified_jetpack_request($client_ip, $request_uri, $settings)) {
                 // Legitimate Jetpack request from official Automattic CIDR with valid tokens: permit execution
@@ -1620,7 +1620,7 @@ class FirewallEngine {
 
         // Smart Rule #49: Authentication & Password-Reset Array Type-Confusion Trap
         // Defends against PHP 8+ TypeError crashes and loose comparison bypasses in custom login/reset handlers
-        if (!self::is_authenticated_administrator() && !self::is_authenticated_editor_or_builder()) {
+        if (!self::$executed_under_pipeline && !self::is_authenticated_administrator() && !self::is_authenticated_editor_or_builder()) {
             $is_auth_endpoint = (strpos($request_uri, 'wp-login.php') !== false || strpos($request_uri, '/my-account') !== false || str_contains($request_uri, 'wc-ajax') || strpos($request_uri, 'lost-password') !== false || strpos($request_uri, 'action=rp') !== false || strpos($request_uri, 'action=resetpass') !== false);
             $sensitive_auth_keys = $is_auth_endpoint
                 ? ['log', 'pwd', 'user_login', 'user_email', 'rp_key', 'key', 'pass1', 'pass2', 'username', 'password']
@@ -1909,7 +1909,7 @@ class FirewallEngine {
         }
 
         // Specialized Rule: Disallow phpMyAdmin & Database Manager Plugin Installations (AJAX/REST/Query inspection)
-        if (!empty($settings['waf_disallow_phpmyadmin_plugins'])) {
+        if (!self::$executed_under_pipeline && !empty($settings['waf_disallow_phpmyadmin_plugins'])) {
             // phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.NonceVerification.Recommended -- Early WAF request inspection
             $req_slug = strtolower(isset($_POST['slug']) ? sanitize_text_field(wp_unslash($_POST['slug'])) : (isset($_GET['slug']) ? sanitize_text_field(wp_unslash($_GET['slug'])) : (isset($_POST['plugin']) ? sanitize_text_field(wp_unslash($_POST['plugin'])) : (isset($_GET['plugin']) ? sanitize_text_field(wp_unslash($_GET['plugin'])) : ''))));
             // phpcs:ignore WordPress.Security.NonceVerification.Missing
@@ -1961,7 +1961,7 @@ class FirewallEngine {
         }
 
         // Specialized Rule: Disallow File Manager Plugin Installations (AJAX/REST/Query inspection)
-        if (!empty($settings['waf_disallow_filemanager_plugins'])) {
+        if (!self::$executed_under_pipeline && !empty($settings['waf_disallow_filemanager_plugins'])) {
             // phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.NonceVerification.Recommended -- Early WAF request inspection
             $req_slug = strtolower(isset($_POST['slug']) ? sanitize_text_field(wp_unslash($_POST['slug'])) : (isset($_GET['slug']) ? sanitize_text_field(wp_unslash($_GET['slug'])) : (isset($_POST['plugin']) ? sanitize_text_field(wp_unslash($_POST['plugin'])) : (isset($_GET['plugin']) ? sanitize_text_field(wp_unslash($_GET['plugin'])) : ''))));
             // phpcs:ignore WordPress.Security.NonceVerification.Missing

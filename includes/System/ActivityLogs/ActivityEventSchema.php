@@ -136,13 +136,13 @@ class ActivityEventSchema {
             $roles = (array) $current_user->roles;
             $primary_role = !empty($roles) ? reset($roles) : 'none';
             return [
-                'display_name' => (string) $current_user->display_name,
+                'display_name' => (string) ($current_user->display_name ?? $current_user->user_login ?? 'User'),
                 'id'           => (int) $current_user->ID,
                 'ip'           => self::get_client_ip(),
                 'role'         => (string) $primary_role,
                 'type'         => 'user',
                 'user_agent'   => isset($_SERVER['HTTP_USER_AGENT']) ? substr(sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])), 0, 255) : '',
-                'user_login'   => (string) $current_user->user_login,
+                'user_login'   => (string) ($current_user->user_login ?? 'user'),
             ];
         }
 

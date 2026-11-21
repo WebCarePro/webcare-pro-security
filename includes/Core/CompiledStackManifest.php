@@ -179,6 +179,7 @@ final class CompiledStackManifest {
                 'WebCareProScanner\\Firewall\\Core\\AlwaysOnCoreGuard',
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
                 'WebCareProScanner\\Firewall\\Evaluators\\ProtocolAndBotEvaluator',
+                'WebCareProScanner\\Firewall\\Evaluators\\AuthAndAjaxSurfaceEvaluator',
                 'WebCareProScanner\\Auth\\WebAuthnManager',
             ],
             RouteClass::RestApi->value => [
@@ -198,12 +199,14 @@ final class CompiledStackManifest {
                 'WebCareProScanner\\Firewall\\Core\\AlwaysOnCoreGuard',
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
                 'WebCareProScanner\\Firewall\\Evaluators\\ProtocolAndBotEvaluator',
+                'WebCareProScanner\\Firewall\\Evaluators\\AuthAndAjaxSurfaceEvaluator',
                 'WebCareProScanner\\Firewall\\NextGen\\RuntimeSqlRaspEngine',
             ],
             RouteClass::AdminUi->value => [
                 'WebCareProScanner\\Firewall\\Core\\AlwaysOnCoreGuard',
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
                 'WebCareProScanner\\Firewall\\Evaluators\\ProtocolAndBotEvaluator',
+                'WebCareProScanner\\Firewall\\Evaluators\\AuthAndAjaxSurfaceEvaluator',
             ],
         ];
 

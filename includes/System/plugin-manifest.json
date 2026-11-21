@@ -1,6 +1,6 @@
 {
   "version": "3.21.0",
-  "generated_at": "2026-11-21T09:19:38.709Z",
+  "generated_at": "2026-11-21T11:06:14.500Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -348,8 +348,8 @@
       "size": 4446
     },
     "includes/Core/CompiledStackManifest.php": {
-      "sha256": "3bf0890703f076204b787b09f29f3c3c7e26eecd313f92ea2f63d5e62c954392",
-      "size": 23054
+      "sha256": "8bf2d7f0d3efbcf9f9e26cc8465dbebabb43acd984277148ebe68e3555503591",
+      "size": 23318
     },
     "includes/Core/ModuleRegistry.php": {
       "sha256": "0ecddd5325ff7b92d552f29054ef2d549181a8cfa00f175864e1c7494a5ff828",
@@ -591,6 +591,10 @@
       "sha256": "31ce55e5701a9069bf71087974ecec1113208ebd038ca8513c4485fd7adbef94",
       "size": 16748
     },
+    "includes/Firewall/Evaluators/AuthAndAjaxSurfaceEvaluator.php": {
+      "sha256": "2e12060c8b7efb0881df22642aff1c217e9f7a3f68d0437c30c35ab43d5686cc",
+      "size": 25696
+    },
     "includes/Firewall/Evaluators/AuthPolicyEvaluator.php": {
       "sha256": "07f6c8b1e346564c1bcab1d8dc59bb53d189db5c87506fca514ca53c243e35b2",
       "size": 2938
@@ -608,8 +612,8 @@
       "size": 2449
     },
     "includes/Firewall/FirewallEngine.php": {
-      "sha256": "9c38c5271c9607cbecf49caee343c5770d58ea9411fa49ab2dc8b82005c5cfd9",
-      "size": 325841
+      "sha256": "146795df1b9daf7a5a737a24f206ce865e593d372e1af81b1ed134d792b5295a",
+      "size": 326051
     },
     "includes/Firewall/FormSpamProtectionEngine.php": {
       "sha256": "d450cf8289cddf53554c6a084cd4776f6a6333f7c7afdad8d65c39e9fc79bfb6",
@@ -960,8 +964,8 @@
       "size": 4997
     },
     "includes/System/ActivityLogs/ActivityEventSchema.php": {
-      "sha256": "b10c91e03ca998bccbaf7903f85f1007cf5663b30594c0c7957789c6181db073",
-      "size": 8058
+      "sha256": "fac809d9e8ca6fc4576652055c789d4bdf8fed3819ca8433098e9b5ec253d3f9",
+      "size": 8111
     },
     "includes/System/ActivityLogs/ActivityExporter.php": {
       "sha256": "a1b7bb0d607a103a20e08caaf376d513532b39a424acc1a1bc37212c0b930391",
