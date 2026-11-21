@@ -759,9 +759,10 @@ class CloudflareIpListSynchronizer {
         }
 
         // Track operation_id if returned by Cloudflare async bulk list API
-        if (!empty($post_res['result']['operation_id'])) {
+        $operation_id = !empty($post_res['result']['operation_id']) ? (string) $post_res['result']['operation_id'] : '';
+        if (!empty($operation_id)) {
             self::record_pending_operation(
-                (string) $post_res['result']['operation_id'],
+                $operation_id,
                 $account_id,
                 $list_id,
                 'create',
@@ -814,7 +815,26 @@ class CloudflareIpListSynchronizer {
             }
         }
 
-        // If items STILL cannot be confirmed with valid item_id, fail closed and downgrade to zone access rules
+        // If items are still pending under an async operation, persist them in pending state
+        // rather than immediately falling back to Zone Access Rules while the bulk operation is processing
+        if (empty($synced_targets) && !empty($operation_id)) {
+            foreach ($targets as $t) {
+                $t_ip = (string) ($t['target'] ?? '');
+                if (!empty($t_ip)) {
+                    $active_bans[$t_ip] = [
+                        'target'       => $t_ip,
+                        'mode'         => 'account',
+                        'state'        => 'pending_create',
+                        'operation_id' => $operation_id,
+                        'expires_at'   => (int) ($source_entries[$t_ip]['expires_at'] ?? (time() + 86400)),
+                        'synced_at'    => time(),
+                    ];
+                    $synced_targets[] = $t_ip;
+                }
+            }
+        }
+
+        // If items STILL cannot be confirmed or tracked via pending operation, fail closed and downgrade to zone access rules
         if (empty($synced_targets)) {
             set_transient(self::OPTION_TOKEN_SCOPE, 'zone', 6 * 3600);
             return $this->sync_via_zone_access_rules($targets, $source_entries);
@@ -1066,10 +1086,14 @@ class CloudflareIpListSynchronizer {
         }
 
         // 2. Remove from pending batch queue if queued
-        self::mutate_ban_queue(static function (array $queue) use ($ip): array {
+        $queue_removed = self::mutate_ban_queue(static function (array $queue) use ($ip): array {
             unset($queue[$ip]);
             return $queue;
         });
+
+        if ($queue_removed === false) {
+            return false;
+        }
 
         // 3. Inspect active edge bans ledger
         $active_bans = get_option(self::OPTION_ACTIVE_EDGE_BANS, []);
@@ -1093,9 +1117,10 @@ class CloudflareIpListSynchronizer {
         $sync = new self();
         $scope = $sync->detect_api_scope();
         $zone_id = $settings['cloudflare_zone_id'] ?? '';
+        $mode = (string) ($meta['mode'] ?? '');
 
         // If tracked in Account List
-        if ($scope === 'account') {
+        if ($mode === 'account' || ($scope === 'account' && $mode !== 'zone')) {
             $accounts_res = CloudflareService::request('accounts');
             if (!empty($accounts_res['success']) && !empty($accounts_res['result'][0]['id'])) {
                 $account_id = (string) $accounts_res['result'][0]['id'];
@@ -1132,19 +1157,21 @@ class CloudflareIpListSynchronizer {
                                 $op_status = self::poll_bulk_operation($account_id, $operation_id);
 
                                 if ($op_status === 'completed') {
-                                    // Verify item is actually removed from list
+                                    // 3-state verification: 'confirmed_absent', 'confirmed_present', 'verification_unknown'
                                     $verify_res = CloudflareService::request("accounts/{$account_id}/rules/lists/{$list_id}/items?search=" . rawurlencode($ip));
-                                    $still_present = false;
-                                    if (!empty($verify_res['success']) && !empty($verify_res['result']) && is_array($verify_res['result'])) {
+                                    $verification_state = 'verification_unknown';
+                                    if (!empty($verify_res['success']) && isset($verify_res['result']) && is_array($verify_res['result'])) {
+                                        $still_present = false;
                                         foreach ($verify_res['result'] as $v_item) {
                                             if (($v_item['ip'] ?? '') === $ip) {
                                                 $still_present = true;
                                                 break;
                                             }
                                         }
+                                        $verification_state = $still_present ? 'confirmed_present' : 'confirmed_absent';
                                     }
 
-                                    if (!$still_present) {
+                                    if ($verification_state === 'confirmed_absent') {
                                         unset($active_bans[$ip]);
                                         update_option(self::OPTION_ACTIVE_EDGE_BANS, $active_bans, false);
                                         return true;
@@ -1163,12 +1190,35 @@ class CloudflareIpListSynchronizer {
                             }
 
                             // Synchronous completion without operation_id
-                            unset($active_bans[$ip]);
+                            $verify_res = CloudflareService::request("accounts/{$account_id}/rules/lists/{$list_id}/items?search=" . rawurlencode($ip));
+                            $verification_state = 'verification_unknown';
+                            if (!empty($verify_res['success']) && isset($verify_res['result']) && is_array($verify_res['result'])) {
+                                $still_present = false;
+                                foreach ($verify_res['result'] as $v_item) {
+                                    if (($v_item['ip'] ?? '') === $ip) {
+                                        $still_present = true;
+                                        break;
+                                    }
+                                }
+                                $verification_state = $still_present ? 'confirmed_present' : 'confirmed_absent';
+                            }
+
+                            if ($verification_state === 'confirmed_absent') {
+                                unset($active_bans[$ip]);
+                                update_option(self::OPTION_ACTIVE_EDGE_BANS, $active_bans, false);
+                                return true;
+                            }
+
+                            $meta['state']            = 'pending_unban';
+                            $meta['unban_status']     = 'unban_retry';
+                            $meta['last_unban_error'] = 'Post-verification state: ' . $verification_state;
+                            $active_bans[$ip]         = $meta;
                             update_option(self::OPTION_ACTIVE_EDGE_BANS, $active_bans, false);
-                            return true;
+                            return false;
                         }
 
                         // API call failed: retain local ledger entry and record error
+                        $meta['state']            = 'pending_unban';
                         $meta['unban_status']     = 'unban_retry';
                         $meta['last_unban_error'] = $del_res['errors'][0]['message'] ?? 'DELETE request rejected';
                         $active_bans[$ip]         = $meta;
@@ -1177,6 +1227,14 @@ class CloudflareIpListSynchronizer {
                     }
                 }
             }
+
+            // Do not fall through to Zone Access Rules for an account-list tracked IP
+            $meta['state']            = 'pending_unban';
+            $meta['unban_status']     = 'unban_retry';
+            $meta['last_unban_error'] = 'Account list lookup failed for account-tracked IP';
+            $active_bans[$ip]         = $meta;
+            update_option(self::OPTION_ACTIVE_EDGE_BANS, $active_bans, false);
+            return false;
         }
 
         // Zone IP Access Rules
@@ -1321,6 +1379,27 @@ class CloudflareIpListSynchronizer {
                     foreach ($ips as $ip) {
                         unset($active_bans[$ip]);
                         $bans_modified = true;
+                    }
+                } elseif ($type === 'create') {
+                    // Fetch list items to resolve and persist exact item_id for created items
+                    $list_items_res = CloudflareService::request("accounts/{$account_id}/rules/lists/{$list_id}/items?per_page=100");
+                    if (!empty($list_items_res['success']) && !empty($list_items_res['result']) && is_array($list_items_res['result'])) {
+                        $target_map = array_fill_keys($ips, true);
+                        foreach ($list_items_res['result'] as $l_item) {
+                            $l_ip = (string) ($l_item['ip'] ?? '');
+                            $l_id = (string) ($l_item['id'] ?? '');
+                            if (!empty($l_ip) && !empty($l_id) && isset($target_map[$l_ip])) {
+                                $entry = $active_bans[$l_ip] ?? [];
+                                $entry['target']     = $l_ip;
+                                $entry['mode']       = 'account';
+                                $entry['item_id']    = $l_id;
+                                $entry['state']      = 'active';
+                                $entry['synced_at']  = time();
+                                unset($entry['operation_id']);
+                                $active_bans[$l_ip]  = $entry;
+                                $bans_modified       = true;
+                            }
+                        }
                     }
                 }
                 $op_meta['status'] = 'completed';

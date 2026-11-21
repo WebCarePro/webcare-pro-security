@@ -210,6 +210,25 @@ class RescueAssistantManager {
             wp_delete_file($marker);
         }
 
+        // Verify marker deletion to prevent silent degraded state where Micro-WAF stays paused
+        if (file_exists($marker)) {
+            if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                \WebCareProScanner\System\AuditLogger::log('safe_mode_resume_failed', [
+                    'user_id' => get_current_user_id(),
+                    'marker'  => $marker,
+                    'error'   => 'Safe mode marker file could not be unlinked; pre-WordPress Micro-WAF remains paused.',
+                ]);
+            }
+
+            return array_merge(
+                [
+                    'success' => false,
+                    'message' => __('Warning: Strict firewall protection could not delete the Safe Mode marker file. Micro-WAF remains paused.', 'webcare-pro-security'),
+                ],
+                self::get_pause_status()
+            );
+        }
+
         if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
             \WebCareProScanner\System\AuditLogger::log('safe_mode_disabled', [
                 'user_id' => get_current_user_id(),

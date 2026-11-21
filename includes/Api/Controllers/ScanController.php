@@ -575,6 +575,20 @@ final class ScanController extends AbstractApiController {
             }
         }
 
+        // Verify scan was not cancelled and ownership is intact before performing durable file telemetry or queue advance
+        if (get_transient("webcareproscan_scan_cancelled_{$scan_id}")) {
+            ScanLock::release_batch_lock();
+            return new \WP_Error('scan_aborted', __('Scan was aborted. Halting vault and queue updates.', 'webcare-pro-security'), ['status' => 409]);
+        }
+
+        $scan_pre_advance_sql = "SELECT id FROM `{$table_scans}` WHERE id = %d AND status = 'running' AND generation_token = %s";
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
+        $valid_pre_advance = $wpdb->get_var($wpdb->prepare($scan_pre_advance_sql, $scan_id, $lease_token));
+        if (!$valid_pre_advance) {
+            ScanLock::release_batch_lock();
+            return new \WP_Error('scan_ownership_lost', __('Scan ownership lost or superseded. Halting vault and queue updates.', 'webcare-pro-security'), ['status' => 409]);
+        }
+
         // Offload scanned file telemetry to WebCare Scan Vault JSON manifest (zero database write bloat)
         if (!empty($batch_files_records) && class_exists('\\WebCareProScanner\\Scan\\ScanVaultManager')) {
             \WebCareProScanner\Scan\ScanVaultManager::append_batch($scan_id, $batch_files_records);

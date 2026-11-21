@@ -26,7 +26,8 @@ if (!defined('ABSPATH')) {
  */
 class CloudflareSlotOptimizer {
 
-    public const OPTION_MANAGED_RULE_IDS   = 'webcareproscan_cf_managed_rule_ids';
+    public const OPTION_MANAGED_RULE_IDS        = 'webcareproscan_cf_managed_rule_ids';
+    public const OPTION_VISUAL_MANAGED_RULE_IDS = 'webcareproscan_cf_visual_managed_rule_ids';
     public const MAX_EXPRESSION_BYTES       = 4000; // Safety buffer below Cloudflare Free 4096-byte limit
     public const MAX_WEBCARE_SLOTS          = 4;    // Maximum slots WebCare can ever claim (Slot 5 is 100% reserved for owner)
     public const MAX_WCP_SLOTS              = 4;    // Backward compatibility alias
@@ -154,6 +155,30 @@ class CloudflareSlotOptimizer {
     }
 
     /**
+     * Check if a rule entry is a WebCare Visual Studio rule by ID or description.
+     * Checks tracked visual rule IDs before description matching so user custom rules
+     * whose descriptions happen to contain WebCare substrings are never reclassified.
+     *
+     * @param string $rule_id
+     * @param string $description
+     * @param array<string>|null $visual_rule_ids
+     * @return bool
+     */
+    public function is_visual_custom_rule_entry(string $rule_id, string $description, ?array $visual_rule_ids = null): bool {
+        if ($visual_rule_ids === null) {
+            $stored = get_option(self::OPTION_VISUAL_MANAGED_RULE_IDS, []);
+            $visual_rule_ids = is_array($stored) ? $stored : [];
+        }
+
+        // If tracked visual rule IDs exist and rule has an ID, enforce ID-based ownership
+        if (!empty($rule_id) && !empty($visual_rule_ids)) {
+            return in_array($rule_id, $visual_rule_ids, true);
+        }
+
+        return $this->is_visual_custom_rule($description);
+    }
+
+    /**
      * Check if a rule description indicates a WebCare-managed rule.
      *
      * @param string $description
@@ -191,7 +216,7 @@ class CloudflareSlotOptimizer {
         }
 
         // Visual rules authored in WebCare Visual Studio
-        if ($this->is_visual_custom_rule($description)) {
+        if ($this->is_visual_custom_rule_entry($rule_id, $description)) {
             return true;
         }
 
@@ -344,17 +369,22 @@ class CloudflareSlotOptimizer {
         $existing_rules = $fetch['rules'];
         $managed_ids    = get_option(self::OPTION_MANAGED_RULE_IDS, []);
         $managed_ids    = is_array($managed_ids) ? $managed_ids : [];
+        $visual_ids     = get_option(self::OPTION_VISUAL_MANAGED_RULE_IDS, []);
+        $visual_ids     = is_array($visual_ids) ? $visual_ids : [];
 
         $visual_rules   = [];
         $user_rules     = [];
+        $stale_webcare  = [];
 
         foreach ($existing_rules as $rule) {
             $rule_id = (string) ($rule['id'] ?? '');
             $desc    = (string) ($rule['description'] ?? '');
 
-            if ($this->is_visual_custom_rule($desc)) {
+            if ($this->is_visual_custom_rule_entry($rule_id, $desc, $visual_ids)) {
                 $visual_rules[] = $rule;
-            } elseif (!$this->is_webcare_rule_entry($rule_id, $desc, $managed_ids)) {
+            } elseif ($this->is_webcare_rule_entry($rule_id, $desc, $managed_ids)) {
+                $stale_webcare[] = $rule;
+            } else {
                 $user_rules[] = $rule;
             }
         }
@@ -366,6 +396,18 @@ class CloudflareSlotOptimizer {
             max(0, 5 - 1 - count($user_rules) - count($visual_rules))
         );
         if ($slot_budget === 0) {
+            // If stale WebCare rules exist in the ruleset, deploy a cleaned ruleset containing
+            // only non-WebCare rules to free the owner's reserved slot rather than leaving stale rules behind
+            if (!empty($stale_webcare)) {
+                $cleaned_rules = array_merge($user_rules, $visual_rules);
+                CloudflareService::request(
+                    "zones/{$zone_id}/rulesets/phases/http_request_firewall_custom/entrypoint",
+                    'PUT',
+                    ['rules' => $cleaned_rules]
+                );
+                delete_option(self::OPTION_MANAGED_RULE_IDS);
+            }
+
             return [
                 'success'      => false,
                 'message'      => __('All available Cloudflare Free Plan custom rules are occupied by Visual or user-defined rules. 1 slot is guaranteed reserved for the site owner.', 'webcare-pro-security'),
@@ -398,9 +440,9 @@ class CloudflareSlotOptimizer {
         );
 
         // 6. Merge rules with strict Cloudflare `skip` semantics and owner precedence (Finding 1.2):
-        // Precedence order:
-        // 1. Visual `skip` rules (scoped strictly to `current` ruleset)
-        // 2. Owner custom rules (intact relative order)
+        // True Owner Rule Precedence:
+        // 1. Owner custom rules ($user_rules evaluate FIRST so visual skip never skips owner rules)
+        // 2. Visual `skip` rules (scoped strictly to `current` ruleset)
         // 3. WebCare managed compound rules (capped at $slot_budget)
         // 4. Visual `block` rules
         $visual_skip_rules  = [];
@@ -421,8 +463,8 @@ class CloudflareSlotOptimizer {
         }
 
         $final_rules = array_merge(
-            $visual_skip_rules,
             $user_rules,
+            $visual_skip_rules,
             $webcare_rules,
             $visual_block_rules
         );
@@ -445,15 +487,23 @@ class CloudflareSlotOptimizer {
                 ? $res['result']['rules']
                 : [];
             $new_managed_ids = [];
+            $new_visual_ids  = [];
             foreach ($returned_rules as $ret_r) {
                 $r_desc = (string) ($ret_r['description'] ?? '');
                 $r_id   = (string) ($ret_r['id'] ?? '');
-                if (!empty($r_id) && $this->is_webcare_rule($r_desc) && !$this->is_visual_custom_rule($r_desc)) {
-                    $new_managed_ids[] = $r_id;
+                if (!empty($r_id)) {
+                    if ($this->is_visual_custom_rule($r_desc)) {
+                        $new_visual_ids[] = $r_id;
+                    } elseif ($this->is_webcare_rule($r_desc)) {
+                        $new_managed_ids[] = $r_id;
+                    }
                 }
             }
             if (!empty($new_managed_ids)) {
                 update_option(self::OPTION_MANAGED_RULE_IDS, $new_managed_ids, false);
+            }
+            if (!empty($new_visual_ids)) {
+                update_option(self::OPTION_VISUAL_MANAGED_RULE_IDS, $new_visual_ids, false);
             }
 
             update_option('webcareproscan_caf_last_cf_slot_sync', [
