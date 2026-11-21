@@ -340,18 +340,37 @@ class VirtualPatchManager {
         $patch = $active[$patch_id];
 
         unset($active[$patch_id]);
-        update_option(self::OPTION_PATCHES, $active, false);
+        $main_updated = update_option(self::OPTION_PATCHES, $active, false);
 
         // If patch exists in synthesized hotpatches, revoke and disable it so it never reappears
         $synthesized_opt_key = class_exists('\\WebCareProScanner\\Firewall\\VirtualPatchSynthesizer')
             ? VirtualPatchSynthesizer::OPTION_SYNTHESIZED_PATCHES
             : 'webcareproscan_synthesized_virtual_patches';
         $synth_patches = get_option($synthesized_opt_key, []);
+        $synth_updated = true;
         if (is_array($synth_patches) && isset($synth_patches[$patch_id])) {
             $synth_patches[$patch_id]['enabled'] = false;
             $synth_patches[$patch_id]['stage'] = DeclarativePatchVerifier::STAGE_REVOKED;
             $synth_patches[$patch_id]['updated_at'] = current_time('mysql');
-            update_option($synthesized_opt_key, $synth_patches, false);
+            $synth_updated = update_option($synthesized_opt_key, $synth_patches, false);
+            // Verify persistence
+            $persisted_synth = get_option($synthesized_opt_key, []);
+            if (!empty($persisted_synth[$patch_id]['enabled'])) {
+                $synth_updated = false;
+            }
+        }
+
+        // Verify active patches persistence
+        $persisted_active = self::get_active_patches();
+        $local_removed = !isset($persisted_active[$patch_id]) && $synth_updated;
+
+        if (!$local_removed) {
+            return [
+                'success'         => false,
+                'local_removed'   => false,
+                'edge_reconciled' => false,
+                'message'         => __('Failed to persist patch deactivation in local storage.', 'webcare-pro-security'),
+            ];
         }
 
         // Always reconcile Cloudflare edge rules when a patch is removed / deactivated

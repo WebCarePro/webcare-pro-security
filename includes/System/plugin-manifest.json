@@ -1,6 +1,6 @@
 {
-  "version": "3.3.5",
-  "generated_at": "2026-11-21T17:04:23.027Z",
+  "version": "3.3.6",
+  "generated_at": "2026-11-21T17:13:32.758Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -476,8 +476,8 @@
       "size": 31579
     },
     "includes/Firewall/CAF/CloudflareIpListSynchronizer.php": {
-      "sha256": "092223fed4fccd71d09f92d22c0bf3386c551d7e28230a40df0cb3e0547ac9fd",
-      "size": 72804
+      "sha256": "623e4412fb1d36410b294acf4e29adc32bee68a7b980316645f4969eeffdd1e6",
+      "size": 74625
     },
     "includes/Firewall/CAF/CloudflareSlotOptimizer.php": {
       "sha256": "06a1ce29432bf9fef44c893c9030e50c5b3f9cb1eff8efcedf9b5de84d36f71b",
@@ -716,8 +716,8 @@
       "size": 23267
     },
     "includes/Firewall/VirtualPatchManager.php": {
-      "sha256": "0927910c3d665dd8c263cc2c957dc5d009daa588b0d1df59808dca145724ad11",
-      "size": 51736
+      "sha256": "3cfc79025d9894a76cae1da62403831822a0223ee676090cb95dd75341ee640f",
+      "size": 52539
     },
     "includes/Firewall/VirtualPatchSynthesizer.php": {
       "sha256": "0d2dbb9e7b3558c92d48b9a76cd3ec53986934f028f5c049e3d953416e9e3981",
@@ -1104,15 +1104,15 @@
       "size": 28
     },
     "package.json": {
-      "sha256": "37f484611dc7d9424c63bec0eb8483677fe32c521704251a202c389310bb8aa7",
+      "sha256": "bc50d5dc4296e9f6507511f441b55d4e314cb4d5f3359852f8a8909e6a6209d2",
       "size": 437
     },
     "README.md": {
-      "sha256": "b0157ee834205bd414dffe081f349e215567ce6ec5c5219f7241a922aec1dcb9",
+      "sha256": "0d72732b80e869ffe8b263c3baa59a2f93c56058b9631fb66798f99d514733bd",
       "size": 28899
     },
     "readme.txt": {
-      "sha256": "8752f604dbfb3305fc6aeab97deab229d3bfe8a8d62f0c88b156db2592d5a5dc",
+      "sha256": "427f9f57678d3551be8901cc30b1c75955f71cbc68ffacb67c4c371d5b135d89",
       "size": 15155
     },
     "uninstall.php": {
@@ -1120,7 +1120,7 @@
       "size": 15530
     },
     "webcare-pro-security.php": {
-      "sha256": "4a738066477cc72426e93f3cc098cc27ee104d957dc07d15b8a65b80e5aff864",
+      "sha256": "7b02452d655e77dd8a466e7f43d777e5774ffc77145ea593c412a8b14713dbe9",
       "size": 8333
     }
   }

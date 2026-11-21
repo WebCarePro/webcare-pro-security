@@ -1383,6 +1383,8 @@ class CloudflareIpListSynchronizer {
             if ($current_status === 'completed') {
                 if ($type === 'delete') {
                     $unresolved_deletes = [];
+                    $confirmed_present_items = []; // [['id' => $item_id, 'ip' => $ip]]
+                    $has_unknown_verification = false;
                     $retry_count = (int) ($op_meta['retry_count'] ?? 0);
 
                     foreach ($ips as $ip) {
@@ -1407,50 +1409,72 @@ class CloudflareIpListSynchronizer {
                         if ($verify_state === 'confirmed_absent') {
                             unset($active_bans[$ip]);
                             $bans_modified = true;
-                        } else {
-                            // If confirmed present, submit a fresh Cloudflare DELETE request if under retry limit
-                            if ($verify_state === 'confirmed_present' && $retry_count < 5) {
-                                $delete_item_id = $found_item_id !== '' ? $found_item_id : (string) ($active_bans[$ip]['item_id'] ?? '');
-                                if (!empty($delete_item_id)) {
-                                    $fresh_del_res = CloudflareService::request(
-                                        "accounts/{$account_id}/rules/lists/{$list_id}/items",
-                                        'DELETE',
-                                        ['items' => [['id' => $delete_item_id]]]
-                                    );
-                                    if (!empty($fresh_del_res['success'])) {
-                                        $new_op_id = (string) ($fresh_del_res['result']['operation_id'] ?? '');
-                                        if (!empty($new_op_id)) {
-                                            $op_meta['operation_id'] = $new_op_id;
-                                            $op_meta['status'] = 'running';
-                                        }
-                                    }
-                                }
+                        } elseif ($verify_state === 'confirmed_present') {
+                            $delete_item_id = $found_item_id !== '' ? $found_item_id : (string) ($active_bans[$ip]['item_id'] ?? '');
+                            if (!empty($delete_item_id)) {
+                                $confirmed_present_items[] = ['id' => $delete_item_id, 'ip' => $ip];
                             }
+                            $unresolved_deletes[] = $ip;
+                        } else { // verification_unknown
+                            $has_unknown_verification = true;
                             $unresolved_deletes[] = $ip;
                         }
                     }
 
-                    // Keep delete operation pending for retry if any IP is still confirmed_present or verification_unknown
-                    if (!empty($unresolved_deletes)) {
-                        $op_meta['ips'] = $unresolved_deletes;
-                        $op_meta['updated_at'] = time();
-
-                        // Transition to failed_terminal only when the 5th attempt has already completed and verification still fails
-                        if ($retry_count >= 5) {
+                    // If items are confirmed present and under the retry limit, submit a single consolidated batch DELETE
+                    $submitted_new_delete = false;
+                    if (!empty($confirmed_present_items)) {
+                        if ($retry_count < 5) {
+                            $batch_items = array_map(static fn(array $item): array => ['id' => $item['id']], $confirmed_present_items);
+                            $fresh_del_res = CloudflareService::request(
+                                "accounts/{$account_id}/rules/lists/{$list_id}/items",
+                                'DELETE',
+                                ['items' => $batch_items]
+                            );
+                            if (!empty($fresh_del_res['success'])) {
+                                $new_op_id = (string) ($fresh_del_res['result']['operation_id'] ?? '');
+                                if (!empty($new_op_id)) {
+                                    $op_meta['operation_id'] = $new_op_id;
+                                    $op_meta['status'] = 'running';
+                                    $retry_count++;
+                                    $op_meta['retry_count'] = $retry_count;
+                                    $submitted_new_delete = true;
+                                } else {
+                                    // P2: Success without operation_id is a reconciliation anomaly
+                                    $op_meta['status'] = 'running';
+                                    $op_meta['last_error'] = 'Cloudflare batch DELETE succeeded without operation_id';
+                                    unset($op_meta['operation_id']); // Do not poll stale completed ID
+                                    if (class_exists('\\WebCareProScanner\\Audit\\AuditLogger')) {
+                                        \WebCareProScanner\Audit\AuditLogger::log_event(
+                                            'CF_ASYNC_DELETE_MISSING_OP_ID',
+                                            'Cloudflare batch DELETE succeeded without operation_id. Will reverify list items on next tick.'
+                                        );
+                                    }
+                                }
+                            } else {
+                                $op_meta['status'] = 'running';
+                                $op_meta['last_error'] = 'Cloudflare batch DELETE request failed';
+                            }
+                        } else {
+                            // Already submitted 5 attempts, and verification still confirmed items present
                             $op_meta['status'] = 'failed_terminal';
                             if (class_exists('\\WebCareProScanner\\Audit\\AuditLogger')) {
                                 \WebCareProScanner\Audit\AuditLogger::log_event(
                                     'CF_ASYNC_DELETE_FAILED_TERMINAL',
-                                    sprintf('Cloudflare async delete reached max retry limit (5) with %d unresolved IP(s): %s', count($unresolved_deletes), implode(', ', $unresolved_deletes))
+                                    sprintf('Cloudflare async delete reached max retry limit (5) with %d confirmed present IP(s): %s', count($confirmed_present_items), implode(', ', array_column($confirmed_present_items, 'ip')))
                                 );
                             }
-                        } else {
-                            $retry_count++;
-                            $op_meta['retry_count'] = $retry_count;
-                            if (empty($op_meta['status']) || $op_meta['status'] !== 'running') {
-                                $op_meta['status'] = 'running';
-                            }
                         }
+                    } elseif ($has_unknown_verification) {
+                        // P1: verification_unknown does not count as a completed unsuccessful delete attempt
+                        // Retain operation for retry verification without incrementing retry_count or terminating
+                        $op_meta['status'] = 'running';
+                    }
+
+                    // Keep delete operation pending for retry if any IP is still unresolved
+                    if (!empty($unresolved_deletes)) {
+                        $op_meta['ips'] = $unresolved_deletes;
+                        $op_meta['updated_at'] = time();
 
                         $ops[$op_id] = $op_meta;
                         $ops_modified = true;
