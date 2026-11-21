@@ -1,6 +1,6 @@
 {
-  "version": "3.3.9",
-  "generated_at": "2026-11-21T17:57:56.934Z",
+  "version": "3.22.0",
+  "generated_at": "2026-11-21T18:05:26.343Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -588,8 +588,8 @@
       "size": 16339
     },
     "includes/Firewall/Evaluators/AiAgentBehaviorEvaluator.php": {
-      "sha256": "ef256ebbf13edfab995a3c2f2cf980c5126a7c35ab75c103f558852486c0df96",
-      "size": 16764
+      "sha256": "6760e60017c42216573257d8bfbb53e47a353d4219b20e9b5b2efe4486cec182",
+      "size": 16856
     },
     "includes/Firewall/Evaluators/AuthAndAjaxSurfaceEvaluator.php": {
       "sha256": "2e12060c8b7efb0881df22642aff1c217e9f7a3f68d0437c30c35ab43d5686cc",
@@ -1104,24 +1104,24 @@
       "size": 28
     },
     "package.json": {
-      "sha256": "b4be56eed21afe0275a3de3aed1bbcd1e5d6f3aa3f9b8ca97eba11283da2194e",
-      "size": 437
+      "sha256": "4fb784ca587e1d1161ecf24ee365793f08e40be6a133d164dd3e700afbf2fc45",
+      "size": 438
     },
     "README.md": {
-      "sha256": "be8a8685e9a596d97273d68b7900b7aad9befef1acf74b60ce6c22560943ed3e",
-      "size": 28899
+      "sha256": "3ce791a612ab73071c252ca8b7f1f57b7ee5650bb56e80c309e66f8f46cbc4d0",
+      "size": 28900
     },
     "readme.txt": {
-      "sha256": "f0425d9d547b90506556842a5865bd09626319c03a2114a828ea4a45362f9b27",
-      "size": 15155
+      "sha256": "4576bf3797709a302f185c1116a49e9d00343b3184ffed233891b68a58513188",
+      "size": 15156
     },
     "uninstall.php": {
       "sha256": "ddc8a1e6f7d51b3b29bad7427ee596af23e3df06658f34e2ef3a12d15fe9f5cb",
       "size": 15530
     },
     "webcare-pro-security.php": {
-      "sha256": "459ba9c837b973ef6570f801ebc25761b690d1d21367e1e73ee5c7e0bded3a16",
-      "size": 8333
+      "sha256": "6b7a5ec0227d224fee98321bc75068d13f0ba05ad1ca2ce5c99be08fb78d34c0",
+      "size": 8335
     }
   }
 }
