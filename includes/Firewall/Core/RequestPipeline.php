@@ -373,7 +373,21 @@ final class RequestPipeline {
                     $evaluator = new $evaluator_class();
                     $verdict = $evaluator->evaluate_runtime_request($ctx);
                     if ($verdict instanceof WafVerdict) {
-                        if (self::is_terminal_verdict($verdict)) {
+                        if ($verdict->get_action_value() === 'log_only') {
+                            if (class_exists(FirewallEngine::class)) {
+                                FirewallEngine::log_incident([
+                                    'id'          => $verdict->ruleId,
+                                    'name'        => $verdict->category . ' [Log Only]',
+                                    'category'    => $verdict->category,
+                                    'description' => $verdict->reason,
+                                    'match_type'  => 'Virtual Patch Log Only',
+                                    'match_value' => $verdict->ruleId,
+                                    'payload'     => "Client IP: {$ctx->ip} URI: {$ctx->uri}",
+                                    'sync_cloudflare' => false,
+                                    'ban_ttl'         => 0,
+                                ], 'detected');
+                            }
+                        } elseif (self::is_terminal_verdict($verdict)) {
                             return $verdict;
                         }
                     }

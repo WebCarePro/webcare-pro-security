@@ -24,6 +24,7 @@ final class RequestBodyReader {
     private static ?int $configured_max_bytes = null;
     private static int $bytes_read = 0;
     private static bool $is_truncated = false;
+    private static bool $read_failed = false;
     private static string $sha256 = '';
 
     /**
@@ -57,12 +58,25 @@ final class RequestBodyReader {
                 self::$bytes_read = $len;
                 self::$cached_raw_body = $raw;
             }
+            self::$read_failed = false;
             self::$sha256 = hash('sha256', self::$cached_raw_body);
             return self::$cached_raw_body;
         }
 
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Bounded streaming of php://input
-        $read = (string) @file_get_contents('php://input', false, null, 0, $max_bytes + 1);
+        $raw_read = @file_get_contents('php://input', false, null, 0, $max_bytes + 1);
+
+        if ($raw_read === false) {
+            self::$read_failed = true;
+            self::$is_truncated = false;
+            self::$bytes_read = 0;
+            self::$cached_raw_body = '';
+            self::$sha256 = hash('sha256', '');
+            return '';
+        }
+
+        self::$read_failed = false;
+        $read = (string) $raw_read;
         $len = strlen($read);
 
         if ($len > $max_bytes) {
@@ -77,6 +91,18 @@ final class RequestBodyReader {
 
         self::$sha256 = hash('sha256', self::$cached_raw_body);
         return self::$cached_raw_body;
+    }
+
+    /**
+     * Check if reading the request body failed.
+     *
+     * @return bool
+     */
+    public static function has_read_failed(): bool {
+        if (self::$cached_raw_body === null) {
+            self::get_bounded_body();
+        }
+        return self::$read_failed;
     }
 
     /**

@@ -1381,6 +1381,7 @@ class CloudflareIpListSynchronizer {
 
             if ($current_status === 'completed') {
                 if ($type === 'delete') {
+                    $unresolved_deletes = [];
                     foreach ($ips as $ip) {
                         // PR-A2: Explicit tri-state verification: 'confirmed_absent', 'confirmed_present', 'verification_unknown'
                         $verify_res = CloudflareService::request("accounts/{$account_id}/rules/lists/{$list_id}/items?search=" . rawurlencode($ip));
@@ -1401,13 +1402,24 @@ class CloudflareIpListSynchronizer {
                         if ($verify_state === 'confirmed_absent') {
                             unset($active_bans[$ip]);
                             $bans_modified = true;
+                        } else {
+                            $unresolved_deletes[] = $ip;
                         }
+                    }
+
+                    // Keep delete operation pending for retry if any IP is still confirmed_present or verification_unknown
+                    if (!empty($unresolved_deletes)) {
+                        $op_meta['ips'] = $unresolved_deletes;
+                        $op_meta['updated_at'] = time();
+                        $ops[$op_id] = $op_meta;
+                        $ops_modified = true;
+                        continue;
                     }
                 } elseif ($type === 'create') {
                     // Fetch list items with cursor-based pagination to resolve and persist exact item_id for created items
                     $target_map = array_fill_keys($ips, true);
                     $resolved_ips = [];
-                    $cursor = '';
+                    $cursor = (string) ($op_meta['last_cursor'] ?? '');
                     $max_pages = 10;
                     $page_count = 0;
 
@@ -1448,15 +1460,22 @@ class CloudflareIpListSynchronizer {
                         }
                     } while (!empty($cursor) && $page_count < $max_pages);
 
-                    // If not all IPs were resolved, retain only unresolved IPs for retry
+                    // If not all IPs were resolved, retain only unresolved IPs for retry and persist last_cursor
                     if (count($resolved_ips) < count($ips)) {
                         $unresolved = array_values(array_filter($ips, static fn($ip) => !isset($resolved_ips[$ip])));
                         $op_meta['ips'] = $unresolved;
+                        if (!empty($cursor)) {
+                            $op_meta['last_cursor'] = $cursor;
+                        } else {
+                            unset($op_meta['last_cursor']);
+                        }
                         $op_meta['updated_at'] = time();
                         $ops[$op_id] = $op_meta;
                         $ops_modified = true;
                         continue;
                     }
+
+                    unset($op_meta['last_cursor']);
                 }
                 $op_meta['status'] = 'completed';
                 $op_meta['updated_at'] = time();

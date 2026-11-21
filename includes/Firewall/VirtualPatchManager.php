@@ -187,8 +187,8 @@ class VirtualPatchManager {
             $patch = $verify_res['patch'];
             $settings = SettingsManager::get_settings();
             $owner_opt_in = !empty($settings['waf_auto_enforce_virtual_patches']);
-            // If owner has NOT opted into auto-enforcement, force stage to SHADOW
-            if (!$owner_opt_in) {
+            // If owner has NOT opted into auto-enforcement, force stage to SHADOW (preserving STAGE_REVOKED)
+            if (!$owner_opt_in && ($patch['stage'] ?? '') !== DeclarativePatchVerifier::STAGE_REVOKED) {
                 $patch['stage'] = DeclarativePatchVerifier::STAGE_SHADOW;
             } else {
                 $declared_stage = (string) ($patch['stage'] ?? '');
@@ -220,6 +220,8 @@ class VirtualPatchManager {
                     'description'   => $custom_config['description'] ?? 'Custom Virtual Patch shield deployed via WebCare.',
                     'php_rule'      => $custom_config['php_rule'] ?? ['target_uris' => ['/'], 'regex' => '/\.\.\//i'],
                     'cf_expression' => $custom_config['cf_expression'] ?? '',
+                    'stage'         => $custom_config['stage'] ?? DeclarativePatchVerifier::STAGE_ACTIVE,
+                    'action'        => $custom_config['action'] ?? 'block',
                 ];
             }
         }
@@ -238,33 +240,33 @@ class VirtualPatchManager {
         $patch['deployed_to_cloudflare'] = false;
         $patch['cloudflare_rule_id'] = null;
 
+        // Build & persist the post-update patch collection FIRST before Cloudflare reconciliation
+        $active[$patch_id] = $patch;
+        update_option(self::OPTION_PATCHES, $active, false);
+
         // Tier 2: Deploy to Cloudflare Global Edge if Cloudflare is configured
         $cf_deployed = false;
         $cf_msg = '';
 
-        if (!empty($patch['cf_expression'])) {
-            $patch_stage = (string) ($patch['stage'] ?? DeclarativePatchVerifier::STAGE_ACTIVE);
-            $patch_action = strtolower((string) ($patch['action'] ?? 'block'));
-            if ($patch_stage === DeclarativePatchVerifier::STAGE_ACTIVE && $patch_action === 'block') {
-                $cf_res = self::deploy_to_cloudflare_edge($patch);
-                if ($cf_res['success']) {
-                    $patch['deployed_to_cloudflare'] = true;
-                    $patch['cloudflare_rule_id'] = $cf_res['rule_id'] ?? null;
-                    $cf_deployed = true;
-                    $cf_msg = __(' (Active on Cloudflare Global Edge + PHP WAF Lite)', 'webcare-pro-security');
-                } else {
-                    $cf_msg = ' (' . __('Local PHP WAF Lite Active; Cloudflare Edge: ', 'webcare-pro-security') . ($cf_res['message'] ?? 'Not connected') . ')';
-                }
+        $patch_stage = (string) ($patch['stage'] ?? DeclarativePatchVerifier::STAGE_ACTIVE);
+        $patch_action = strtolower((string) ($patch['action'] ?? 'block'));
+
+        // Always reconcile Cloudflare edge rules with the full post-update patch collection
+        $cf_res = self::deploy_to_cloudflare_edge($patch);
+        if ($cf_res['success']) {
+            if ($patch_stage === DeclarativePatchVerifier::STAGE_ACTIVE && $patch_action === 'block' && !empty($patch['cf_expression'])) {
+                $patch['deployed_to_cloudflare'] = true;
+                $patch['cloudflare_rule_id'] = $cf_res['rule_id'] ?? null;
+                $cf_deployed = true;
+                $cf_msg = __(' (Active on Cloudflare Global Edge + PHP WAF Lite)', 'webcare-pro-security');
+                $active[$patch_id] = $patch;
+                update_option(self::OPTION_PATCHES, $active, false);
             } else {
                 $cf_msg = ' (' . sprintf(__('Local PHP WAF Lite [%s/%s]; Cloudflare Edge: Non-blocking or non-active stage retained at origin', 'webcare-pro-security'), $patch_stage, $patch_action) . ')';
             }
         } else {
-            $stage_label = !empty($patch['stage']) ? " [{$patch['stage']}]" : '';
-            $cf_msg = __(' (Active on Local PHP WAF Lite)', 'webcare-pro-security') . $stage_label;
+            $cf_msg = ' (' . __('Local PHP WAF Lite Active; Cloudflare Edge: ', 'webcare-pro-security') . ($cf_res['message'] ?? 'Not connected') . ')';
         }
-
-        $active[$patch_id] = $patch;
-        update_option(self::OPTION_PATCHES, $active, false);
 
         // Record Audit Log with Rich Details
         if (class_exists('\\WebCareProScanner\\System\\WebCareActivityLogger')) {
@@ -334,13 +336,13 @@ class VirtualPatchManager {
 
         $patch = $active[$patch_id];
 
-        // Remove from Cloudflare if deployed
-        if (!empty($patch['deployed_to_cloudflare'])) {
-            self::remove_from_cloudflare_edge($patch_id);
-        }
-
         unset($active[$patch_id]);
         update_option(self::OPTION_PATCHES, $active, false);
+
+        // Always reconcile Cloudflare edge rules when a patch is removed / deactivated
+        if (!empty($patch['deployed_to_cloudflare']) || !empty($patch['cf_expression'])) {
+            self::remove_from_cloudflare_edge($patch_id);
+        }
 
         if (class_exists('\\WebCareProScanner\\System\\WebCareActivityLogger')) {
             \WebCareProScanner\System\WebCareActivityLogger::notice('virtual_patch_deactivated', 'firewall', [
@@ -543,6 +545,25 @@ class VirtualPatchManager {
 
                 $source = strtolower((string) ($match['source'] ?? ''));
                 $key    = (string) ($match['key'] ?? '');
+
+                // Check for read truncation or stream read failure on body predicates
+                if (in_array($source, ['body', 'raw_body', 'json', 'post', 'form'], true) || ($source === '' && $key === '')) {
+                    if (class_exists('\\WebCareProScanner\\Firewall\\Core\\RequestBodyReader')) {
+                        if (\WebCareProScanner\Firewall\Core\RequestBodyReader::has_read_failed()) {
+                            AuditLogger::log_event(
+                                'VPATCH_BODY_READ_FAILED',
+                                sprintf('Virtual patch %s body predicate evaluation skipped due to php://input stream read failure.', $patch_id)
+                            );
+                            continue;
+                        }
+                        if (\WebCareProScanner\Firewall\Core\RequestBodyReader::is_truncated()) {
+                            AuditLogger::log_event(
+                                'VPATCH_BODY_TRUNCATED',
+                                sprintf('Virtual patch %s body payload exceeded bounded ceiling; evaluating available truncated prefix.', $patch_id)
+                            );
+                        }
+                    }
+                }
 
                 // Resolve target source value if key/source is specified
                 $target_value = null;
@@ -788,6 +809,8 @@ class VirtualPatchManager {
         if (class_exists('\\WebCareProScanner\\Firewall\\CAF\\CloudflareSlotOptimizer')) {
             $optimizer = new \WebCareProScanner\Firewall\CAF\CloudflareSlotOptimizer();
             $active_patches = self::get_active_patches();
+            // Ensure incoming patch is reflected in active_patches collection
+            $active_patches[$patch['patch_id']] = $patch;
             $scoped_patches = [];
             foreach ($active_patches as $p) {
                 $p_stage = (string) ($p['stage'] ?? DeclarativePatchVerifier::STAGE_ACTIVE);
@@ -795,11 +818,6 @@ class VirtualPatchManager {
                 if (!empty($p['cf_expression']) && !empty($p['enabled']) && $p_stage === DeclarativePatchVerifier::STAGE_ACTIVE && $p_act === 'block') {
                     $scoped_patches[] = $p;
                 }
-            }
-            $target_stage = (string) ($patch['stage'] ?? DeclarativePatchVerifier::STAGE_ACTIVE);
-            $target_act = strtolower((string) ($patch['action'] ?? 'block'));
-            if (!empty($patch['cf_expression']) && !isset($active_patches[$patch['patch_id']]) && $target_stage === DeclarativePatchVerifier::STAGE_ACTIVE && $target_act === 'block') {
-                $scoped_patches[] = $patch;
             }
             return $optimizer->deploy_to_cloudflare($zone_id, null, $scoped_patches);
         }
@@ -874,6 +892,22 @@ class VirtualPatchManager {
 
         if (!class_exists('\\WebCareProScanner\\Cloudflare\\CloudflareService')) {
             return false;
+        }
+
+        // Delegate synchronization cleanly through CloudflareSlotOptimizer as single authoritative fetch + deploy path
+        if (class_exists('\\WebCareProScanner\\Firewall\\CAF\\CloudflareSlotOptimizer')) {
+            $optimizer = new \WebCareProScanner\Firewall\CAF\CloudflareSlotOptimizer();
+            $active_patches = self::get_active_patches();
+            $scoped_patches = [];
+            foreach ($active_patches as $p) {
+                $p_stage = (string) ($p['stage'] ?? DeclarativePatchVerifier::STAGE_ACTIVE);
+                $p_act = strtolower((string) ($p['action'] ?? 'block'));
+                if (!empty($p['cf_expression']) && !empty($p['enabled']) && $p_stage === DeclarativePatchVerifier::STAGE_ACTIVE && $p_act === 'block') {
+                    $scoped_patches[] = $p;
+                }
+            }
+            $opt_res = $optimizer->deploy_to_cloudflare($zone_id, null, $scoped_patches);
+            return !empty($opt_res['success']);
         }
 
         $res = CloudflareService::request("zones/{$zone_id}/rulesets/phases/http_request_firewall_custom/entrypoint");

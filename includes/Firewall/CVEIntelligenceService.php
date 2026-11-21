@@ -211,8 +211,13 @@ class CVEIntelligenceService {
                 $parts        = explode(':', $criteria);
                 $cpe_product  = isset($parts[4]) ? self::resolve_canonical_slug($parts[4]) : '';
 
-                // If this cpeMatch does not target this component, skip unless universal
+                // If this cpeMatch does not target this component:
+                // For OR nodes, skip leaf.
+                // For AND nodes, cross-product prerequisite cannot be verified from single component version alone -> mark unknown
                 if ($cpe_product !== '' && $cpe_product !== $component_slug) {
+                    if ($operator === 'AND') {
+                        $results[] = 'unknown';
+                    }
                     continue;
                 }
 
