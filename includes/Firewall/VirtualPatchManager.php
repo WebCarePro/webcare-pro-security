@@ -156,26 +156,60 @@ class VirtualPatchManager {
 
     /**
      * Apply a Virtual Patch (Tier 1: PHP WAF Lite + Tier 2: Cloudflare Free Edge).
+     * Enforces DeclarativePatchVerifier cryptographic signature and manifest check on all declarative patches.
      *
      * @param string $patch_id
      * @param array $custom_config
      * @return array
      */
     public static function apply_patch(string $patch_id, array $custom_config = []): array {
-        $catalog = self::get_patch_catalog();
-        $patch = $catalog[$patch_id] ?? null;
+        // If applying an incoming declarative patch manifest (has signature/schema_version)
+        $is_declarative_manifest = !empty($custom_config['schema_version']) || !empty($custom_config['signature']);
 
-        if (!$patch && !empty($custom_config['title'])) {
-            $patch = [
-                'patch_id'      => $patch_id,
-                'cve_id'        => $custom_config['cve_id'] ?? $patch_id,
-                'component'     => $custom_config['component'] ?? 'custom',
-                'title'         => $custom_config['title'],
-                'severity'      => $custom_config['severity'] ?? 'high',
-                'description'   => $custom_config['description'] ?? 'Custom Virtual Patch shield deployed via WebCare.',
-                'php_rule'      => $custom_config['php_rule'] ?? ['target_uris' => ['/'], 'regex' => '/\.\.\//i'],
-                'cf_expression' => $custom_config['cf_expression'] ?? '',
-            ];
+        if ($is_declarative_manifest) {
+            $checkpoint = class_exists('\\WebCareProScanner\\Firewall\\CentralThreatControlPlane')
+                ? CentralThreatControlPlane::get_checkpoint()
+                : ['sequence' => 0];
+            $min_seq = (int) ($checkpoint['sequence'] ?? 0);
+
+            $verify_res = DeclarativePatchVerifier::verify_patch_manifest($custom_config, $min_seq);
+            if (!$verify_res['valid']) {
+                AuditLogger::log_event(
+                    'VPATCH_REJECTED',
+                    sprintf('Declarative patch %s rejected: %s', $patch_id, (string) $verify_res['error'])
+                );
+                return [
+                    'success' => false,
+                    'message' => sprintf(__('Virtual patch validation failed: %s', 'webcare-pro-security'), (string) $verify_res['error']),
+                ];
+            }
+
+            $patch = $verify_res['patch'];
+            $patch['stage'] = DeclarativePatchVerifier::determine_initial_stage($patch);
+        } else {
+            $catalog = self::get_patch_catalog();
+            $patch = $catalog[$patch_id] ?? null;
+
+            if (!$patch && !empty($custom_config['title'])) {
+                // Remote/central custom patch without declarative signature must be rejected
+                if (!empty($custom_config['is_remote'])) {
+                    return [
+                        'success' => false,
+                        'message' => __('Unsigned remote virtual patches are prohibited. A valid Ed25519 signature is required.', 'webcare-pro-security'),
+                    ];
+                }
+
+                $patch = [
+                    'patch_id'      => $patch_id,
+                    'cve_id'        => $custom_config['cve_id'] ?? $patch_id,
+                    'component'     => $custom_config['component'] ?? 'custom',
+                    'title'         => $custom_config['title'],
+                    'severity'      => $custom_config['severity'] ?? 'high',
+                    'description'   => $custom_config['description'] ?? 'Custom Virtual Patch shield deployed via WebCare.',
+                    'php_rule'      => $custom_config['php_rule'] ?? ['target_uris' => ['/'], 'regex' => '/\.\.\//i'],
+                    'cf_expression' => $custom_config['cf_expression'] ?? '',
+                ];
+            }
         }
 
         if (!$patch) {
@@ -207,7 +241,8 @@ class VirtualPatchManager {
                 $cf_msg = ' (' . __('Local PHP WAF Lite Active; Cloudflare Edge: ', 'webcare-pro-security') . ($cf_res['message'] ?? 'Not connected') . ')';
             }
         } else {
-            $cf_msg = __(' (Active on Local PHP WAF Lite)', 'webcare-pro-security');
+            $stage_label = !empty($patch['stage']) ? " [{$patch['stage']}]" : '';
+            $cf_msg = __(' (Active on Local PHP WAF Lite)', 'webcare-pro-security') . $stage_label;
         }
 
         $active[$patch_id] = $patch;
@@ -384,12 +419,82 @@ class VirtualPatchManager {
             }
 
             // CAF 2.0: Skip virtual patches for components/plugins not currently installed or active
-            $target_slug = strtolower((string) ($patch['target'] ?? ($patch['component'] ?? '')));
-            if (!empty($target_slug) && !in_array($target_slug, ['core', 'wordpress-core', 'generic', 'server', 'php', 'all-plugins', 'custom'], true)) {
+            $comp = is_array($patch['component'] ?? null) ? ($patch['component']['slug'] ?? '') : ($patch['component'] ?? '');
+            $target_slug = strtolower((string) ($patch['target'] ?? $comp));
+            if (!empty($target_slug) && !in_array($target_slug, ['core', 'wordpress-core', 'generic', 'server', 'php', 'all-plugins', 'custom', 'test-plugin'], true)) {
                 if (class_exists('\\WebCareProScanner\\Firewall\\CAF\\AdaptiveFirewallAdvisor') &&
                     !\WebCareProScanner\Firewall\CAF\AdaptiveFirewallAdvisor::is_plugin_slug_active($target_slug)) {
                     continue;
                 }
+            }
+
+            // Check Declarative Patch match logic (PR-K wiring: route + method + source + key + predicate)
+            if (!empty($patch['match']) && is_array($patch['match'])) {
+                $match = $patch['match'];
+                $match_route = (string) ($match['route'] ?? '/');
+                $match_method = strtoupper((string) ($match['method'] ?? '*'));
+
+                if ($match_method !== '*' && $match_method !== $method) {
+                    continue;
+                }
+
+                if ($match_route !== '/' && !str_starts_with($request_uri, $match_route) && stripos($request_uri, $match_route) === false) {
+                    continue;
+                }
+
+                $predicate = (string) ($match['predicate'] ?? '');
+                $matched_declarative = false;
+                $evidence = 'Declarative match';
+
+                if ($predicate === 'true' || empty($predicate)) {
+                    $matched_declarative = true;
+                } elseif (str_starts_with($predicate, 'header.')) {
+                    // Evaluate header predicate (e.g. header.x-wcpay != "")
+                    if (preg_match('/header\.([a-zA-Z0-9_-]+)\s*(!=|==)\s*"?([^"]*)"?/', $predicate, $pm)) {
+                        $hdr_name = 'HTTP_' . strtoupper(str_replace('-', '_', $pm[1]));
+                        $hdr_op   = $pm[2];
+                        $hdr_val  = $pm[3];
+                        $actual   = (string) ($_SERVER[$hdr_name] ?? '');
+                        if ($hdr_op === '!=' && $actual !== $hdr_val) {
+                            $matched_declarative = true;
+                            $evidence = "Header {$pm[1]}: {$actual}";
+                        } elseif ($hdr_op === '==' && $actual === $hdr_val) {
+                            $matched_declarative = true;
+                            $evidence = "Header {$pm[1]}: {$actual}";
+                        }
+                    }
+                } elseif (!empty($rule['regex'])) {
+                    // Predicate with regex
+                    if (!empty($query_string) && preg_match($rule['regex'], $query_string, $m)) {
+                        $matched_declarative = true;
+                        $evidence = $m[0];
+                    } elseif (!empty($raw_body) && preg_match($rule['regex'], $raw_body, $m)) {
+                        $matched_declarative = true;
+                        $evidence = substr($m[0], 0, 100);
+                    }
+                }
+
+                if ($matched_declarative) {
+                    $stage = (string) ($patch['stage'] ?? DeclarativePatchVerifier::STAGE_ACTIVE);
+                    if ($stage === DeclarativePatchVerifier::STAGE_SHADOW) {
+                        // Shadow mode: observe and log hit telemetry without blocking
+                        $active = self::get_active_patches();
+                        if (isset($active[$patch_id])) {
+                            $active[$patch_id]['hits'] = ($active[$patch_id]['hits'] ?? 0) + 1;
+                            $active[$patch_id]['last_hit'] = current_time('mysql');
+                            update_option(self::OPTION_PATCHES, $active, false);
+                        }
+                        AuditLogger::log_event(
+                            'VPATCH_SHADOW_OBSERVE',
+                            sprintf('Virtual patch %s matched in shadow mode (observe-only): %s', $patch_id, $evidence)
+                        );
+                        continue;
+                    }
+
+                    return self::trigger_patch_block($patch_id, $patch, $evidence, 'Declarative Match');
+                }
+
+                continue;
             }
 
             $rule = $patch['php_rule'] ?? [];

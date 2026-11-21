@@ -124,7 +124,12 @@ final class DeclarativePatchVerifier {
             return ['valid' => false, 'error' => "Feed sequence {$sequence} is rolled back or replayed (min allowed: {$min_allowed_sequence}).", 'patch' => null];
         }
 
-        // 5. Expiration validation
+        // 5. Expiration and publication validation
+        $published_at = is_numeric($patch['published_at']) ? (int) $patch['published_at'] : strtotime((string) $patch['published_at']);
+        if ($published_at <= 0 || $published_at > (time() + 300)) {
+            return ['valid' => false, 'error' => "Virtual patch {$patch['patch_id']} has invalid or future publication timestamp.", 'patch' => null];
+        }
+
         $expires_at = is_numeric($patch['expires_at']) ? (int) $patch['expires_at'] : strtotime((string) $patch['expires_at']);
         if ($expires_at <= 0 || time() > $expires_at) {
             return ['valid' => false, 'error' => "Virtual patch {$patch['patch_id']} has expired.", 'patch' => null];
@@ -134,6 +139,17 @@ final class DeclarativePatchVerifier {
         $component = $patch['component'];
         if (!is_array($component) || empty($component['slug']) || empty($component['type'])) {
             return ['valid' => false, 'error' => 'Ambiguous or invalid component specification in patch manifest.', 'patch' => null];
+        }
+
+        $allowed_comp_types = ['core', 'plugin', 'theme', 'mu-plugin'];
+        $comp_type = (string) $component['type'];
+        if (!in_array($comp_type, $allowed_comp_types, true)) {
+            return ['valid' => false, 'error' => "Invalid component type '{$comp_type}'. Allowed: " . implode(', ', $allowed_comp_types), 'patch' => null];
+        }
+
+        $comp_slug = (string) $component['slug'];
+        if (!preg_match('/^[a-z0-9._-]+$/', $comp_slug)) {
+            return ['valid' => false, 'error' => "Invalid component slug '{$comp_slug}'.", 'patch' => null];
         }
 
         // 7. Match structure validation
@@ -175,8 +191,8 @@ final class DeclarativePatchVerifier {
         $data_to_sign = $patch;
         unset($data_to_sign['signature']);
 
-        // Canonical deterministic JSON
-        ksort($data_to_sign);
+        // Canonical deterministic JSON with recursive key sorting
+        $data_to_sign = self::canonicalize_recursive($data_to_sign);
         $canonical_message = (string) json_encode($data_to_sign, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
         $signature_bytes = @hex2bin($signature_hex);
@@ -199,6 +215,66 @@ final class DeclarativePatchVerifier {
     }
 
     /**
+     * Recursively sort keys for deterministic canonical JSON representation.
+     *
+     * @param mixed $data
+     * @return mixed
+     */
+    public static function canonicalize_recursive(mixed $data): mixed {
+        if (!is_array($data)) {
+            return $data;
+        }
+
+        // Check if array is associative
+        $is_assoc = array_keys($data) !== range(0, count($data) - 1);
+        if ($is_assoc) {
+            ksort($data);
+        }
+
+        foreach ($data as $key => $value) {
+            if (is_array($value)) {
+                $data[$key] = self::canonicalize_recursive($value);
+            }
+        }
+
+        return $data;
+    }
+
+    /**
+     * Verify a generic signed envelope containing payload data, key_id, and signature.
+     * Used for central intelligence delta feeds and declarative patch manifests.
+     *
+     * @param array<string, mixed> $envelope
+     * @return array{valid: bool, error: string|null}
+     */
+    public static function verify_signature_envelope(array $envelope): array {
+        $key_id = (string) ($envelope['key_id'] ?? '');
+        $signature_hex = (string) ($envelope['signature'] ?? '');
+
+        if ($key_id === '' || $signature_hex === '') {
+            return ['valid' => false, 'error' => 'Missing key_id or signature in envelope.'];
+        }
+
+        if (in_array($key_id, self::REVOKED_KEY_IDS, true)) {
+            return ['valid' => false, 'error' => "Signing key {$key_id} has been revoked."];
+        }
+
+        $public_key_hex = (self::$test_public_keys !== null && isset(self::$test_public_keys[$key_id]))
+            ? self::$test_public_keys[$key_id]
+            : (self::PINNED_PUBLIC_KEYS[$key_id] ?? null);
+
+        if ($public_key_hex === null) {
+            return ['valid' => false, 'error' => "Unknown or untrusted signing key ID: {$key_id}"];
+        }
+
+        if (!self::verify_ed25519_signature($envelope, $signature_hex, $public_key_hex)) {
+            return ['valid' => false, 'error' => 'Invalid Ed25519 envelope signature.'];
+        }
+
+        return ['valid' => true, 'error' => null];
+    }
+
+    /**
      * Helper to sign a declarative patch manifest for testing or authoring.
      *
      * @param array<string, mixed> $patch
@@ -208,7 +284,7 @@ final class DeclarativePatchVerifier {
     public static function sign_patch_manifest(array $patch, string $secret_key_hex): string {
         $data_to_sign = $patch;
         unset($data_to_sign['signature']);
-        ksort($data_to_sign);
+        $data_to_sign = self::canonicalize_recursive($data_to_sign);
         $canonical_message = (string) json_encode($data_to_sign, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
         $secret_key_bytes = (string) hex2bin($secret_key_hex);
@@ -223,18 +299,28 @@ final class DeclarativePatchVerifier {
     /**
      * Staged Promotion Evaluation:
      * High-confidence vendor patches with exact affected ranges promote automatically to active.
+     * Medium-confidence or vendor-verified non-critical patches promote to staged (canary).
      * Lower-confidence or broad heuristic rules start in shadow mode and require explicit owner promotion.
      *
      * @param array<string, mixed> $patch
      * @param bool $owner_opt_in_auto Whether site owner permits auto-enforcement of verified patches
-     * @return string Staged promotion stage (shadow, staged, active)
+     * @return string Staged promotion stage (shadow, staged, active, revoked)
      */
     public static function determine_initial_stage(array $patch, bool $owner_opt_in_auto = true): string {
+        $stage = (string) ($patch['stage'] ?? '');
+        if ($stage === self::STAGE_REVOKED) {
+            return self::STAGE_REVOKED;
+        }
+
         $confidence = (string) ($patch['confidence'] ?? 'medium');
         $is_exact_vendor = !empty($patch['vendor_verified']);
 
         if ($confidence === 'high' && $is_exact_vendor && $owner_opt_in_auto) {
             return self::STAGE_ACTIVE;
+        }
+
+        if (($confidence === 'high' || $is_exact_vendor) && $owner_opt_in_auto) {
+            return self::STAGE_STAGED;
         }
 
         return self::STAGE_SHADOW;

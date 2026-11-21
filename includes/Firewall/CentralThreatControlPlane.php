@@ -24,8 +24,10 @@ final class CentralThreatControlPlane {
 
     public const OPTION_DELTA_CHECKPOINT = 'webcareproscan_cve_delta_checkpoint';
     public const OPTION_KEV_CATALOG      = 'webcareproscan_cisa_kev_catalog';
+    public const OPTION_CVE_FINDINGS     = 'webcareproscan_cve_evaluated_findings';
     public const OPTION_FEED_META        = 'webcareproscan_central_feed_meta';
     public const DEFAULT_FEED_URL        = 'https://intel.webcarespro.com/api/v1/feed/cve-delta';
+    public const MAX_FEED_BYTES          = 2097152; // 2 MB strict ceiling on feed response size
 
     /**
      * Checkpoint structure:
@@ -105,6 +107,22 @@ final class CentralThreatControlPlane {
             }
 
             $body = wp_remote_retrieve_body($response);
+
+            // Bounded response size check before json_decode
+            if (strlen($body) > self::MAX_FEED_BYTES) {
+                AuditLogger::log_event(
+                    'FEED_PAYLOAD_TOO_LARGE',
+                    sprintf('Threat intelligence feed response exceeds strict ceiling (%d bytes > %d max).', strlen($body), self::MAX_FEED_BYTES)
+                );
+                return [
+                    'success'     => false,
+                    'new_cves'    => 0,
+                    'kev_updates' => 0,
+                    'sequence'    => $checkpoint['sequence'],
+                    'message'     => __('Threat intelligence feed response exceeded maximum allowable size (2 MB).', 'webcare-pro-security'),
+                ];
+            }
+
             $payload = json_decode($body, true);
         }
 
@@ -115,6 +133,22 @@ final class CentralThreatControlPlane {
                 'kev_updates' => 0,
                 'sequence'    => $checkpoint['sequence'],
                 'message'     => __('Malformed or invalid threat intelligence delta feed payload.', 'webcare-pro-security'),
+            ];
+        }
+
+        // Cryptographic verification: enforce Ed25519 signed envelope on all incoming feeds
+        $sig_result = DeclarativePatchVerifier::verify_signature_envelope($payload);
+        if (!$sig_result['valid']) {
+            AuditLogger::log_event(
+                'FEED_SIGNATURE_INVALID',
+                sprintf('Rejected delta intelligence feed with invalid/missing Ed25519 signature: %s', (string) $sig_result['error'])
+            );
+            return [
+                'success'     => false,
+                'new_cves'    => 0,
+                'kev_updates' => 0,
+                'sequence'    => $checkpoint['sequence'],
+                'message'     => sprintf(__('Threat intelligence feed signature verification failed: %s', 'webcare-pro-security'), (string) $sig_result['error']),
             ];
         }
 
@@ -136,10 +170,20 @@ final class CentralThreatControlPlane {
 
         $cve_entries = (array) ($payload['cves'] ?? []);
         $kev_entries = (array) ($payload['cisa_kev'] ?? []);
+        $kev_removed = (array) ($payload['kev_removed'] ?? []);
 
         // 1. Process and store CISA KEV (Known Exploited Vulnerabilities)
         $current_kev = (array) get_option(self::OPTION_KEV_CATALOG, []);
         $kev_count = 0;
+
+        // Remove revoked/remediated KEV entries
+        foreach ($kev_removed as $removed_id) {
+            $r_id = is_string($removed_id) ? trim($removed_id) : '';
+            if ($r_id !== '' && isset($current_kev[$r_id])) {
+                unset($current_kev[$r_id]);
+            }
+        }
+
         foreach ($kev_entries as $kev) {
             $cve_id = (string) ($kev['cve_id'] ?? '');
             if ($cve_id !== '') {
@@ -160,7 +204,14 @@ final class CentralThreatControlPlane {
         // 2. Evaluate incremental CVE updates against local WordPress component inventory
         $evaluated_findings = self::evaluate_cves_against_inventory($cve_entries, $current_kev);
 
-        // 3. Update Checkpoint
+        // Persist evaluated actionable findings durably
+        $stored_findings = (array) get_option(self::OPTION_CVE_FINDINGS, []);
+        foreach ($evaluated_findings as $cve_id => $finding) {
+            $stored_findings[$cve_id] = $finding;
+        }
+        update_option(self::OPTION_CVE_FINDINGS, $stored_findings, false);
+
+        // 3. Update Checkpoint - only after signature verification, finding persistence, and KEV updates succeed
         $new_mod_timestamp = (string) ($payload['last_mod_timestamp'] ?? $checkpoint['last_mod_start']);
         self::update_checkpoint($incoming_seq, $new_mod_timestamp);
 

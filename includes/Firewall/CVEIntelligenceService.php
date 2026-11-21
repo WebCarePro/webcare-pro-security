@@ -77,13 +77,17 @@ class CVEIntelligenceService {
      *     versionStartExcluding?: string,
      *     versionEndIncluding?: string,
      *     versionEndExcluding?: string,
-     * } $range Version constraint bounds
+     * }|string $range Version constraint bounds array or constraint string (e.g. '<= 5.6.1')
      * @return 'vulnerable'|'not_vulnerable'|'unknown'
      */
-    public static function evaluate_version_range_tri_state(string $installed_version, array $range): string {
+    public static function evaluate_version_range_tri_state(string $installed_version, array|string $range): string {
         $installed = trim($installed_version);
         if ($installed === '' || $installed === '0.0.0') {
             return 'unknown';
+        }
+
+        if (is_string($range)) {
+            $range = self::parse_version_range_string($range);
         }
 
         $vStartInc = trim((string) ($range['versionStartIncluding'] ?? ''));
@@ -119,6 +123,57 @@ class CVEIntelligenceService {
         }
 
         return 'vulnerable';
+    }
+
+    /**
+     * Parses human-readable or version constraint strings into a structured bounds array.
+     * Supports formats like:
+     * - '<= 5.6.1' / '< 6.0'
+     * - '>= 1.0.0, <= 2.3.4'
+     * - '2.1.0' (exact or max bound)
+     *
+     * @param string $range_str
+     * @return array{
+     *     versionStartIncluding?: string,
+     *     versionStartExcluding?: string,
+     *     versionEndIncluding?: string,
+     *     versionEndExcluding?: string,
+     * }
+     */
+    public static function parse_version_range_string(string $range_str): array {
+        $str = trim($range_str);
+        if ($str === '') {
+            return [];
+        }
+
+        $bounds = [];
+        // Split on comma or ' and '
+        $parts = preg_split('/[, ]+(?:and\s+)?/i', $str);
+        if (!$parts) {
+            $parts = [$str];
+        }
+
+        foreach ($parts as $part) {
+            $part = trim($part);
+            if ($part === '') {
+                continue;
+            }
+
+            if (preg_match('/^<=\s*([0-9a-zA-Z._+-]+)/', $part, $m)) {
+                $bounds['versionEndIncluding'] = $m[1];
+            } elseif (preg_match('/^<\s*([0-9a-zA-Z._+-]+)/', $part, $m)) {
+                $bounds['versionEndExcluding'] = $m[1];
+            } elseif (preg_match('/^>=\s*([0-9a-zA-Z._+-]+)/', $part, $m)) {
+                $bounds['versionStartIncluding'] = $m[1];
+            } elseif (preg_match('/^>\s*([0-9a-zA-Z._+-]+)/', $part, $m)) {
+                $bounds['versionStartExcluding'] = $m[1];
+            } elseif (preg_match('/^([0-9]+(?:\.[0-9a-zA-Z._+-]+)*)$/', $part, $m)) {
+                // Bare version number usually denotes upper fixed limit or <= version
+                $bounds['versionEndIncluding'] = $m[1];
+            }
+        }
+
+        return $bounds;
     }
 
     /**
@@ -516,30 +571,42 @@ class CVEIntelligenceService {
         // 1. WordPress Core Check
         if ($component_type === 'core' || strpos(strtolower($component_slug), 'core') !== false) {
             global $wp_version;
-            $is_vuln = false;
+            $installed_wp = (string) ($wp_version ?? '6.7.0');
+            $range_status = 'safe';
             if (!empty($vulnerable_max_version)) {
-                $is_vuln = version_compare($wp_version, $vulnerable_max_version, '<');
+                $eval_status = self::evaluate_version_range_tri_state($installed_wp, $vulnerable_max_version);
+                if ($eval_status === 'vulnerable') {
+                    $range_status = 'vulnerable';
+                } elseif ($eval_status === 'unknown') {
+                    $range_status = 'unknown';
+                }
             }
 
             return [
-                'status'            => $is_vuln ? 'vulnerable' : 'safe',
+                'status'            => $range_status,
                 'component_type'    => 'core',
                 'installed'         => true,
                 'name'              => 'WordPress Core',
-                'version'           => $wp_version,
+                'version'           => $installed_wp,
                 'is_active'         => true,
-                'message'           => $is_vuln
+                'message'           => $range_status === 'vulnerable'
                     ? sprintf(
                         /* translators: 1: Installed WP version, 2: Fixed version */
                         __('WordPress Core v%1$s is vulnerable (requires update to >= %2$s).', 'webcare-pro-security'),
-                        $wp_version,
+                        $installed_wp,
                         $vulnerable_max_version
                     )
-                    : sprintf(
-                        /* translators: %s: Installed WP version */
-                        __('WordPress Core v%s is running and verified immune or patched.', 'webcare-pro-security'),
-                        $wp_version
-                    ),
+                    : ($range_status === 'unknown'
+                        ? sprintf(
+                            /* translators: %s: Installed WP version */
+                            __('WordPress Core v%s has ambiguous CVE version constraints (status unknown).', 'webcare-pro-security'),
+                            $installed_wp
+                        )
+                        : sprintf(
+                            /* translators: %s: Installed WP version */
+                            __('WordPress Core v%s is running and verified immune or patched.', 'webcare-pro-security'),
+                            $installed_wp
+                        )),
             ];
         }
 
@@ -573,13 +640,20 @@ class CVEIntelligenceService {
             $is_active = is_plugin_active($matched_file);
             $installed_ver = $matched_data['Version'] ?? '0.0.0';
 
-            $is_vulnerable = true;
+            $range_status = 'unknown';
             if (!empty($vulnerable_max_version)) {
-                $is_vulnerable = version_compare($installed_ver, $vulnerable_max_version, '<=');
+                $eval_status = self::evaluate_version_range_tri_state($installed_ver, $vulnerable_max_version);
+                if ($eval_status === 'vulnerable') {
+                    $range_status = 'vulnerable';
+                } elseif ($eval_status === 'not_vulnerable') {
+                    $range_status = 'safe';
+                } else {
+                    $range_status = 'unknown';
+                }
             }
 
             return [
-                'status'            => $is_vulnerable ? 'vulnerable' : 'safe',
+                'status'            => $range_status,
                 'component_type'    => 'plugin',
                 'installed'         => true,
                 'plugin_file'       => $matched_file,
@@ -587,51 +661,72 @@ class CVEIntelligenceService {
                 'version'           => $installed_ver,
                 'is_active'         => $is_active,
                 'can_deactivate'    => $is_active && current_user_can('activate_plugins'),
-                'message'           => $is_vulnerable
+                'message'           => $range_status === 'vulnerable'
                     ? sprintf(
                         /* translators: 1: Plugin name, 2: Installed version */
                         __('Plugin "%1$s" (v%2$s) is INSTALLED and matches the vulnerable version range!', 'webcare-pro-security'),
                         $matched_data['Name'],
                         $installed_ver
                     )
-                    : sprintf(
-                        /* translators: 1: Plugin name, 2: Installed version */
-                        __('Plugin "%1$s" is installed, but running v%2$s which is already patched.', 'webcare-pro-security'),
-                        $matched_data['Name'],
-                        $installed_ver
-                    ),
+                    : ($range_status === 'unknown'
+                        ? sprintf(
+                            /* translators: 1: Plugin name, 2: Installed version */
+                            __('Plugin "%1$s" (v%2$s) is installed, but CVE version constraints are ambiguous.', 'webcare-pro-security'),
+                            $matched_data['Name'],
+                            $installed_ver
+                        )
+                        : sprintf(
+                            /* translators: 1: Plugin name, 2: Installed version */
+                            __('Plugin "%1$s" is installed, but running v%2$s which is already patched.', 'webcare-pro-security'),
+                            $matched_data['Name'],
+                            $installed_ver
+                        )),
             ];
         }
 
         // 3. Themes Check
         $theme = wp_get_theme($target_slug);
         if ($theme->exists()) {
-            $theme_ver = $theme->get('Version');
-            $is_vulnerable = true;
+            $theme_ver = (string) $theme->get('Version');
+            $range_status = 'unknown';
             if (!empty($vulnerable_max_version)) {
-                $is_vulnerable = version_compare($theme_ver, $vulnerable_max_version, '<=');
+                $eval_status = self::evaluate_version_range_tri_state($theme_ver, $vulnerable_max_version);
+                if ($eval_status === 'vulnerable') {
+                    $range_status = 'vulnerable';
+                } elseif ($eval_status === 'not_vulnerable') {
+                    $range_status = 'safe';
+                } else {
+                    $range_status = 'unknown';
+                }
             }
 
             return [
-                'status'         => $is_vulnerable ? 'vulnerable' : 'safe',
+                'status'         => $range_status,
                 'component_type' => 'theme',
                 'installed'      => true,
                 'name'           => $theme->get('Name'),
                 'version'        => $theme_ver,
                 'is_active'      => (get_stylesheet() === $target_slug || get_template() === $target_slug),
-                'message'        => $is_vulnerable
+                'message'        => $range_status === 'vulnerable'
                     ? sprintf(
                         /* translators: 1: Theme name, 2: Installed version */
                         __('Theme "%1$s" (v%2$s) is INSTALLED and matches the vulnerable version range!', 'webcare-pro-security'),
                         $theme->get('Name'),
                         $theme_ver
                     )
-                    : sprintf(
-                        /* translators: 1: Theme name, 2: Installed version */
-                        __('Theme "%1$s" is installed, but running v%2$s which is already patched.', 'webcare-pro-security'),
-                        $theme->get('Name'),
-                        $theme_ver
-                    ),
+                    : ($range_status === 'unknown'
+                        ? sprintf(
+                            /* translators: 1: Theme name, 2: Installed version */
+                            __('Theme "%1$s" (v%2$s) is installed, but CVE version constraints are ambiguous.', 'webcare-pro-security'),
+                            $theme->get('Name'),
+                            $theme_ver
+                        )
+                        : sprintf(
+                            /* translators: 1: Theme name, 2: Installed version */
+                            __('Theme "%1$s" is installed, but running v%2$s which is already patched.', 'webcare-pro-security'),
+                            $theme->get('Name'),
+                            $theme_ver
+                        )),
             ];
         }
 
@@ -747,26 +842,41 @@ class CVEIntelligenceService {
             }
         }
 
-        // 2. Check CPEs if slug not found
+        // 2. Check CPEs if slug not found using recursive Boolean evaluation
         $version_end_excluding = '';
         $version_end_including = '';
 
-        if (!empty($cve_item['configurations'][0]['nodes'][0]['cpeMatch'])) {
-            foreach ($cve_item['configurations'][0]['nodes'][0]['cpeMatch'] as $cpe) {
-                $criteria = $cpe['criteria'] ?? '';
-                if (strpos($criteria, 'wordpress') !== false) {
-                    $is_wordpress = true;
+        if (!empty($cve_item['configurations']) && is_array($cve_item['configurations'])) {
+            foreach ($cve_item['configurations'] as $config) {
+                if (!is_array($config)) {
+                    continue;
                 }
-                $parts = explode(':', $criteria);
-                if (empty($slug) && isset($parts[4]) && !empty($parts[4]) && $parts[4] !== 'wordpress') {
-                    $slug = sanitize_title($parts[4]);
-                    $is_wordpress = true;
-                }
-                if (!empty($cpe['versionEndExcluding'])) {
-                    $version_end_excluding = $cpe['versionEndExcluding'];
-                }
-                if (!empty($cpe['versionEndIncluding'])) {
-                    $version_end_including = $cpe['versionEndIncluding'];
+                $nodes = !empty($config['nodes']) && is_array($config['nodes']) ? $config['nodes'] : [$config];
+                foreach ($nodes as $node) {
+                    if (!is_array($node)) {
+                        continue;
+                    }
+                    $cpe_matches = !empty($node['cpeMatch']) && is_array($node['cpeMatch']) ? $node['cpeMatch'] : [];
+                    foreach ($cpe_matches as $cpe) {
+                        if (!is_array($cpe)) {
+                            continue;
+                        }
+                        $criteria = (string) ($cpe['criteria'] ?? '');
+                        if (str_contains($criteria, 'wordpress')) {
+                            $is_wordpress = true;
+                        }
+                        $parts = explode(':', $criteria);
+                        if (empty($slug) && isset($parts[4]) && !empty($parts[4]) && $parts[4] !== 'wordpress') {
+                            $slug = self::resolve_canonical_slug($parts[4]);
+                            $is_wordpress = true;
+                        }
+                        if (!empty($cpe['versionEndExcluding'])) {
+                            $version_end_excluding = (string) $cpe['versionEndExcluding'];
+                        }
+                        if (!empty($cpe['versionEndIncluding'])) {
+                            $version_end_including = (string) $cpe['versionEndIncluding'];
+                        }
+                    }
                 }
             }
         }

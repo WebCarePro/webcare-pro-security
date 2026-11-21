@@ -576,7 +576,7 @@ class UpdateScanner {
                 'has_cve'           => false,
                 'cves'              => [],
                 'cve_count'         => 0,
-                'status'            => 'secure',
+                'status'            => 'unknown',
             ];
         }
 

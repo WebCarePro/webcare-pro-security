@@ -1,6 +1,6 @@
 {
   "version": "3.21.0",
-  "generated_at": "2026-11-21T02:57:48.112Z",
+  "generated_at": "2026-11-21T03:21:10.484Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -508,8 +508,8 @@
       "size": 13336
     },
     "includes/Firewall/CentralThreatControlPlane.php": {
-      "sha256": "7778c2478c679dafc62e2a18aaac4386cb47fcd4e7d1d57a267179dabf7254d3",
-      "size": 10592
+      "sha256": "49676397a3c216b7db02f492fddc126c24b0b1bfa5c644e7770971431eca2c42",
+      "size": 13130
     },
     "includes/Firewall/Core/AffiliateSecurityEngine.php": {
       "sha256": "5f46a331916603afa46022cfd0d6021aefae7dc1a9912e10a6c0cebcc7647959",
@@ -568,12 +568,12 @@
       "size": 14039
     },
     "includes/Firewall/CVEIntelligenceService.php": {
-      "sha256": "53fb06b5dc382dbd6dd8c2a7d3ac22ce2744973e456e85ad9886607b0f9d82a9",
-      "size": 56674
+      "sha256": "3859c3c50ab8139c3301dd54220f7c08663292113a4fecfcded4f4d28f93c99d",
+      "size": 61710
     },
     "includes/Firewall/DeclarativePatchVerifier.php": {
-      "sha256": "91166b09bdbe75e616f9195a95618a302ce426e518126ec8da9c61028be0cac5",
-      "size": 10139
+      "sha256": "a0af425e433b9baf83af8b8f0568dba9880ef70c2eabe29514b552a326212281",
+      "size": 13684
     },
     "includes/Firewall/DistributedVelocityShield.php": {
       "sha256": "eab849570736089cda62667615aec5a238af550c46409c4f8da3034876919667",
@@ -700,8 +700,8 @@
       "size": 23267
     },
     "includes/Firewall/VirtualPatchManager.php": {
-      "sha256": "bbe470cf7e4f23cccc9a719d26c0d96b7cd5db86e1314db187a4446c9975e490",
-      "size": 27476
+      "sha256": "ef22f411400913ab63240606d7f3ed278604b27b363e53ddd21c37e02e4958af",
+      "size": 33178
     },
     "includes/Firewall/VirtualPatchSynthesizer.php": {
       "sha256": "0d2dbb9e7b3558c92d48b9a76cd3ec53986934f028f5c049e3d953416e9e3981",
@@ -1068,8 +1068,8 @@
       "size": 39375
     },
     "includes/WordPress/UpdateScanner.php": {
-      "sha256": "4e4373d2758a072aa6ef66421a1fed0584aa59d864b3176c823ec389b18caf3f",
-      "size": 51227
+      "sha256": "cb4f9d0163b16bc9109feac23768a8c2ae1c5e91f71b6ccc11c385160ef5fa4e",
+      "size": 51228
     },
     "includes/WordPress/UserRemediationManager.php": {
       "sha256": "79726aa103672f54dd78c3f94ddebf1a0406c293535d0247495b304db9ceaadf",
