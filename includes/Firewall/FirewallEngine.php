@@ -1146,17 +1146,17 @@ class FirewallEngine {
         $skip_operational_heuristics = ($url_whitelisted || $custom_allow_matched || $is_admin_operation || $is_builder_operation);
 
         // Differential Threat Score & Behavioral Pre-Flight Sentinel (CAF Phase 3)
-        if (!$skip_operational_heuristics && !empty($settings['caf_threat_score_enabled']) && class_exists('\\WebCareProScanner\\Firewall\\CAF\\ThreatScoreTracker')) {
+        if (!self::$executed_under_pipeline && !$skip_operational_heuristics && !empty($settings['caf_threat_score_enabled']) && class_exists('\\WebCareProScanner\\Firewall\\CAF\\ThreatScoreTracker')) {
             \WebCareProScanner\Firewall\CAF\ThreatScoreTracker::inspect_client_threat($client_ip);
         }
 
         // Adaptive Rate Limiter & Token-Bucket Throttling
-        if (!$skip_operational_heuristics && class_exists('\\WebCareProScanner\\Firewall\\AdaptiveRateLimiter')) {
+        if (!self::$executed_under_pipeline && !$skip_operational_heuristics && class_exists('\\WebCareProScanner\\Firewall\\AdaptiveRateLimiter')) {
             \WebCareProScanner\Firewall\AdaptiveRateLimiter::check_request($client_ip);
         }
 
         // WebCrypto Proof-of-Work (PoW) Enforced Suspicious IP Sentinel
-        if (!$skip_operational_heuristics) {
+        if (!self::$executed_under_pipeline && !$skip_operational_heuristics) {
             $pow_ips = get_option('webcare_pow_enforced_ips', []);
             if (is_array($pow_ips) && isset($pow_ips[$client_ip])) {
                 $pow_exp = (int) ($pow_ips[$client_ip]['expires_at'] ?? 0);
@@ -1170,7 +1170,7 @@ class FirewallEngine {
         }
 
         // HTTP/2 & HTTP/3 Pseudo-Header and Client-Hint Anomaly Sentinel (CAF Phase 3)
-        if (!$skip_operational_heuristics && class_exists('\\WebCareProScanner\\Firewall\\BotReconDefense')) {
+        if (!self::$executed_under_pipeline && !$skip_operational_heuristics && class_exists('\\WebCareProScanner\\Firewall\\BotReconDefense')) {
             $h2_anomaly = \WebCareProScanner\Firewall\BotReconDefense::check_http2_pseudo_header_anomaly();
             if ($h2_anomaly !== null) {
                 // Record threat score increment for header anomaly (+15)
@@ -1304,7 +1304,7 @@ class FirewallEngine {
 
         // Context-Adaptive Firewall (CAF): Dormant Attack Surface Lockdown
         $lock_dormant = (bool) get_option('webcareproscan_caf_lock_dormant_surface', get_option('webcare_caf_lock_dormant_surface', true));
-        if (!$skip_operational_heuristics && $lock_dormant) {
+        if (!self::$executed_under_pipeline && !$skip_operational_heuristics && $lock_dormant) {
             $raw_uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '';
             $decoded_check_uri = rawurldecode($raw_uri);
 
@@ -1749,7 +1749,7 @@ class FirewallEngine {
         }
 
         // Block IPs who send POST requests with blank User-Agent and Referer
-        if (!$skip_operational_heuristics && !empty($settings['waf_block_empty_post_ua_referer'])) {
+        if (!self::$executed_under_pipeline && !$skip_operational_heuristics && !empty($settings['waf_block_empty_post_ua_referer'])) {
             $is_post = (isset($_SERVER['REQUEST_METHOD']) && strtoupper(sanitize_text_field(wp_unslash($_SERVER['REQUEST_METHOD']))) === 'POST');
             if ($is_post) {
                 // E-Commerce & Membership Safe Mode: Server-to-server payment gateway webhooks
@@ -1777,7 +1777,7 @@ class FirewallEngine {
         }
 
         // Rule: Blank or Missing User-Agent Shield
-        if (!$skip_operational_heuristics && !empty($settings['waf_block_empty_user_agent'])) {
+        if (!self::$executed_under_pipeline && !$skip_operational_heuristics && !empty($settings['waf_block_empty_user_agent'])) {
             $raw_ua = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';
             if (trim($raw_ua) === '') {
                 $req_method = strtoupper(isset($_SERVER['REQUEST_METHOD']) ? sanitize_key(wp_unslash($_SERVER['REQUEST_METHOD'])) : 'GET');
@@ -2190,7 +2190,7 @@ class FirewallEngine {
         }
 
         // Check Bot Recon Defense & AI Scraper Shield
-        if (!$skip_operational_heuristics) {
+        if (!self::$executed_under_pipeline && !$skip_operational_heuristics) {
             $user_agent = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';
             $bot_rule = BotReconDefense::inspect_bot($client_ip, $user_agent, $settings);
             if ($bot_rule !== null) {

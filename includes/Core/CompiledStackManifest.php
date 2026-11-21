@@ -148,12 +148,14 @@ final class CompiledStackManifest {
             RouteClass::PublicGet->value => [
                 'WebCareProScanner\\Firewall\\Core\\AlwaysOnCoreGuard',
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
+                'WebCareProScanner\\Firewall\\Evaluators\\ProtocolAndBotEvaluator',
                 'WebCareProScanner\\Firewall\\BotReconDefense',
                 'WebCareProScanner\\Firewall\\Evaluators\\AiAgentBehaviorEvaluator',
             ],
             RouteClass::PublicMutation->value => [
                 'WebCareProScanner\\Firewall\\Core\\AlwaysOnCoreGuard',
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
+                'WebCareProScanner\\Firewall\\Evaluators\\ProtocolAndBotEvaluator',
                 'WebCareProScanner\\Firewall\\BotReconDefense',
                 'WebCareProScanner\\Firewall\\Evaluators\\AiAgentBehaviorEvaluator',
                 'WebCareProScanner\\Firewall\\NextGen\\RuntimeSqlRaspEngine',
@@ -161,6 +163,7 @@ final class CompiledStackManifest {
             RouteClass::Commerce->value => [
                 'WebCareProScanner\\Firewall\\Core\\AlwaysOnCoreGuard',
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
+                'WebCareProScanner\\Firewall\\Evaluators\\ProtocolAndBotEvaluator',
                 'WebCareProScanner\\Firewall\\Evaluators\\AiAgentBehaviorEvaluator',
                 'WebCareProScanner\\Firewall\\Core\\CommerceSessionGuard',
                 'WebCareProScanner\\Firewall\\Core\\CommerceVelocityGuard',
@@ -168,33 +171,39 @@ final class CompiledStackManifest {
             RouteClass::Membership->value => [
                 'WebCareProScanner\\Firewall\\Core\\AlwaysOnCoreGuard',
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
+                'WebCareProScanner\\Firewall\\Evaluators\\ProtocolAndBotEvaluator',
                 'WebCareProScanner\\Auth\\SessionSentinel',
                 'WebCareProScanner\\Firewall\\NextGen\\RuntimeSqlRaspEngine',
             ],
             RouteClass::AuthLogin->value => [
                 'WebCareProScanner\\Firewall\\Core\\AlwaysOnCoreGuard',
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
+                'WebCareProScanner\\Firewall\\Evaluators\\ProtocolAndBotEvaluator',
                 'WebCareProScanner\\Auth\\WebAuthnManager',
             ],
             RouteClass::RestApi->value => [
                 'WebCareProScanner\\Firewall\\Core\\AlwaysOnCoreGuard',
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
+                'WebCareProScanner\\Firewall\\Evaluators\\ProtocolAndBotEvaluator',
                 'WebCareProScanner\\Firewall\\NextGen\\RuntimeSqlRaspEngine',
                 'WebCareProScanner\\Firewall\\NextGen\\ResponseDlpSentinel',
             ],
             RouteClass::GraphQL->value => [
                 'WebCareProScanner\\Firewall\\Core\\AlwaysOnCoreGuard',
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
+                'WebCareProScanner\\Firewall\\Evaluators\\ProtocolAndBotEvaluator',
                 'WebCareProScanner\\Firewall\\NextGen\\ModernApiShield',
             ],
             RouteClass::AdminAjax->value => [
                 'WebCareProScanner\\Firewall\\Core\\AlwaysOnCoreGuard',
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
+                'WebCareProScanner\\Firewall\\Evaluators\\ProtocolAndBotEvaluator',
                 'WebCareProScanner\\Firewall\\NextGen\\RuntimeSqlRaspEngine',
             ],
             RouteClass::AdminUi->value => [
                 'WebCareProScanner\\Firewall\\Core\\AlwaysOnCoreGuard',
                 'WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine',
+                'WebCareProScanner\\Firewall\\Evaluators\\ProtocolAndBotEvaluator',
             ],
         ];
 
