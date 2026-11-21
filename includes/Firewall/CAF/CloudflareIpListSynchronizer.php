@@ -1377,8 +1377,14 @@ class CloudflareIpListSynchronizer {
             $type       = (string) ($op_meta['type'] ?? 'delete');
             $ips        = (array) ($op_meta['ips'] ?? []);
 
-            $poll_id = !empty($op_meta['operation_id']) ? (string) $op_meta['operation_id'] : (string) $op_id;
-            $current_status = self::poll_bulk_operation($account_id, $poll_id);
+            // If operation is in awaiting_list_verification state (e.g. DELETE succeeded without an operation_id),
+            // bypass bulk-operation polling and directly perform list item verification.
+            if ($status === 'awaiting_list_verification') {
+                $current_status = 'completed';
+            } else {
+                $poll_id = !empty($op_meta['operation_id']) ? (string) $op_meta['operation_id'] : (string) $op_id;
+                $current_status = self::poll_bulk_operation($account_id, $poll_id);
+            }
 
             if ($current_status === 'completed') {
                 if ($type === 'delete') {
@@ -1440,14 +1446,15 @@ class CloudflareIpListSynchronizer {
                                     $op_meta['retry_count'] = $retry_count;
                                     $submitted_new_delete = true;
                                 } else {
-                                    // P2: Success without operation_id is a reconciliation anomaly
-                                    $op_meta['status'] = 'running';
+                                    // P2: Success without operation_id: enter awaiting_list_verification state
+                                    // Bypasses stale operation ID polling and performs direct list verification on next tick
+                                    $op_meta['status'] = 'awaiting_list_verification';
                                     $op_meta['last_error'] = 'Cloudflare batch DELETE succeeded without operation_id';
                                     unset($op_meta['operation_id']); // Do not poll stale completed ID
                                     if (class_exists('\\WebCareProScanner\\Audit\\AuditLogger')) {
                                         \WebCareProScanner\Audit\AuditLogger::log_event(
                                             'CF_ASYNC_DELETE_MISSING_OP_ID',
-                                            'Cloudflare batch DELETE succeeded without operation_id. Will reverify list items on next tick.'
+                                            'Cloudflare batch DELETE succeeded without operation_id. Scheduled direct list verification on next tick.'
                                         );
                                     }
                                 }

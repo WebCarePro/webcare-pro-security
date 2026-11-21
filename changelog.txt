@@ -1,4 +1,8 @@
-﻿v:3.3.6 - 2026-11-21
+﻿v:3.3.7 - 2026-11-21
+- Awaiting List Verification State & Strict Revoked Stage Verification (v3.3.7):
+  * P2 — Dedicated `awaiting_list_verification` State for Missing Operation IDs (CloudflareIpListSynchronizer.php): When a Cloudflare batch DELETE succeeds without returning an `operation_id`, the operation transitions to an explicit `awaiting_list_verification` state. On the next reconciliation tick, bulk-operation polling is cleanly bypassed (preventing fallback polling against stale, completed operation IDs), and direct IP list search verification is executed immediately.
+  * P2 — Strict Revoked Stage Persistence Verification (VirtualPatchManager.php): In `remove_patch()`, enhanced local persistence verification to confirm that synthesized patches are not only disabled (`enabled === false`) but also strictly persisted with `stage === STAGE_REVOKED`, guaranteeing complete deactivation invariant enforcement before reporting successful local removal.
+- v:3.3.6 - 2026-11-21
 - Consolidated Batch Delete, Verification Decoupling & Synthesized Persistence Verification (v3.3.6):
   * P1 — Consolidated Batch Async Delete (CloudflareIpListSynchronizer.php): Replaced individual DELETE calls with a single consolidated batch request (`['items' => array_map(..., $confirmed_present_items)]`) for all confirmed present IPs in `reconcile_pending_operations()`. Fixed multi-IP delete operations overwriting metadata by tracking the single unified batch `operation_id` across all associated IPs.
   * P1 — Decouple Verification Failures from Delete Retry Budget (CloudflareIpListSynchronizer.php): Isolated `verification_unknown` from `confirmed_present`, keeping the operation running for retry verification without incrementing the delete `retry_count` or prematurely triggering `failed_terminal`. The 5-attempt retry budget now strictly measures completed unsuccessful delete operations.

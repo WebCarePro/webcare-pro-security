@@ -353,9 +353,10 @@ class VirtualPatchManager {
             $synth_patches[$patch_id]['stage'] = DeclarativePatchVerifier::STAGE_REVOKED;
             $synth_patches[$patch_id]['updated_at'] = current_time('mysql');
             $synth_updated = update_option($synthesized_opt_key, $synth_patches, false);
-            // Verify persistence
+            // Verify persistence: must be disabled and marked STAGE_REVOKED
             $persisted_synth = get_option($synthesized_opt_key, []);
-            if (!empty($persisted_synth[$patch_id]['enabled'])) {
+            $persisted_entry = $persisted_synth[$patch_id] ?? null;
+            if (!is_array($persisted_entry) || !empty($persisted_entry['enabled']) || ($persisted_entry['stage'] ?? '') !== DeclarativePatchVerifier::STAGE_REVOKED) {
                 $synth_updated = false;
             }
         }
