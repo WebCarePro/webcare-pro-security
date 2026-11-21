@@ -185,7 +185,15 @@ class VirtualPatchManager {
             }
 
             $patch = $verify_res['patch'];
-            $patch['stage'] = DeclarativePatchVerifier::determine_initial_stage($patch);
+            $settings = SettingsManager::get_settings();
+            $owner_opt_in = !isset($settings['waf_auto_enforce_virtual_patches']) || !empty($settings['waf_auto_enforce_virtual_patches']);
+            // If the incoming signed patch already specifies an explicit valid stage, preserve it; otherwise evaluate promotion
+            $declared_stage = (string) ($patch['stage'] ?? '');
+            if ($declared_stage !== '') {
+                $patch['stage'] = $declared_stage;
+            } else {
+                $patch['stage'] = DeclarativePatchVerifier::determine_initial_stage($patch, $owner_opt_in);
+            }
         } else {
             $catalog = self::get_patch_catalog();
             $patch = $catalog[$patch_id] ?? null;
@@ -428,6 +436,11 @@ class VirtualPatchManager {
                 }
             }
 
+            $stage = (string) ($patch['stage'] ?? DeclarativePatchVerifier::STAGE_ACTIVE);
+            if ($stage === DeclarativePatchVerifier::STAGE_REVOKED) {
+                continue;
+            }
+
             // Check Declarative Patch match logic (PR-K wiring: route + method + source + key + predicate)
             if (!empty($patch['match']) && is_array($patch['match'])) {
                 $match = $patch['match'];
@@ -446,6 +459,53 @@ class VirtualPatchManager {
                 $matched_declarative = false;
                 $evidence = 'Declarative match';
 
+                $source = strtolower((string) ($match['source'] ?? ''));
+                $key    = (string) ($match['key'] ?? '');
+
+                // Resolve target source value if key/source is specified
+                $target_value = null;
+                if ($source !== '' || $key !== '') {
+                    switch ($source) {
+                        case 'query':
+                        case 'get':
+                            // phpcs:ignore WordPress.Security.NonceVerification.Missing
+                            $target_value = $key !== '' ? ((string) ($_GET[$key] ?? '')) : $query_string;
+                            break;
+                        case 'post':
+                        case 'form':
+                            // phpcs:ignore WordPress.Security.NonceVerification.Missing
+                            $target_value = $key !== '' ? ((string) ($_POST[$key] ?? '')) : $raw_body;
+                            break;
+                        case 'header':
+                            $hdr_k = 'HTTP_' . strtoupper(str_replace('-', '_', $key));
+                            $target_value = (string) ($_SERVER[$hdr_k] ?? '');
+                            break;
+                        case 'cookie':
+                            $target_value = (string) ($_COOKIE[$key] ?? '');
+                            break;
+                        case 'uri':
+                        case 'path':
+                            $target_value = $request_uri;
+                            break;
+                        case 'body':
+                        case 'raw_body':
+                        case 'json':
+                            if ($key !== '') {
+                                $decoded = json_decode($raw_body, true);
+                                $target_value = is_array($decoded) && isset($decoded[$key]) ? (string) $decoded[$key] : '';
+                            } else {
+                                $target_value = $raw_body;
+                            }
+                            break;
+                        default:
+                            if ($key !== '') {
+                                // phpcs:ignore WordPress.Security.NonceVerification.Missing
+                                $target_value = (string) ($_GET[$key] ?? ($_POST[$key] ?? ($_SERVER['HTTP_' . strtoupper(str_replace('-', '_', $key))] ?? '')));
+                            }
+                            break;
+                    }
+                }
+
                 if ($predicate === 'true' || empty($predicate)) {
                     $matched_declarative = true;
                 } elseif (str_starts_with($predicate, 'header.')) {
@@ -463,21 +523,37 @@ class VirtualPatchManager {
                             $evidence = "Header {$pm[1]}: {$actual}";
                         }
                     }
-                } elseif (!empty($rule['regex'])) {
-                    // Predicate with regex
-                    if (!empty($query_string) && preg_match($rule['regex'], $query_string, $m)) {
+                } elseif (str_starts_with($predicate, 'equals:')) {
+                    $eq_val = substr($predicate, 7);
+                    if ($target_value !== null && $target_value === $eq_val) {
                         $matched_declarative = true;
-                        $evidence = $m[0];
-                    } elseif (!empty($raw_body) && preg_match($rule['regex'], $raw_body, $m)) {
+                        $evidence = "Value equals {$eq_val}";
+                    }
+                } elseif (str_starts_with($predicate, 'contains:')) {
+                    $ct_val = substr($predicate, 9);
+                    if ($target_value !== null && str_contains($target_value, $ct_val)) {
                         $matched_declarative = true;
-                        $evidence = substr($m[0], 0, 100);
+                        $evidence = "Value contains {$ct_val}";
+                    }
+                } elseif (str_starts_with($predicate, 'regex:') || (str_starts_with($predicate, '/') && str_ends_with($predicate, '/'))) {
+                    $pattern = str_starts_with($predicate, 'regex:') ? substr($predicate, 6) : $predicate;
+                    $subject = $target_value ?? (!empty($query_string) ? $query_string : $raw_body);
+                    if (!empty($subject) && @preg_match($pattern, $subject, $m)) {
+                        $matched_declarative = true;
+                        $evidence = substr((string) ($m[0] ?? ''), 0, 100);
+                    }
+                } elseif (!empty($match['regex'])) {
+                    $pattern = (string) $match['regex'];
+                    $subject = $target_value ?? (!empty($query_string) ? $query_string : $raw_body);
+                    if (!empty($subject) && @preg_match($pattern, $subject, $m)) {
+                        $matched_declarative = true;
+                        $evidence = substr((string) ($m[0] ?? ''), 0, 100);
                     }
                 }
 
                 if ($matched_declarative) {
-                    $stage = (string) ($patch['stage'] ?? DeclarativePatchVerifier::STAGE_ACTIVE);
-                    if ($stage === DeclarativePatchVerifier::STAGE_SHADOW) {
-                        // Shadow mode: observe and log hit telemetry without blocking
+                    if ($stage === DeclarativePatchVerifier::STAGE_SHADOW || $stage === DeclarativePatchVerifier::STAGE_STAGED) {
+                        // Shadow / Staged canary mode: record hit telemetry without blocking
                         $active = self::get_active_patches();
                         if (isset($active[$patch_id])) {
                             $active[$patch_id]['hits'] = ($active[$patch_id]['hits'] ?? 0) + 1;
@@ -485,12 +561,13 @@ class VirtualPatchManager {
                             update_option(self::OPTION_PATCHES, $active, false);
                         }
                         AuditLogger::log_event(
-                            'VPATCH_SHADOW_OBSERVE',
-                            sprintf('Virtual patch %s matched in shadow mode (observe-only): %s', $patch_id, $evidence)
+                            'VPATCH_' . strtoupper($stage) . '_OBSERVE',
+                            sprintf('Virtual patch %s matched in %s mode (observe-only): %s', $patch_id, $stage, $evidence)
                         );
                         continue;
                     }
 
+                    // STAGE_ACTIVE: Trigger block or declared action
                     return self::trigger_patch_block($patch_id, $patch, $evidence, 'Declarative Match');
                 }
 
@@ -581,12 +658,22 @@ class VirtualPatchManager {
             update_option(self::OPTION_PATCHES, $active, false);
         }
 
+        $action_raw = strtolower((string) ($patch['action'] ?? 'block'));
+        $status_code = match ($action_raw) {
+            'rate_limit'                 => 429,
+            'challenge_pow', 'challenge' => (str_contains($_SERVER['REQUEST_URI'] ?? '', 'wp-json') || str_contains($_SERVER['REQUEST_URI'] ?? '', 'admin-ajax.php')) ? 429 : 200,
+            'log', 'log_only'            => 200,
+            default                      => 403,
+        };
+
         return [
             'id'          => 'VPATCH-' . $patch_id,
             'name'        => '[Virtual Patch] ' . ($patch['title'] ?? $patch_id),
             'category'    => 'Virtual Patch (CVE Shield)',
             'detector'    => 'VirtualPatchManager',
             'sig_id'      => 'cve:' . strtolower($patch_id),
+            'action'      => $action_raw,
+            'status_code' => $status_code,
             'match_type'  => $match_type,
             'match_value' => substr($evidence, 0, 120),
         ];
@@ -615,11 +702,31 @@ class VirtualPatchManager {
             return ['success' => false, 'message' => __('Cloudflare integration service is unavailable.', 'webcare-pro-security')];
         }
 
-        // Fetch existing ruleset
+        // Abort immediately if fetching existing ruleset fails (PR-K2 / CF-05: Non-destructive sync)
         $res = CloudflareService::request("zones/{$zone_id}/rulesets/phases/http_request_firewall_custom/entrypoint");
-        $rules = [];
+        if (empty($res['success'])) {
+            $err = $res['errors'][0]['message'] ?? __('Failed to verify existing Cloudflare ruleset. Aborting sync to prevent overwriting customer rules.', 'webcare-pro-security');
+            return ['success' => false, 'message' => $err];
+        }
 
-        if (!empty($res['success']) && !empty($res['result']['rules'])) {
+        // Delegate synchronization cleanly through CloudflareSlotOptimizer if available
+        if (class_exists('\\WebCareProScanner\\Firewall\\CAF\\CloudflareSlotOptimizer')) {
+            $optimizer = new \WebCareProScanner\Firewall\CAF\CloudflareSlotOptimizer();
+            $active_patches = self::get_active_patches();
+            $scoped_patches = [];
+            foreach ($active_patches as $p) {
+                if (!empty($p['cf_expression']) && !empty($p['enabled'])) {
+                    $scoped_patches[] = $p;
+                }
+            }
+            if (!empty($patch['cf_expression']) && !isset($active_patches[$patch['patch_id']])) {
+                $scoped_patches[] = $patch;
+            }
+            return $optimizer->deploy_to_cloudflare($zone_id, null, $scoped_patches);
+        }
+
+        $rules = [];
+        if (!empty($res['result']['rules'])) {
             foreach ($res['result']['rules'] as $r) {
                 // Keep other rules
                 $desc = $r['description'] ?? '';

@@ -150,6 +150,7 @@ final class RequestBodyReader {
         if (!file_exists($file_path) || !is_readable($file_path)) {
             return [
                 'completed'      => false,
+                'read_failed'    => true,
                 'bytes_streamed' => 0,
                 'truncated'      => false,
                 'result'         => null,
@@ -161,6 +162,7 @@ final class RequestBodyReader {
         if (!is_resource($fp)) {
             return [
                 'completed'      => false,
+                'read_failed'    => true,
                 'bytes_streamed' => 0,
                 'truncated'      => false,
                 'result'         => null,
@@ -170,6 +172,7 @@ final class RequestBodyReader {
         $overlap = '';
         $bytes_streamed = 0;
         $truncated = false;
+        $read_failed = false;
         $result = null;
 
         while (!feof($fp)) {
@@ -181,7 +184,11 @@ final class RequestBodyReader {
 
             // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fread -- Bounded chunked streaming
             $chunk = @fread($fp, $bytes_to_read);
-            if ($chunk === false || $chunk === '') {
+            if ($chunk === false) {
+                $read_failed = true;
+                break;
+            }
+            if ($chunk === '') {
                 break;
             }
 
@@ -202,7 +209,8 @@ final class RequestBodyReader {
         @fclose($fp);
 
         return [
-            'completed'      => true,
+            'completed'      => (!$read_failed && !$truncated),
+            'read_failed'    => $read_failed,
             'bytes_streamed' => $bytes_streamed,
             'truncated'      => $truncated,
             'result'         => $result,

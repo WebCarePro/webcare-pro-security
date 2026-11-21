@@ -500,13 +500,15 @@ class CVEIntelligenceService {
 
         $vector_type = self::detect_vector_type($description);
 
-        // Correlate with local site inventory
+        // Correlate with local site inventory (evaluating structured NVD configurations if present)
+        $nvd_configs = (!empty($cve_item['configurations']) && is_array($cve_item['configurations'])) ? $cve_item['configurations'] : [];
         $correlation = self::correlate_component(
             $component_name,
             $software_info['name'],
             $description,
             $component_type,
-            $vulnerable_max_version
+            $vulnerable_max_version,
+            $nvd_configs
         );
 
         $result = [
@@ -562,25 +564,52 @@ class CVEIntelligenceService {
         string $title,
         string $description,
         string $component_type = 'plugin',
-        string $vulnerable_max_version = ''
+        string $vulnerable_max_version = '',
+        array $configurations = []
     ): array {
         if (!function_exists('get_plugins')) {
             require_once ABSPATH . 'wp-admin/includes/plugin.php';
         }
 
+        // Helper to resolve range status considering Boolean NVD tree configurations
+        $eval_component_status = static function (string $installed_ver, string $slug) use ($vulnerable_max_version, $configurations): string {
+            if (!empty($configurations)) {
+                $tree_results = [];
+                foreach ($configurations as $configNode) {
+                    if (is_array($configNode)) {
+                        $tree_results[] = self::evaluate_nvd_boolean_tree($configNode, $slug, $installed_ver);
+                    }
+                }
+                if (!empty($tree_results)) {
+                    if (in_array('vulnerable', $tree_results, true)) {
+                        return 'vulnerable';
+                    }
+                    if (in_array('unknown', $tree_results, true)) {
+                        return 'unknown';
+                    }
+                    return 'safe';
+                }
+            }
+
+            if (!empty($vulnerable_max_version)) {
+                $eval_status = self::evaluate_version_range_tri_state($installed_ver, $vulnerable_max_version);
+                if ($eval_status === 'vulnerable') {
+                    return 'vulnerable';
+                }
+                if ($eval_status === 'not_vulnerable') {
+                    return 'safe';
+                }
+                return 'unknown';
+            }
+
+            return 'unknown';
+        };
+
         // 1. WordPress Core Check
         if ($component_type === 'core' || strpos(strtolower($component_slug), 'core') !== false) {
             global $wp_version;
             $installed_wp = (string) ($wp_version ?? '6.7.0');
-            $range_status = 'safe';
-            if (!empty($vulnerable_max_version)) {
-                $eval_status = self::evaluate_version_range_tri_state($installed_wp, $vulnerable_max_version);
-                if ($eval_status === 'vulnerable') {
-                    $range_status = 'vulnerable';
-                } elseif ($eval_status === 'unknown') {
-                    $range_status = 'unknown';
-                }
-            }
+            $range_status = $eval_component_status($installed_wp, 'wordpress');
 
             return [
                 'status'            => $range_status,
@@ -639,18 +668,7 @@ class CVEIntelligenceService {
         if ($matched_file && $matched_data) {
             $is_active = is_plugin_active($matched_file);
             $installed_ver = $matched_data['Version'] ?? '0.0.0';
-
-            $range_status = 'unknown';
-            if (!empty($vulnerable_max_version)) {
-                $eval_status = self::evaluate_version_range_tri_state($installed_ver, $vulnerable_max_version);
-                if ($eval_status === 'vulnerable') {
-                    $range_status = 'vulnerable';
-                } elseif ($eval_status === 'not_vulnerable') {
-                    $range_status = 'safe';
-                } else {
-                    $range_status = 'unknown';
-                }
-            }
+            $range_status = $eval_component_status($installed_ver, $target_slug);
 
             return [
                 'status'            => $range_status,
@@ -688,17 +706,7 @@ class CVEIntelligenceService {
         $theme = wp_get_theme($target_slug);
         if ($theme->exists()) {
             $theme_ver = (string) $theme->get('Version');
-            $range_status = 'unknown';
-            if (!empty($vulnerable_max_version)) {
-                $eval_status = self::evaluate_version_range_tri_state($theme_ver, $vulnerable_max_version);
-                if ($eval_status === 'vulnerable') {
-                    $range_status = 'vulnerable';
-                } elseif ($eval_status === 'not_vulnerable') {
-                    $range_status = 'safe';
-                } else {
-                    $range_status = 'unknown';
-                }
-            }
+            $range_status = $eval_component_status($theme_ver, $target_slug);
 
             return [
                 'status'         => $range_status,

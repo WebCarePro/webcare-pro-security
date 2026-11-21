@@ -6,6 +6,7 @@ namespace WebCareProScanner\Firewall\Core;
 use WebCareProScanner\Contracts\EvaluatorFailurePolicy;
 use WebCareProScanner\Contracts\RequestContext;
 use WebCareProScanner\Contracts\RouteClass;
+use WebCareProScanner\Contracts\WafAction;
 use WebCareProScanner\Contracts\WafEvaluatorInterface;
 use WebCareProScanner\Contracts\WafVerdict;
 use WebCareProScanner\Firewall\BotReconDefense;
@@ -618,13 +619,23 @@ final class AlwaysOnCoreGuard implements WafEvaluatorInterface {
                 if (class_exists(ThreatIntelNetwork::class)) {
                     ThreatIntelNetwork::record_consensus_beacon($client_ip, $vpatch_rule['name'] ?? 'Virtual Patch Violation', ['category' => 'Virtual Patch']);
                 }
+
+                $action_raw = (string) ($vpatch_rule['action'] ?? 'block');
+                $status_code = (int) ($vpatch_rule['status_code'] ?? ($action_raw === 'rate_limit' ? 429 : 403));
+                $waf_action = match ($action_raw) {
+                    'challenge_pow', 'challenge' => WafAction::Challenge,
+                    'rate_limit'                 => WafAction::RateLimit,
+                    'log_only', 'log'            => WafAction::LogOnly,
+                    default                      => WafAction::Block,
+                };
+
                 return new WafVerdict(
-                    'block',
+                    $waf_action,
                     (string) ($vpatch_rule['id'] ?? 'VPATCH-VIOLATION'),
                     (string) ($vpatch_rule['description'] ?? 'Virtual patch violation detected.'),
                     [
-                        'category'    => 'Virtual Patch (CVE Shield)',
-                        'status_code' => 403,
+                        'category'    => (string) ($vpatch_rule['category'] ?? 'Virtual Patch (CVE Shield)'),
+                        'status_code' => $status_code,
                     ]
                 );
             }

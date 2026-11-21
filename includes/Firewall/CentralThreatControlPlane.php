@@ -44,6 +44,7 @@ final class CentralThreatControlPlane {
             'sequence'       => (int) ($cp['sequence'] ?? 0),
             'last_mod_start' => (string) ($cp['last_mod_start'] ?? gmdate('Y-m-d\TH:i:s\Z', time() - (30 * 86400))),
             'last_sync_ts'   => (int) ($cp['last_sync_ts'] ?? 0),
+            'payload_sha256' => (string) ($cp['payload_sha256'] ?? ''),
         ];
     }
 
@@ -52,12 +53,14 @@ final class CentralThreatControlPlane {
      *
      * @param int $sequence Monotonic sequence
      * @param string $last_mod_start Timestamp of latest processed CVE
+     * @param string $payload_sha256 Canonical SHA256 of processed payload
      */
-    public static function update_checkpoint(int $sequence, string $last_mod_start): void {
+    public static function update_checkpoint(int $sequence, string $last_mod_start, string $payload_sha256 = ''): void {
         update_option(self::OPTION_DELTA_CHECKPOINT, [
             'sequence'       => $sequence,
             'last_mod_start' => $last_mod_start,
             'last_sync_ts'   => time(),
+            'payload_sha256' => $payload_sha256,
         ], false);
     }
 
@@ -154,6 +157,9 @@ final class CentralThreatControlPlane {
 
         // Anti-rollback check: sequence must strictly advance or match current
         $incoming_seq = (int) ($payload['sequence'] ?? 0);
+        $payload_bytes = (string) wp_json_encode(DeclarativePatchVerifier::canonicalize_recursive($payload));
+        $current_payload_sha256 = hash('sha256', $payload_bytes);
+
         if ($incoming_seq < $checkpoint['sequence']) {
             AuditLogger::log_event(
                 'FEED_ROLLBACK_REJECTED',
@@ -168,7 +174,26 @@ final class CentralThreatControlPlane {
             ];
         }
 
+        // PR-J2: If incoming feed has identical sequence, reject replay unless payload SHA-256 matches identically
+        if ($incoming_seq === $checkpoint['sequence'] && $checkpoint['sequence'] > 0) {
+            $known_sha256 = (string) ($checkpoint['payload_sha256'] ?? '');
+            if ($known_sha256 !== '' && $known_sha256 !== $current_payload_sha256) {
+                AuditLogger::log_event(
+                    'FEED_REPLAY_MUTATION_REJECTED',
+                    sprintf('Rejected conflicting intelligence feed at sequence %d with differing payload hash.', $incoming_seq)
+                );
+                return [
+                    'success'     => false,
+                    'new_cves'    => 0,
+                    'kev_updates' => 0,
+                    'sequence'    => $checkpoint['sequence'],
+                    'message'     => __('Feed replay conflict detected: differing payload submitted for identical sequence.', 'webcare-pro-security'),
+                ];
+            }
+        }
+
         $cve_entries = (array) ($payload['cves'] ?? []);
+        $cve_removed = (array) ($payload['cve_removed'] ?? []);
         $kev_entries = (array) ($payload['cisa_kev'] ?? []);
         $kev_removed = (array) ($payload['kev_removed'] ?? []);
 
@@ -204,8 +229,25 @@ final class CentralThreatControlPlane {
         // 2. Evaluate incremental CVE updates against local WordPress component inventory
         $evaluated_findings = self::evaluate_cves_against_inventory($cve_entries, $current_kev);
 
-        // Persist evaluated actionable findings durably
+        // Persist evaluated actionable findings durably (PR-J2: Support explicit cve_removed tombstones and update is_cisa_kev)
         $stored_findings = (array) get_option(self::OPTION_CVE_FINDINGS, []);
+
+        // Remove explicitly withdrawn CVEs
+        foreach ($cve_removed as $tombstone_cve) {
+            $t_id = is_string($tombstone_cve) ? trim($tombstone_cve) : '';
+            if ($t_id !== '' && isset($stored_findings[$t_id])) {
+                unset($stored_findings[$t_id]);
+            }
+        }
+
+        // When kev_removed removes a KEV entry, update is_cisa_kev = false on matching persisted findings
+        foreach ($kev_removed as $r_kev) {
+            $r_k_id = is_string($r_kev) ? trim($r_kev) : '';
+            if ($r_k_id !== '' && isset($stored_findings[$r_k_id])) {
+                $stored_findings[$r_k_id]['is_cisa_kev'] = false;
+            }
+        }
+
         foreach ($evaluated_findings as $cve_id => $finding) {
             $stored_findings[$cve_id] = $finding;
         }
@@ -213,7 +255,7 @@ final class CentralThreatControlPlane {
 
         // 3. Update Checkpoint - only after signature verification, finding persistence, and KEV updates succeed
         $new_mod_timestamp = (string) ($payload['last_mod_timestamp'] ?? $checkpoint['last_mod_start']);
-        self::update_checkpoint($incoming_seq, $new_mod_timestamp);
+        self::update_checkpoint($incoming_seq, $new_mod_timestamp, $current_payload_sha256);
 
         // Save sync meta
         update_option(self::OPTION_FEED_META, [

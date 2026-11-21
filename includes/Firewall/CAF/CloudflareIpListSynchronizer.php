@@ -817,6 +817,7 @@ class CloudflareIpListSynchronizer {
 
         // If items are still pending under an async operation, persist them in pending state
         // rather than immediately falling back to Zone Access Rules while the bulk operation is processing
+        // PR-A2: Pending-create items must NOT be treated as confirmed synced; they stay tracked under pending_create
         if (empty($synced_targets) && !empty($operation_id)) {
             foreach ($targets as $t) {
                 $t_ip = (string) ($t['target'] ?? '');
@@ -829,9 +830,13 @@ class CloudflareIpListSynchronizer {
                         'expires_at'   => (int) ($source_entries[$t_ip]['expires_at'] ?? (time() + 86400)),
                         'synced_at'    => time(),
                     ];
-                    $synced_targets[] = $t_ip;
                 }
             }
+            if (count($active_bans) > 2000) {
+                $active_bans = array_slice($active_bans, -2000, null, true);
+            }
+            update_option(self::OPTION_ACTIVE_EDGE_BANS, $active_bans, false);
+            return ['synced_targets' => [], 'error' => 'Pending async operation: ' . $operation_id];
         }
 
         // If items STILL cannot be confirmed or tracked via pending operation, fail closed and downgrade to zone access rules
@@ -1377,8 +1382,21 @@ class CloudflareIpListSynchronizer {
             if ($current_status === 'completed') {
                 if ($type === 'delete') {
                     foreach ($ips as $ip) {
-                        unset($active_bans[$ip]);
-                        $bans_modified = true;
+                        // PR-A2: For completed async deletes, verify item absence ('confirmed_absent') before removing local active ledger entry
+                        $verify_res = CloudflareService::request("accounts/{$account_id}/rules/lists/{$list_id}/items?search=" . rawurlencode($ip));
+                        $is_absent = true;
+                        if (!empty($verify_res['success']) && isset($verify_res['result']) && is_array($verify_res['result'])) {
+                            foreach ($verify_res['result'] as $v_item) {
+                                if (($v_item['ip'] ?? '') === $ip) {
+                                    $is_absent = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if ($is_absent) {
+                            unset($active_bans[$ip]);
+                            $bans_modified = true;
+                        }
                     }
                 } elseif ($type === 'create') {
                     // Fetch list items to resolve and persist exact item_id for created items
@@ -1407,6 +1425,32 @@ class CloudflareIpListSynchronizer {
                 $ops[$op_id] = $op_meta;
                 $ops_modified = true;
             } elseif ($current_status === 'failed') {
+                // PR-A2: When pending create fails, re-queue IPs in OPTION_BAN_QUEUE and clean up incomplete pending_create ledger entries
+                if ($type === 'create') {
+                    $now = time();
+                    self::mutate_ban_queue(static function (array $queue) use ($ips, $now): array {
+                        foreach ($ips as $f_ip) {
+                            $existing = $queue[$f_ip] ?? [];
+                            $attempts = ((int) ($existing['attempts'] ?? 0)) + 1;
+                            $queue[$f_ip] = [
+                                'ip'         => $f_ip,
+                                'reason'     => (string) ($existing['reason'] ?? 'WebCare Threat Block (Async Retry)'),
+                                'status'     => ($attempts >= 5) ? 'failed' : 'retry',
+                                'attempts'   => $attempts,
+                                'next_retry' => $now + min(3600, 30 * (2 ** $attempts)),
+                                'last_error' => 'Async bulk create operation failed',
+                            ];
+                        }
+                        return $queue;
+                    });
+
+                    foreach ($ips as $f_ip) {
+                        if (isset($active_bans[$f_ip]) && ($active_bans[$f_ip]['state'] ?? '') === 'pending_create') {
+                            unset($active_bans[$f_ip]);
+                            $bans_modified = true;
+                        }
+                    }
+                }
                 $op_meta['status'] = 'failed';
                 $op_meta['updated_at'] = time();
                 $ops[$op_id] = $op_meta;

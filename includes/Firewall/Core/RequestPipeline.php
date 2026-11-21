@@ -48,6 +48,49 @@ final class RequestPipeline {
             return;
         }
 
+        // Global disable / killswitch pre-checks: return immediately before pipeline evaluation
+        if ((defined('WEBCAREPROSCAN_DISABLE_WAF') && WEBCAREPROSCAN_DISABLE_WAF)
+            || (defined('WEBCAREPROSCAN_DISABLE_FIREWALL') && WEBCAREPROSCAN_DISABLE_FIREWALL)
+            || (defined('WEBCARE_CAF_DISABLE_PRELOAD') && WEBCARE_CAF_DISABLE_PRELOAD)
+        ) {
+            return;
+        }
+
+        // Killswitch file presence in upload directory
+        $upload_dir = function_exists('wp_upload_dir') ? wp_upload_dir() : [];
+        if (!empty($upload_dir['basedir'])) {
+            $uploads_base = rtrim($upload_dir['basedir'], '/\\');
+            if (file_exists($uploads_base . '/webcare-pro-security/.killswitch') || file_exists($uploads_base . '/webcare-vault/.killswitch')) {
+                return;
+            }
+        }
+
+        // Skip CLI execution (unless running in synthetic test runner)
+        if (php_sapi_name() === 'cli' || (defined('WP_CLI') && WP_CLI)) {
+            if (!class_exists('\\WebCareProScanner\\Firewall\\DeclarativePatchVerifier')
+                || !\WebCareProScanner\Firewall\DeclarativePatchVerifier::is_test_context()
+            ) {
+                return;
+            }
+        }
+
+        // Internal DOING_CRON pre-check: skip unless this is an external HTTP trigger to wp-cron.php
+        if (defined('DOING_CRON') && DOING_CRON) {
+            $raw_cron_uri = isset($_SERVER['REQUEST_URI']) ? (string) $_SERVER['REQUEST_URI'] : '';
+            $clean_cron_check = strtolower(wp_parse_url($raw_cron_uri, PHP_URL_PATH) ?: $raw_cron_uri);
+            if (!str_contains($clean_cron_check, 'wp-cron.php')) {
+                return;
+            }
+        }
+
+        // Settings check: global WAF enabled / disabled mode
+        if (class_exists(SettingsManager::class)) {
+            $early_settings = SettingsManager::get_settings();
+            if (empty($early_settings['waf_enabled']) || ($early_settings['waf_mode'] ?? 'enabled') === 'disabled') {
+                return;
+            }
+        }
+
         self::$is_processing = true;
 
         try {
