@@ -135,7 +135,8 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
         $signals = [];
 
         // Heuristic 1: HTTPS Sec-Fetch-* Absence (+35 risk)
-        $is_https = function_exists('is_ssl') ? is_ssl() : (!empty($ctx->server['HTTPS']) && strtolower((string) $ctx->server['HTTPS']) !== 'off');
+        $is_https = (!empty($ctx->server['HTTPS']) && strtolower((string) $ctx->server['HTTPS']) !== 'off')
+            || (function_exists('is_ssl') && is_ssl());
 
         $has_sec_fetch = isset($ctx->headers['sec-fetch-site']) || isset($ctx->headers['sec-fetch-mode']) || isset($ctx->headers['sec-fetch-dest'])
             || isset($ctx->server['HTTP_SEC_FETCH_SITE']) || isset($ctx->server['HTTP_SEC_FETCH_MODE']) || isset($ctx->server['HTTP_SEC_FETCH_DEST']);

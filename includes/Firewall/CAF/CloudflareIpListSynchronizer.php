@@ -1377,12 +1377,13 @@ class CloudflareIpListSynchronizer {
             $type       = (string) ($op_meta['type'] ?? 'delete');
             $ips        = (array) ($op_meta['ips'] ?? []);
 
-            // If operation is in awaiting_list_verification state (e.g. DELETE succeeded without an operation_id),
-            // bypass bulk-operation polling and directly perform list item verification.
-            if ($status === 'awaiting_list_verification') {
+            // Central Polling Invariant: Only poll when a valid Cloudflare operation_id exists.
+            // If operation is in awaiting_list_verification state or lacks an operation_id,
+            // bypass bulk-operation polling and directly perform list item verification (never fall back to ledger key $op_id).
+            $poll_id = !empty($op_meta['operation_id']) ? (string) $op_meta['operation_id'] : '';
+            if ($status === 'awaiting_list_verification' || $poll_id === '') {
                 $current_status = 'completed';
             } else {
-                $poll_id = !empty($op_meta['operation_id']) ? (string) $op_meta['operation_id'] : (string) $op_id;
                 $current_status = self::poll_bulk_operation($account_id, $poll_id);
             }
 
@@ -1475,8 +1476,9 @@ class CloudflareIpListSynchronizer {
                         }
                     } elseif ($has_unknown_verification) {
                         // P1: verification_unknown does not count as a completed unsuccessful delete attempt
-                        // Retain operation for retry verification without incrementing retry_count or terminating
-                        $op_meta['status'] = 'running';
+                        // Retain operation for retry verification without incrementing retry_count or terminating.
+                        // Preserve awaiting_list_verification whenever there is no valid operation_id.
+                        $op_meta['status'] = empty($op_meta['operation_id']) ? 'awaiting_list_verification' : 'running';
                     }
 
                     // Keep delete operation pending for retry if any IP is still unresolved
