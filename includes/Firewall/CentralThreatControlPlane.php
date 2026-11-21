@@ -25,7 +25,7 @@ final class CentralThreatControlPlane {
     public const OPTION_DELTA_CHECKPOINT = 'webcareproscan_cve_delta_checkpoint';
     public const OPTION_KEV_CATALOG      = 'webcareproscan_cisa_kev_catalog';
     public const OPTION_FEED_META        = 'webcareproscan_central_feed_meta';
-    public const DEFAULT_FEED_URL        = 'https://intel.webcarepro.com/api/v1/feed/cve-delta';
+    public const DEFAULT_FEED_URL        = 'https://intel.webcarespro.com/api/v1/feed/cve-delta';
 
     /**
      * Checkpoint structure:
@@ -86,7 +86,7 @@ final class CentralThreatControlPlane {
                 'since_mod' => rawurlencode($checkpoint['last_mod_start']),
             ], self::DEFAULT_FEED_URL);
 
-            $response = wp_remote_get($feed_url, [
+            $response = wp_safe_remote_get($feed_url, [
                 'timeout'    => 15,
                 'user-agent' => 'WebCare-Pro-Security/' . (defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '3.3.0'),
                 'headers'    => [

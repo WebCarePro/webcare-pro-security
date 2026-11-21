@@ -24,12 +24,28 @@ final class DeclarativePatchVerifier {
 
     /**
      * Bundled Pinned Ed25519 Public Verification Keys (Key ID => Hex-encoded 32-byte public key).
-     * Includes primary signing key and secondary rotation key.
+     * Production trusted WebCare Pro signing keys.
      */
     private const PINNED_PUBLIC_KEYS = [
-        'wcp-ed25519-v1' => 'd75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a',
-        'wcp-ed25519-v2' => '3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29',
+        'wcp-ed25519-v1' => '5abb0cb435741a5732c3495ceb4834041b28a04177ba28c78f1094ee7e3a5dc6',
+        'wcp-ed25519-v2' => 'c8c187cd4ed02d08d1a32ba5ecc1734f0ace2f09fc78dfb4c94383b92ab248e8',
     ];
+
+    /**
+     * Optional test public keys injected strictly during unit testing.
+     *
+     * @var array<string, string>|null
+     */
+    private static ?array $test_public_keys = null;
+
+    /**
+     * Set test public keys for unit testing isolation.
+     *
+     * @param array<string, string>|null $keys
+     */
+    public static function set_test_public_keys(?array $keys): void {
+        self::$test_public_keys = $keys;
+    }
 
     /**
      * Revoked Key IDs (Compromised or retired keys that must always be rejected).
@@ -80,7 +96,9 @@ final class DeclarativePatchVerifier {
             return ['valid' => false, 'error' => "Signing key {$key_id} has been revoked.", 'patch' => null];
         }
 
-        $public_key_hex = self::PINNED_PUBLIC_KEYS[$key_id] ?? null;
+        $public_key_hex = (self::$test_public_keys !== null && isset(self::$test_public_keys[$key_id]))
+            ? self::$test_public_keys[$key_id]
+            : (self::PINNED_PUBLIC_KEYS[$key_id] ?? null);
         if ($public_key_hex === null) {
             return ['valid' => false, 'error' => "Unknown or untrusted signing key ID: {$key_id}", 'patch' => null];
         }

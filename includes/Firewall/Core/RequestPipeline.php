@@ -11,6 +11,7 @@ use WebCareProScanner\Contracts\WafVerdict;
 use WebCareProScanner\Core\CompiledStackManifest;
 use WebCareProScanner\Core\RouteClassifier;
 use WebCareProScanner\Firewall\FirewallEngine;
+use WebCareProScanner\Firewall\RescueAssistantManager;
 use WebCareProScanner\System\SettingsManager;
 
 if (!defined('ABSPATH')) {
@@ -55,10 +56,20 @@ final class RequestPipeline {
                     $action_val = $verdict->get_action_value();
 
                     // If Safe Mode is active, downgrade heuristic/conditional blocks to observe-only ('detected')
-                    // while retaining zero-tolerance exploit blocks (RCE/SQLi)
-                    $is_critical_exploit = in_array($verdict->ruleId, ['WAF-RCE', 'WAF-SQLI', 'WAF-FILE-INCLUSION', 'WAF-ARBITRARY-FILE-WRITE'], true)
+                    // while retaining zero-tolerance exploit blocks (RCE/SQLi/LFI/XXE/SSRF/Object Injection)
+                    $is_critical_exploit = in_array($verdict->ruleId, [
+                        'WAF-RCE-PHP-INJECTION',
+                        'WAF-SQLI-INJECTION',
+                        'WAF-LFI-TRAVERSAL',
+                        'WAF-OBJECT-STREAM-INJECTION',
+                        'WAF-XXE-INJECTION',
+                        'WAF-SSRF-METADATA',
+                        'WAF-AJAX-SHORTCODE-GADGET',
+                        'WAF-ARBITRARY-FILE-WRITE',
+                    ], true)
                         || str_contains($verdict->category, 'SQL Injection')
-                        || str_contains($verdict->category, 'Command Injection');
+                        || str_contains($verdict->category, 'Command Injection')
+                        || str_contains($verdict->category, 'PHP Code Injection');
 
                     if ($is_safe_mode && !$is_critical_exploit) {
                         FirewallEngine::log_incident([

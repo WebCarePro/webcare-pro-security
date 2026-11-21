@@ -1,6 +1,6 @@
 {
   "version": "3.21.0",
-  "generated_at": "2026-11-20T23:30:06.116Z",
+  "generated_at": "2026-11-21T02:14:11.647Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -508,8 +508,8 @@
       "size": 13336
     },
     "includes/Firewall/CentralThreatControlPlane.php": {
-      "sha256": "cc5a7e90f2ba2a810b320d531a3bded26ea397e3d2065eaed4d0cd18211526f3",
-      "size": 10586
+      "sha256": "7778c2478c679dafc62e2a18aaac4386cb47fcd4e7d1d57a267179dabf7254d3",
+      "size": 10592
     },
     "includes/Firewall/Core/AffiliateSecurityEngine.php": {
       "sha256": "5f46a331916603afa46022cfd0d6021aefae7dc1a9912e10a6c0cebcc7647959",
@@ -552,8 +552,8 @@
       "size": 3700
     },
     "includes/Firewall/Core/RequestPipeline.php": {
-      "sha256": "8228265524d43d572caff3bd6ea34e5aeda01c30995bb0b368959030480da236",
-      "size": 13840
+      "sha256": "ea172396529744ac519f2db8a7827d85d3735f18e3b8d928c3bed9e9860ee57b",
+      "size": 14347
     },
     "includes/Firewall/Core/TransientRateLimiter.php": {
       "sha256": "f4ded40968ea08e8e113b53c98e60979930a6b722e0e76f989df16656d15499e",
@@ -572,8 +572,8 @@
       "size": 56674
     },
     "includes/Firewall/DeclarativePatchVerifier.php": {
-      "sha256": "aa3f294be408c3e94aabf7ea39aceb4ab1bc13deab8f6317a7331d7aae102878",
-      "size": 8844
+      "sha256": "48d93fb446bd15b576528aa30fb8b341c02b5cfaaf1732b55a50bcd53fff76ef",
+      "size": 9404
     },
     "includes/Firewall/DistributedVelocityShield.php": {
       "sha256": "eab849570736089cda62667615aec5a238af550c46409c4f8da3034876919667",
