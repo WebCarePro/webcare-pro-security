@@ -478,6 +478,37 @@ class SettingsManager {
                 continue;
             }
             $rule_id = !empty($rule['id']) ? sanitize_key($rule['id']) : 'rule_' . substr(md5(uniqid((string) wp_rand(), true)), 0, 8);
+            $raw_endpoints = is_array($rule['endpoints'] ?? null)
+                ? array_values(array_filter(array_map('sanitize_text_field', $rule['endpoints'])))
+                : array_values(array_filter(array_map('sanitize_text_field', explode("\n", str_replace("\r", "", (string) ($rule['endpoints'] ?? ''))))));
+
+            $clean_endpoints = [];
+            foreach ($raw_endpoints as $ep) {
+                $ep = trim((string) $ep);
+                if ($ep === '') {
+                    continue;
+                }
+                // Reject universal wildcards
+                if ($ep === '*' || $ep === '/*' || $ep === '/**') {
+                    continue;
+                }
+                // Reject dot segments
+                if (str_contains($ep, '..')) {
+                    continue;
+                }
+                // Ensure starts with '/'
+                if (!str_starts_with($ep, '/')) {
+                    $ep = '/' . $ep;
+                }
+                // Canonicalize multiple consecutive slashes
+                $ep = (string) preg_replace('#/{2,}#', '/', $ep);
+                if ($ep === '/' || $ep === '/*') {
+                    continue;
+                }
+                $clean_endpoints[] = $ep;
+            }
+            $clean_endpoints = array_values(array_unique($clean_endpoints));
+
             $clean_rule = [
                 'id'           => $rule_id,
                 'name'         => sanitize_text_field($rule['name'] ?? 'Custom Allowlist Rule'),
@@ -485,9 +516,7 @@ class SettingsManager {
                 'user_agents'  => is_array($rule['user_agents'] ?? null) 
                     ? array_values(array_filter(array_map('sanitize_text_field', $rule['user_agents'])))
                     : array_values(array_filter(array_map('sanitize_text_field', explode("\n", str_replace("\r", "", (string) ($rule['user_agents'] ?? '')))))),
-                'endpoints'    => is_array($rule['endpoints'] ?? null)
-                    ? array_values(array_filter(array_map('sanitize_text_field', $rule['endpoints'])))
-                    : array_values(array_filter(array_map('sanitize_text_field', explode("\n", str_replace("\r", "", (string) ($rule['endpoints'] ?? '')))))),
+                'endpoints'    => $clean_endpoints,
                 'ip_addresses'     => is_array($rule['ip_addresses'] ?? null)
                     ? array_values(array_filter(array_map('sanitize_text_field', $rule['ip_addresses'])))
                     : array_values(array_filter(array_map('sanitize_text_field', explode("\n", str_replace("\r", "", (string) ($rule['ip_addresses'] ?? '')))))),
@@ -507,8 +536,8 @@ class SettingsManager {
                 'description'      => sanitize_text_field($rule['description'] ?? ''),
             ];
 
-            // S2 Finding 3: Reject empty targeted allowlist rules that lack any effective constraints.
-            // An allowlist rule must contain at least one non-empty IP/CIDR, endpoint, verified hostname, or ASN.
+            // S2 Finding 3 & v3.25.1: Reject empty targeted allowlist rules that lack any effective constraints.
+            // An allowlist rule must contain at least one non-empty IP/CIDR, validated non-universal endpoint, verified hostname, or ASN.
             $has_ips       = !empty($clean_rule['ip_addresses']);
             $has_endpoints = !empty($clean_rule['endpoints']);
             $has_hosts     = !empty($clean_rule['hostnames']);

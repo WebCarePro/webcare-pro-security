@@ -183,14 +183,28 @@ final class AllowlistManager {
             if (!empty($rule_endpoints)) {
                 $endpoint_matched = false;
                 foreach ($rule_endpoints as $endpoint_pattern) {
-                    $endpoint_pattern = trim($endpoint_pattern);
+                    $endpoint_pattern = trim((string) $endpoint_pattern);
                     if ($endpoint_pattern === '') {
                         continue;
                     }
+                    // Defense in depth: Reject universal wildcards or path traversal dots
+                    if ($endpoint_pattern === '*' || $endpoint_pattern === '/*' || $endpoint_pattern === '/**' || str_contains($endpoint_pattern, '..')) {
+                        continue;
+                    }
+
                     // Strip host/query for matching
                     $clean_pattern = (string) wp_parse_url($endpoint_pattern, PHP_URL_PATH);
                     if (empty($clean_pattern)) {
                         $clean_pattern = $endpoint_pattern;
+                    }
+
+                    // Canonicalize leading slash and multi-slashes
+                    if (!str_starts_with($clean_pattern, '/')) {
+                        $clean_pattern = '/' . $clean_pattern;
+                    }
+                    $clean_pattern = (string) preg_replace('#/{2,}#', '/', $clean_pattern);
+                    if ($clean_pattern === '/' || $clean_pattern === '/*') {
+                        continue;
                     }
 
                     // Check exact, wildcard, or prefix

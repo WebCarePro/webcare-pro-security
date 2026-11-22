@@ -153,24 +153,117 @@ final class SystemDoctor {
             'required'    => '0750 directory / 0600 files',
         ];
 
-        // 4b. WAF Log Storage HTTP Protection Check
+        // 4b. Honest Server-Aware WAF Log Storage HTTP Protection Check
         $log_storage_dir = class_exists('\\WebCareProScanner\\Firewall\\WafFileLogger')
             ? \WebCareProScanner\Firewall\WafFileLogger::get_storage_dir()
             : $vault_dir . '/logs';
-        $log_secured = class_exists('\\WebCareProScanner\\Firewall\\WafFileLogger')
+        $log_storage_dir_norm = wp_normalize_path($log_storage_dir);
+        $site_abspath_norm    = wp_normalize_path(ABSPATH);
+
+        $server_software = isset($_SERVER['SERVER_SOFTWARE']) ? (string) $_SERVER['SERVER_SOFTWARE'] : '';
+        $is_nginx        = (stripos($server_software, 'nginx') !== false);
+        $is_caddy        = (stripos($server_software, 'caddy') !== false);
+        $is_apache_or_ls = (stripos($server_software, 'apache') !== false || stripos($server_software, 'litespeed') !== false || !empty($_SERVER['LITESPEED_SERVER_SOFTWARE']));
+        $is_iis          = (stripos($server_software, 'microsoft-iis') !== false);
+
+        $guard_files_ok = class_exists('\\WebCareProScanner\\Firewall\\WafFileLogger')
             ? \WebCareProScanner\Firewall\WafFileLogger::ensure_directory_secured()
             : (file_exists($log_storage_dir . '/.htaccess') && file_exists($log_storage_dir . '/web.config'));
+
+        $is_outside_webroot = !str_starts_with($log_storage_dir_norm, $site_abspath_norm);
+
+        $waf_prot_status   = 'fail';
+        $waf_prot_message  = '';
+        $waf_prot_current  = '';
+
+        if ($is_outside_webroot) {
+            // State 1: Outside webroot (WEBCARE_WAF_STORAGE_DIR above ABSPATH)
+            $waf_prot_status  = 'pass';
+            $waf_prot_message = __('WAF log storage is stored outside the public document root for complete isolation.', 'webcare-pro-security');
+            $waf_prot_current = 'Stored outside public document root';
+        } elseif ($is_apache_or_ls || $is_iis || (!$is_nginx && !$is_caddy)) {
+            // State 2: Apache / LiteSpeed / IIS with verified guard files
+            if ($guard_files_ok) {
+                $waf_prot_status  = 'pass';
+                $waf_prot_message = __('WAF log storage is isolated with auto-repaired .htaccess, web.config, and index.php access barriers.', 'webcare-pro-security');
+                $waf_prot_current = 'Secured (.htaccess + web.config + index.php verified)';
+            } else {
+                $waf_prot_status  = 'fail';
+                $waf_prot_message = __('WAF log directory guard files (.htaccess / web.config) could not be created or verified.', 'webcare-pro-security');
+                $waf_prot_current = 'Unprotected / Inaccessible guards';
+            }
+        } else {
+            // State 3: Nginx / Caddy inside webroot -> Live non-sensitive HTTP canary probe
+            $probe_filename = 'probe_canary_' . wp_generate_password(12, false) . '.json';
+            $probe_filepath = $log_storage_dir . '/' . $probe_filename;
+            $probe_code     = 0;
+            $probe_success  = false;
+
+            try {
+                // Write temporary non-sensitive canary probe file
+                @file_put_contents($probe_filepath, '{"canary":"webcare_doc_probe"}');
+                @chmod($probe_filepath, 0600);
+
+                if (file_exists($probe_filepath)) {
+                    $rel_dir = ltrim(substr($log_storage_dir_norm, strlen($site_abspath_norm)), '/\\');
+                    $probe_url = home_url('/' . $rel_dir . '/' . $probe_filename);
+
+                    $probe_res = function_exists('wp_safe_remote_get')
+                        ? wp_safe_remote_get($probe_url, [
+                            'timeout'     => 5,
+                            'redirection' => 0,
+                            'sslverify'   => false,
+                            'user-agent'  => 'WEBCARE-Doctor-Probe/1.0',
+                        ])
+                        : (function_exists('wp_remote_get') ? wp_remote_get($probe_url, [
+                            'timeout'     => 5,
+                            'redirection' => 0,
+                            'sslverify'   => false,
+                            'user-agent'  => 'WEBCARE-Doctor-Probe/1.0',
+                        ]) : null);
+
+                    if (!is_wp_error($probe_res)) {
+                        $probe_code = (int) wp_remote_retrieve_response_code($probe_res);
+                        // Report pass ONLY if HTTP 403 or 404 is confirmed
+                        if ($probe_code === 403 || $probe_code === 401 || $probe_code === 404) {
+                            $probe_success = true;
+                        }
+                    }
+                }
+            } finally {
+                // Ensure canary probe file is deleted immediately in finally
+                if (file_exists($probe_filepath)) {
+                    // phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
+                    @unlink($probe_filepath);
+                }
+            }
+
+            if ($probe_success) {
+                $waf_prot_status  = 'pass';
+                $waf_prot_message = sprintf(
+                    __('WAF log storage HTTP denial verified on %s (HTTP %d confirmed).', 'webcare-pro-security'),
+                    $is_nginx ? 'Nginx' : 'Caddy',
+                    $probe_code
+                );
+                $waf_prot_current = sprintf('Live Verified Block (HTTP %d on %s)', $probe_code, $is_nginx ? 'Nginx' : 'Caddy');
+            } else {
+                $waf_prot_status  = 'warn';
+                $waf_prot_message = sprintf(
+                    __('%1$s does not parse .htaccess automatically. Add "location ^~ /wp-content/webcare-waf/ { deny all; return 403; }" to your server configuration, or define WEBCARE_WAF_STORAGE_DIR above webroot.', 'webcare-pro-security'),
+                    $is_nginx ? 'Nginx' : 'Caddy'
+                );
+                $waf_prot_current = sprintf('Unverified on %s (Response: HTTP %d)', $is_nginx ? 'Nginx' : 'Caddy', $probe_code ?: 200);
+            }
+        }
 
         $checks['waf_log_storage_protection'] = [
             'id'          => 'waf_log_storage_protection',
             'title'       => __('WAF Log Storage HTTP Access Protection', 'webcare-pro-security'),
             'category'    => 'security',
-            'status'      => $log_secured ? 'pass' : 'fail',
+            'status'      => $waf_prot_status,
             'severity'    => 'critical',
-            'message'     => $log_secured
-                ? __('WAF log storage is isolated with auto-repaired .htaccess, web.config, and index.php access barriers.', 'webcare-pro-security')
-                : __('WAF log directory could not be secured against direct HTTP access.', 'webcare-pro-security'),
-            'current'     => $log_secured ? 'Secured (.htaccess + web.config + index.php verified)' : 'Unprotected / Inaccessible guards',
+            'message'     => $waf_prot_message,
+            'current'     => $waf_prot_current,
             'required'    => '0750 directory / deny all web guards',
         ];
 

@@ -380,8 +380,8 @@ final readonly class ProtocolAndBotEvaluator implements WafEvaluatorInterface {
         $is_options = ($method === 'OPTIONS');
 
         // Check for verified payment gateway webhooks (Stripe / PayPal / Mollie / Square)
-        // Hardening (S2 Finding 5): Require BOTH verified provider IP and provider signature header
-        $is_webhook = self::is_verified_payment_gateway_ip_webhook_from_ctx($ctx);
+        // Hardening (S2 Finding 5 & v3.25.1): Cryptographic verification or explicit verified provider IP candidate
+        $is_webhook = self::verify_payment_gateway_webhook_from_ctx($ctx);
 
         if (!empty($settings['waf_block_empty_post_ua_referer']) && $is_post && !$is_options && !$is_webhook) {
             $is_commerce_safe = !empty($settings['waf_ecommerce_safe_mode']) && CommerceSessionGuard::is_commerce_or_membership_request($request_uri);
@@ -553,14 +553,12 @@ final readonly class ProtocolAndBotEvaluator implements WafEvaluatorInterface {
     }
 
     /**
-     * Detect verified payment gateway webhooks (Stripe / PayPal / Mollie / Square).
+     * Cryptographic verification or verified provider IP candidate for incoming payment gateway webhooks.
      *
-     * Security Invariant (S2 Finding 5): Require BOTH verified provider source IP/CIDR
-     * AND a syntactically valid provider signature header. A forged signature header
-     * from an arbitrary IP or a request from a gateway IP without a signature header
-     * must never grant exemption from empty User-Agent/Referer bot checks.
+     * @param RequestContext $ctx
+     * @return bool
      */
-    private static function is_verified_payment_gateway_ip_webhook_from_ctx(RequestContext $ctx): bool {
+    private static function verify_payment_gateway_webhook_from_ctx(RequestContext $ctx): bool {
         $client_ip = $ctx->ip;
 
         // Verify Stripe IP
@@ -578,12 +576,49 @@ final readonly class ProtocolAndBotEvaluator implements WafEvaluatorInterface {
             }
         }
 
-        // 1. Stripe Webhooks: must come from Stripe IP AND supply Stripe-Signature header
+        // 1. Stripe Webhooks: must come from Stripe IP AND have Stripe-Signature
         if ($is_stripe_ip) {
-            $has_stripe_sig = !empty($ctx->headers['stripe-signature'])
-                || !empty($ctx->server['HTTP_STRIPE_SIGNATURE']);
-            if ($has_stripe_sig) {
-                return true;
+            $raw_stripe_sig = !empty($ctx->headers['stripe-signature'])
+                ? (string) $ctx->headers['stripe-signature']
+                : (!empty($ctx->server['HTTP_STRIPE_SIGNATURE']) ? (string) $ctx->server['HTTP_STRIPE_SIGNATURE'] : '');
+
+            if ($raw_stripe_sig !== '') {
+                $stripe_secret = '';
+                if (defined('STRIPE_WEBHOOK_SECRET') && is_string(STRIPE_WEBHOOK_SECRET) && STRIPE_WEBHOOK_SECRET !== '') {
+                    $stripe_secret = STRIPE_WEBHOOK_SECRET;
+                } elseif (function_exists('get_option')) {
+                    $wc_stripe_settings = get_option('woocommerce_stripe_settings', []);
+                    if (is_array($wc_stripe_settings)) {
+                        $stripe_secret = (string) ($wc_stripe_settings['webhook_secret'] ?? '');
+                    }
+                }
+
+                if ($stripe_secret !== '') {
+                    // Cryptographic HMAC verification with 300s timestamp tolerance
+                    $sig_parts = [];
+                    foreach (explode(',', $raw_stripe_sig) as $part) {
+                        $kv = explode('=', trim($part), 2);
+                        if (count($kv) === 2) {
+                            $sig_parts[trim($kv[0])] = trim($kv[1]);
+                        }
+                    }
+
+                    $ts = isset($sig_parts['t']) ? (int) $sig_parts['t'] : 0;
+                    $v1 = isset($sig_parts['v1']) ? $sig_parts['v1'] : '';
+
+                    if ($ts > 0 && $v1 !== '' && abs(time() - $ts) <= 300) {
+                        $raw_body = \WebCareProScanner\Firewall\Core\RequestBodyReader::get_bounded_body(262144);
+                        $expected = hash_hmac('sha256', "{$ts}.{$raw_body}", $stripe_secret);
+                        if (hash_equals($expected, $v1)) {
+                            return true;
+                        }
+                    }
+                    // Secret configured but signature check failed -> reject
+                    return false;
+                }
+
+                // If no secret configured, label as known payment provider IP candidate
+                return self::is_known_payment_provider_ip_webhook_candidate($is_stripe_ip, $is_paypal_ip);
             }
         }
 
@@ -594,37 +629,47 @@ final readonly class ProtocolAndBotEvaluator implements WafEvaluatorInterface {
                 || !empty($ctx->headers['paypal-transmission-sig'])
                 || !empty($ctx->server['HTTP_PAYPAL_TRANSMISSION_SIG']);
             if ($has_paypal_sig) {
+                return self::is_known_payment_provider_ip_webhook_candidate($is_stripe_ip, $is_paypal_ip);
+            }
+        }
+
+        // 3. WooCommerce / Shopify webhooks: Cryptographic verification if secrets configured
+        $wc_sig = !empty($ctx->headers['x-wc-webhook-signature'])
+            ? (string) $ctx->headers['x-wc-webhook-signature']
+            : (!empty($ctx->server['HTTP_X_WC_WEBHOOK_SIGNATURE']) ? (string) $ctx->server['HTTP_X_WC_WEBHOOK_SIGNATURE'] : '');
+        $wc_secret = defined('WC_WEBHOOK_SECRET') && is_string(WC_WEBHOOK_SECRET) ? WC_WEBHOOK_SECRET : '';
+        if ($wc_sig !== '' && $wc_secret !== '') {
+            $raw_body = \WebCareProScanner\Firewall\Core\RequestBodyReader::get_bounded_body(262144);
+            $expected = base64_encode(hash_hmac('sha256', $raw_body, $wc_secret, true));
+            if (hash_equals($expected, $wc_sig)) {
                 return true;
             }
         }
 
-        // 3. Designated local webhook endpoints (Square, Mollie, SureCart, WooCommerce API):
-        // Must target a designated webhook endpoint AND supply a valid signature header
-        $parsed_path = strtolower(wp_parse_url($ctx->uri, PHP_URL_PATH) ?: $ctx->uri);
-        $is_webhook_endpoint = (
-            str_contains($parsed_path, '/wp-json/mollie')
-            || str_contains($parsed_path, '/wp-json/square')
-            || str_contains($parsed_path, '/wp-json/surecart')
-            || str_contains($ctx->uri, 'wc-api=')
-            || !empty($ctx->queryParams['wc-api'])
-        );
-
-        if ($is_webhook_endpoint) {
-            $sig_headers = [
-                'x-square-hmacsha256-signature',
-                'x-wc-webhook-signature',
-                'x-razorpay-signature',
-                'x-shopify-hmac-sha256',
-                'x-mollie-signature',
-                'x-surecart-signature',
-            ];
-            foreach ($sig_headers as $sh) {
-                if (!empty($ctx->headers[$sh]) || !empty($ctx->server['HTTP_' . strtoupper(str_replace('-', '_', $sh))])) {
-                    return true;
-                }
+        $shopify_sig = !empty($ctx->headers['x-shopify-hmac-sha256'])
+            ? (string) $ctx->headers['x-shopify-hmac-sha256']
+            : (!empty($ctx->server['HTTP_X_SHOPIFY_HMAC_SHA256']) ? (string) $ctx->server['HTTP_X_SHOPIFY_HMAC_SHA256'] : '');
+        $shopify_secret = defined('SHOPIFY_WEBHOOK_SECRET') && is_string(SHOPIFY_WEBHOOK_SECRET) ? SHOPIFY_WEBHOOK_SECRET : '';
+        if ($shopify_sig !== '' && $shopify_secret !== '') {
+            $raw_body = \WebCareProScanner\Firewall\Core\RequestBodyReader::get_bounded_body(262144);
+            $expected = base64_encode(hash_hmac('sha256', $raw_body, $shopify_secret, true));
+            if (hash_equals($expected, $shopify_sig)) {
+                return true;
             }
         }
 
         return false;
+    }
+
+    /**
+     * Explicit fallback candidate labeling when provider secrets are not configured.
+     * Requires strictly verified provider IP (Stripe or PayPal).
+     *
+     * @param bool $is_stripe_ip
+     * @param bool $is_paypal_ip
+     * @return bool
+     */
+    private static function is_known_payment_provider_ip_webhook_candidate(bool $is_stripe_ip, bool $is_paypal_ip): bool {
+        return ($is_stripe_ip || $is_paypal_ip);
     }
 }

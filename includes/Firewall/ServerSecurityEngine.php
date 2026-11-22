@@ -172,14 +172,10 @@ class ServerSecurityEngine {
 
         if (!empty($opts['rate_limit_login'])) {
             $burst = max(1, (int) $opts['login_burst_limit']);
-            $c .= "# --- 1. Login Brute Force Throttling ---\n";
-            $c .= "# Note: Place 'limit_req zone=webcare_wp_login burst={$burst} nodelay;' inside your\n";
-            $c .= "# existing PHP-FPM fastcgi location block for wp-login.php, or use this standalone block:\n";
-            $c .= "location = /wp-login.php {\n";
-            $c .= "    limit_req zone=webcare_wp_login burst={$burst} nodelay;\n";
-            $c .= "    # Ensure fastcgi_pass points to your upstream PHP handler (e.g. unix:/run/php/php8.3-fpm.sock or 127.0.0.1:9000)\n";
-            $c .= "    include fastcgi_params;\n";
-            $c .= "}\n\n";
+            $c .= "# --- 1. Login Brute Force Throttling (Insertion-Only Directive) ---\n";
+            $c .= "# Note: Add this directive directly inside your site's existing PHP-FPM fastcgi location block (e.g. location ~ \\.php$):\n";
+            $c .= "#     limit_req zone=webcare_wp_login burst={$burst} nodelay;\n";
+            $c .= "# Verify configuration with 'nginx -t' before reloading Nginx.\n\n";
         }
 
         // Global Request Rate Limit
@@ -189,7 +185,7 @@ class ServerSecurityEngine {
         }
 
         // Client Max Body Size
-        $body_mb = max(1, (int) $opts['client_max_body_mb']);
+        $body_mb = max(1, (int) ($opts['client_max_body_mb'] ?? 25));
         $c .= "# --- 3. Maximum Request Payload Armor ---\n";
         $c .= "client_max_body_size {$body_mb}M;\n\n";
 
@@ -214,6 +210,10 @@ class ServerSecurityEngine {
         // Protect WebCare Pro Security Vault, Logs & Database Backups
         if (!empty($opts['protect_webcare_data_dir'])) {
             $c .= "# --- 5b. Shield WebCare Pro Security Data Directory (Logs, Vault, DB Backups) ---\n";
+            $c .= "location ^~ /wp-content/webcare-waf/ {\n";
+            $c .= "    deny all;\n";
+            $c .= "    return 403;\n";
+            $c .= "}\n";
             $c .= "location ^~ /wp-content/uploads/webcare-pro-security/ {\n";
             $c .= "    deny all;\n";
             $c .= "    access_log off;\n";
@@ -341,7 +341,7 @@ class ServerSecurityEngine {
         }
 
         // Request Body Limit
-        $body_mb = max(1, (int) $opts['client_max_body_mb']);
+        $body_mb = max(1, (int) ($opts['client_max_body_mb'] ?? 25));
         $body_bytes = $body_mb * 1024 * 1024;
         $c .= "# --- 3. Request Payload Size Armor ({$body_mb} MB) ---\n";
         $c .= "LimitRequestBody {$body_bytes}\n\n";
@@ -397,6 +397,7 @@ class ServerSecurityEngine {
         // Protect WebCare Pro Security Vault, Logs & Database Backups
         if (!empty($opts['protect_webcare_data_dir'])) {
             $c .= "    # Protect WebCare Pro Security Vault, Logs & Database Backups\n";
+            $c .= "    RewriteRule ^wp-content/webcare-waf/ - [F,L,NC]\n";
             $c .= "    RewriteRule ^wp-content/uploads/webcare-pro-security/ - [F,L,NC]\n\n";
         }
 
@@ -624,6 +625,8 @@ class ServerSecurityEngine {
 
         if (!empty($opts['protect_webcare_data_dir'])) {
             $c .= "    # Shield WebCare Pro Security Vault, Logs & Database Backups\n";
+            $c .= "    @webcare_waf_vault path /wp-content/webcare-waf/*\n";
+            $c .= "    respond @webcare_waf_vault 403\n\n";
             $c .= "    @webcare_data_vault path /wp-content/uploads/webcare-pro-security/*\n";
             $c .= "    respond @webcare_data_vault 403\n\n";
         }
@@ -708,11 +711,29 @@ class ServerSecurityEngine {
         $env_code = !is_wp_error($env_res) ? (int) wp_remote_retrieve_response_code($env_res) : 0;
         $env_blocked = ($env_code === 403 || $env_code === 401 || $env_code === 404);
 
-        // Probe 3: WebCare Plugin Data & Vault Directory Probe (waf-logs/activity-logs)
-        $webcare_vault_url = home_url('/wp-content/uploads/webcare-pro-security/waf-logs/');
-        $webcare_vault_res = wp_remote_get($webcare_vault_url, $args);
-        $webcare_vault_code = !is_wp_error($webcare_vault_res) ? (int) wp_remote_retrieve_response_code($webcare_vault_res) : 0;
-        $webcare_vault_blocked = ($webcare_vault_code === 403 || $webcare_vault_code === 401);
+        // Probe 3: Active WAF Log Directory Probe (WafFileLogger::get_storage_dir())
+        $active_log_dir = class_exists('\\WebCareProScanner\\Firewall\\WafFileLogger')
+            ? \WebCareProScanner\Firewall\WafFileLogger::get_storage_dir()
+            : (defined('WP_CONTENT_DIR') ? WP_CONTENT_DIR . '/webcare-waf/logs' : ABSPATH . 'wp-content/webcare-waf/logs');
+        $active_log_dir_normalized = wp_normalize_path($active_log_dir);
+        $site_abspath = wp_normalize_path(ABSPATH);
+
+        $webcare_vault_blocked = false;
+        $webcare_vault_code = 0;
+        $webcare_vault_url = '';
+
+        if (!str_starts_with($active_log_dir_normalized, $site_abspath)) {
+            // Log directory is safely isolated outside public webroot
+            $webcare_vault_blocked = true;
+            $webcare_vault_code = 403;
+            $webcare_vault_url = 'storage://isolated-above-docroot';
+        } else {
+            $rel_path = ltrim(substr($active_log_dir_normalized, strlen($site_abspath)), '/\\');
+            $webcare_vault_url = home_url('/' . $rel_path . '/');
+            $webcare_vault_res = wp_remote_get($webcare_vault_url, $args);
+            $webcare_vault_code = !is_wp_error($webcare_vault_res) ? (int) wp_remote_retrieve_response_code($webcare_vault_res) : 0;
+            $webcare_vault_blocked = ($webcare_vault_code === 403 || $webcare_vault_code === 401 || $webcare_vault_code === 404);
+        }
 
         $is_enforced = ($uploads_blocked && $env_blocked && $webcare_vault_blocked);
         $overall_status = $is_enforced ? 'protected' : 'partial';
