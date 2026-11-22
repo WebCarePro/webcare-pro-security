@@ -1667,6 +1667,15 @@ class FirewallEngine {
     }
 
     /**
+     * Clear and unban all blocked IPs locally and on Cloudflare Edge in one operation.
+     *
+     * @return array
+     */
+    public static function clear_all_blocked_ips(): array {
+        return Core\BlocklistRepository::clear_all_blocked_ips();
+    }
+
+    /**
      * Retrieve aggregated list of all currently locked or custom-blocked IPs across engines with rich forensics.
      *
      * @return array

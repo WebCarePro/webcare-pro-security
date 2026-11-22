@@ -1023,6 +1023,42 @@ export const FirewallPage = ({
   const [copiedIncidentId, setCopiedIncidentId] = useState<string | null>(null);
   const [blockedStatusFilter, setBlockedStatusFilter] = useState<'all' | 'active' | 'expired'>('all');
   const [clearingExpiredBans, setClearingExpiredBans] = useState<boolean>(false);
+  const [isUnbanningAllIps, setIsUnbanningAllIps] = useState<boolean>(false);
+
+  const handleUnbanAllIps = () => {
+    requestFirewallConfirm({
+      title: 'Unban All IP Addresses',
+      message: 'Are you sure you want to unban all IP addresses? This will remove all local WAF blocks, unlock all login lockouts, clear all temporary bans, and remove all edge block rules from Cloudflare.',
+      targetItem: `${lockedIpsList.length} IP Address${lockedIpsList.length === 1 ? '' : 'es'} + Edge Bans`,
+      confirmLabel: 'Unban All IPs',
+      variant: 'danger',
+      onConfirm: async () => {
+        try {
+          setIsUnbanningAllIps(true);
+          const res = await apiRequest({
+            path: '/firewall/logs/unblock-all',
+            method: 'POST'
+          });
+          if (res && res.success) {
+            setLockedIpsList(res.locked_ips || []);
+            if (res.waf_blocked_ips !== undefined) {
+              setWafSettings(prev => ({ ...prev, waf_blocked_ips: res.waf_blocked_ips }));
+            }
+            if (typeof loadBannedIps === 'function') {
+              await loadBannedIps();
+            }
+            showFirewallNotice('success', res.message || `Successfully unbanned all ${res.cleared_count || 0} IPs.`);
+          } else {
+            showFirewallNotice('error', res?.message || 'Failed to unban all IPs.');
+          }
+        } catch (e: any) {
+          showFirewallNotice('error', e?.message || 'Error occurred while unbanning all IPs.');
+        } finally {
+          setIsUnbanningAllIps(false);
+        }
+      }
+    });
+  };
 
   const handleClearExpiredBans = async () => {
     try {
@@ -6597,6 +6633,31 @@ export const FirewallPage = ({
                   })()}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  {Boolean(lockedIpsList.length > 0 || bannedIpsList.length > 0) && (
+                    <button
+                      type="button"
+                      className="webcare-btn"
+                      onClick={handleUnbanAllIps}
+                      disabled={isUnbanningAllIps}
+                      style={{
+                        fontSize: '11px',
+                        padding: '5px 12px',
+                        background: 'rgba(239, 68, 68, 0.08)',
+                        border: '1px solid rgba(239, 68, 68, 0.35)',
+                        color: '#dc2626',
+                        borderRadius: '5px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '5px',
+                        fontWeight: 700,
+                        cursor: isUnbanningAllIps ? 'not-allowed' : 'pointer'
+                      }}
+                      title="Unban all IP addresses from local firewall and Cloudflare Edge in 1 click"
+                    >
+                      {isUnbanningAllIps ? <Loader2 size={12} className="webcare-spin-icon" /> : <Unlock size={12} />}
+                      <span>{isUnbanningAllIps ? 'Unbanning All...' : 'Unban All IPs'}</span>
+                    </button>
+                  )}
                   {Boolean(lockedIpsList.some(item => item.is_expired)) && (
                     <button
                       type="button"
@@ -10725,6 +10786,31 @@ export const FirewallPage = ({
                 </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {Boolean(lockedIpsList.length > 0 || bannedIpsList.length > 0) && (
+                  <button
+                    type="button"
+                    className="webcare-btn"
+                    onClick={handleUnbanAllIps}
+                    disabled={isUnbanningAllIps}
+                    style={{
+                      fontSize: '11px',
+                      padding: '5px 10px',
+                      borderRadius: '5px',
+                      background: 'rgba(239, 68, 68, 0.1)',
+                      color: '#dc2626',
+                      border: '1px solid rgba(239, 68, 68, 0.3)',
+                      fontWeight: 700,
+                      cursor: isUnbanningAllIps ? 'not-allowed' : 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px'
+                    }}
+                    title="Unban all IP addresses from local firewall and Cloudflare Edge"
+                  >
+                    {isUnbanningAllIps ? <Loader2 size={12} className="webcare-spin" /> : <Unlock size={12} />}
+                    {isUnbanningAllIps ? 'Unbanning...' : 'Unban All IPs'}
+                  </button>
+                )}
                 <button
                   type="button"
                   className="webcare-btn"

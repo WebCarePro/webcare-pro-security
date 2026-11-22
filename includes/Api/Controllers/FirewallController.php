@@ -97,6 +97,12 @@ final class FirewallController extends AbstractApiController {
             'permission_callback' => $permission,
         ]);
 
+        register_rest_route($namespace, '/firewall/logs/unblock-all', [
+            'methods'             => 'POST',
+            'callback'            => [self::class, 'unblock_all_firewall_ips'],
+            'permission_callback' => $permission,
+        ]);
+
         register_rest_route($namespace, '/firewall/customer/lookup-block', [
             'methods'             => 'GET',
             'callback'            => [self::class, 'lookup_customer_lockout'],
@@ -865,6 +871,54 @@ final class FirewallController extends AbstractApiController {
             'success' => $unblocked,
             'message' => $msg,
             'locked_ips' => \WebCareProScanner\Firewall\FirewallEngine::get_all_locked_ips(),
+        ]);
+    }
+
+    /**
+     * Unban all IP addresses across Local WAF, Login Hardening, Transients, and Cloudflare Edge.
+     */
+    public static function unblock_all_firewall_ips(\WP_REST_Request $request) {
+        $result = \WebCareProScanner\Firewall\FirewallEngine::clear_all_blocked_ips();
+        $cleared_count = (int) ($result['cleared_count'] ?? 0);
+        $cf_unbanned = (int) ($result['cf_unbanned'] ?? 0);
+        $locked_ips = \WebCareProScanner\Firewall\FirewallEngine::get_all_locked_ips();
+        $settings = \WebCareProScanner\System\SettingsManager::get_settings();
+
+        if (class_exists('\\WebCareProScanner\\System\\WebCareActivityLogger')) {
+            $current_user = wp_get_current_user();
+            $user_login = ($current_user && $current_user->exists()) ? $current_user->user_login : 'admin';
+            $client_ip = \WebCareProScanner\Firewall\FirewallEngine::get_client_ip();
+
+            \WebCareProScanner\System\WebCareActivityLogger::notice(
+                'firewall_all_ips_unblocked',
+                'firewall',
+                [
+                    'cleared_count' => $cleared_count,
+                    'cf_unbanned'   => $cf_unbanned,
+                    /* translators: %1$s: user login, %2$s: client IP, %3$d: cleared count, %4$d: Cloudflare unbanned count */
+                    'description'   => sprintf(
+                        __('All banned IPs (%3$d total, %4$d Cloudflare edge rules) unbanned by %1$s from IP %2$s.', 'webcare-pro-security'),
+                        $user_login,
+                        $client_ip,
+                        $cleared_count,
+                        $cf_unbanned
+                    ),
+                ]
+            );
+        }
+
+        $msg = $cleared_count > 0
+            /* translators: 1: total cleared count, 2: Cloudflare edge unbanned count */
+            ? sprintf(__('Successfully unbanned all %1$d IPs from local firewall and Cloudflare Edge (%2$d edge rules cleared).', 'webcare-pro-security'), $cleared_count, $cf_unbanned)
+            : __('All firewall ban lists and lockouts are clear. No active IP bans were found.', 'webcare-pro-security');
+
+        return rest_ensure_response([
+            'success'         => true,
+            'cleared_count'   => $cleared_count,
+            'cf_unbanned'     => $cf_unbanned,
+            'message'         => $msg,
+            'locked_ips'      => $locked_ips,
+            'waf_blocked_ips' => $settings['waf_blocked_ips'] ?? '',
         ]);
     }
 

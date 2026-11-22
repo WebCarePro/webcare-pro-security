@@ -323,6 +323,127 @@ final class BlocklistRepository {
     }
 
     /**
+     * Unban and clear all blocked and locked IPs across all engines (Local WAF, Login Hardening,
+     * Transients, and Cloudflare Edge) in a single atomic operation.
+     *
+     * @return array Structure containing cleared count, cleared IPs, and Cloudflare unban statistics.
+     */
+    public static function clear_all_blocked_ips(): array {
+        $settings = SettingsManager::get_settings();
+        $blocked_raw = trim($settings['waf_blocked_ips'] ?? '');
+        $cleared_ips = [];
+
+        // 1. Gather all custom blocklist IPs
+        if (!empty($blocked_raw)) {
+            $lines = array_filter(array_map('trim', explode("\n", str_replace("\r", "", $blocked_raw))));
+            foreach ($lines as $line) {
+                $entry_ip = trim(preg_split('/[\s#]+/', $line)[0] ?? '');
+                if (!empty($entry_ip)) {
+                    $cleared_ips[$entry_ip] = true;
+                }
+            }
+        }
+
+        // 2. Gather all login hardening locked IPs
+        if (class_exists('\\WebCareProScanner\\Auth\\LoginHardening')) {
+            $lockouts = \WebCareProScanner\Auth\LoginHardening::get_locked_ips();
+            foreach (array_keys($lockouts) as $l_ip) {
+                if (!empty($l_ip)) {
+                    $cleared_ips[(string) $l_ip] = true;
+                }
+            }
+            \WebCareProScanner\Auth\LoginHardening::clear_all_lockouts();
+        }
+
+        // 3. Gather all IPs from block metadata ledger
+        $all_meta = self::get_all_block_meta();
+        foreach (array_keys($all_meta) as $m_ip) {
+            if (!empty($m_ip)) {
+                $cleared_ips[(string) $m_ip] = true;
+            }
+        }
+
+        // 4. Gather active Cloudflare edge bans ledger if present
+        $cf_edge_bans = get_option('webcare_cf_active_edge_bans', []);
+        if (is_array($cf_edge_bans)) {
+            foreach (array_keys($cf_edge_bans) as $cf_ip) {
+                if (!empty($cf_ip)) {
+                    $cleared_ips[(string) $cf_ip] = true;
+                }
+            }
+        }
+
+        $unique_cleared_ips = array_keys($cleared_ips);
+
+        // 5. Clear per-IP lockout transients and individual transients
+        foreach ($unique_cleared_ips as $cip) {
+            delete_transient('webcareproscan_404_lock_' . md5($cip));
+            delete_transient('webcareproscan_404_cnt_' . md5($cip));
+            delete_transient('webcareproscan_cpn_lock_' . md5($cip));
+            delete_transient('webcareproscan_cpn_fail_' . md5($cip));
+            delete_transient('webcareproscan_chk_lock_' . md5($cip));
+            delete_transient('webcareproscan_chk_fail_' . md5($cip));
+            delete_transient('webcareproscan_scrape_lock_' . md5($cip));
+            delete_transient('webcareproscan_scrape_vel_' . md5($cip));
+            delete_transient('webcareproscan_bot_ban_' . md5($cip));
+            delete_transient('webcareproscan_lockout_ip_' . md5($cip));
+            delete_transient('webcareproscan_temp_allow_' . md5($cip));
+        }
+
+        // 6. Empty custom WAF blocklist in settings
+        $settings['waf_blocked_ips'] = '';
+        SettingsManager::$suppress_firewall_ruleset_log = true;
+        SettingsManager::save_settings($settings);
+        SettingsManager::$suppress_firewall_ruleset_log = false;
+
+        // 7. Purge entire block metadata option
+        update_option(FirewallEngine::OPTION_BLOCKED_IPS_META, [], false);
+
+        // 8. Recompile Micro-WAF script so preload drops all bans immediately
+        if (class_exists(__NAMESPACE__ . '\MicroWafCompiler')) {
+            MicroWafCompiler::compile_script();
+        }
+
+        // 9. Bi-Directional Cloudflare Edge Unban for all cleared IPs
+        $cf_unbanned_count = 0;
+        if (class_exists('\\WebCareProScanner\\Firewall\\CAF\\CloudflareIpListSynchronizer')) {
+            try {
+                foreach ($unique_cleared_ips as $cip) {
+                    if (\WebCareProScanner\Firewall\CAF\CloudflareIpListSynchronizer::unban_ip_immediately($cip)) {
+                        $cf_unbanned_count++;
+                    }
+                }
+            } catch (\Throwable $e) {
+                // Fail-safe: prevent network/API exceptions from interrupting local unban flow
+            }
+        }
+
+        // Also purge any Cloudflare access rules matching this plugin's tag if configured
+        if (class_exists('\\WebCareProScanner\\Cloudflare\\CloudflareService')) {
+            try {
+                $cf_banned = \WebCareProScanner\Cloudflare\CloudflareService::get_banned_ips(1, 100);
+                if (!empty($cf_banned['success']) && !empty($cf_banned['rules']) && is_array($cf_banned['rules'])) {
+                    foreach ($cf_banned['rules'] as $rule) {
+                        $r_id = $rule['id'] ?? '';
+                        if (!empty($r_id)) {
+                            \WebCareProScanner\Cloudflare\CloudflareService::unblock_ip($r_id);
+                            $cf_unbanned_count++;
+                        }
+                    }
+                }
+            } catch (\Throwable $e) {
+                // Fail-safe
+            }
+        }
+
+        return [
+            'cleared_count' => count($unique_cleared_ips),
+            'cleared_ips'   => $unique_cleared_ips,
+            'cf_unbanned'   => $cf_unbanned_count,
+        ];
+    }
+
+    /**
      * Retrieve aggregated list of all currently locked or custom-blocked IPs across engines with rich forensics.
      *
      * @return array
