@@ -1000,42 +1000,7 @@ class DistributedVelocityShield {
                 $prefix_set   = method_exists($wp_object_cache, 'build_key') ? $wp_object_cache->build_key($set_key, $group) : "{$group}:{$set_key}";
                 $prefix_ev    = method_exists($wp_object_cache, 'build_key') ? $wp_object_cache->build_key($event_set_key, $group) : "{$group}:{$event_set_key}";
 
-                $lua = "local t1 = redis.call('TYPE', KEYS[1])['ok']\n"
-                     . "if t1 ~= 'none' and t1 ~= 'string' then return redis.error_reply('WRONGTYPE_PREFLIGHT') end\n"
-                     . "local t2 = redis.call('TYPE', KEYS[2])['ok']\n"
-                     . "if t2 ~= 'none' and t2 ~= 'set' then return redis.error_reply('WRONGTYPE_PREFLIGHT') end\n"
-                     . "local t3 = redis.call('TYPE', KEYS[3])['ok']\n"
-                     . "if t3 ~= 'none' and t3 ~= 'set' then return redis.error_reply('WRONGTYPE_PREFLIGHT') end\n"
-                     . "local function is_incrementable_i64(s)\n"
-                     . "    local neg, digits = string.match(s, '^(-?)(%d+)$')\n"
-                     . "    if not digits then return false end\n"
-                     . "    if #digits > 1 and string.sub(digits, 1, 1) == '0' then return false end\n"
-                     . "    if neg == '-' and digits == '0' then return false end\n"
-                     . "    if #digits > 19 then return false end\n"
-                     . "    if #digits == 19 then\n"
-                     . "        if neg == '-' then\n"
-                     . "            return digits <= '9223372036854775808'\n"
-                     . "        else\n"
-                     . "            return digits <= '9223372036854775806'\n"
-                     . "        end\n"
-                     . "    end\n"
-                     . "    return true\n"
-                     . "end\n"
-                     . "local existing_cnt = redis.call('GET', KEYS[1])\n"
-                     . "if existing_cnt and not is_incrementable_i64(existing_cnt) then\n"
-                     . "    return redis.error_reply('ERR_COUNTER_OUT_OF_RANGE')\n"
-                     . "end\n"
-                     . "local added = redis.call('SADD', KEYS[3], ARGV[3])\n"
-                     . "if added == 0 then\n"
-                     . "    local cur = redis.call('GET', KEYS[1])\n"
-                     . "    return {tonumber(cur) or 0, redis.call('SCARD', KEYS[2])}\n"
-                     . "end\n"
-                     . "local c = redis.call('INCR', KEYS[1])\n"
-                     . "if c == 1 then redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2])) end\n"
-                     . "redis.call('SADD', KEYS[2], ARGV[1])\n"
-                     . "redis.call('EXPIRE', KEYS[2], tonumber(ARGV[2]))\n"
-                     . "redis.call('EXPIRE', KEYS[3], tonumber(ARGV[2]))\n"
-                     . "return {c, redis.call('SCARD', KEYS[2])}";
+                $lua = self::build_redis_sliding_event_lua();
 
                 $eval_args = [$prefix_count, $prefix_set, $prefix_ev, $ip_hash, (string) $ttl, $event_id];
                 $res = null;
@@ -1385,6 +1350,51 @@ class DistributedVelocityShield {
             return [];
         }
         return array_fill(0, $metrics['count'], ['ip' => 'tracked_client', 'time' => time()]);
+    }
+
+    /**
+     * Build the canonical Redis Lua script for atomic sliding event velocity increments.
+     * Enforces key type preflights, signed 64-bit string2ll range guards, and event-ID idempotency.
+     *
+     * @return string
+     */
+    private static function build_redis_sliding_event_lua(): string {
+        return "local t1 = redis.call('TYPE', KEYS[1])['ok']\n"
+             . "if t1 ~= 'none' and t1 ~= 'string' then return redis.error_reply('WRONGTYPE_PREFLIGHT') end\n"
+             . "local t2 = redis.call('TYPE', KEYS[2])['ok']\n"
+             . "if t2 ~= 'none' and t2 ~= 'set' then return redis.error_reply('WRONGTYPE_PREFLIGHT') end\n"
+             . "local t3 = redis.call('TYPE', KEYS[3])['ok']\n"
+             . "if t3 ~= 'none' and t3 ~= 'set' then return redis.error_reply('WRONGTYPE_PREFLIGHT') end\n"
+             . "local function is_incrementable_i64(s)\n"
+             . "    local neg, digits = string.match(s, '^(-?)(%d+)$')\n"
+             . "    if not digits then return false end\n"
+             . "    if #digits > 1 and string.sub(digits, 1, 1) == '0' then return false end\n"
+             . "    if neg == '-' and digits == '0' then return false end\n"
+             . "    if #digits > 19 then return false end\n"
+             . "    if #digits == 19 then\n"
+             . "        if neg == '-' then\n"
+             . "            return digits <= '9223372036854775808'\n"
+             . "        else\n"
+             . "            return digits <= '9223372036854775806'\n"
+             . "        end\n"
+             . "    end\n"
+             . "    return true\n"
+             . "end\n"
+             . "local existing_cnt = redis.call('GET', KEYS[1])\n"
+             . "if existing_cnt and not is_incrementable_i64(existing_cnt) then\n"
+             . "    return redis.error_reply('ERR_COUNTER_OUT_OF_RANGE')\n"
+             . "end\n"
+             . "local added = redis.call('SADD', KEYS[3], ARGV[3])\n"
+             . "if added == 0 then\n"
+             . "    local cur = redis.call('GET', KEYS[1])\n"
+             . "    return {tonumber(cur) or 0, redis.call('SCARD', KEYS[2])}\n"
+             . "end\n"
+             . "local c = redis.call('INCR', KEYS[1])\n"
+             . "if c == 1 then redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2])) end\n"
+             . "redis.call('SADD', KEYS[2], ARGV[1])\n"
+             . "redis.call('EXPIRE', KEYS[2], tonumber(ARGV[2]))\n"
+             . "redis.call('EXPIRE', KEYS[3], tonumber(ARGV[2]))\n"
+             . "return {c, redis.call('SCARD', KEYS[2])}";
     }
 
     /**

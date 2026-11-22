@@ -1079,7 +1079,7 @@ class DistributedVelocityShieldTest extends TestCase {
 
     /**
      * Helper to connect to real standalone Redis server in test container.
-     * Returns null if Redis extension or server is unavailable.
+     * Asserts that database 15 is successfully selected. Returns null if Redis is unreachable.
      */
     private function get_real_redis_connection(): ?\Redis {
         if (!extension_loaded('redis') || !class_exists('\\Redis')) {
@@ -1095,8 +1095,10 @@ class DistributedVelocityShieldTest extends TestCase {
             if ($redis->ping() !== '+PONG' && $redis->ping() !== true) {
                 return null;
             }
-            // Use dedicated database 15 for tests so application data in db 0 is never touched
-            $redis->select(15);
+            // Strictly assert selection of isolated test database 15 so DB 0 is never touched
+            if ($redis->select(15) !== true) {
+                throw new \RuntimeException('Unable to select isolated Redis DB 15.');
+            }
             return $redis;
         } catch (\Throwable) {
             return null;
@@ -1213,43 +1215,12 @@ class DistributedVelocityShieldTest extends TestCase {
             $this->assertNotEmpty($existing_event_ids, 'Event set must contain stored event IDs.');
             $replayed_event_id = $existing_event_ids[0];
 
-            // Resolve the exact Lua script from reflection or invoke directly
-            $lua = "local t1 = redis.call('TYPE', KEYS[1])['ok']\n"
-                 . "if t1 ~= 'none' and t1 ~= 'string' then return redis.error_reply('WRONGTYPE_PREFLIGHT') end\n"
-                 . "local t2 = redis.call('TYPE', KEYS[2])['ok']\n"
-                 . "if t2 ~= 'none' and t2 ~= 'set' then return redis.error_reply('WRONGTYPE_PREFLIGHT') end\n"
-                 . "local t3 = redis.call('TYPE', KEYS[3])['ok']\n"
-                 . "if t3 ~= 'none' and t3 ~= 'set' then return redis.error_reply('WRONGTYPE_PREFLIGHT') end\n"
-                 . "local function is_incrementable_i64(s)\n"
-                 . "    local neg, digits = string.match(s, '^(-?)(%d+)$')\n"
-                 . "    if not digits then return false end\n"
-                 . "    if #digits > 1 and string.sub(digits, 1, 1) == '0' then return false end\n"
-                 . "    if neg == '-' and digits == '0' then return false end\n"
-                 . "    if #digits > 19 then return false end\n"
-                 . "    if #digits == 19 then\n"
-                 . "        if neg == '-' then\n"
-                 . "            return digits <= '9223372036854775808'\n"
-                 . "        else\n"
-                 . "            return digits <= '9223372036854775806'\n"
-                 . "        end\n"
-                 . "    end\n"
-                 . "    return true\n"
-                 . "end\n"
-                 . "local existing_cnt = redis.call('GET', KEYS[1])\n"
-                 . "if existing_cnt and not is_incrementable_i64(existing_cnt) then\n"
-                 . "    return redis.error_reply('ERR_COUNTER_OUT_OF_RANGE')\n"
-                 . "end\n"
-                 . "local added = redis.call('SADD', KEYS[3], ARGV[3])\n"
-                 . "if added == 0 then\n"
-                 . "    local cur = redis.call('GET', KEYS[1])\n"
-                 . "    return {tonumber(cur) or 0, redis.call('SCARD', KEYS[2])}\n"
-                 . "end\n"
-                 . "local c = redis.call('INCR', KEYS[1])\n"
-                 . "if c == 1 then redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2])) end\n"
-                 . "redis.call('SADD', KEYS[2], ARGV[1])\n"
-                 . "redis.call('EXPIRE', KEYS[2], tonumber(ARGV[2]))\n"
-                 . "redis.call('EXPIRE', KEYS[3], tonumber(ARGV[2]))\n"
-                 . "return {c, redis.call('SCARD', KEYS[2])}";
+            // Resolve the canonical production Lua script directly from DistributedVelocityShield via reflection
+            $luaBuilderMethod = $refl->getMethod('build_redis_sliding_event_lua');
+            $luaBuilderMethod->setAccessible(true);
+            $lua = $luaBuilderMethod->invoke(null);
+            $this->assertIsString($lua);
+            $this->assertStringContainsString('is_incrementable_i64', $lua, 'Production Lua script must contain 64-bit integer guard.');
 
             $eval_replay_res = $real_redis->eval($lua, [$cnt_key, $ips_key, $ev_key, substr(md5($ip1), 0, 12), '80', $replayed_event_id], 3);
             $this->assertIsArray($eval_replay_res);
@@ -1341,10 +1312,13 @@ class DistributedVelocityShieldTest extends TestCase {
             }
             $this->assertSame(0, $real_redis->exists($lead_zero_ev_key), 'Event set must NEVER be created on leading-zero string counter.');
         } finally {
-            // Clean up ONLY keys created during this test run in db 15
-            $test_keys = $real_redis->keys("*{$test_id}*");
-            if (is_array($test_keys) && !empty($test_keys)) {
-                $real_redis->del($test_keys);
+            // Clean up ONLY keys created during this test run in db 15 using non-blocking SCAN
+            $it = null;
+            $pattern = "*{$test_id}*";
+            while (false !== ($keys = $real_redis->scan($it, $pattern, 100))) {
+                if (!empty($keys)) {
+                    $real_redis->del($keys);
+                }
             }
             $wp_object_cache = $prev_cache;
             if (function_exists('wp_using_ext_object_cache')) {
