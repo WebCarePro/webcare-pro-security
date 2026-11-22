@@ -506,4 +506,80 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
         $this->assertSame(200, $resValid->get_status());
         $this->assertTrue($resValid->get_data()['success']);
     }
+
+    public function test_rotated_log_segment_incident_lookup_and_resolution(): void {
+        $storageDir = \WebCareProScanner\Firewall\WafFileLogger::get_storage_dir();
+        if (!is_dir($storageDir)) {
+            wp_mkdir_p($storageDir);
+        }
+
+        // Simulate a rotated segment file: november-22-2026-waf-logs.json.1
+        $baseFilename = strtolower(gmdate('F-j-Y', time())) . '-waf-logs.json';
+        $rotatedFilename = $baseFilename . '.1';
+        $rotatedFilePath = $storageDir . '/' . $rotatedFilename;
+
+        $uniqueRotIncidentId = 'WEBCARE-' . strtoupper(substr(md5('rot_test_' . microtime(true)), 0, 8));
+        $rotatedRecord = [
+            'id'                => 'webcare_' . substr(md5(uniqid('', true)), 0, 12),
+            'incident_id'       => $uniqueRotIncidentId,
+            'ref_code'          => 'WEBCARE-ROT1',
+            'timestamp'         => time() - 3600,
+            'created_at'        => gmdate('Y-m-d H:i:s', time() - 3600),
+            'created_at_gmt'    => gmdate('Y-m-d H:i:s', time() - 3600),
+            'ip_address'        => '203.0.113.199',
+            'request_uri'       => '/my-account/orders',
+            'request_method'    => 'POST',
+            'http_status_code'  => 403,
+            'rule_id'           => 'WAF-ROTATED-DETECTOR',
+            'rule_name'         => 'Rotated Test Rule',
+            'rule_category'     => 'Behavioral Defense',
+            'rule_description'  => 'Rotated segment incident test',
+            'action_taken'      => 'blocked',
+            'matched_param_key' => 'order_note',
+            'matched_value'     => 'suspicious payload',
+        ];
+
+        // Write directly to the rotated segment file (.1)
+        file_put_contents($rotatedFilePath, wp_json_encode($rotatedRecord) . "\n", LOCK_EX);
+        $this->assertFileExists($rotatedFilePath);
+
+        // 1. Verify get_available_files includes the rotated segment
+        $available = \WebCareProScanner\Firewall\WafFileLogger::get_available_files();
+        $foundRotated = false;
+        foreach ($available as $finfo) {
+            if ($finfo['filename'] === $rotatedFilename) {
+                $foundRotated = true;
+                break;
+            }
+        }
+        $this->assertTrue($foundRotated, 'Rotated segment (.1) must be discovered by get_available_files()');
+
+        // 2. Verify query_logs with range => 'all' finds the incident inside the rotated segment
+        $queryResult = \WebCareProScanner\Firewall\WafFileLogger::query_logs([
+            'search' => $uniqueRotIncidentId,
+            'action' => 'all',
+            'range'  => 'all',
+        ], 1);
+        $this->assertNotEmpty($queryResult['logs'], 'Incident in rotated segment must be discoverable via query_logs()');
+        $this->assertSame($uniqueRotIncidentId, $queryResult['logs'][0]['incident_id']);
+
+        // 3. Verify FirewallController::trust_log_action authoritatively resolves the incident from the rotated segment
+        $trustReq = new \WP_REST_Request('POST', '/webcare-pro-scanner/v1/firewall/logs/trust-action');
+        $trustReq->set_header('content-type', 'application/json');
+        $trustReq->set_body((string) wp_json_encode([
+            'incident_id' => $uniqueRotIncidentId,
+            'uri'         => '/my-account/orders',
+            'rule_id'     => 'WAF-ROTATED-DETECTOR',
+            'method'      => 'POST',
+            'param_key'   => 'order_note',
+        ]));
+        $trustRes = \WebCareProScanner\Api\Controllers\FirewallController::trust_log_action($trustReq);
+        $this->assertSame(200, $trustRes->get_status());
+        $this->assertTrue($trustRes->get_data()['success']);
+
+        // Clean up test file
+        if (file_exists($rotatedFilePath)) {
+            @unlink($rotatedFilePath);
+        }
+    }
 }

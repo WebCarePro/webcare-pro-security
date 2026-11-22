@@ -1,6 +1,6 @@
 {
-  "version": "3.23.6",
-  "generated_at": "2026-11-22T08:37:37.469Z",
+  "version": "3.23.7",
+  "generated_at": "2026-11-22T08:47:19.690Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -724,8 +724,8 @@
       "size": 21084
     },
     "includes/Firewall/WafFileLogger.php": {
-      "sha256": "4c71982659b38bed8f7cd7e78f1274ecef42463c00d2aaa8983abdc0274e96e4",
-      "size": 54164
+      "sha256": "f5d8b1272eff2091dce1f8ba0147573e4be5fcda365a4ef0de3e1a6bc0996e43",
+      "size": 54483
     },
     "includes/Forensics/AttackChainEngine.php": {
       "sha256": "3bf4e688f9c42eecaa4cad29be378f2f116896ee497508d5874033d4ff31a5a9",
@@ -968,8 +968,8 @@
       "size": 4997
     },
     "includes/System/ActivityLogs/ActivityEventSchema.php": {
-      "sha256": "fac809d9e8ca6fc4576652055c789d4bdf8fed3819ca8433098e9b5ec253d3f9",
-      "size": 8111
+      "sha256": "6582a86b5636682e7f9972e73e161f97caa5c34731cf1125c779bbeda50d7c71",
+      "size": 8277
     },
     "includes/System/ActivityLogs/ActivityExporter.php": {
       "sha256": "a1b7bb0d607a103a20e08caaf376d513532b39a424acc1a1bc37212c0b930391",
@@ -1060,8 +1060,8 @@
       "size": 10865
     },
     "includes/System/WebCareActivityLogger.php": {
-      "sha256": "36480c9db273f76ed9e6c0b0929daf8c095486d802cf464c5a93c8d8b42d1b51",
-      "size": 40816
+      "sha256": "daef2d31d04f4fa85c6532ea19151acb4caed5d2d3b9f16fe40cf24a34ba5f25",
+      "size": 41280
     },
     "includes/WordPress/ConfigScanner.php": {
       "sha256": "a2b8ec63ad8b371d4c4db2634ce0b349197ae6ad5e884d8273539a3d32c178af",
@@ -1104,15 +1104,15 @@
       "size": 28
     },
     "package.json": {
-      "sha256": "31b36a43777f632a800a76ad9d6f4b710c96bfdf06d552bdaa318ff4b945b279",
+      "sha256": "90ea8ee3b86a21a1d587f6c3c1f4dec18a0581a2c67c0c6d35f12bfaf07b8185",
       "size": 438
     },
     "README.md": {
-      "sha256": "7def14274011baf8899b1c0746600f9e33570813e0038efb541497dc5af6a511",
+      "sha256": "25567eec639a66ad68b1a9af597e615fa24fef9dfec7453edf0217759079ecfe",
       "size": 28900
     },
     "readme.txt": {
-      "sha256": "7e24de598e7fce1f72c84067f485b99ec8df569c14988a53a97f8ebfb9f32aa8",
+      "sha256": "4cf5e58ee185b78c07775ff4aa6622c85dd021246ae2987fe8c8da5d30d7dc1d",
       "size": 15156
     },
     "uninstall.php": {
@@ -1120,7 +1120,7 @@
       "size": 15530
     },
     "webcare-pro-security.php": {
-      "sha256": "2b81f1077c3359fdca78c078ecec2563bb6c54973428c952681491a44a4dc73b",
+      "sha256": "35550909a1c03f2193e5655ad3481d3647348df8fde588433cc4843f3c497168",
       "size": 8335
     }
   }

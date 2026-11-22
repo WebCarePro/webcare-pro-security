@@ -650,6 +650,16 @@ class WebCareActivityLogger {
             return;
         }
 
+        // Administrator Accountability Invariant:
+        // Option watcher strictly records verified administrator modifications (manage_options).
+        // Background crons, automated subroutines, or unauthenticated processes modifying options are excluded.
+        if (defined('DOING_CRON') && DOING_CRON) {
+            return;
+        }
+        if (function_exists('current_user_can') && !current_user_can('manage_options')) {
+            return;
+        }
+
         // Ignore internal high-frequency operational / ledger / telemetry / volatile lock pointers
         // Also ignore options already explicitly instrumented with rich before/after activity logging
         $ignored_patterns = [

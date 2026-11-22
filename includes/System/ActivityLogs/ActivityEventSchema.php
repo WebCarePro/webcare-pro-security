@@ -135,12 +135,13 @@ class ActivityEventSchema {
         if ($current_user && $current_user->exists()) {
             $roles = (array) $current_user->roles;
             $primary_role = !empty($roles) ? reset($roles) : 'none';
+            $is_admin = in_array('administrator', $roles, true) || (function_exists('current_user_can') && current_user_can('manage_options'));
             return [
                 'display_name' => (string) ($current_user->display_name ?? $current_user->user_login ?? 'User'),
                 'id'           => (int) $current_user->ID,
                 'ip'           => self::get_client_ip(),
                 'role'         => (string) $primary_role,
-                'type'         => 'user',
+                'type'         => $is_admin ? 'admin' : 'user',
                 'user_agent'   => isset($_SERVER['HTTP_USER_AGENT']) ? substr(sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])), 0, 255) : '',
                 'user_login'   => (string) ($current_user->user_login ?? 'user'),
             ];

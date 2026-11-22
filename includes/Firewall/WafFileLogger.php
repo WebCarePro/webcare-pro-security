@@ -113,7 +113,9 @@ class WafFileLogger {
      * @return string|null Returns ISO date YYYY-MM-DD or null if invalid format.
      */
     public static function parse_date_from_filename(string $filename): ?string {
-        if (!preg_match('/^([a-z]+)-(\d{1,2})-(\d{4})-waf-logs\.json$/i', $filename, $matches)) {
+        // Match both standard daily partitions (e.g. october-27-2026-waf-logs.json)
+        // and rotated segment files (e.g. october-27-2026-waf-logs.json.1, .json.2, .json.3)
+        if (!preg_match('/^([a-z]+)-(\d{1,2})-(\d{4})-waf-logs\.json(?:\.\d+)?$/i', $filename, $matches)) {
             return null;
         }
 
@@ -197,7 +199,7 @@ class WafFileLogger {
 
         $raw_uri    = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '/';
         $uri        = substr($raw_uri, 0, 500);
-        $raw_method = isset($_SERVER['REQUEST_METHOD']) ? sanitize_key(wp_unslash($_SERVER['REQUEST_METHOD'])) : 'GET';
+        $raw_method = isset($_SERVER['REQUEST_METHOD']) ? strtoupper(sanitize_key(wp_unslash($_SERVER['REQUEST_METHOD']))) : 'GET';
         $method     = substr($raw_method, 0, 10);
         $raw_ua     = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';
         $user_agent = substr($raw_ua, 0, 300);
@@ -338,7 +340,8 @@ class WafFileLogger {
         $results = [];
 
         foreach ($files as $file) {
-            if ($file === '.' || $file === '..' || !preg_match('/-waf-logs\.json$/', $file)) {
+            // Match main daily log files and rotated segments (.json, .json.1, .json.2, .json.3)
+            if ($file === '.' || $file === '..' || !preg_match('/-waf-logs\.json(?:\.\d+)?$/', $file)) {
                 continue;
             }
 
@@ -1144,7 +1147,7 @@ class WafFileLogger {
         $pruned      = 0;
 
         foreach ($files as $file) {
-            if (!preg_match('/-waf-logs\.json$/', $file)) {
+            if (!preg_match('/-waf-logs\.json(?:\.\d+)?$/', $file)) {
                 continue;
             }
 
