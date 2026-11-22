@@ -42,11 +42,19 @@ class WafFileLogger {
     }
 
     /**
+     * Optional custom storage directory override for isolated testing environments.
+     */
+    public static ?string $custom_storage_dir = null;
+
+    /**
      * Get the absolute path to the WAF logs storage directory.
      *
      * @return string
      */
     public static function get_storage_dir(): string {
+        if (self::$custom_storage_dir !== null && self::$custom_storage_dir !== '') {
+            return rtrim(self::$custom_storage_dir, '/\\');
+        }
         $upload_dir = wp_upload_dir();
         $base_dir   = $upload_dir['basedir'];
         return rtrim($base_dir, '/\\') . '/' . self::SUBDIR;

@@ -76,10 +76,17 @@ class WebCareActivityLogger {
         ?string $correlation_id = null
     ): bool {
         // Enforce Strict Administrator Accountability Boundary:
-        // The Activity Log is reserved exclusively for verified administrator actions to ensure non-repudiation.
-        // Automated system tasks, cron executions, unauthenticated public requests, and non-admin users
-        // must never pollute or impersonate the administrator audit trail.
-        // Even if an actor_override is provided, the current authenticated user MUST possess 'manage_options'.
+        // The Activity Log is reserved exclusively for verified human administrator actions to ensure non-repudiation.
+        // Automated background tasks (WP-Cron, WP-CLI unattended automation), unauthenticated public requests,
+        // and non-admin users must never pollute or impersonate the administrator audit trail.
+        // Even if an administrator capability happens to be present in CLI or Cron context, background automation
+        // must be logged in dedicated operational logs rather than the privileged human accountability trail.
+        if (defined('DOING_CRON') && DOING_CRON) {
+            return false;
+        }
+        if (defined('WP_CLI') && WP_CLI) {
+            return false;
+        }
         if (!function_exists('current_user_can') || !current_user_can('manage_options')) {
             return false;
         }

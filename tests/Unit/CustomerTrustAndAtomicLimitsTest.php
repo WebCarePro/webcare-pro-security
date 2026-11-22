@@ -790,55 +790,86 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
         $recentEvents = \WebCareProScanner\System\WebCareActivityLogger::query_records([
             'action' => 'admin_verified_action',
         ]);
-        if (!empty($recentEvents['records'])) {
-            $actor = $recentEvents['records'][0]['actor'] ?? [];
-            $this->assertSame(1, $actor['id'] ?? 0, 'Actor ID must be derived from authenticated user, not caller override');
-            $this->assertSame('realadmin', $actor['user_login'] ?? '', 'Actor user_login must be derived from authenticated user');
+        $this->assertNotEmpty($recentEvents['records'], 'Audit records must not be empty after verified admin write');
+        $actor = $recentEvents['records'][0]['actor'] ?? [];
+        $this->assertSame(1, $actor['id'] ?? 0, 'Actor ID must be derived from authenticated user, not caller override');
+        $this->assertSame('realadmin', $actor['user_login'] ?? '', 'Actor user_login must be derived from authenticated user');
+
+        // 8. Verify automated execution contexts (DOING_CRON, WP_CLI) are excluded from the human admin accountability log
+        if (!defined('DOING_CRON')) {
+            define('DOING_CRON', true);
         }
+        $cronLogged = \WebCareProScanner\System\WebCareActivityLogger::log(
+            'cron_automated_action',
+            'system',
+            \WebCareProScanner\System\ActivityLogs\ActivityEventSchema::SEVERITY_INFO,
+            ['data' => 'cron attempt']
+        );
+        $this->assertFalse($cronLogged, 'Cron context must be strictly excluded from WebCareActivityLogger even with admin user present');
 
         // Reset to admin for following tests
         \wp_set_current_user(1, 'realadmin');
     }
 
     public function test_rotated_log_clear_all_and_retention_pruning(): void {
-        $storageDir = \WebCareProScanner\Firewall\WafFileLogger::get_storage_dir();
-        if (!is_dir($storageDir)) {
-            wp_mkdir_p($storageDir);
+        // Use an isolated temporary test directory to guarantee zero contamination of live/dev WAF evidence
+        $isolatedTestDir = sys_get_temp_dir() . '/webcare_test_waf_' . wp_generate_password(8, false);
+        wp_mkdir_p($isolatedTestDir);
+
+        \WebCareProScanner\Firewall\WafFileLogger::$custom_storage_dir = $isolatedTestDir;
+
+        try {
+            // Create a fixture of expired rotated segments (30 days old) in isolated test directory
+            $expiredDateStr = strtolower(gmdate('F-j-Y', time() - (30 * 86400)));
+            $expiredBase = $expiredDateStr . '-waf-logs.json';
+            $expiredRot1 = $isolatedTestDir . '/' . $expiredBase . '.1';
+            $expiredRot2 = $isolatedTestDir . '/' . $expiredBase . '.2';
+
+            file_put_contents($expiredRot1, "{\"test\":\"expired_rot1\"}\n", LOCK_EX);
+            file_put_contents($expiredRot2, "{\"test\":\"expired_rot2\"}\n", LOCK_EX);
+
+            $this->assertFileExists($expiredRot1);
+            $this->assertFileExists($expiredRot2);
+
+            // 1. Verify prune_expired_logs() removes expired rotated segments in isolated storage
+            $deletedCount = \WebCareProScanner\Firewall\WafFileLogger::prune_expired_logs(7);
+            $this->assertSame(2, $deletedCount, 'Expired rotated segments must be pruned by prune_expired_logs()');
+            $this->assertFileDoesNotExist($expiredRot1, 'Expired rotated segment .1 must be deleted after pruning');
+            $this->assertFileDoesNotExist($expiredRot2, 'Expired rotated segment .2 must be deleted after pruning');
+
+            // 2. Verify clear_all_logs() deletes rotated segments alongside active logs in isolated storage
+            $todayDateStr = strtolower(gmdate('F-j-Y', time()));
+            $activeBase = $todayDateStr . '-waf-logs.json';
+            $activeLog = $isolatedTestDir . '/' . $activeBase;
+            $tempRot1 = $isolatedTestDir . '/' . $activeBase . '.99';
+            $tempRot2 = $isolatedTestDir . '/' . $activeBase . '.100';
+
+            file_put_contents($activeLog, "{\"test\":\"active_log\"}\n", LOCK_EX);
+            file_put_contents($tempRot1, "{\"test\":\"temp_rot1\"}\n", LOCK_EX);
+            file_put_contents($tempRot2, "{\"test\":\"temp_rot2\"}\n", LOCK_EX);
+
+            $this->assertFileExists($activeLog);
+            $this->assertFileExists($tempRot1);
+            $this->assertFileExists($tempRot2);
+
+            $cleared = \WebCareProScanner\Firewall\WafFileLogger::clear_all_logs();
+            $this->assertTrue($cleared, 'clear_all_logs() must return true');
+            $this->assertFileDoesNotExist($activeLog, 'clear_all_logs() must remove active log in isolated dir');
+            $this->assertFileDoesNotExist($tempRot1, 'clear_all_logs() must remove rotated segment .99');
+            $this->assertFileDoesNotExist($tempRot2, 'clear_all_logs() must remove rotated segment .100');
+
+        } finally {
+            // Always reset custom storage dir and clean up isolated directory
+            \WebCareProScanner\Firewall\WafFileLogger::$custom_storage_dir = null;
+            if (is_dir($isolatedTestDir)) {
+                $files = glob($isolatedTestDir . '/*');
+                foreach ($files as $f) {
+                    if (is_file($f)) {
+                        @unlink($f);
+                    }
+                }
+                @rmdir($isolatedTestDir);
+            }
         }
-
-        // Create a fixture of expired rotated segments (30 days old)
-        $expiredDateStr = strtolower(gmdate('F-j-Y', time() - (30 * 86400)));
-        $expiredBase = $expiredDateStr . '-waf-logs.json';
-        $expiredRot1 = $storageDir . '/' . $expiredBase . '.1';
-        $expiredRot2 = $storageDir . '/' . $expiredBase . '.2';
-
-        file_put_contents($expiredRot1, "{\"test\":\"expired_rot1\"}\n", LOCK_EX);
-        file_put_contents($expiredRot2, "{\"test\":\"expired_rot2\"}\n", LOCK_EX);
-
-        $this->assertFileExists($expiredRot1);
-        $this->assertFileExists($expiredRot2);
-
-        // 1. Verify prune_expired_logs() removes expired rotated segments
-        $deletedCount = \WebCareProScanner\Firewall\WafFileLogger::prune_expired_logs(7);
-        $this->assertGreaterThanOrEqual(2, $deletedCount, 'Expired rotated segments must be pruned by prune_expired_logs()');
-        $this->assertFileDoesNotExist($expiredRot1, 'Expired rotated segment .1 must be deleted after pruning');
-        $this->assertFileDoesNotExist($expiredRot2, 'Expired rotated segment .2 must be deleted after pruning');
-
-        // 2. Verify clear_all_logs() deletes rotated segments alongside active logs
-        $todayDateStr = strtolower(gmdate('F-j-Y', time()));
-        $activeBase = $todayDateStr . '-waf-logs.json';
-        $tempRot1 = $storageDir . '/' . $activeBase . '.99';
-        $tempRot2 = $storageDir . '/' . $activeBase . '.100';
-
-        file_put_contents($tempRot1, "{\"test\":\"temp_rot1\"}\n", LOCK_EX);
-        file_put_contents($tempRot2, "{\"test\":\"temp_rot2\"}\n", LOCK_EX);
-
-        $this->assertFileExists($tempRot1);
-        $this->assertFileExists($tempRot2);
-
-        $cleared = \WebCareProScanner\Firewall\WafFileLogger::clear_all_logs();
-        $this->assertTrue($cleared, 'clear_all_logs() must return true');
-        $this->assertFileDoesNotExist($tempRot1, 'clear_all_logs() must remove rotated segment .99');
-        $this->assertFileDoesNotExist($tempRot2, 'clear_all_logs() must remove rotated segment .100');
     }
 }
