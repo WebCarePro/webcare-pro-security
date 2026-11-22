@@ -180,6 +180,7 @@ class VirtualPatchManager {
                 );
                 return [
                     'success' => false,
+                    /* translators: %s: Error message detail */
                     'message' => sprintf(__('Virtual patch validation failed: %s', 'webcare-pro-security'), (string) $verify_res['error']),
                 ];
             }
@@ -265,7 +266,8 @@ class VirtualPatchManager {
                 $active[$patch_id] = $patch;
                 update_option(self::OPTION_PATCHES, $active, false);
             } else {
-                $cf_msg = ' (' . sprintf(__('Local PHP WAF Lite [%s/%s]; Cloudflare Edge: Non-blocking, non-active, or omitted from Edge budget', 'webcare-pro-security'), $patch_stage, $patch_action) . ')';
+                /* translators: 1: Virtual patch rollout stage, 2: Virtual patch action */
+                $cf_msg = ' (' . sprintf(__('Local PHP WAF Lite [%1$s/%2$s]; Cloudflare Edge: Non-blocking, non-active, or omitted from Edge budget', 'webcare-pro-security'), $patch_stage, $patch_action) . ')';
             }
         } else {
             $cf_msg = ' (' . __('Local PHP WAF Lite Active; Cloudflare Edge: ', 'webcare-pro-security') . ($cf_res['message'] ?? 'Not connected') . ')';
@@ -632,20 +634,22 @@ class VirtualPatchManager {
                     switch ($source) {
                         case 'query':
                         case 'get':
-                            // phpcs:ignore WordPress.Security.NonceVerification.Missing
-                            $target_value = $key !== '' ? ((string) ($_GET[$key] ?? '')) : $query_string;
+                            // phpcs:ignore WordPress.Security.NonceVerification.Recommended, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+                            $target_value = $key !== '' ? (isset($_GET[$key]) ? (string) wp_unslash($_GET[$key]) : '') : $query_string;
                             break;
                         case 'post':
                         case 'form':
-                            // phpcs:ignore WordPress.Security.NonceVerification.Missing
-                            $target_value = $key !== '' ? ((string) ($_POST[$key] ?? '')) : $raw_body;
+                            // phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+                            $target_value = $key !== '' ? (isset($_POST[$key]) ? (string) wp_unslash($_POST[$key]) : '') : $raw_body;
                             break;
                         case 'header':
                             $hdr_k = 'HTTP_' . strtoupper(str_replace('-', '_', $key));
-                            $target_value = (string) ($_SERVER[$hdr_k] ?? '');
+                            // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+                            $target_value = isset($_SERVER[$hdr_k]) ? (string) wp_unslash($_SERVER[$hdr_k]) : '';
                             break;
                         case 'cookie':
-                            $target_value = (string) ($_COOKIE[$key] ?? '');
+                            // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+                            $target_value = isset($_COOKIE[$key]) ? (string) wp_unslash($_COOKIE[$key]) : '';
                             break;
                         case 'uri':
                         case 'path':
@@ -663,8 +667,9 @@ class VirtualPatchManager {
                             break;
                         default:
                             if ($key !== '') {
-                                // phpcs:ignore WordPress.Security.NonceVerification.Missing
-                                $target_value = (string) ($_GET[$key] ?? ($_POST[$key] ?? ($_SERVER['HTTP_' . strtoupper(str_replace('-', '_', $key))] ?? '')));
+                                $hdr_k_def = 'HTTP_' . strtoupper(str_replace('-', '_', $key));
+                                // phpcs:ignore WordPress.Security.NonceVerification.Recommended, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+                                $target_value = (string) (isset($_GET[$key]) ? wp_unslash($_GET[$key]) : (isset($_POST[$key]) ? wp_unslash($_POST[$key]) : (isset($_SERVER[$hdr_k_def]) ? wp_unslash($_SERVER[$hdr_k_def]) : '')));
                             }
                             break;
                     }
@@ -678,7 +683,8 @@ class VirtualPatchManager {
                         $hdr_name = 'HTTP_' . strtoupper(str_replace('-', '_', $pm[1]));
                         $hdr_op   = $pm[2];
                         $hdr_val  = $pm[3];
-                        $actual   = (string) ($_SERVER[$hdr_name] ?? '');
+                        // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+                        $actual   = isset($_SERVER[$hdr_name]) ? (string) wp_unslash($_SERVER[$hdr_name]) : '';
                         if ($hdr_op === '!=' && $actual !== $hdr_val) {
                             $matched_declarative = true;
                             $evidence = "Header {$pm[1]}: {$actual}";
@@ -848,9 +854,10 @@ class VirtualPatchManager {
         }
 
         $action_raw = strtolower((string) ($patch['action'] ?? 'block'));
+        $vpatch_req_uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash((string) $_SERVER['REQUEST_URI'])) : '';
         $status_code = match ($action_raw) {
             'rate_limit'                 => 429,
-            'challenge_pow', 'challenge' => (str_contains($_SERVER['REQUEST_URI'] ?? '', 'wp-json') || str_contains($_SERVER['REQUEST_URI'] ?? '', 'admin-ajax.php')) ? 429 : 200,
+            'challenge_pow', 'challenge' => (str_contains($vpatch_req_uri, 'wp-json') || str_contains($vpatch_req_uri, 'admin-ajax.php')) ? 429 : 200,
             'log', 'log_only'            => 200,
             default                      => 403,
         };

@@ -411,6 +411,7 @@ final class CentralThreatControlPlane {
                 'new_cves'    => 0,
                 'kev_updates' => 0,
                 'sequence'    => $checkpoint['sequence'],
+                /* translators: %s: Error message detail */
                 'message'     => sprintf(__('Threat intelligence feed signature verification failed: %s', 'webcare-pro-security'), (string) $sig_result['error']),
             ];
         }

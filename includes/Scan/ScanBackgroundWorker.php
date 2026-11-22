@@ -198,7 +198,7 @@ final class ScanBackgroundWorker {
         }
 
         $table_scans = $wpdb->prefix . 'webcareproscan_scans';
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
         $scan_row = $wpdb->get_row(
             $wpdb->prepare("SELECT * FROM `{$table_scans}` WHERE id = %d", $locked_id),
             ARRAY_A

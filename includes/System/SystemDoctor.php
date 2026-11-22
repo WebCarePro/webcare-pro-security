@@ -160,7 +160,7 @@ final class SystemDoctor {
         $log_storage_dir_norm = rtrim(wp_normalize_path($log_storage_dir), '/');
         $site_abspath_norm    = rtrim(wp_normalize_path(ABSPATH), '/');
 
-        $server_software = isset($_SERVER['SERVER_SOFTWARE']) ? (string) $_SERVER['SERVER_SOFTWARE'] : '';
+        $server_software = isset($_SERVER['SERVER_SOFTWARE']) ? sanitize_text_field(wp_unslash((string) $_SERVER['SERVER_SOFTWARE'])) : '';
         $is_nginx        = (stripos($server_software, 'nginx') !== false);
         $is_caddy        = (stripos($server_software, 'caddy') !== false);
         $is_apache_or_ls = (stripos($server_software, 'apache') !== false || stripos($server_software, 'litespeed') !== false || !empty($_SERVER['LITESPEED_SERVER_SOFTWARE']));
@@ -207,7 +207,9 @@ final class SystemDoctor {
 
             try {
                 // Write temporary non-sensitive canary probe file
+                // phpcs:ignore WordPress.WP.AlternativeFileSystem.file_put_contents_file_put_contents, PluginCheck.CodeAnalysis.WriteFile.PluginDirectoryWrite
                 @file_put_contents($probe_filepath, '{"canary":"webcare_doc_probe"}');
+                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod
                 @chmod($probe_filepath, 0600);
 
                 if (file_exists($probe_filepath)) {
@@ -246,14 +248,16 @@ final class SystemDoctor {
 
             if ($probe_success) {
                 $waf_prot_status  = 'pass';
+                /* translators: 1: Web server name (e.g. Nginx or Caddy), 2: HTTP status code */
                 $waf_prot_message = sprintf(
-                    __('WAF log storage HTTP denial verified on %s (HTTP %d confirmed).', 'webcare-pro-security'),
+                    __('WAF log storage HTTP denial verified on %1$s (HTTP %2$d confirmed).', 'webcare-pro-security'),
                     $is_nginx ? 'Nginx' : 'Caddy',
                     $probe_code
                 );
                 $waf_prot_current = sprintf('Live Verified Block (HTTP %d on %s)', $probe_code, $is_nginx ? 'Nginx' : 'Caddy');
             } else {
                 $waf_prot_status  = 'fail';
+                /* translators: %s: Web server name (e.g. Nginx or Caddy) */
                 $waf_prot_message = sprintf(
                     __('%1$s does not parse .htaccess automatically. Add "location ^~ /wp-content/webcare-waf/ { deny all; return 403; }" to your server configuration, or define WEBCARE_WAF_STORAGE_DIR above webroot.', 'webcare-pro-security'),
                     $is_nginx ? 'Nginx' : 'Caddy'
@@ -352,8 +356,11 @@ final class SystemDoctor {
             'category'    => 'scheduler',
             'status'      => $cron_healthy ? 'pass' : 'warn',
             'severity'    => 'medium',
+            /* translators: %d: Number of overdue cron hooks */
             'message'     => $cron_healthy
+                /* translators: %d: Number of overdue cron hooks */
                 ? sprintf(__('Scheduler running smoothly (%d overdue hooks). Loopback worker ready for background scans.', 'webcare-pro-security'), $cron_due_count)
+                /* translators: %d: Number of overdue cron hooks */
                 : sprintf(__('WP-Cron has %d overdue jobs. Loopback worker will self-chain background scans safely.', 'webcare-pro-security'), $cron_due_count),
             'current'     => sprintf('Overdue: %d | DISABLE_WP_CRON: %s | ALTERNATE_WP_CRON: %s', $cron_due_count, $cron_disabled ? 'true' : 'false', $alternate_cron ? 'true' : 'false'),
             'required'    => __('Functioning WP-Cron or Server Cron runner', 'webcare-pro-security'),
@@ -377,7 +384,9 @@ final class SystemDoctor {
             'category'    => 'conflicts',
             'status'      => $has_conflicts ? 'warn' : 'pass',
             'severity'    => 'high',
+            /* translators: %s: Comma-separated list of conflicting plugin names */
             'message'     => $has_conflicts
+                /* translators: %s: Comma-separated list of conflicting plugin names */
                 ? sprintf(__('Detected active third-party security plugin(s): %s. Running dual WAF engines can cause false positive double-blocks and redundant memory overhead.', 'webcare-pro-security'), implode(', ', $detected_conflicts))
                 : __('No conflicting third-party security plugins detected. WebCare Pro is operating as primary perimeter firewall.', 'webcare-pro-security'),
             'current'     => $has_conflicts ? implode(', ', $detected_conflicts) : __('Zero Conflicts', 'webcare-pro-security'),
@@ -393,6 +402,7 @@ final class SystemDoctor {
 
         if (!class_exists($mandatory_cls)) {
             $pipeline_intact = false;
+            /* translators: %s: Class name of missing mandatory evaluator */
             $pipeline_issues[] = sprintf(__('Mandatory evaluator %s missing from runtime.', 'webcare-pro-security'), $mandatory_cls);
         }
 
@@ -400,6 +410,7 @@ final class SystemDoctor {
             foreach ($evaluator_meta as $eval_cls => $m) {
                 if (!empty($m['missing']) || (!empty($m['required']) && !class_exists($eval_cls))) {
                     $pipeline_intact = false;
+                    /* translators: %s: Class name of missing required evaluator */
                     $pipeline_issues[] = sprintf(__('Required evaluator %s missing or unresolvable in runtime.', 'webcare-pro-security'), $eval_cls);
                 }
             }
@@ -411,8 +422,10 @@ final class SystemDoctor {
             'category'    => 'waf',
             'status'      => $pipeline_intact ? 'pass' : 'fail',
             'severity'    => 'critical',
+            /* translators: %s: Semicolon-separated list of WAF pipeline degradation issues */
             'message'     => $pipeline_intact
                 ? __('All mandatory and required WAF evaluators are present and compiled with strict metadata contracts.', 'webcare-pro-security')
+                /* translators: %s: Semicolon-separated list of WAF pipeline degradation issues */
                 : sprintf(__('WAF pipeline degraded: %s', 'webcare-pro-security'), implode('; ', $pipeline_issues)),
             'current'     => $pipeline_intact ? __('Active & Intact', 'webcare-pro-security') : __('Degraded / Critical Evaluator Missing', 'webcare-pro-security'),
             'required'    => __('All required evaluators operational', 'webcare-pro-security'),
@@ -472,7 +485,7 @@ final class SystemDoctor {
                 'exported_at' => gmdate('c'),
                 'php_version' => PHP_VERSION,
                 'wp_version'  => (string) ($wp_version ?? '0.0.0'),
-                'server_software' => sanitize_text_field($_SERVER['SERVER_SOFTWARE'] ?? 'Unknown'),
+                'server_software' => sanitize_text_field(wp_unslash((string) ($_SERVER['SERVER_SOFTWARE'] ?? 'Unknown'))),
             ],
             'runtime_environment' => [
                 'memory_limit'      => ini_get('memory_limit'),

@@ -1381,6 +1381,7 @@ class CVEIntelligenceService {
         // phpcs:ignore WordPress.WP.AlternativeFileSystem.file_put_contents_file_put_contents
         @file_put_contents($inv_file, (string) wp_json_encode($snapshot, JSON_PRETTY_PRINT), LOCK_EX);
         if (file_exists($inv_file)) {
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod
             @chmod($inv_file, 0600);
         }
 
@@ -1394,6 +1395,7 @@ class CVEIntelligenceService {
                     $lines[] = sprintf('• [%s] %s in %s (Installed: v%s)', strtoupper($info['severity']), $cve_id, $info['component_name'], $info['installed_ver']);
                 }
                 \WebCareProScanner\Notifications\NotificationDispatcher::trigger('cve_vulnerability_detected', [
+                    /* translators: %d: Number of vulnerable components detected */
                     'title'    => sprintf(__('Security Alert: %d Vulnerable Component(s) Detected', 'webcare-pro-security'), count($notify_items)),
                     'message'  => implode("\n", $lines),
                     'severity' => 'critical',

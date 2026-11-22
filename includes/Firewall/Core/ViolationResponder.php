@@ -113,6 +113,7 @@ final class ViolationResponder {
             $is_virtual_patch = !empty($rule['is_virtual_patch']) || stripos($rule['category'] ?? '', 'Virtual Patch') !== false;
             if ($is_virtual_patch) {
                 $can_translate = function_exists('did_action') && did_action('init');
+                /* translators: 1: Attacker IP address, 2: Target rule name, 3: Incident ID */
                 $patch_msg_fmt = $can_translate
                     ? __('Virtual Patch intercepted an exploit payload from %1$s targeting "%2$s" [Incident: %3$s].', 'webcare-pro-security')
                     : 'Virtual Patch intercepted an exploit payload from %1$s targeting "%2$s" [Incident: %3$s].';
@@ -675,12 +676,14 @@ final class ViolationResponder {
             && $tier !== FirewallEngine::TIER_CONFIRMED_EXPLOIT
             && class_exists('\\WebCareProScanner\\Firewall\\RescueAssistantManager')
         ) {
-            $req_uri_raw = isset($_SERVER['REQUEST_URI']) ? (string) $_SERVER['REQUEST_URI'] : '';
+            $req_uri_raw = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash((string) $_SERVER['REQUEST_URI'])) : '';
             $clean_uri   = str_replace(["\0", "\r", "\n"], '', $req_uri_raw);
             $clean_path  = (string) wp_parse_url($clean_uri, PHP_URL_PATH);
+            // phpcs:ignore WordPress.Security.NonceVerification.Recommended
             $ajax_act    = isset($_REQUEST['action']) ? sanitize_key(wp_unslash($_REQUEST['action'])) : '';
+            // phpcs:ignore WordPress.Security.NonceVerification.Recommended
             $rest_route  = isset($_GET['rest_route']) ? sanitize_text_field(wp_unslash($_GET['rest_route'])) : '';
-            $req_method  = isset($_SERVER['REQUEST_METHOD']) ? (string) $_SERVER['REQUEST_METHOD'] : 'GET';
+            $req_method  = isset($_SERVER['REQUEST_METHOD']) ? sanitize_text_field(wp_unslash((string) $_SERVER['REQUEST_METHOD'])) : 'GET';
             // Canonical parameter key resolution: strictly target the parameter key name, never raw payload values
             $param_key   = (string) ($rule['param_key'] ?? ($rule['target_param'] ?? ''));
             $user_role   = '';
@@ -938,6 +941,7 @@ final class ViolationResponder {
             if (!$surge_alert_sent && class_exists('\\WebCareProScanner\\Notifications\\NotificationDispatcher')) {
                 set_transient('webcareproscan_waf_block_surge_alerted', 1, 300); // Throttle alerts to once per 5 minutes
                 $can_translate = function_exists('did_action') && did_action('init');
+                /* translators: %1$d: Number of blocked attack requests in under 60 seconds */
                 $surge_msg_fmt = $can_translate
                     ? __('WAF Lite intercepted an abnormal surge of blocked attacks (%1$d blocks in under 60 seconds).', 'webcare-pro-security')
                     : 'WAF Lite intercepted an abnormal surge of blocked attacks (%1$d blocks in under 60 seconds).';

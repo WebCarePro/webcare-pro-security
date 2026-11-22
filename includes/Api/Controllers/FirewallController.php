@@ -534,6 +534,7 @@ final class FirewallController extends AbstractApiController {
             return new \WP_REST_Response([
                 'success' => false,
                 'code'    => 'incident_not_found',
+                /* translators: %s: Incident identifier */
                 'message' => sprintf(__('Incident record "%s" was not found in audit logs. Cannot establish verified trust context.', 'webcare-pro-security'), $incident_id),
             ], 404);
         }
@@ -559,6 +560,7 @@ final class FirewallController extends AbstractApiController {
             return new \WP_REST_Response([
                 'success' => false,
                 'code'    => 'method_mismatch',
+                /* translators: 1: Supplied HTTP method, 2: Authoritative incident HTTP method */
                 'message' => sprintf(
                     __('Supplied method "%1$s" does not match authoritative incident method "%2$s".', 'webcare-pro-security'),
                     $method,
@@ -572,6 +574,7 @@ final class FirewallController extends AbstractApiController {
             return new \WP_REST_Response([
                 'success' => false,
                 'code'    => 'rule_mismatch',
+                /* translators: 1: Supplied rule ID, 2: Authoritative incident rule ID */
                 'message' => sprintf(
                     __('Supplied rule ID "%1$s" does not match authoritative incident rule ID "%2$s".', 'webcare-pro-security'),
                     $rule_id,
@@ -589,6 +592,7 @@ final class FirewallController extends AbstractApiController {
             return new \WP_REST_Response([
                 'success' => false,
                 'code'    => 'uri_mismatch',
+                /* translators: 1: Supplied URI path, 2: Authoritative incident path */
                 'message' => sprintf(
                     __('Supplied URI path "%1$s" does not match authoritative incident path "%2$s".', 'webcare-pro-security'),
                     $client_clean_path,
@@ -611,6 +615,7 @@ final class FirewallController extends AbstractApiController {
                 return new \WP_REST_Response([
                     'success' => false,
                     'code'    => 'param_key_mismatch',
+                    /* translators: 1: Supplied parameter key, 2: Authoritative incident parameter key */
                     'message' => sprintf(
                         __('Supplied parameter key "%1$s" does not match authoritative incident parameter key "%2$s".', 'webcare-pro-security'),
                         $param_key,
@@ -647,12 +652,14 @@ final class FirewallController extends AbstractApiController {
         }
 
         if (class_exists('\\WebCareProScanner\\Firewall\\RescueAssistantManager')) {
+            /* translators: %s: Rule identifier */
+            $rule_label = sprintf(__('1-Click Trust from WAF Log (%s)', 'webcare-pro-security'), $rule_id);
             $trust_res = \WebCareProScanner\Firewall\RescueAssistantManager::trust_and_allow_action([
                 'type'       => 'uri',
                 'value'      => $target_uri,
                 'rule_id'    => $rule_id,
                 'method'     => $method,
-                'label'      => $label ?: sprintf(__('1-Click Trust from WAF Log (%s)', 'webcare-pro-security'), $rule_id),
+                'label'      => $label ?: $rule_label,
                 'ip'         => $ip ?: (string) ($incident_record['ip_address'] ?? ''),
                 'param_key'  => $param_key,
                 'user_role'  => $user_role ?: (string) ($incident_record['user_role'] ?? ''),

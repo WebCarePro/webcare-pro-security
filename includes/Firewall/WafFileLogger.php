@@ -1309,7 +1309,7 @@ class WafFileLogger {
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
             $table_exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table));
             if ($table_exists === $table) {
-                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
                 $wpdb->query("TRUNCATE TABLE `{$table}`");
             }
         }

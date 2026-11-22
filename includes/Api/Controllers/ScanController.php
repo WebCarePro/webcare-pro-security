@@ -549,7 +549,7 @@ final class ScanController extends AbstractApiController {
                 }
 
                 $scan_check_sql = "SELECT id FROM `{$table_scans}` WHERE id = %d AND status = 'running' AND generation_token = %s";
-                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.NotPrepared
                 $valid_scan = $wpdb->get_var($wpdb->prepare($scan_check_sql, $scan_id, $lease_token));
                 if (!$valid_scan) {
                     ScanLock::release_batch_lock();
@@ -586,7 +586,7 @@ final class ScanController extends AbstractApiController {
         }
 
         $scan_pre_advance_sql = "SELECT id FROM `{$table_scans}` WHERE id = %d AND status = 'running' AND generation_token = %s";
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.NotPrepared
         $valid_pre_advance = $wpdb->get_var($wpdb->prepare($scan_pre_advance_sql, $scan_id, $lease_token));
         if (!$valid_pre_advance) {
             ScanLock::release_batch_lock();
@@ -643,7 +643,7 @@ final class ScanController extends AbstractApiController {
 
         // Conditional progress update: WHERE id = %d AND status = 'running' AND generation_token = %s
         $update_progress_sql = "UPDATE `{$table_scans}` SET scanned_files = %d, issues_found = %d WHERE id = %d AND status = 'running' AND generation_token = %s";
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.NotPrepared
         $rows_affected = $wpdb->query(
             $wpdb->prepare($update_progress_sql, $scanned_so_far, $current_issues_total, $scan_id, $lease_token)
         );
@@ -1124,7 +1124,7 @@ final class ScanController extends AbstractApiController {
                 }
 
                 $scan_check_sql = "SELECT id FROM `{$table_scans}` WHERE id = %d AND status = 'running' AND generation_token = %s";
-                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.NotPrepared
                 $valid_scan = $wpdb->get_var($wpdb->prepare($scan_check_sql, $scan_id, $lease_token));
                 if (!$valid_scan) {
                     ScanLock::release($scan_id, $lease_token);
@@ -1274,7 +1274,7 @@ final class ScanController extends AbstractApiController {
             } else {
                 // Conditional finalization update: WHERE id = %d AND status = 'running' AND generation_token = %s
                 $fin_sql = "UPDATE `{$table_scans}` SET status = 'completed', issues_found = %d, risk_score = %d, duration = %d, duration_ms = %d, started_at = %s, completed_at = %s WHERE id = %d AND status = 'running' AND generation_token = %s";
-                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.NotPrepared
                 $rows_affected = $wpdb->query(
                     $wpdb->prepare($fin_sql, $open_issues_count, $summary['score'], $duration_sec, $duration_ms, $started_at_db, $completed_at_exact, $scan_id, $lease_token)
                 );
@@ -2339,7 +2339,7 @@ final class ScanController extends AbstractApiController {
         if ($scan_id) {
             // Retrieve generation_token for targeted release and cancellation marking
             $gen_sql = "SELECT generation_token FROM `{$table_scans}` WHERE id = %d";
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.NotPrepared
             $gen_token = $wpdb->get_var($wpdb->prepare($gen_sql, $scan_id));
 
             // Set durable cancellation marker transient

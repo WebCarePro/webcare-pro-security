@@ -211,7 +211,9 @@ final readonly class CommerceAndUploadEvaluator implements WafEvaluatorInterface
             $sig_type = $has_stripe_sig ? 'Stripe-Signature' : 'PayPal-Transmission-Sig';
 
             $can_translate = function_exists('did_action') && did_action('init');
+            /* translators: 1: Webhook signature header type (e.g. Stripe-Signature), 2: Client IP address */
             $desc_fmt = $can_translate
+                /* translators: 1: Webhook signature header type (e.g. Stripe-Signature), 2: Client IP address */
                 ? __('Forged %1$s webhook header presented by unauthorized non-gateway IP (%2$s).', 'webcare-pro-security')
                 : 'Forged %1$s webhook header presented by unauthorized non-gateway IP (%2$s).';
 
@@ -337,7 +339,9 @@ final readonly class CommerceAndUploadEvaluator implements WafEvaluatorInterface
             $first_key = array_key_first($found_params);
 
             $can_translate = function_exists('did_action') && did_action('init');
+            /* translators: 1: Client IP address, 2: Max allowed clicks per minute */
             $desc_fmt = $can_translate
+                /* translators: 1: Client IP address, 2: Max allowed clicks per minute */
                 ? __('High-velocity referral click flood from IP %1$s exceeded safety threshold (%2$d clicks/min). Suppressed database visit logging to prevent table bloat and click-fraud.', 'webcare-pro-security')
                 : 'High-velocity referral click flood from IP %1$s exceeded safety threshold (%2$d clicks/min). Suppressed database visit logging to prevent table bloat and click-fraud.';
 

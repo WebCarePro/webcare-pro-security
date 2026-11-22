@@ -599,6 +599,7 @@ class PluginSelfDefense {
         ]);
 
         if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
+            /* translators: %s: Plugin version release tag */
             return ['success' => false, 'message' => sprintf(__('Failed to fetch clean file from GitHub repository for release tag %s.', 'webcare-pro-security'), esc_html($version_tag))];
         }
 

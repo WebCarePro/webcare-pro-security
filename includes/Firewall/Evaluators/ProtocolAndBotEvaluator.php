@@ -228,7 +228,9 @@ final readonly class ProtocolAndBotEvaluator implements WafEvaluatorInterface {
                         $identity_key = 'wc:' . $wc_cookie_val;
                     }
                 } elseif ($bucket === AdaptiveRateLimiter::BUCKET_SEARCH_PROBE) {
-                    $sess_token = $_COOKIE['PHPSESSID'] ?? ($_COOKIE['woocommerce_cart_hash'] ?? $ctx->userAgent);
+                    $phpsessid = isset($_COOKIE['PHPSESSID']) ? sanitize_text_field(wp_unslash((string) $_COOKIE['PHPSESSID'])) : '';
+                    $wc_cart   = isset($_COOKIE['woocommerce_cart_hash']) ? sanitize_text_field(wp_unslash((string) $_COOKIE['woocommerce_cart_hash'])) : '';
+                    $sess_token = $phpsessid !== '' ? $phpsessid : ($wc_cart !== '' ? $wc_cart : $ctx->userAgent);
                     if ($sess_token !== '') {
                         $identity_key = 's:' . substr((string) $sess_token, 0, 64);
                     }
@@ -687,7 +689,7 @@ final readonly class ProtocolAndBotEvaluator implements WafEvaluatorInterface {
      * @return bool
      */
     public static function is_strict_payment_webhook_route(string $request_uri): bool {
-        $parsed = parse_url($request_uri);
+        $parsed = wp_parse_url($request_uri);
         $path = strtolower(rtrim((string) ($parsed['path'] ?? ''), '/'));
         $query = (string) ($parsed['query'] ?? '');
 

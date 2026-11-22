@@ -212,7 +212,9 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
         // Action Decision: If risk score >= 60, evaluate API-native 429 vs browser WebCrypto PoW
         if ($risk_score >= 60) {
             $can_translate = function_exists('did_action') && did_action('init');
+            /* translators: %s: Comma-separated list of behavioral threat signals */
             $challenge_fmt = $can_translate
+                /* translators: %s: Comma-separated list of behavioral threat signals */
                 ? __('Browser integrity validation required (signals: %s).', 'webcare-pro-security')
                 : 'Browser integrity validation required (signals: %s).';
 
