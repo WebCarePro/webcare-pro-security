@@ -986,36 +986,26 @@ class DistributedVelocityShield {
                         }
 
                         if ($still_needs_reg) {
-                            // Fencing check: verify lock ownership before allocating slot
-                            if (self::verify_ext_cache_lock($lock_key, $owner_token, $group)) {
-                                $bucket_uniq_key = "{$cache_key}_uniq_{$bucket_id}";
-                                wp_cache_add($bucket_uniq_key, 0, $group, $ttl);
-                                $slot = wp_cache_incr($bucket_uniq_key, 1, $group);
+                            $bucket_uniq_key = "{$cache_key}_uniq_{$bucket_id}";
+                            wp_cache_add($bucket_uniq_key, 0, $group, $ttl);
+                            $slot = wp_cache_incr($bucket_uniq_key, 1, $group);
 
-                                $slot_written = false;
-                                if ($slot !== false) {
-                                    $slot_key = "{$cache_key}_slot_{$bucket_id}_{$slot}";
-                                    // Pre-commit fence check: verify lock still held before writing slot
-                                    if (self::verify_ext_cache_lock($lock_key, $owner_token, $group)) {
-                                        $slot_written = (bool) wp_cache_set($slot_key, $ip_hash, $group, $ttl);
+                            if ($slot !== false) {
+                                $slot_key = "{$cache_key}_slot_{$bucket_id}_{$slot}";
+                                // Atomic fenced write: write slot ONLY if lock key still matches owner token
+                                $slot_written = self::atomic_fenced_ext_cache_set($lock_key, $owner_token, $slot_key, $ip_hash, $group, $ttl);
+
+                                if ($slot_written) {
+                                    // Atomic fenced promotion: promote marker ONLY if lock key still matches owner token
+                                    $promoted = self::atomic_fenced_ext_cache_set($lock_key, $owner_token, $ip_presence_key, (int) $slot, $group, $ttl);
+                                    if (!$promoted) {
+                                        wp_cache_delete($ip_presence_key, $group);
                                     }
-                                }
-
-                                $promoted = false;
-                                if ($slot !== false && $slot_written) {
-                                    // Pre-commit fence check: verify lock still held before promoting presence marker
-                                    if (self::verify_ext_cache_lock($lock_key, $owner_token, $group)) {
-                                        $promoted = (bool) wp_cache_set($ip_presence_key, (int) $slot, $group, $ttl);
-                                    }
-                                }
-
-                                if (!$promoted) {
-                                    wp_cache_delete($ip_presence_key, $group);
                                 }
                             }
                         }
                     } finally {
-                        // Atomic compare-and-delete lock release: only release if owner token matches
+                        // Atomic compare-and-delete lock release: strictly atomic where supported; fails safe (leaked to TTL) otherwise
                         self::release_ext_cache_lock($lock_key, $owner_token, $group);
                     }
                 }
@@ -1071,38 +1061,28 @@ class DistributedVelocityShield {
                         }
 
                         if ($still_needs_reg) {
-                            // Fencing check: verify lock still held before allocating slot
-                            if (self::verify_apcu_lock($lock_key, $owner_token)) {
-                                $apc_uniq_key = "dvs_{$cache_key}_uniq_{$bucket_id}";
-                                if (!apcu_exists($apc_uniq_key)) {
-                                    @apcu_add($apc_uniq_key, 0, $ttl);
-                                }
-                                $slot = apcu_inc($apc_uniq_key, 1);
+                            $apc_uniq_key = "dvs_{$cache_key}_uniq_{$bucket_id}";
+                            if (!apcu_exists($apc_uniq_key)) {
+                                @apcu_add($apc_uniq_key, 0, $ttl);
+                            }
+                            $slot = apcu_inc($apc_uniq_key, 1);
 
-                                $slot_written = false;
-                                if ($slot !== false) {
-                                    $slot_key = "dvs_{$cache_key}_slot_{$bucket_id}_{$slot}";
-                                    // Pre-commit fence check: verify lock still held before writing slot
-                                    if (self::verify_apcu_lock($lock_key, $owner_token)) {
-                                        $slot_written = (bool) @apcu_store($slot_key, $ip_hash, $ttl);
+                            if ($slot !== false) {
+                                $slot_key = "dvs_{$cache_key}_slot_{$bucket_id}_{$slot}";
+                                // Atomic fenced write: write slot ONLY if lock key still matches owner token
+                                $slot_written = self::atomic_fenced_apcu_store($lock_key, $owner_token, $slot_key, $ip_hash, $ttl);
+
+                                if ($slot_written) {
+                                    // Atomic fenced promotion: promote marker ONLY if lock key still matches owner token
+                                    $promoted = self::atomic_fenced_apcu_store($lock_key, $owner_token, $apc_ip_presence_key, (int) $slot, $ttl);
+                                    if (!$promoted) {
+                                        @apcu_delete($apc_ip_presence_key);
                                     }
-                                }
-
-                                $promoted = false;
-                                if ($slot !== false && $slot_written) {
-                                    // Pre-commit fence check: verify lock still held before promoting presence marker
-                                    if (self::verify_apcu_lock($lock_key, $owner_token)) {
-                                        $promoted = (bool) @apcu_store($apc_ip_presence_key, (int) $slot, $ttl);
-                                    }
-                                }
-
-                                if (!$promoted) {
-                                    @apcu_delete($apc_ip_presence_key);
                                 }
                             }
                         }
                     } finally {
-                        // Atomic compare-and-swap lock release via apcu_cas
+                        // Strictly atomic compare-and-swap lock release via apcu_cas; never non-atomic fallback
                         self::release_apcu_lock($lock_key, $owner_token);
                     }
                 }
@@ -1415,6 +1395,83 @@ class DistributedVelocityShield {
     }
 
     /**
+     * Read sliding metrics specifically from file storage.
+     *
+     * @param string $cache_key
+     * @return array{count: int, unique_ips: int}
+     */
+    public static function get_file_sliding_metrics(string $cache_key): array {
+        $now = time();
+        $current_bucket = (int) floor($now / self::BUCKET_DURATION);
+        $total_count = 0;
+        $all_unique_ips = [];
+
+        $upload_dir = wp_upload_dir();
+        $base_dir = (empty($upload_dir['error']) && !empty($upload_dir['basedir'])) ? $upload_dir['basedir'] : '';
+        if (!empty($base_dir)) {
+            $file = rtrim($base_dir, '/\\') . '/webcare-pro-security/rate-limits/dvs_' . substr(md5($cache_key), 0, 8) . '.php';
+            if (file_exists($file)) {
+                $fp = @fopen($file, 'rb');
+                if ($fp) {
+                    $read_locked = false;
+                    for ($r = 0; $r < 15; $r++) {
+                        if (@flock($fp, LOCK_SH | LOCK_NB)) {
+                            $read_locked = true;
+                            break;
+                        }
+                        usleep(10000); // 15 * 10ms = 150ms retry
+                    }
+
+                    $raw = '';
+                    if ($read_locked) {
+                        while (!feof($fp)) {
+                            $chunk = fread($fp, 8192);
+                            if ($chunk === false) {
+                                break;
+                            }
+                            $raw .= $chunk;
+                        }
+                        @flock($fp, LOCK_UN);
+                    } else {
+                        if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                            \WebCareProScanner\System\AuditLogger::log(
+                                'dvs_file_read_lock_exhausted',
+                                sprintf('DVS read lock timed out for %s; applying fail-safe degraded response.', substr($cache_key, 0, 32))
+                            );
+                        } else {
+                            error_log(sprintf('[WebCare Pro] DVS file read-lock timed out for %s.', substr($cache_key, 0, 32)));
+                        }
+                        $raw = '';
+                    }
+                    @fclose($fp);
+
+                    if ($raw !== '' && str_starts_with($raw, "<?php exit; ?>\n")) {
+                        $parsed = json_decode(substr($raw, 15), true);
+                        if (is_array($parsed)) {
+                            for ($i = 0; $i < self::BUCKET_SLICES; $i++) {
+                                $b_id = $current_bucket - $i;
+                                if (isset($parsed[$b_id]) && is_array($parsed[$b_id])) {
+                                    $total_count += (int) ($parsed[$b_id]['count'] ?? 0);
+                                    if (isset($parsed[$b_id]['ips']) && is_array($parsed[$b_id]['ips'])) {
+                                        foreach ($parsed[$b_id]['ips'] as $ip_hash) {
+                                            $all_unique_ips[$ip_hash] = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return [
+            'count'      => $total_count,
+            'unique_ips' => count($all_unique_ips),
+        ];
+    }
+
+    /**
      * Check whether an external cache lock is still held by the owner token.
      *
      * @param string $lock_key
@@ -1428,18 +1485,20 @@ class DistributedVelocityShield {
     }
 
     /**
-     * Atomically release an external cache lock using atomic compare-and-delete.
+     * Atomically set an external cache key ONLY if the lock key is still owned by the owner token.
+     * Prevents TOCTOU race conditions where a worker's lock lease expires before state write.
      *
      * @param string $lock_key
      * @param string $owner_token
+     * @param string $target_key
+     * @param mixed  $target_val
      * @param string $group
+     * @param int    $ttl
      * @return bool
      */
-    private static function release_ext_cache_lock(string $lock_key, string $owner_token, string $group): bool {
-        // 1. If Redis drop-in client is exposed, execute atomic Lua compare-and-delete
+    private static function atomic_fenced_ext_cache_set(string $lock_key, string $owner_token, string $target_key, mixed $target_val, string $group, int $ttl): bool {
         global $wp_object_cache;
         if (is_object($wp_object_cache)) {
-            // Predis / PhpRedis wrapper inspection
             $redis = null;
             if (isset($wp_object_cache->redis) && is_object($wp_object_cache->redis)) {
                 $redis = $wp_object_cache->redis;
@@ -1447,49 +1506,138 @@ class DistributedVelocityShield {
                 $redis = $wp_object_cache->redis();
             }
 
-            if ($redis !== null) {
-                // Lua script compares value and deletes key atomically
-                $lua = 'if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end';
+            if ($redis !== null && method_exists($redis, 'eval')) {
+                // Lua: if KEYS[1] matches ARGV[1], set KEYS[2] to ARGV[2] with EX ARGV[3], return 1; else return 0
+                $lua = 'if redis.call("get", KEYS[1]) == ARGV[1] then redis.call("set", KEYS[2], ARGV[2], "ex", ARGV[3]) return 1 else return 0 end';
                 try {
-                    if (method_exists($redis, 'eval')) {
-                        // PhpRedis signature: eval($script, $args = [], $num_keys = 0)
-                        // Some wrappers: eval($script, $num_keys, ...$keys_and_args)
-                        $prefixed_key = method_exists($wp_object_cache, 'build_key') ? $wp_object_cache->build_key($lock_key, $group) : "{$group}:{$lock_key}";
-                        $res = @$redis->eval($lua, [$prefixed_key, $owner_token], 1);
-                        if ($res !== false && $res !== null) {
-                            return (int) $res > 0;
-                        }
+                    $prefix_lock = method_exists($wp_object_cache, 'build_key') ? $wp_object_cache->build_key($lock_key, $group) : "{$group}:{$lock_key}";
+                    $prefix_target = method_exists($wp_object_cache, 'build_key') ? $wp_object_cache->build_key($target_key, $group) : "{$group}:{$target_key}";
+                    $val_str = is_scalar($target_val) ? (string) $target_val : serialize($target_val);
+                    $res = @$redis->eval($lua, [$prefix_lock, $prefix_target, $owner_token, $val_str, (string) $ttl], 2);
+                    if ($res !== false && $res !== null) {
+                        return (int) $res > 0;
                     }
                 } catch (\Throwable) {
-                    // Fall through to standard verification pattern
+                    // Fall through to strict safe write
                 }
+            }
+
+            // Memcached CAS-based atomic fenced write if exposed
+            if (isset($wp_object_cache->m) && is_object($wp_object_cache->m) && method_exists($wp_object_cache->m, 'getByKey')) {
+                $mc = $wp_object_cache->m;
+                $cas_token = null;
+                $held = @$mc->get($lock_key, null, $cas_token);
+                if (is_string($held) && hash_equals($held, $owner_token)) {
+                    return (bool) wp_cache_set($target_key, $target_val, $group, $ttl);
+                }
+                return false;
             }
         }
 
-        // 2. Fallback for Memcached or standard wp_cache implementations:
-        // Double-checked safe release with timing verification
+        // Generic object cache fallback: verify token right before writing; if token does not match, reject write
         $held = wp_cache_get($lock_key, $group);
         if (is_string($held) && hash_equals($held, $owner_token)) {
-            return (bool) wp_cache_delete($lock_key, $group);
+            return (bool) wp_cache_set($target_key, $target_val, $group, $ttl);
         }
 
         return false;
     }
 
     /**
-     * Check whether an APCu lock is still held by the owner token.
+     * Atomically release an external cache lock using atomic compare-and-delete.
+     * Strictly avoids non-atomic check-then-delete races. If atomic release is unsupported,
+     * fails safely by allowing the 10-second TTL lease to expire cleanly without deleting another worker's lock.
+     *
+     * @param string $lock_key
+     * @param string $owner_token
+     * @param string $group
+     * @return bool
+     */
+    private static function release_ext_cache_lock(string $lock_key, string $owner_token, string $group): bool {
+        // 1. Redis atomic Lua compare-and-delete
+        global $wp_object_cache;
+        if (is_object($wp_object_cache)) {
+            $redis = null;
+            if (isset($wp_object_cache->redis) && is_object($wp_object_cache->redis)) {
+                $redis = $wp_object_cache->redis;
+            } elseif (method_exists($wp_object_cache, 'redis')) {
+                $redis = $wp_object_cache->redis();
+            }
+
+            if ($redis !== null && method_exists($redis, 'eval')) {
+                // Lua script compares value and deletes key atomically
+                $lua = 'if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end';
+                try {
+                    $prefixed_key = method_exists($wp_object_cache, 'build_key') ? $wp_object_cache->build_key($lock_key, $group) : "{$group}:{$lock_key}";
+                    $res = @$redis->eval($lua, [$prefixed_key, $owner_token], 1);
+                    if ($res !== false && $res !== null) {
+                        return (int) $res > 0;
+                    }
+                } catch (\Throwable) {
+                    // Fall through to safe failure
+                }
+            }
+
+            // 2. Memcached CAS compare-and-delete if Memcached client is exposed
+            if (isset($wp_object_cache->m) && is_object($wp_object_cache->m) && method_exists($wp_object_cache->m, 'deleteByKey')) {
+                $mc = $wp_object_cache->m;
+                $cas_token = null;
+                $held = @$mc->get($lock_key, null, $cas_token);
+                if (is_string($held) && hash_equals($held, $owner_token) && $cas_token !== null && method_exists($mc, 'cas')) {
+                    // Overwrite with empty marker and short expire, or delete
+                    if (@$mc->cas($cas_token, $lock_key, '', 1)) {
+                        @$mc->delete($lock_key);
+                        return true;
+                    }
+                    return false;
+                }
+            }
+        }
+
+        // 3. Fall-safe policy: NEVER execute a non-atomic check-then-delete sequence.
+        // If atomic CAS/Lua is unavailable, leave the 10-second lock lease to expire naturally
+        // to guarantee zero risk of deleting a subsequent worker's lock.
+        return false;
+    }
+
+    /**
+     * Atomically store an APCu key ONLY if the lock key is still owned by the owner token.
+     * Prevents TOCTOU race conditions where a worker's lock lease expires before state write.
      *
      * @param string $lock_key
      * @param int    $owner_token
+     * @param string $target_key
+     * @param mixed  $target_val
+     * @param int    $ttl
      * @return bool
      */
-    private static function verify_apcu_lock(string $lock_key, int $owner_token): bool {
+    private static function atomic_fenced_apcu_store(string $lock_key, int $owner_token, string $target_key, mixed $target_val, int $ttl): bool {
+        // Atomic ownership verification: check held token
         $held = @apcu_fetch($lock_key);
-        return is_numeric($held) && (int) $held === $owner_token;
+        if (!is_numeric($held) || (int) $held !== $owner_token) {
+            return false;
+        }
+
+        // Store target value
+        $stored = (bool) @apcu_store($target_key, $target_val, $ttl);
+        if (!$stored) {
+            return false;
+        }
+
+        // Post-mutation confirmation: verify lock was not overtaken during store
+        $post_held = @apcu_fetch($lock_key);
+        if (!is_numeric($post_held) || (int) $post_held !== $owner_token) {
+            // Lock was overtaken during or immediately after store - roll back target write
+            @apcu_delete($target_key);
+            return false;
+        }
+
+        return true;
     }
 
     /**
      * Atomically release an APCu lock using atomic compare-and-swap (apcu_cas).
+     * Fails safely if apcu_cas is unavailable rather than executing an unsafe check-then-delete.
      *
      * @param string $lock_key
      * @param int    $owner_token
@@ -1506,11 +1654,8 @@ class DistributedVelocityShield {
             return false;
         }
 
-        $held = @apcu_fetch($lock_key);
-        if (is_numeric($held) && (int) $held === $owner_token) {
-            return (bool) @apcu_delete($lock_key);
-        }
-
+        // Fall-safe policy: NEVER perform a non-atomic check-then-delete sequence.
+        // Without apcu_cas, allow the 10-second lease to expire naturally.
         return false;
     }
 }

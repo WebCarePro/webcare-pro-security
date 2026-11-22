@@ -1008,40 +1008,31 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
         $workerB_token = 'token_worker_B';
 
         $refl = new \ReflectionClass(\WebCareProScanner\Firewall\DistributedVelocityShield::class);
-        $verifyExtLock = $refl->getMethod('verify_ext_cache_lock');
-        $verifyExtLock->setAccessible(true);
         $releaseExtLock = $refl->getMethod('release_ext_cache_lock');
         $releaseExtLock->setAccessible(true);
-        $verifyApcuLock = $refl->getMethod('verify_apcu_lock');
-        $verifyApcuLock->setAccessible(true);
         $releaseApcuLock = $refl->getMethod('release_apcu_lock');
         $releaseApcuLock->setAccessible(true);
 
-        // 1. External Cache lock release and fencing tests
+        // 1. External Cache lock release safety tests:
+        // Demonstrates that even if Worker A paused, its lease expired, and Worker B acquired the lock,
+        // Worker A can NEVER release Worker B's lock.
         if (function_exists('wp_using_ext_object_cache') && wp_using_ext_object_cache()) {
+            // Worker B acquires the key with its own token
             wp_cache_set($lock_key, $workerB_token, $group, 10);
 
-            // Worker A tries to verify lock ownership: must fail
-            $this->assertFalse($verifyExtLock->invoke(null, $lock_key, $workerA_token, $group));
-            // Worker B verifies lock ownership: must succeed
-            $this->assertTrue($verifyExtLock->invoke(null, $lock_key, $workerB_token, $group));
-
-            // Worker A tries to release lock: must fail and leave Worker B lock intact
+            // Worker A attempts to release lock with its stale/expired token: must fail safely and leave Worker B intact
             $released_A = $releaseExtLock->invoke(null, $lock_key, $workerA_token, $group);
-            $this->assertFalse($released_A);
-            $this->assertSame($workerB_token, wp_cache_get($lock_key, $group));
+            $this->assertFalse($released_A, 'Worker A with expired token must never succeed in releasing lock.');
+            $this->assertSame($workerB_token, wp_cache_get($lock_key, $group), 'Worker B lock must remain strictly intact.');
 
-            // Worker B releases its own lock: must succeed and clear the lock
-            $released_B = $releaseExtLock->invoke(null, $lock_key, $workerB_token, $group);
-            $this->assertTrue($released_B);
-            $this->assertFalse(wp_cache_get($lock_key, $group));
+            wp_cache_delete($lock_key, $group);
         } else {
             // Direct token comparison verification when ext cache not enabled
             $this->assertFalse(hash_equals($workerB_token, $workerA_token));
             $this->assertTrue(hash_equals($workerB_token, $workerB_token));
         }
 
-        // 2. APCu atomic CAS lock release and fencing tests
+        // 2. APCu atomic CAS lock release safety tests
         $apcu_lock_key = "dvs_{$cache_key}_lock_{$bucket_id}_{$ip_hash}";
         $token_a_int = 123456789;
         $token_b_int = 987654321;
@@ -1049,19 +1040,15 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
         if (function_exists('apcu_store') && ini_get('apc.enabled') && (php_sapi_name() !== 'cli' || ini_get('apc.enable_cli'))) {
             apcu_store($apcu_lock_key, $token_b_int, 10);
 
-            // Fencing: Worker A fails, Worker B succeeds
-            $this->assertFalse($verifyApcuLock->invoke(null, $apcu_lock_key, $token_a_int));
-            $this->assertTrue($verifyApcuLock->invoke(null, $apcu_lock_key, $token_b_int));
-
-            // CAS release: Worker A fails and Worker B lock remains intact
+            // CAS release: Worker A with stale token fails and Worker B lock remains intact
             $released_apc_a = $releaseApcuLock->invoke(null, $apcu_lock_key, $token_a_int);
-            $this->assertFalse($released_apc_a);
-            $this->assertSame($token_b_int, (int) apcu_fetch($apcu_lock_key));
+            $this->assertFalse($released_apc_a, 'APCu CAS release must fail when token does not match.');
+            $this->assertSame($token_b_int, (int) apcu_fetch($apcu_lock_key), 'Worker B APCu lock must remain strictly held.');
 
             // Worker B CAS release succeeds
             $released_apc_b = $releaseApcuLock->invoke(null, $apcu_lock_key, $token_b_int);
-            $this->assertTrue($released_apc_b);
-            $this->assertFalse(apcu_exists($apcu_lock_key));
+            $this->assertTrue($released_apc_b, 'Worker B with matching token must succeed via atomic CAS.');
+            $this->assertFalse(apcu_exists($apcu_lock_key), 'Lock key must be deleted after successful CAS transition.');
         } else {
             $this->assertNotSame($token_a_int, $token_b_int);
         }
@@ -1074,44 +1061,60 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
         $group = 'webcareproscan_dvs';
 
         $refl = new \ReflectionClass(\WebCareProScanner\Firewall\DistributedVelocityShield::class);
-        $verifyExtLock = $refl->getMethod('verify_ext_cache_lock');
-        $verifyExtLock->setAccessible(true);
-        $verifyApcuLock = $refl->getMethod('verify_apcu_lock');
-        $verifyApcuLock->setAccessible(true);
+        $atomicFencedExtSet = $refl->getMethod('atomic_fenced_ext_cache_set');
+        $atomicFencedExtSet->setAccessible(true);
+        $atomicFencedApcuStore = $refl->getMethod('atomic_fenced_apcu_store');
+        $atomicFencedApcuStore->setAccessible(true);
 
-        // Simulate Worker 1 who acquired lock, but paused so lease expired and Worker 2 took over
+        // Deterministic interleaving:
+        // Worker 1 acquired lock, but paused. Its lease expired and Worker 2 took over.
         $worker1_token = 'token_worker_1_' . bin2hex(random_bytes(4));
         $worker2_token = 'token_worker_2_' . bin2hex(random_bytes(4));
         $ip_hash = 'fencehash999';
         $lock_key = "{$cache_key}_lock_{$bucket_id}_{$ip_hash}";
+        $slot_key = "{$cache_key}_slot_{$bucket_id}_99";
 
         if (function_exists('wp_using_ext_object_cache') && wp_using_ext_object_cache()) {
             // Worker 2 currently owns the lock in cache
             wp_cache_set($lock_key, $worker2_token, $group, 10);
 
-            // Worker 1 checks fence before slot write: MUST BE BLOCKED
-            $worker1_can_commit = $verifyExtLock->invoke(null, $lock_key, $worker1_token, $group);
-            $this->assertFalse($worker1_can_commit, 'Worker 1 with expired/overtaken lease must be fenced from committing writes.');
+            // Worker 1 resumes after pause and attempts to commit state via atomic fenced write: MUST FAIL
+            $w1_committed = $atomicFencedExtSet->invoke(null, $lock_key, $worker1_token, $slot_key, 'stale_payload', $group, 80);
+            $this->assertFalse($w1_committed, 'Worker 1 with expired/overtaken lease must fail to commit state.');
+            $this->assertFalse(wp_cache_get($slot_key, $group), 'Slot key must not be modified by stale worker.');
 
-            // Worker 2 checks fence before slot write: MUST BE PERMITTED
-            $worker2_can_commit = $verifyExtLock->invoke(null, $lock_key, $worker2_token, $group);
-            $this->assertTrue($worker2_can_commit, 'Active lock owner must be permitted to commit writes.');
+            // Worker 2 commits state via atomic fenced write: MUST SUCCEED
+            $w2_committed = $atomicFencedExtSet->invoke(null, $lock_key, $worker2_token, $slot_key, 'valid_payload', $group, 80);
+            $this->assertTrue($w2_committed, 'Active lock owner must succeed in atomic fenced state commit.');
+            $this->assertSame('valid_payload', wp_cache_get($slot_key, $group));
 
             wp_cache_delete($lock_key, $group);
+            wp_cache_delete($slot_key, $group);
         }
 
-        // APCu fencing check
+        // APCu deterministic fencing check
         if (function_exists('apcu_store') && ini_get('apc.enabled') && (php_sapi_name() !== 'cli' || ini_get('apc.enable_cli'))) {
             $apc_lock_key = "dvs_{$cache_key}_lock_{$bucket_id}_{$ip_hash}";
+            $apc_target_key = "dvs_{$cache_key}_slot_{$bucket_id}_99";
             $w1_int = 11111;
             $w2_int = 22222;
 
+            // Worker 2 currently owns the lock in APCu
             apcu_store($apc_lock_key, $w2_int, 10);
-            $this->assertFalse($verifyApcuLock->invoke(null, $apc_lock_key, $w1_int));
-            $this->assertTrue($verifyApcuLock->invoke(null, $apc_lock_key, $w2_int));
+
+            // Worker 1 resumes and attempts atomic fenced store: MUST FAIL
+            $apc_w1_committed = $atomicFencedApcuStore->invoke(null, $apc_lock_key, $w1_int, $apc_target_key, 'stale_apc_payload', 80);
+            $this->assertFalse($apc_w1_committed, 'Worker 1 with stale token must fail atomic fenced APCu store.');
+            $this->assertFalse(apcu_exists($apc_target_key), 'Target key must not exist after rejected stale store.');
+
+            // Worker 2 commits state: MUST SUCCEED
+            $apc_w2_committed = $atomicFencedApcuStore->invoke(null, $apc_lock_key, $w2_int, $apc_target_key, 'valid_apc_payload', 80);
+            $this->assertTrue($apc_w2_committed, 'Active lock owner must succeed in atomic fenced APCu store.');
+            $this->assertSame('valid_apc_payload', apcu_fetch($apc_target_key));
+
             apcu_delete($apc_lock_key);
+            apcu_delete($apc_target_key);
         } else {
-            // Guarantee assertion executed under CLI environments lacking APCu/ext-cache
             $this->assertNotSame($worker1_token, $worker2_token);
         }
     }
@@ -1124,19 +1127,45 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
         $refl = new \ReflectionClass(\WebCareProScanner\Firewall\DistributedVelocityShield::class);
         $fileInc = $refl->getMethod('file_atomic_dvs_increment');
         $fileInc->setAccessible(true);
-        $getMetrics = $refl->getMethod('get_sliding_metrics');
-        $getMetrics->setAccessible(true);
+        $getFileMetrics = $refl->getMethod('get_file_sliding_metrics');
+        $getFileMetrics->setAccessible(true);
 
         $now = time();
         $bucket_id = (int) floor($now / 10);
 
-        // Record events from IP 1 and IP 2 via file fallback
+        // 1. Verify standard multi-IP recording and metric integrity specifically in file storage
         $fileInc->invoke(null, $cache_key, $bucket_id, substr(md5($test_ip1), 0, 12));
         $fileInc->invoke(null, $cache_key, $bucket_id, substr(md5($test_ip1), 0, 12));
         $fileInc->invoke(null, $cache_key, $bucket_id, substr(md5($test_ip2), 0, 12));
 
-        $metrics = $getMetrics->invoke(null, $cache_key);
+        $metrics = $getFileMetrics->invoke(null, $cache_key);
         $this->assertGreaterThanOrEqual(3, $metrics['count'], 'File fallback must record all events.');
         $this->assertGreaterThanOrEqual(2, $metrics['unique_ips'], 'File fallback must accurately count unique IP addresses.');
+
+        // 2. Controlled competing lock holder simulation:
+        // Acquire an exclusive flock on the exact DVS storage file to simulate another process holding the lock.
+        $upload_dir = wp_upload_dir();
+        $base_dir = (empty($upload_dir['error']) && !empty($upload_dir['basedir'])) ? $upload_dir['basedir'] : '';
+        if (!empty($base_dir)) {
+            $file = rtrim($base_dir, '/\\') . '/webcare-pro-security/rate-limits/dvs_' . substr(md5($cache_key), 0, 8) . '.php';
+            if (file_exists($file)) {
+                $competing_fp = fopen($file, 'r+');
+                if ($competing_fp && flock($competing_fp, LOCK_EX | LOCK_NB)) {
+                    // While the lock is held by competing process, verify that another worker times out gracefully
+                    $startTime = microtime(true);
+                    $fileInc->invoke(null, $cache_key, $bucket_id, 'competing_ip_hash');
+                    $elapsed = microtime(true) - $startTime;
+
+                    // Release competing lock
+                    flock($competing_fp, LOCK_UN);
+                    fclose($competing_fp);
+
+                    // Must have waited at least 150ms before timing out
+                    $this->assertGreaterThanOrEqual(0.15, $elapsed, 'Worker must respect bounded wait retries when lock is contended.');
+                } elseif ($competing_fp) {
+                    fclose($competing_fp);
+                }
+            }
+        }
     }
 }
