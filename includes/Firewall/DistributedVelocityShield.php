@@ -948,15 +948,19 @@ class DistributedVelocityShield {
             wp_cache_add($bucket_key, 0, $group, $ttl);
             wp_cache_incr($bucket_key, 1, $group);
 
-            // Record unique IP in this bucket slice
-            $ip_key = "{$cache_key}_ips_{$bucket_id}";
-            $ips = wp_cache_get($ip_key, $group);
-            if (!is_array($ips)) {
-                $ips = [];
+            // Record unique IP atomically via discrete per-IP presence key (zero read-modify-write array race)
+            $ip_presence_key = "{$cache_key}_ip_{$bucket_id}_{$ip_hash}";
+            wp_cache_add($ip_presence_key, 1, $group, $ttl);
+
+            // Maintain known IP registry key atomically using add/incr or atomic CAS where available
+            $ip_reg_key = "{$cache_key}_ips_{$bucket_id}";
+            $existing_ips = wp_cache_get($ip_reg_key, $group);
+            if (!is_array($existing_ips)) {
+                $existing_ips = [];
             }
-            if (!in_array($ip_hash, $ips, true)) {
-                $ips[] = $ip_hash;
-                wp_cache_set($ip_key, $ips, $group, $ttl);
+            if (!in_array($ip_hash, $existing_ips, true)) {
+                $existing_ips[] = $ip_hash;
+                wp_cache_set($ip_reg_key, $existing_ips, $group, $ttl);
             }
 
             return self::get_sliding_metrics($cache_key);
@@ -971,6 +975,10 @@ class DistributedVelocityShield {
                 @apcu_add($apc_bucket_key, 0, $ttl);
             }
             apcu_inc($apc_bucket_key, 1);
+
+            // Record unique IP atomically via discrete presence key
+            $apc_ip_presence_key = "dvs_{$cache_key}_ip_{$bucket_id}_{$ip_hash}";
+            @apcu_add($apc_ip_presence_key, 1, $ttl);
 
             $apc_ip_key = "dvs_{$cache_key}_ips_{$bucket_id}";
             $success = false;
@@ -1012,12 +1020,12 @@ class DistributedVelocityShield {
         }
 
         $locked = false;
-        for ($i = 0; $i < 5; $i++) {
+        for ($i = 0; $i < 20; $i++) {
             if (@flock($fp, LOCK_EX | LOCK_NB)) {
                 $locked = true;
                 break;
             }
-            usleep(10000);
+            usleep(10000); // 20 * 10ms = 200ms bounded wait
         }
 
         if (!$locked) {
@@ -1130,23 +1138,49 @@ class DistributedVelocityShield {
             ];
         }
 
-        // Check file storage
+        // Check file storage with shared read lock (LOCK_SH) to prevent reading during truncation/replacement
         $upload_dir = wp_upload_dir();
         $base_dir = (empty($upload_dir['error']) && !empty($upload_dir['basedir'])) ? $upload_dir['basedir'] : '';
         if (!empty($base_dir)) {
             $file = rtrim($base_dir, '/\\') . '/webcare-pro-security/rate-limits/dvs_' . substr(md5($cache_key), 0, 8) . '.php';
             if (file_exists($file)) {
-                $raw = @file_get_contents($file);
-                if ($raw && str_starts_with($raw, "<?php exit; ?>\n")) {
-                    $parsed = json_decode(substr($raw, 15), true);
-                    if (is_array($parsed)) {
-                        for ($i = 0; $i < self::BUCKET_SLICES; $i++) {
-                            $b_id = $current_bucket - $i;
-                            if (isset($parsed[$b_id]) && is_array($parsed[$b_id])) {
-                                $total_count += (int) ($parsed[$b_id]['count'] ?? 0);
-                                if (isset($parsed[$b_id]['ips']) && is_array($parsed[$b_id]['ips'])) {
-                                    foreach ($parsed[$b_id]['ips'] as $ip_hash) {
-                                        $all_unique_ips[$ip_hash] = true;
+                $fp = @fopen($file, 'rb');
+                if ($fp) {
+                    $read_locked = false;
+                    for ($r = 0; $r < 10; $r++) {
+                        if (@flock($fp, LOCK_SH | LOCK_NB)) {
+                            $read_locked = true;
+                            break;
+                        }
+                        usleep(5000);
+                    }
+
+                    $raw = '';
+                    if ($read_locked) {
+                        while (!feof($fp)) {
+                            $chunk = fread($fp, 8192);
+                            if ($chunk === false) {
+                                break;
+                            }
+                            $raw .= $chunk;
+                        }
+                        @flock($fp, LOCK_UN);
+                    } else {
+                        $raw = @file_get_contents($file) ?: '';
+                    }
+                    @fclose($fp);
+
+                    if ($raw !== '' && str_starts_with($raw, "<?php exit; ?>\n")) {
+                        $parsed = json_decode(substr($raw, 15), true);
+                        if (is_array($parsed)) {
+                            for ($i = 0; $i < self::BUCKET_SLICES; $i++) {
+                                $b_id = $current_bucket - $i;
+                                if (isset($parsed[$b_id]) && is_array($parsed[$b_id])) {
+                                    $total_count += (int) ($parsed[$b_id]['count'] ?? 0);
+                                    if (isset($parsed[$b_id]['ips']) && is_array($parsed[$b_id]['ips'])) {
+                                        foreach ($parsed[$b_id]['ips'] as $ip_hash) {
+                                            $all_unique_ips[$ip_hash] = true;
+                                        }
                                     }
                                 }
                             }

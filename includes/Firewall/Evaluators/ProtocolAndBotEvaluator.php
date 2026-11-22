@@ -379,11 +379,24 @@ final readonly class ProtocolAndBotEvaluator implements WafEvaluatorInterface {
         $is_post = ($method === 'POST');
         $is_options = ($method === 'OPTIONS');
 
-        // Check for verified payment gateway webhooks (Stripe / PayPal / Mollie / Square)
-        // Hardening (S2 Finding 5 & v3.25.1): Cryptographic verification or explicit verified provider IP candidate
-        $is_webhook = self::verify_payment_gateway_webhook_from_ctx($ctx);
+        // Check for payment gateway webhooks (Stripe / PayPal / Mollie / Square)
+        // Hardening (v3.25.2 / ChatGpt Review):
+        // Explicitly distinguish 'verified' (valid cryptographic HMAC) from 'provider_candidate' (known CIDR, no secret)
+        $webhook_status = self::verify_payment_gateway_webhook_from_ctx($ctx);
+        $is_verified_webhook = ($webhook_status === 'verified');
+        $is_webhook_candidate = ($webhook_status === 'provider_candidate');
 
-        if (!empty($settings['waf_block_empty_post_ua_referer']) && $is_post && !$is_options && !$is_webhook) {
+        // Missing UA / Referer exemption:
+        // Fully verified webhooks are granted exemption.
+        // Candidates from verified payment provider IPs (e.g. Stripe/PayPal) are exempted if addressing a webhook/commerce URI or carrying provider protocol headers.
+        $is_webhook_route = str_contains($request_uri, '/stripe/')
+            || str_contains($request_uri, '/paypal/')
+            || str_contains($request_uri, 'webhook')
+            || str_contains($request_uri, 'ipn')
+            || CommerceSessionGuard::is_commerce_or_membership_request($request_uri);
+        $is_webhook_exempt = $is_verified_webhook || ($is_webhook_candidate && $is_webhook_route);
+
+        if (!empty($settings['waf_block_empty_post_ua_referer']) && $is_post && !$is_options && !$is_webhook_exempt) {
             $is_commerce_safe = !empty($settings['waf_ecommerce_safe_mode']) && CommerceSessionGuard::is_commerce_or_membership_request($request_uri);
             $is_form_safe = !empty($settings['waf_forms_safe_mode']) && CommerceSessionGuard::is_form_submission_request($request_uri);
 
@@ -411,7 +424,7 @@ final readonly class ProtocolAndBotEvaluator implements WafEvaluatorInterface {
             $raw_ua = trim($ctx->userAgent);
             if ($raw_ua === '') {
                 // Never break CORS preflight OPTIONS requests
-                if (!$is_options && !$is_webhook) {
+                if (!$is_options && !$is_webhook_exempt) {
                     $is_loopback = in_array($client_ip, ['127.0.0.1', '::1'], true)
                         || ($client_ip === ($ctx->server['SERVER_ADDR'] ?? ''));
                     $is_cli_or_cron = (php_sapi_name() === 'cli' || (defined('DOING_CRON') && DOING_CRON) || isset($ctx->queryParams['doing_wp_cron']));
@@ -553,12 +566,17 @@ final readonly class ProtocolAndBotEvaluator implements WafEvaluatorInterface {
     }
 
     /**
-     * Cryptographic verification or verified provider IP candidate for incoming payment gateway webhooks.
+     * Cryptographically verify payment gateway webhooks or return candidate status.
+     *
+     * Returns:
+     * - 'verified'           : Valid cryptographic signature confirmed against secret
+     * - 'provider_candidate' : Verified provider IP CIDR and protocol headers, but no local secret configured
+     * - 'unverified'         : Invalid signature, spoofed IP, or unrecognized request
      *
      * @param RequestContext $ctx
-     * @return bool
+     * @return string 'verified'|'provider_candidate'|'unverified'
      */
-    private static function verify_payment_gateway_webhook_from_ctx(RequestContext $ctx): bool {
+    private static function verify_payment_gateway_webhook_from_ctx(RequestContext $ctx): string {
         $client_ip = $ctx->ip;
 
         // Verify Stripe IP
@@ -610,15 +628,15 @@ final readonly class ProtocolAndBotEvaluator implements WafEvaluatorInterface {
                         $raw_body = \WebCareProScanner\Firewall\Core\RequestBodyReader::get_bounded_body(262144);
                         $expected = hash_hmac('sha256', "{$ts}.{$raw_body}", $stripe_secret);
                         if (hash_equals($expected, $v1)) {
-                            return true;
+                            return 'verified';
                         }
                     }
                     // Secret configured but signature check failed -> reject
-                    return false;
+                    return 'unverified';
                 }
 
                 // If no secret configured, label as known payment provider IP candidate
-                return self::is_known_payment_provider_ip_webhook_candidate($is_stripe_ip, $is_paypal_ip);
+                return 'provider_candidate';
             }
         }
 
@@ -629,7 +647,7 @@ final readonly class ProtocolAndBotEvaluator implements WafEvaluatorInterface {
                 || !empty($ctx->headers['paypal-transmission-sig'])
                 || !empty($ctx->server['HTTP_PAYPAL_TRANSMISSION_SIG']);
             if ($has_paypal_sig) {
-                return self::is_known_payment_provider_ip_webhook_candidate($is_stripe_ip, $is_paypal_ip);
+                return 'provider_candidate';
             }
         }
 
@@ -642,8 +660,9 @@ final readonly class ProtocolAndBotEvaluator implements WafEvaluatorInterface {
             $raw_body = \WebCareProScanner\Firewall\Core\RequestBodyReader::get_bounded_body(262144);
             $expected = base64_encode(hash_hmac('sha256', $raw_body, $wc_secret, true));
             if (hash_equals($expected, $wc_sig)) {
-                return true;
+                return 'verified';
             }
+            return 'unverified';
         }
 
         $shopify_sig = !empty($ctx->headers['x-shopify-hmac-sha256'])
@@ -654,11 +673,12 @@ final readonly class ProtocolAndBotEvaluator implements WafEvaluatorInterface {
             $raw_body = \WebCareProScanner\Firewall\Core\RequestBodyReader::get_bounded_body(262144);
             $expected = base64_encode(hash_hmac('sha256', $raw_body, $shopify_secret, true));
             if (hash_equals($expected, $shopify_sig)) {
-                return true;
+                return 'verified';
             }
+            return 'unverified';
         }
 
-        return false;
+        return 'unverified';
     }
 
     /**
