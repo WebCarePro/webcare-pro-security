@@ -30,6 +30,7 @@ import {
   RefreshCw,
   Trash2,
   Database,
+  Shield,
   ShieldCheck,
   MessageSquare,
   Activity,
