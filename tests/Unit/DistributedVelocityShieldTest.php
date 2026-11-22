@@ -694,4 +694,355 @@ class DistributedVelocityShieldTest extends TestCase {
             }
         }
     }
+
+    /**
+     * Test Step 4.1: Execute-then-timeout idempotency replay.
+     * Configure Redis mock to execute counter+set mutation on call #1 and throw RuntimeException
+     * after execution; on retry #2 (exact same event_id), assert duplicate is detected and final count === 1 and unique_ips === 1.
+     */
+    public function test_execute_then_timeout_idempotency_retry(): void {
+        global $wp_object_cache;
+        $prev_cache = $wp_object_cache;
+
+        $mock_redis = new class {
+            public int $eval_calls = 0;
+            public array $counters = [];
+            public array $sets = [];
+
+            public function eval($script, $args = [], $num_keys = 0) {
+                $this->eval_calls++;
+
+                $count_key = $args[0];
+                $set_key   = $args[1];
+                $ev_key    = $args[2];
+                $ip_hash   = $args[3];
+                $ttl       = (int) $args[4];
+                $event_id  = $args[5] ?? 'default_ev';
+
+                if (!isset($this->sets[$ev_key])) {
+                    $this->sets[$ev_key] = [];
+                }
+
+                // If duplicate event_id, return existing values without incrementing
+                if (isset($this->sets[$ev_key][$event_id])) {
+                    return [
+                        $this->counters[$count_key] ?? 0,
+                        count($this->sets[$set_key] ?? []),
+                    ];
+                }
+
+                // First execution: perform mutation
+                $this->sets[$ev_key][$event_id] = true;
+                if (!isset($this->counters[$count_key])) {
+                    $this->counters[$count_key] = 0;
+                }
+                $this->counters[$count_key]++;
+
+                if (!isset($this->sets[$set_key])) {
+                    $this->sets[$set_key] = [];
+                }
+                $this->sets[$set_key][$ip_hash] = true;
+
+                // Simulate connection drop after execution on first call
+                if ($this->eval_calls === 1) {
+                    throw new \RuntimeException('Connection lost after EXEC');
+                }
+
+                return [
+                    $this->counters[$count_key],
+                    count($this->sets[$set_key]),
+                ];
+            }
+
+            public function sMembers($key) {
+                return array_keys($this->sets[$key] ?? []);
+            }
+
+            public function get($key) {
+                return $this->counters[$key] ?? null;
+            }
+        };
+
+        $mock_object_cache = new class($mock_redis) {
+            public $redis;
+            public function __construct($r) { $this->redis = $r; }
+            public function build_key($key, $group) { return "{$group}:{$key}"; }
+            public function get($key, $group = 'default', $force = false, &$found = null) {
+                $k = $this->build_key($key, $group);
+                $found = isset($this->redis->counters[$k]);
+                return $this->redis->counters[$k] ?? false;
+            }
+            public function set($key, $val, $group = 'default', $exp = 0) { return true; }
+            public function add($key, $val, $group = 'default', $exp = 0) { return true; }
+            public function incr($key, $offset = 1, $group = 'default') { return 1; }
+            public function delete($key, $group = 'default') { return true; }
+        };
+
+        $wp_object_cache = $mock_object_cache;
+
+        $prev_ext = function_exists('wp_using_ext_object_cache') ? wp_using_ext_object_cache() : false;
+        if (function_exists('wp_using_ext_object_cache')) {
+            wp_using_ext_object_cache(true);
+        }
+
+        $refl = new \ReflectionClass(DistributedVelocityShield::class);
+        $appendMethod = $refl->getMethod('append_sliding_event');
+        $appendMethod->setAccessible(true);
+        $getMetricsMethod = $refl->getMethod('get_sliding_metrics');
+        $getMetricsMethod->setAccessible(true);
+
+        $cache_key = 'dvs_test_exec_timeout_' . bin2hex(random_bytes(4));
+        $ip = '198.51.100.99';
+
+        try {
+            // append_sliding_event triggers eval call 1 (which mutates then throws), then retries eval call 2 with same event_id
+            $res = $appendMethod->invoke(null, $cache_key, $ip, 'Timeout retry test', []);
+            $this->assertSame(2, $mock_redis->eval_calls, 'Worker must retry once on Redis EVAL exception.');
+            $this->assertSame(1, $res['count'], 'Final count must be exactly 1 after idempotent retry (never 2).');
+            $this->assertSame(1, $res['unique_ips'], 'Final unique_ips must be exactly 1.');
+
+            $metrics = $getMetricsMethod->invoke(null, $cache_key);
+            $this->assertSame(1, $metrics['count'], 'get_sliding_metrics must show exactly 1 event recorded.');
+            $this->assertSame(1, $metrics['unique_ips'], 'get_sliding_metrics must show exactly 1 unique IP.');
+        } finally {
+            $wp_object_cache = $prev_cache;
+            if (function_exists('wp_using_ext_object_cache')) {
+                wp_using_ext_object_cache($prev_ext);
+            }
+        }
+    }
+
+    /**
+     * Test Step 4.2: Empty Redis window never falls through to stale file storage.
+     * Seed a stale file in $custom_storage_dir, enable healthy empty Redis mock,
+     * and assert get_sliding_metrics() returns count === 0, unique_ips === 0, complete === true without reading the stale file.
+     */
+    public function test_empty_redis_window_never_falls_through_to_stale_file(): void {
+        global $wp_object_cache;
+        $prev_cache = $wp_object_cache;
+        $prev_custom_storage = DistributedVelocityShield::$custom_storage_dir;
+
+        $temp_storage_dir = sys_get_temp_dir() . '/webcare_test_dvs_empty_redis_' . bin2hex(random_bytes(4));
+        wp_mkdir_p($temp_storage_dir);
+        DistributedVelocityShield::$custom_storage_dir = $temp_storage_dir;
+
+        $cache_key = 'dvs_test_empty_redis_' . bin2hex(random_bytes(4));
+
+        // 1. Seed stale data file in storage dir with 50 events
+        $now = time();
+        $bucket_id = (int) floor($now / 10);
+        $stale_file = $temp_storage_dir . '/dvs_' . substr(md5($cache_key), 0, 8) . '.php';
+        $stale_payload = "<?php exit; ?>\n" . json_encode([
+            $bucket_id => ['count' => 50, 'ips' => ['stale_ip_1', 'stale_ip_2', 'stale_ip_3']]
+        ]);
+        file_put_contents($stale_file, $stale_payload);
+
+        // 2. Mock healthy empty Redis
+        $mock_redis = new class {
+            public function get($key) { return null; }
+            public function sMembers($key) { return []; }
+            public function eval($script, $args = [], $num_keys = 0) { return [0, 0]; }
+        };
+
+        $mock_object_cache = new class($mock_redis) {
+            public $redis;
+            public function __construct($r) { $this->redis = $r; }
+            public function build_key($key, $group) { return "{$group}:{$key}"; }
+            public function get($key, $group = 'default', $force = false, &$found = null) { return false; }
+            public function set($key, $val, $group = 'default', $exp = 0) { return true; }
+            public function add($key, $val, $group = 'default', $exp = 0) { return true; }
+            public function incr($key, $offset = 1, $group = 'default') { return 1; }
+            public function delete($key, $group = 'default') { return true; }
+        };
+
+        $wp_object_cache = $mock_object_cache;
+
+        $prev_ext = function_exists('wp_using_ext_object_cache') ? wp_using_ext_object_cache() : false;
+        if (function_exists('wp_using_ext_object_cache')) {
+            wp_using_ext_object_cache(true);
+        }
+
+        $refl = new \ReflectionClass(DistributedVelocityShield::class);
+        $getMetricsMethod = $refl->getMethod('get_sliding_metrics');
+        $getMetricsMethod->setAccessible(true);
+
+        try {
+            $metrics = $getMetricsMethod->invoke(null, $cache_key);
+            $this->assertSame(0, $metrics['count'], 'Empty Redis window must report count === 0 and never contaminate with stale file.');
+            $this->assertSame(0, $metrics['unique_ips'], 'Empty Redis window must report unique_ips === 0.');
+            $this->assertTrue($metrics['complete'], 'Healthy empty Redis window must be complete.');
+            $this->assertFalse($metrics['degraded'], 'Healthy empty Redis window must not be degraded.');
+            $this->assertSame('redis', $metrics['backend'] ?? '', 'Metrics backend must be redis.');
+        } finally {
+            $wp_object_cache = $prev_cache;
+            DistributedVelocityShield::$custom_storage_dir = $prev_custom_storage;
+            if (function_exists('wp_using_ext_object_cache')) {
+                wp_using_ext_object_cache($prev_ext);
+            }
+
+            if (file_exists($stale_file)) {
+                @unlink($stale_file);
+            }
+            @rmdir($temp_storage_dir);
+        }
+    }
+
+    /**
+     * Test Step 4.3: Corrupted non-integer counter preflight validation.
+     * Put a non-integer string 'corrupt' in KEYS[1] and assert Lua rejects before inserting $event_id into KEYS[3].
+     */
+    public function test_corrupted_counter_preflight_rejection(): void {
+        global $wp_object_cache;
+        $prev_cache = $wp_object_cache;
+
+        $mock_redis = new class {
+            public array $keys = [];
+            public array $sets = [];
+
+            public function eval($script, $args = [], $num_keys = 0) {
+                $count_key = $args[0];
+                $set_key   = $args[1];
+                $ev_key    = $args[2];
+                $event_id  = $args[5] ?? 'default_ev';
+
+                $existing_cnt = $this->keys[$count_key] ?? null;
+                if ($existing_cnt !== null && !preg_match('/^-?\d+$/', (string) $existing_cnt)) {
+                    throw new \RuntimeException('ERR_NON_INTEGER_COUNTER');
+                }
+
+                // If not rejected, would add event_id
+                $this->sets[$ev_key][$event_id] = true;
+                return [1, 1];
+            }
+
+            public function get($key) { return $this->keys[$key] ?? null; }
+            public function sMembers($key) { return array_keys($this->sets[$key] ?? []); }
+        };
+
+        // Corrupt counter key with non-integer string
+        $cache_key = 'dvs_test_corrupt_' . bin2hex(random_bytes(4));
+        $now = time();
+        $bucket_id = (int) floor($now / 10);
+        $group = 'webcareproscan_dvs';
+        $hash_tag = '{dvs:' . $cache_key . ':' . $bucket_id . '}';
+        $count_key = "{$group}:" . $hash_tag . ':cnt';
+        $ev_key = "{$group}:" . $hash_tag . ':ev';
+
+        $mock_redis->keys[$count_key] = 'corrupt_non_int_val';
+
+        $mock_object_cache = new class($mock_redis) {
+            public $redis;
+            public function __construct($r) { $this->redis = $r; }
+            public function build_key($key, $group) { return "{$group}:{$key}"; }
+            public function get($key, $group = 'default', $force = false, &$found = null) { return false; }
+            public function set($key, $val, $group = 'default', $exp = 0) { return true; }
+            public function add($key, $val, $group = 'default', $exp = 0) { return true; }
+            public function incr($key, $offset = 1, $group = 'default') { return 1; }
+            public function delete($key, $group = 'default') { return true; }
+        };
+
+        $wp_object_cache = $mock_object_cache;
+
+        $prev_ext = function_exists('wp_using_ext_object_cache') ? wp_using_ext_object_cache() : false;
+        if (function_exists('wp_using_ext_object_cache')) {
+            wp_using_ext_object_cache(true);
+        }
+
+        $refl = new \ReflectionClass(DistributedVelocityShield::class);
+        $appendMethod = $refl->getMethod('append_sliding_event');
+        $appendMethod->setAccessible(true);
+
+        try {
+            $res = $appendMethod->invoke(null, $cache_key, '192.0.2.11', 'Corrupt preflight test', []);
+            // Must fail closed with degraded response
+            $this->assertSame(0, $res['count']);
+            $this->assertFalse($res['complete']);
+            $this->assertTrue($res['degraded']);
+
+            // Verify event set was NEVER poisoned with event_id
+            $this->assertEmpty($mock_redis->sets[$ev_key] ?? [], 'Event set must never be mutated when counter is corrupted.');
+        } finally {
+            $wp_object_cache = $prev_cache;
+            if (function_exists('wp_using_ext_object_cache')) {
+                wp_using_ext_object_cache($prev_ext);
+            }
+        }
+    }
+
+    /**
+     * Test Step 4.4: Degraded enforcement logging.
+     * When telemetry is degraded (partial read / backend failure), record_auth_failure() and record_checkout_failure()
+     * explicitly handle the degraded state and log dvs_degraded_enforcement via AuditLogger.
+     */
+    public function test_degraded_enforcement_logs_and_returns_degraded_velocity(): void {
+        global $wp_object_cache;
+        $prev_cache = $wp_object_cache;
+
+        // Isolate AuditLogger using temporary directory override
+        $isolated_audit_dir = sys_get_temp_dir() . '/webcare_test_audit_degraded_' . bin2hex(random_bytes(4));
+        wp_mkdir_p($isolated_audit_dir);
+
+        $prev_custom_dir = AuditLogger::$custom_log_dir;
+        AuditLogger::$custom_log_dir = $isolated_audit_dir;
+
+        // Mock Redis EVAL failure to force degraded return
+        $mock_redis = new class {
+            public function eval($script, $args = [], $num_keys = 0) {
+                throw new \RuntimeException('Redis connection timeout');
+            }
+            public function get($key) { return null; }
+            public function sMembers($key) { return []; }
+        };
+
+        $mock_object_cache = new class($mock_redis) {
+            public $redis;
+            public function __construct($r) { $this->redis = $r; }
+            public function build_key($key, $group) { return "{$group}:{$key}"; }
+            public function get($key, $group = 'default', $force = false, &$found = null) { return false; }
+            public function set($key, $val, $group = 'default', $exp = 0) { return true; }
+            public function add($key, $val, $group = 'default', $exp = 0) { return true; }
+            public function incr($key, $offset = 1, $group = 'default') { return 1; }
+            public function delete($key, $group = 'default') { return true; }
+        };
+
+        $wp_object_cache = $mock_object_cache;
+
+        $prev_ext = function_exists('wp_using_ext_object_cache') ? wp_using_ext_object_cache() : false;
+        if (function_exists('wp_using_ext_object_cache')) {
+            wp_using_ext_object_cache(true);
+        }
+
+        try {
+            $auth_res = DistributedVelocityShield::record_auth_failure('198.51.100.44', 'degraded_user_' . bin2hex(random_bytes(4)), 'Testing degraded auth');
+            $this->assertTrue($auth_res['degraded'] ?? false, 'record_auth_failure must return degraded=true on telemetry failure.');
+            $this->assertFalse($auth_res['complete'] ?? true, 'record_auth_failure must return complete=false on telemetry failure.');
+
+            $chk_res = DistributedVelocityShield::record_checkout_failure('198.51.100.45', 'Testing degraded checkout ' . bin2hex(random_bytes(4)));
+            $this->assertTrue($chk_res['degraded'] ?? false, 'record_checkout_failure must return degraded=true on telemetry failure.');
+            $this->assertFalse($chk_res['complete'] ?? true, 'record_checkout_failure must return complete=false on telemetry failure.');
+
+            // Verify dvs_degraded_enforcement was logged
+            $audit_file = $isolated_audit_dir . '/audit.log.php';
+            $this->assertFileExists($audit_file, 'Audit log file must exist after degraded event.');
+            $audit_content = file_get_contents($audit_file);
+            $this->assertStringContainsString('dvs_degraded_enforcement', $audit_content, 'Audit log must record dvs_degraded_enforcement event.');
+        } finally {
+            $wp_object_cache = $prev_cache;
+            AuditLogger::$custom_log_dir = $prev_custom_dir;
+            if (function_exists('wp_using_ext_object_cache')) {
+                wp_using_ext_object_cache($prev_ext);
+            }
+
+            if (file_exists($isolated_audit_dir . '/audit.log.php')) {
+                @unlink($isolated_audit_dir . '/audit.log.php');
+            }
+            if (file_exists($isolated_audit_dir . '/.htaccess')) {
+                @unlink($isolated_audit_dir . '/.htaccess');
+            }
+            if (file_exists($isolated_audit_dir . '/index.php')) {
+                @unlink($isolated_audit_dir . '/index.php');
+            }
+            @rmdir($isolated_audit_dir);
+        }
+    }
 }

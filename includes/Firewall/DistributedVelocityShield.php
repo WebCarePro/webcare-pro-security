@@ -196,6 +196,20 @@ class DistributedVelocityShield {
 
         $count = $metrics['count'];
         $unique_ips = $metrics['unique_ips'];
+        $is_complete = ($metrics['complete'] ?? true) && empty($metrics['degraded']);
+
+        if (!$is_complete) {
+            static $last_chk_degraded_log = 0;
+            if (time() - $last_chk_degraded_log >= 60) {
+                $last_chk_degraded_log = time();
+                if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                    \WebCareProScanner\System\AuditLogger::log(
+                        'dvs_degraded_enforcement',
+                        'DVS checkout enforcement operating in degraded velocity telemetry mode due to partial slice read or backend timeout.'
+                    );
+                }
+            }
+        }
 
         // Check if global threshold breached
         if (
@@ -219,7 +233,12 @@ class DistributedVelocityShield {
             }
         }
 
-        return self::get_live_velocity();
+        $velocity = self::get_live_velocity();
+        if (!$is_complete) {
+            $velocity['degraded'] = true;
+            $velocity['complete'] = false;
+        }
+        return $velocity;
     }
 
     /**
@@ -253,6 +272,20 @@ class DistributedVelocityShield {
 
         $count = $metrics['count'];
         $unique_ips = $metrics['unique_ips'];
+        $is_complete = ($metrics['complete'] ?? true) && empty($metrics['degraded']);
+
+        if (!$is_complete) {
+            static $last_auth_degraded_log = 0;
+            if (time() - $last_auth_degraded_log >= 60) {
+                $last_auth_degraded_log = time();
+                if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                    \WebCareProScanner\System\AuditLogger::log(
+                        'dvs_degraded_enforcement',
+                        'DVS authentication enforcement operating in degraded velocity telemetry mode due to partial slice read or backend timeout.'
+                    );
+                }
+            }
+        }
 
         // Check if global threshold breached
         if (
@@ -276,7 +309,12 @@ class DistributedVelocityShield {
             }
         }
 
-        return self::get_live_velocity();
+        $velocity = self::get_live_velocity();
+        if (!$is_complete) {
+            $velocity['degraded'] = true;
+            $velocity['complete'] = false;
+        }
+        return $velocity;
     }
 
     /**
@@ -968,6 +1006,10 @@ class DistributedVelocityShield {
                      . "if t2 ~= 'none' and t2 ~= 'set' then return redis.error_reply('WRONGTYPE_PREFLIGHT') end\n"
                      . "local t3 = redis.call('TYPE', KEYS[3])['ok']\n"
                      . "if t3 ~= 'none' and t3 ~= 'set' then return redis.error_reply('WRONGTYPE_PREFLIGHT') end\n"
+                     . "local existing_cnt = redis.call('GET', KEYS[1])\n"
+                     . "if existing_cnt and not string.match(existing_cnt, '^-?%d+$') then\n"
+                     . "    return redis.error_reply('ERR_NON_INTEGER_COUNTER')\n"
+                     . "end\n"
                      . "local added = redis.call('SADD', KEYS[3], ARGV[3])\n"
                      . "if added == 0 then\n"
                      . "    local cur = redis.call('GET', KEYS[1])\n"
@@ -1279,14 +1321,14 @@ class DistributedVelocityShield {
                 }
             }
 
-            if ($total_count > 0 || count($all_unique_ips) > 0 || $failed_slices > 0) {
-                return [
-                    'count'      => $total_count,
-                    'unique_ips' => count($all_unique_ips),
-                    'complete'   => ($failed_slices === 0),
-                    'degraded'   => ($failed_slices > 0),
-                ];
-            }
+            // Unconditionally return from Redis backend (never fall through to file on empty windows)
+            return [
+                'count'      => $total_count,
+                'unique_ips' => count($all_unique_ips),
+                'complete'   => ($failed_slices === 0),
+                'degraded'   => ($failed_slices > 0),
+                'backend'    => 'redis',
+            ];
         }
 
         // 2. Atomic flock(LOCK_SH) single-transaction file backend for non-Redis environments
