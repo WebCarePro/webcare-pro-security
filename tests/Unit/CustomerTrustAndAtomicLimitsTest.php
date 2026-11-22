@@ -512,10 +512,12 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
         $isolatedTestDir = sys_get_temp_dir() . '/webcare_test_rot_lookup_' . wp_generate_password(8, false);
         wp_mkdir_p($isolatedTestDir);
 
+        $previousStorageDir = \WebCareProScanner\Firewall\WafFileLogger::$custom_storage_dir;
         \WebCareProScanner\Firewall\WafFileLogger::$custom_storage_dir = $isolatedTestDir;
 
-        // Preserve initial trust option state exactly
-        $originalTrustOption = get_option('webcareproscan_rescue_allowlists', null);
+        // Preserve initial trust option state exactly using sentinel
+        $trustSentinel = new \stdClass();
+        $originalTrustOption = get_option('webcareproscan_rescue_allowlists', $trustSentinel);
 
         // Simulate rotated segment files: .1, .2, .3
         $baseFilename = strtolower(gmdate('F-j-Y', time())) . '-waf-logs.json';
@@ -664,14 +666,14 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
 
         } finally {
             // Restore trust option state exactly
-            if ($originalTrustOption === null) {
+            if ($originalTrustOption === $trustSentinel) {
                 delete_option('webcareproscan_rescue_allowlists');
             } else {
                 update_option('webcareproscan_rescue_allowlists', $originalTrustOption, false);
             }
 
-            // Reset custom storage dir and clean up isolated test directory
-            \WebCareProScanner\Firewall\WafFileLogger::$custom_storage_dir = null;
+            // Restore previous custom storage dir configuration
+            \WebCareProScanner\Firewall\WafFileLogger::$custom_storage_dir = $previousStorageDir;
             if (is_dir($isolatedTestDir)) {
                 $files = glob($isolatedTestDir . '/*');
                 foreach ($files as $f) {
@@ -787,27 +789,30 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
         $this->assertSame('realadmin', $actor['user_login'] ?? '', 'Actor user_login must be derived from authenticated user');
 
         // 8. Verify automated execution contexts (DOING_CRON, WP_CLI) are excluded from the human admin accountability log
-        \WebCareProScanner\System\WebCareActivityLogger::$execution_context_override = 'cron';
-        $cronLogged = \WebCareProScanner\System\WebCareActivityLogger::log(
-            'cron_automated_action',
-            'system',
-            \WebCareProScanner\System\ActivityLogs\ActivityEventSchema::SEVERITY_INFO,
-            ['data' => 'cron attempt']
-        );
-        $this->assertFalse($cronLogged, 'Cron context must be strictly excluded from WebCareActivityLogger even with admin user present');
+        $previousContextOverride = \WebCareProScanner\System\WebCareActivityLogger::$execution_context_override;
+        try {
+            \WebCareProScanner\System\WebCareActivityLogger::$execution_context_override = 'cron';
+            $cronLogged = \WebCareProScanner\System\WebCareActivityLogger::log(
+                'cron_automated_action',
+                'system',
+                \WebCareProScanner\System\ActivityLogs\ActivityEventSchema::SEVERITY_INFO,
+                ['data' => 'cron attempt']
+            );
+            $this->assertFalse($cronLogged, 'Cron context must be strictly excluded from WebCareActivityLogger even with admin user present');
 
-        \WebCareProScanner\System\WebCareActivityLogger::$execution_context_override = 'cli';
-        $cliLogged = \WebCareProScanner\System\WebCareActivityLogger::log(
-            'cli_automated_action',
-            'system',
-            \WebCareProScanner\System\ActivityLogs\ActivityEventSchema::SEVERITY_INFO,
-            ['data' => 'cli attempt']
-        );
-        $this->assertFalse($cliLogged, 'CLI context must be strictly excluded from WebCareActivityLogger even with admin user present');
-
-        // Reset execution context override and admin user for following tests
-        \WebCareProScanner\System\WebCareActivityLogger::$execution_context_override = null;
-        \wp_set_current_user(1, 'realadmin');
+            \WebCareProScanner\System\WebCareActivityLogger::$execution_context_override = 'cli';
+            $cliLogged = \WebCareProScanner\System\WebCareActivityLogger::log(
+                'cli_automated_action',
+                'system',
+                \WebCareProScanner\System\ActivityLogs\ActivityEventSchema::SEVERITY_INFO,
+                ['data' => 'cli attempt']
+            );
+            $this->assertFalse($cliLogged, 'CLI context must be strictly excluded from WebCareActivityLogger even with admin user present');
+        } finally {
+            // Restore execution context override and admin user reliably in finally block
+            \WebCareProScanner\System\WebCareActivityLogger::$execution_context_override = $previousContextOverride;
+            \wp_set_current_user(1, 'realadmin');
+        }
     }
 
     public function test_rotated_log_clear_all_and_retention_pruning(): void {
@@ -815,10 +820,12 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
         $isolatedTestDir = sys_get_temp_dir() . '/webcare_test_waf_' . wp_generate_password(8, false);
         wp_mkdir_p($isolatedTestDir);
 
+        $previousStorageDir = \WebCareProScanner\Firewall\WafFileLogger::$custom_storage_dir;
         \WebCareProScanner\Firewall\WafFileLogger::$custom_storage_dir = $isolatedTestDir;
 
-        // Preserve initial lifetime blocked counter state exactly
-        $originalLifetimeBlocked = get_option('webcareproscan_lifetime_blocked_counter', null);
+        // Preserve initial lifetime blocked counter state exactly using sentinel
+        $counterSentinel = new \stdClass();
+        $originalLifetimeBlocked = get_option('webcareproscan_lifetime_blocked_counter', $counterSentinel);
 
         try {
             // Create a fixture of expired rotated segments (30 days old) in isolated test directory
@@ -862,14 +869,14 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
 
         } finally {
             // Restore lifetime blocked counter state exactly
-            if ($originalLifetimeBlocked === null) {
+            if ($originalLifetimeBlocked === $counterSentinel) {
                 delete_option('webcareproscan_lifetime_blocked_counter');
             } else {
                 update_option('webcareproscan_lifetime_blocked_counter', $originalLifetimeBlocked, false);
             }
 
-            // Always reset custom storage dir and clean up isolated directory
-            \WebCareProScanner\Firewall\WafFileLogger::$custom_storage_dir = null;
+            // Restore previous custom storage dir configuration
+            \WebCareProScanner\Firewall\WafFileLogger::$custom_storage_dir = $previousStorageDir;
             if (is_dir($isolatedTestDir)) {
                 $files = glob($isolatedTestDir . '/*');
                 foreach ($files as $f) {
