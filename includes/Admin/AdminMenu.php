@@ -425,9 +425,10 @@ class AdminMenu {
         elseif ($current_page === 'webcare-pro-server') $active_tab = 'server';
         elseif ($current_page === 'webcare-pro-forensics') $active_tab = 'forensics';
         elseif ($current_page === 'webcare-pro-vault') {
+            $forensics_subtabs = ['persistence', 'watchdog', 'baseline', 'files', 'attack_chain', 'correlation', 'whitelist', 'transactions', 'self_defense'];
             if ($tab_param === 'server') {
                 $active_tab = 'server';
-            } elseif ($tab_param === 'forensics') {
+            } elseif ($tab_param === 'forensics' || in_array($tab_param, $forensics_subtabs, true)) {
                 $active_tab = 'forensics';
             } elseif ($tab_param === 'quarantine') {
                 $active_tab = 'quarantine';
