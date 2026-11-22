@@ -624,7 +624,7 @@ class ScannerRoutes {
     
 
     // ==========================================
-    // 17.6. Zero-Trust Identity, Session Forensics & JIT Elevation (Pillar 4)
+    // 17.6. Zero-Trust Identity & Session Forensics (Pillar 4)
     // ==========================================
 
     

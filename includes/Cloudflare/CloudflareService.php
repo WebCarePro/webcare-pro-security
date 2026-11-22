@@ -88,7 +88,7 @@ class CloudflareService {
             $args['body'] = wp_json_encode($body);
         }
 
-        $response = wp_remote_request($url, $args);
+        $response = wp_safe_remote_request($url, $args);
 
         if (is_wp_error($response)) {
             return [

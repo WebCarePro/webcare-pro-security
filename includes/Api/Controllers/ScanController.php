@@ -2613,8 +2613,8 @@ final class ScanController extends AbstractApiController {
                     $svn_urls[] = "https://plugins.svn.wordpress.org/{$slug}/trunk/readme.txt";
 
                     foreach ($svn_urls as $url) {
-                        $response = function_exists('wp_remote_get')
-                            ? wp_remote_get($url, ['timeout' => 4, 'sslverify' => true, 'headers' => ['User-Agent' => 'WordPress/' . get_bloginfo('version')]])
+                        $response = function_exists('wp_safe_remote_get')
+                            ? wp_safe_remote_get($url, ['timeout' => 4, 'sslverify' => true, 'headers' => ['User-Agent' => 'WordPress/' . get_bloginfo('version')]])
                             : false;
 
                         if (!is_wp_error($response) && is_array($response)) {
@@ -2656,8 +2656,8 @@ final class ScanController extends AbstractApiController {
                     $candidates[] = "https://themes.svn.wordpress.org/{$slug}/{$latest_ver}/changelog.txt";
                 }
                 foreach ($candidates as $url) {
-                    $response = function_exists('wp_remote_get')
-                        ? wp_remote_get($url, ['timeout' => 4, 'sslverify' => true])
+                    $response = function_exists('wp_safe_remote_get')
+                        ? wp_safe_remote_get($url, ['timeout' => 4, 'sslverify' => true])
                         : false;
                     if (!is_wp_error($response) && is_array($response)) {
                         $code = wp_remote_retrieve_response_code($response);

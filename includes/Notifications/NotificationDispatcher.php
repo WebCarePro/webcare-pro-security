@@ -88,20 +88,6 @@ class NotificationDispatcher {
                 'description' => __('Fires if a required plugin file was deleted by host scanners, mod_security, or an intruder.', 'webcare-pro-security'),
                 'severity'    => 'critical',
             ],
-            'plugin_deactivate_attempt' => [
-                'category'    => 'self_defense',
-                'category_label' => __('Plugin Self-Defense', 'webcare-pro-security'),
-                'title'       => __('Unauthorized Plugin Deactivation', 'webcare-pro-security'),
-                'description' => __('Alerts when an administrator or external script attempts to deactivate WebCare Pro Security.', 'webcare-pro-security'),
-                'severity'    => 'high',
-            ],
-            'plugin_uninstall' => [
-                'category'    => 'self_defense',
-                'category_label' => __('Plugin Self-Defense', 'webcare-pro-security'),
-                'title'       => __('Plugin Uninstallation Event', 'webcare-pro-security'),
-                'description' => __('Fires when WebCare Pro Security is deleted from WordPress plugins manager.', 'webcare-pro-security'),
-                'severity'    => 'high',
-            ],
 
             // Category: Cloudflare & WAF
             'cf_firewall_updated' => [
@@ -345,13 +331,6 @@ class NotificationDispatcher {
                 'description' => __('Notifies when Slack, Discord, ClickUp, Asana, or custom webhooks are turned on or off.', 'webcare-pro-security'),
                 'severity'    => 'info',
             ],
-            'webhook_delivery_failed' => [
-                'category'    => 'devsecops_ai',
-                'category_label' => __('DevSecOps & AI Forensics', 'webcare-pro-security'),
-                'title'       => __('Webhook HTTP Delivery Error', 'webcare-pro-security'),
-                'description' => __('Alerts via email when a security webhook fails to deliver after multiple HTTP retries.', 'webcare-pro-security'),
-                'severity'    => 'warning',
-            ],
             'ai_forensics_toggled' => [
                 'category'    => 'devsecops_ai',
                 'category_label' => __('DevSecOps & AI Forensics', 'webcare-pro-security'),
@@ -468,20 +447,6 @@ class NotificationDispatcher {
                 'title'       => __('WebAuthn Hardware Passkey Revoked / Deleted', 'webcare-pro-security'),
                 'description' => __('Alerts when a hardware security key or biometric credential is removed from an account.', 'webcare-pro-security'),
                 'severity'    => 'warning',
-            ],
-            'auth_temporary_access_granted' => [
-                'category'    => 'auth',
-                'category_label' => __('Authentication & Access Security', 'webcare-pro-security'),
-                'title'       => __('JIT Ephemeral Administrator Elevation Granted', 'webcare-pro-security'),
-                'description' => __('Notifies when temporary Just-In-Time administrative privileges are granted to an existing user account.', 'webcare-pro-security'),
-                'severity'    => 'high',
-            ],
-            'auth_temporary_access_revoked' => [
-                'category'    => 'auth',
-                'category_label' => __('Authentication & Access Security', 'webcare-pro-security'),
-                'title'       => __('JIT Ephemeral Elevation Revoked / Expired', 'webcare-pro-security'),
-                'description' => __('Fires when a temporary elevation session is manually terminated or automatically expired back to baseline privileges.', 'webcare-pro-security'),
-                'severity'    => 'info',
             ],
             'auth_impossible_travel_flag' => [
                 'category'    => 'auth',
@@ -1125,18 +1090,6 @@ class NotificationDispatcher {
             'data_format' => 'body',
         ]);
         if (is_wp_error($resp)) {
-            if ($payload['event_key'] !== 'webhook_delivery_failed') {
-                self::trigger('webhook_delivery_failed', [
-                    'severity' => 'warning',
-                    /* translators: 1: webhook endpoint URL, 2: error message */
-                    'message'  => sprintf(__('Webhook delivery failed to destination "%1$s": %2$s', 'webcare-pro-security'), esc_url($url), $resp->get_error_message()),
-                    'details'  => [
-                        'Destination URL' => esc_url($url),
-                        'Failed Event'    => $payload['event_key'] ?? 'unknown',
-                        'Error Message'   => $resp->get_error_message(),
-                    ],
-                ]);
-            }
             return false;
         }
         return true;

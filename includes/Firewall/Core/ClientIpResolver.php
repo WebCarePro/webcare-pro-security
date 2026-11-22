@@ -6,6 +6,10 @@ namespace WebCareProScanner\Firewall\Core;
 use WebCareProScanner\System\SettingsManager;
 use WebCareProScanner\System\ServerInfo;
 
+if (!defined('ABSPATH')) {
+    exit;
+}
+
 /**
  * Client IP Resolver & Trusted Proxy Sentinel.
  *

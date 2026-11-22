@@ -7,6 +7,10 @@ use WebCareProScanner\Firewall\FirewallEngine;
 use WebCareProScanner\Firewall\BotReconDefense;
 use WebCareProScanner\System\SettingsManager;
 
+if (!defined('ABSPATH')) {
+    exit;
+}
+
 /**
  * Commerce Velocity Guard & 404 Scanner Rate Limiter.
  *

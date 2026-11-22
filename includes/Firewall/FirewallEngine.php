@@ -2790,7 +2790,7 @@ class FirewallEngine {
         $suffix = substr($hash, 5);
 
         $url = 'https://api.pwnedpasswords.com/range/' . $prefix;
-        $response = wp_remote_get($url, [
+        $response = wp_safe_remote_get($url, [
             'timeout'   => 3,
             'sslverify' => true,
             'headers'   => [

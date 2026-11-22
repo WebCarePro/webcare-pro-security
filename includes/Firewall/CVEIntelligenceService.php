@@ -394,7 +394,7 @@ class CVEIntelligenceService {
 
         // 3. Fetch from Upstream NVD API
         $url = 'https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=' . rawurlencode($cve_id);
-        $response = wp_remote_get($url, [
+        $response = wp_safe_remote_get($url, [
             'timeout'    => 12,
             'user-agent' => 'WEBCARE-Security-Scanner/1.26.0 (WordPress Security Engine)',
             'headers'    => [
@@ -1154,7 +1154,7 @@ class CVEIntelligenceService {
         }
 
         $url = 'https://api.wordpress.org/plugins/info/1.2/?action=plugin_information&request[slug]=' . rawurlencode($slug);
-        $resp = wp_remote_get($url, [
+        $resp = wp_safe_remote_get($url, [
             'timeout'    => 6,
             'user-agent' => 'WEBCARE-Security-Scanner/1.26.0 (WordPress Security Engine)',
         ]);

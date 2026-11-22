@@ -625,7 +625,7 @@ class MCPAgentService {
             ],
             [
                 'name'        => 'webcareproscan_get_identity_forensics',
-                'description' => 'Retrieve Zero-Trust Identity forensics: active privileged sessions with 0-100% risk scores, Impossible Travel alerts, JIT Ephemeral Admin elevations, and HIBP breach status.',
+                'description' => 'Retrieve Zero-Trust Identity forensics: active privileged sessions with 0-100% risk scores, Impossible Travel alerts, and HIBP breach status.',
                 'category'    => 'read',
                 'isMutating'  => false,
                 'policy'      => self::get_tool_policy('webcareproscan_get_identity_forensics'),

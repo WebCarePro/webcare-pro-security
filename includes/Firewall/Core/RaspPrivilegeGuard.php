@@ -6,6 +6,10 @@ namespace WebCareProScanner\Firewall\Core;
 use WebCareProScanner\Firewall\FirewallEngine;
 use WebCareProScanner\System\SettingsManager;
 
+if (!defined('ABSPATH')) {
+    exit;
+}
+
 /**
  * Runtime Application Self-Protection (RASP) Privilege Guard.
  *

@@ -3,6 +3,10 @@ declare(strict_types=1);
 
 namespace WebCareProScanner\Firewall\Core;
 
+if (!defined('ABSPATH')) {
+    exit;
+}
+
 /**
  * Commerce Session Guard & Webhook Verifier.
  *

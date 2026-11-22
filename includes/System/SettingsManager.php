@@ -320,8 +320,6 @@ class SettingsManager {
             // Plugin Self-Defense
             'plugin_file_tampered'      => ['email' => false, 'webhook' => false],
             'plugin_file_missing'       => ['email' => false, 'webhook' => false],
-            'plugin_deactivate_attempt' => ['email' => true,  'webhook' => true],
-            'plugin_uninstall'          => ['email' => false, 'webhook' => false],
 
             // Cloudflare & WAF
             'cf_firewall_updated'       => ['email' => false, 'webhook' => false],
@@ -365,7 +363,6 @@ class SettingsManager {
 
             // DevSecOps Webhooks & AI Forensics
             'webhook_status_toggled'    => ['email' => false, 'webhook' => false],
-            'webhook_delivery_failed'   => ['email' => false, 'webhook' => false],
             'ai_forensics_toggled'      => ['email' => false, 'webhook' => false],
             'mcp_service_toggled'       => ['email' => false, 'webhook' => false],
 
@@ -386,8 +383,6 @@ class SettingsManager {
             // Zero-Trust Identity & Session Forensics
             'auth_passkey_registered'           => ['email' => false, 'webhook' => false],
             'auth_passkey_revoked'              => ['email' => false, 'webhook' => false],
-            'auth_temporary_access_granted'     => ['email' => false, 'webhook' => false],
-            'auth_temporary_access_revoked'     => ['email' => false, 'webhook' => false],
             'auth_impossible_travel_flag'       => ['email' => true,  'webhook' => true],
 
             // Advanced Forensics, Vault & Quarantine

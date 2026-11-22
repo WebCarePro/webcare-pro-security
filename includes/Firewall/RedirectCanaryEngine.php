@@ -360,7 +360,7 @@ final class RedirectCanaryEngine {
         ];
 
         $start_time = microtime(true);
-        $response   = wp_remote_get($url, $args);
+        $response   = wp_safe_remote_get($url, $args);
         $duration   = round((microtime(true) - $start_time) * 1000, 2);
 
         if (is_wp_error($response)) {
