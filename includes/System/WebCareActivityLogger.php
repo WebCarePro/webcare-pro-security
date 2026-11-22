@@ -57,6 +57,11 @@ class WebCareActivityLogger {
     }
 
     /**
+     * Optional execution context override for unit testing (e.g. simulating cron/cli in isolated tests).
+     */
+    public static ?string $execution_context_override = null;
+
+    /**
      * Primary public logging method.
      *
      * @param string      $action         Stable action key (e.g. 'settings_updated', 'scan_started').
@@ -81,10 +86,10 @@ class WebCareActivityLogger {
         // and non-admin users must never pollute or impersonate the administrator audit trail.
         // Even if an administrator capability happens to be present in CLI or Cron context, background automation
         // must be logged in dedicated operational logs rather than the privileged human accountability trail.
-        if (defined('DOING_CRON') && DOING_CRON) {
+        if (self::$execution_context_override === 'cron' || (defined('DOING_CRON') && DOING_CRON)) {
             return false;
         }
-        if (defined('WP_CLI') && WP_CLI) {
+        if (self::$execution_context_override === 'cli' || (defined('WP_CLI') && WP_CLI)) {
             return false;
         }
         if (!function_exists('current_user_can') || !current_user_can('manage_options')) {

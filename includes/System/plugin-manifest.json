@@ -1,6 +1,6 @@
 {
   "version": "3.23.8",
-  "generated_at": "2026-11-22T09:15:49.827Z",
+  "generated_at": "2026-11-22T09:20:32.058Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -1060,8 +1060,8 @@
       "size": 10865
     },
     "includes/System/WebCareActivityLogger.php": {
-      "sha256": "0446a71f949a53a0312c9121f412d87a37144c9c1ac01d66656249b2c9101f2f",
-      "size": 42193
+      "sha256": "2e567ffa15c394950165bd8bc445df407d02008a591d25612b840cf16f712a29",
+      "size": 42477
     },
     "includes/WordPress/ConfigScanner.php": {
       "sha256": "a2b8ec63ad8b371d4c4db2634ce0b349197ae6ad5e884d8273539a3d32c178af",

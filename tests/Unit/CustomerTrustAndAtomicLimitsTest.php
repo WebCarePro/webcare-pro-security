@@ -508,24 +508,23 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
     }
 
     public function test_rotated_log_segment_incident_lookup_and_resolution(): void {
-        $storageDir = \WebCareProScanner\Firewall\WafFileLogger::get_storage_dir();
-        if (!is_dir($storageDir)) {
-            wp_mkdir_p($storageDir);
-        }
+        // Use an isolated temporary test directory to guarantee zero contamination of live/dev WAF evidence
+        $isolatedTestDir = sys_get_temp_dir() . '/webcare_test_rot_lookup_' . wp_generate_password(8, false);
+        wp_mkdir_p($isolatedTestDir);
+
+        \WebCareProScanner\Firewall\WafFileLogger::$custom_storage_dir = $isolatedTestDir;
+
+        // Preserve initial trust option state exactly
+        $originalTrustOption = get_option('webcareproscan_rescue_allowlists', null);
 
         // Simulate rotated segment files: .1, .2, .3
         $baseFilename = strtolower(gmdate('F-j-Y', time())) . '-waf-logs.json';
         $rotatedFilename1 = $baseFilename . '.1';
-        $rotatedFilePath1 = $storageDir . '/' . $rotatedFilename1;
+        $rotatedFilePath1 = $isolatedTestDir . '/' . $rotatedFilename1;
         $rotatedFilename2 = $baseFilename . '.2';
-        $rotatedFilePath2 = $storageDir . '/' . $rotatedFilename2;
+        $rotatedFilePath2 = $isolatedTestDir . '/' . $rotatedFilename2;
         $rotatedFilename3 = $baseFilename . '.3';
-        $rotatedFilePath3 = $storageDir . '/' . $rotatedFilename3;
-
-        // Preserve any existing rotated files content if present in development environment
-        $backupContent1 = file_exists($rotatedFilePath1) ? file_get_contents($rotatedFilePath1) : null;
-        $backupContent2 = file_exists($rotatedFilePath2) ? file_get_contents($rotatedFilePath2) : null;
-        $backupContent3 = file_exists($rotatedFilePath3) ? file_get_contents($rotatedFilePath3) : null;
+        $rotatedFilePath3 = $isolatedTestDir . '/' . $rotatedFilename3;
 
         $uniqueRotIncidentId1 = 'WEBCARE-' . strtoupper(substr(md5('rot_test1_' . microtime(true)), 0, 8));
         $uniqueRotIncidentId2 = 'WEBCARE-' . strtoupper(substr(md5('rot_test2_' . microtime(true)), 0, 8));
@@ -592,7 +591,7 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
         ];
 
         try {
-            // Write directly to the rotated segment files (.1, .2, and .3)
+            // Write directly to the rotated segment files (.1, .2, and .3) in isolated test storage
             file_put_contents($rotatedFilePath1, wp_json_encode($rotatedRecord1) . "\n", LOCK_EX);
             file_put_contents($rotatedFilePath2, wp_json_encode($rotatedRecord2) . "\n", LOCK_EX);
             file_put_contents($rotatedFilePath3, wp_json_encode($rotatedRecord3) . "\n", LOCK_EX);
@@ -664,31 +663,23 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
             $this->assertEmpty($queryAfterDelete['logs'], 'Deleted incident in rotated segment must no longer be discoverable');
 
         } finally {
-            // Clean up created trust entry to maintain test isolation
-            $trustKey = md5('uri:/my-account/orders:post:order_note');
-            $existingTrust = get_option('webcareproscan_rescue_allowlists', []);
-            if (is_array($existingTrust) && isset($existingTrust[$trustKey])) {
-                unset($existingTrust[$trustKey]);
-                update_option('webcareproscan_rescue_allowlists', $existingTrust, false);
+            // Restore trust option state exactly
+            if ($originalTrustOption === null) {
+                delete_option('webcareproscan_rescue_allowlists');
+            } else {
+                update_option('webcareproscan_rescue_allowlists', $originalTrustOption, false);
             }
 
-            // Restore or cleanup test files safely
-            if ($backupContent1 !== null) {
-                file_put_contents($rotatedFilePath1, $backupContent1, LOCK_EX);
-            } elseif (file_exists($rotatedFilePath1)) {
-                @unlink($rotatedFilePath1);
-            }
-
-            if ($backupContent2 !== null) {
-                file_put_contents($rotatedFilePath2, $backupContent2, LOCK_EX);
-            } elseif (file_exists($rotatedFilePath2)) {
-                @unlink($rotatedFilePath2);
-            }
-
-            if ($backupContent3 !== null) {
-                file_put_contents($rotatedFilePath3, $backupContent3, LOCK_EX);
-            } elseif (file_exists($rotatedFilePath3)) {
-                @unlink($rotatedFilePath3);
+            // Reset custom storage dir and clean up isolated test directory
+            \WebCareProScanner\Firewall\WafFileLogger::$custom_storage_dir = null;
+            if (is_dir($isolatedTestDir)) {
+                $files = glob($isolatedTestDir . '/*');
+                foreach ($files as $f) {
+                    if (is_file($f)) {
+                        @unlink($f);
+                    }
+                }
+                @rmdir($isolatedTestDir);
             }
         }
     }
@@ -796,9 +787,7 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
         $this->assertSame('realadmin', $actor['user_login'] ?? '', 'Actor user_login must be derived from authenticated user');
 
         // 8. Verify automated execution contexts (DOING_CRON, WP_CLI) are excluded from the human admin accountability log
-        if (!defined('DOING_CRON')) {
-            define('DOING_CRON', true);
-        }
+        \WebCareProScanner\System\WebCareActivityLogger::$execution_context_override = 'cron';
         $cronLogged = \WebCareProScanner\System\WebCareActivityLogger::log(
             'cron_automated_action',
             'system',
@@ -807,7 +796,17 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
         );
         $this->assertFalse($cronLogged, 'Cron context must be strictly excluded from WebCareActivityLogger even with admin user present');
 
-        // Reset to admin for following tests
+        \WebCareProScanner\System\WebCareActivityLogger::$execution_context_override = 'cli';
+        $cliLogged = \WebCareProScanner\System\WebCareActivityLogger::log(
+            'cli_automated_action',
+            'system',
+            \WebCareProScanner\System\ActivityLogs\ActivityEventSchema::SEVERITY_INFO,
+            ['data' => 'cli attempt']
+        );
+        $this->assertFalse($cliLogged, 'CLI context must be strictly excluded from WebCareActivityLogger even with admin user present');
+
+        // Reset execution context override and admin user for following tests
+        \WebCareProScanner\System\WebCareActivityLogger::$execution_context_override = null;
         \wp_set_current_user(1, 'realadmin');
     }
 
@@ -817,6 +816,9 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
         wp_mkdir_p($isolatedTestDir);
 
         \WebCareProScanner\Firewall\WafFileLogger::$custom_storage_dir = $isolatedTestDir;
+
+        // Preserve initial lifetime blocked counter state exactly
+        $originalLifetimeBlocked = get_option('webcareproscan_lifetime_blocked_counter', null);
 
         try {
             // Create a fixture of expired rotated segments (30 days old) in isolated test directory
@@ -859,6 +861,13 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
             $this->assertFileDoesNotExist($tempRot2, 'clear_all_logs() must remove rotated segment .100');
 
         } finally {
+            // Restore lifetime blocked counter state exactly
+            if ($originalLifetimeBlocked === null) {
+                delete_option('webcareproscan_lifetime_blocked_counter');
+            } else {
+                update_option('webcareproscan_lifetime_blocked_counter', $originalLifetimeBlocked, false);
+            }
+
             // Always reset custom storage dir and clean up isolated directory
             \WebCareProScanner\Firewall\WafFileLogger::$custom_storage_dir = null;
             if (is_dir($isolatedTestDir)) {
