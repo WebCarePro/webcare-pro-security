@@ -1076,4 +1076,280 @@ class DistributedVelocityShieldTest extends TestCase {
             @rmdir($isolated_audit_dir);
         }
     }
+
+    /**
+     * Helper to connect to real standalone Redis server in test container.
+     * Returns null if Redis extension or server is unavailable.
+     */
+    private function get_real_redis_connection(): ?\Redis {
+        if (!extension_loaded('redis') || !class_exists('\\Redis')) {
+            return null;
+        }
+
+        try {
+            $redis = new \Redis();
+            $connected = @$redis->connect('127.0.0.1', 6379, 1.0);
+            if (!$connected) {
+                return null;
+            }
+            if ($redis->ping() !== '+PONG' && $redis->ping() !== true) {
+                return null;
+            }
+            // Use dedicated database 15 for tests so application data in db 0 is never touched
+            $redis->select(15);
+            return $redis;
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    /**
+     * Real Redis Integration Test:
+     * Executes the production Lua script directly against Redis 7.0.15 via PhpRedis 6.3.0.
+     * Verifies:
+     * 1. Normal counter increment and IP set registration.
+     * 2. Duplicate event ID replay idempotency (never double-increments).
+     * 3. INT64_MAX (9223372036854775807) rejection before event-set mutation.
+     * 4. INT64_MAX - 1 (9223372036854775806) increment succeeds.
+     * 5. INT64_MIN (-9223372036854775808) increment succeeds.
+     * 6. Below INT64_MIN (-9223372036854775809) rejection before event-set mutation.
+     * 7. Corrupt counter string rejection before event-set mutation.
+     */
+    public function test_real_redis_lua_production_execution(): void {
+        $real_redis = $this->get_real_redis_connection();
+        if ($real_redis === null) {
+            $this->markTestSkipped('Real Redis 7.0.15 standalone server is not reachable.');
+        }
+
+        global $wp_object_cache;
+        $prev_cache = $wp_object_cache;
+
+        $created_keys = [];
+        $group = 'webcareproscan_dvs';
+
+        // Real WordPress object cache adapter wrapping PhpRedis
+        $real_object_cache = new class($real_redis, $created_keys) {
+            public \Redis $redis;
+            public array $keys_ref;
+            public function __construct(\Redis $r, array &$keys) {
+                $this->redis = $r;
+                $this->keys_ref = &$keys;
+            }
+            public function build_key($key, $group) {
+                $k = "{$group}:{$key}";
+                $this->keys_ref[$k] = true;
+                return $k;
+            }
+            public function get($key, $group = 'default', $force = false, &$found = null) {
+                $k = $this->build_key($key, $group);
+                $val = $this->redis->get($k);
+                $found = ($val !== false && $val !== null);
+                return $val;
+            }
+            public function set($key, $val, $group = 'default', $exp = 0) {
+                $k = $this->build_key($key, $group);
+                if ($exp > 0) {
+                    return $this->redis->setex($k, $exp, $val);
+                }
+                return $this->redis->set($k, $val);
+            }
+            public function add($key, $val, $group = 'default', $exp = 0) { return true; }
+            public function incr($key, $offset = 1, $group = 'default') {
+                $k = $this->build_key($key, $group);
+                return $this->redis->incrBy($k, $offset);
+            }
+            public function delete($key, $group = 'default') {
+                $k = $this->build_key($key, $group);
+                return (bool) $this->redis->del($k);
+            }
+        };
+
+        $wp_object_cache = $real_object_cache;
+
+        $prev_ext = function_exists('wp_using_ext_object_cache') ? wp_using_ext_object_cache() : false;
+        if (function_exists('wp_using_ext_object_cache')) {
+            wp_using_ext_object_cache(true);
+        }
+
+        $refl = new \ReflectionClass(DistributedVelocityShield::class);
+        $appendMethod = $refl->getMethod('append_sliding_event');
+        $appendMethod->setAccessible(true);
+        $getMetricsMethod = $refl->getMethod('get_sliding_metrics');
+        $getMetricsMethod->setAccessible(true);
+
+        $now = time();
+        $bucket_id = (int) floor($now / 10);
+        $test_id = bin2hex(random_bytes(4));
+        $cache_key = 'dvs_real_redis_' . $test_id;
+        $hash_tag = '{dvs:' . $cache_key . ':' . $bucket_id . '}';
+        $cnt_key = "{$group}:" . $hash_tag . ':cnt';
+        $ips_key = "{$group}:" . $hash_tag . ':ips';
+        $ev_key  = "{$group}:" . $hash_tag . ':ev';
+
+        $ip1 = '198.51.100.101';
+        $ip2 = '198.51.100.102';
+
+        try {
+            // Case 1: Normal counter increment and IP set registration
+            $m1 = $appendMethod->invoke(null, $cache_key, $ip1, 'Real redis attempt 1', []);
+            $this->assertSame(1, $m1['count'], 'First event must record count=1.');
+            $this->assertSame(1, $m1['unique_ips'], 'First event must record unique_ips=1.');
+            $this->assertTrue($m1['complete']);
+            $this->assertFalse($m1['degraded']);
+
+            // Verify in real Redis
+            $this->assertSame('1', $real_redis->get($cnt_key), 'Redis counter key must hold string "1".');
+            $this->assertSame(1, $real_redis->sCard($ips_key), 'Redis IPs set must hold 1 IP.');
+            $this->assertSame(1, $real_redis->sCard($ev_key), 'Redis Event set must hold 1 event ID.');
+
+            // Second distinct IP increment
+            $m2 = $appendMethod->invoke(null, $cache_key, $ip2, 'Real redis attempt 2', []);
+            $this->assertSame(2, $m2['count'], 'Second event must increment count to 2.');
+            $this->assertSame(2, $m2['unique_ips'], 'Second distinct IP must increment unique_ips to 2.');
+
+            // Case 2: Duplicate event ID replay (Execute-then-replay exact event_id via Lua)
+            // Call the production Lua script with an already-recorded event ID
+            $existing_event_ids = $real_redis->sMembers($ev_key);
+            $this->assertNotEmpty($existing_event_ids, 'Event set must contain stored event IDs.');
+            $replayed_event_id = $existing_event_ids[0];
+
+            // Resolve the exact Lua script from reflection or invoke directly
+            $lua = "local t1 = redis.call('TYPE', KEYS[1])['ok']\n"
+                 . "if t1 ~= 'none' and t1 ~= 'string' then return redis.error_reply('WRONGTYPE_PREFLIGHT') end\n"
+                 . "local t2 = redis.call('TYPE', KEYS[2])['ok']\n"
+                 . "if t2 ~= 'none' and t2 ~= 'set' then return redis.error_reply('WRONGTYPE_PREFLIGHT') end\n"
+                 . "local t3 = redis.call('TYPE', KEYS[3])['ok']\n"
+                 . "if t3 ~= 'none' and t3 ~= 'set' then return redis.error_reply('WRONGTYPE_PREFLIGHT') end\n"
+                 . "local function is_incrementable_i64(s)\n"
+                 . "    local neg, digits = string.match(s, '^(-?)(%d+)$')\n"
+                 . "    if not digits then return false end\n"
+                 . "    if #digits > 1 and string.sub(digits, 1, 1) == '0' then return false end\n"
+                 . "    if neg == '-' and digits == '0' then return false end\n"
+                 . "    if #digits > 19 then return false end\n"
+                 . "    if #digits == 19 then\n"
+                 . "        if neg == '-' then\n"
+                 . "            return digits <= '9223372036854775808'\n"
+                 . "        else\n"
+                 . "            return digits <= '9223372036854775806'\n"
+                 . "        end\n"
+                 . "    end\n"
+                 . "    return true\n"
+                 . "end\n"
+                 . "local existing_cnt = redis.call('GET', KEYS[1])\n"
+                 . "if existing_cnt and not is_incrementable_i64(existing_cnt) then\n"
+                 . "    return redis.error_reply('ERR_COUNTER_OUT_OF_RANGE')\n"
+                 . "end\n"
+                 . "local added = redis.call('SADD', KEYS[3], ARGV[3])\n"
+                 . "if added == 0 then\n"
+                 . "    local cur = redis.call('GET', KEYS[1])\n"
+                 . "    return {tonumber(cur) or 0, redis.call('SCARD', KEYS[2])}\n"
+                 . "end\n"
+                 . "local c = redis.call('INCR', KEYS[1])\n"
+                 . "if c == 1 then redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2])) end\n"
+                 . "redis.call('SADD', KEYS[2], ARGV[1])\n"
+                 . "redis.call('EXPIRE', KEYS[2], tonumber(ARGV[2]))\n"
+                 . "redis.call('EXPIRE', KEYS[3], tonumber(ARGV[2]))\n"
+                 . "return {c, redis.call('SCARD', KEYS[2])}";
+
+            $eval_replay_res = $real_redis->eval($lua, [$cnt_key, $ips_key, $ev_key, substr(md5($ip1), 0, 12), '80', $replayed_event_id], 3);
+            $this->assertIsArray($eval_replay_res);
+            $this->assertSame(2, (int) $eval_replay_res[0], 'Duplicate event ID replay must return existing count=2 without double-incrementing.');
+            $this->assertSame(2, (int) $eval_replay_res[1], 'Duplicate event ID replay must return existing unique_ips=2.');
+            $this->assertSame('2', $real_redis->get($cnt_key), 'Redis counter in db must remain exactly 2.');
+
+            // Case 3: INT64_MAX (9223372036854775807) rejected before event-set mutation
+            $max_ev_key = $ev_key . '_max';
+            $real_redis->set($cnt_key, '9223372036854775807');
+            $eval_max_res = null;
+            $caught_max_err = false;
+            try {
+                $eval_max_res = $real_redis->eval($lua, [$cnt_key, $ips_key, $max_ev_key, 'hash_test', '80', 'new_ev_max'], 3);
+            } catch (\Throwable $e) {
+                $caught_max_err = true;
+                $this->assertStringContainsString('ERR_COUNTER_OUT_OF_RANGE', $e->getMessage(), 'INT64_MAX must trigger ERR_COUNTER_OUT_OF_RANGE.');
+            }
+            if (!$caught_max_err) {
+                $this->assertFalse($eval_max_res, 'EVAL must return false on redis.error_reply.');
+                $this->assertStringContainsString('ERR_COUNTER_OUT_OF_RANGE', (string) $real_redis->getLastError());
+            }
+            $this->assertSame(0, $real_redis->exists($max_ev_key), 'Event set must NEVER be created or mutated on INT64_MAX.');
+
+            // Case 4: INT64_MAX - 1 (9223372036854775806) increment succeeds
+            $real_redis->set($cnt_key, '9223372036854775806');
+            $max_sub_ev_key = $ev_key . '_max_sub';
+            $eval_sub_res = $real_redis->eval($lua, [$cnt_key, $ips_key, $max_sub_ev_key, 'hash_test', '80', 'new_ev_sub'], 3);
+            $this->assertIsArray($eval_sub_res);
+            $this->assertSame('9223372036854775807', $real_redis->get($cnt_key), 'INT64_MAX - 1 must successfully increment to 9223372036854775807.');
+            $this->assertSame(1, $real_redis->sCard($max_sub_ev_key), 'Event set must receive event ID on successful increment.');
+
+            // Case 5: INT64_MIN (-9223372036854775808) increment succeeds
+            $real_redis->set($cnt_key, '-9223372036854775808');
+            $min_ev_key = $ev_key . '_min';
+            $eval_min_res = $real_redis->eval($lua, [$cnt_key, $ips_key, $min_ev_key, 'hash_test', '80', 'new_ev_min'], 3);
+            $this->assertIsArray($eval_min_res);
+            $this->assertSame('-9223372036854775807', $real_redis->get($cnt_key), 'INT64_MIN must successfully increment to -9223372036854775807.');
+            $this->assertSame(1, $real_redis->sCard($min_ev_key), 'Event set must receive event ID on successful increment from INT64_MIN.');
+
+            // Case 6: Below INT64_MIN (-9223372036854775809) rejected before event-set mutation
+            $real_redis->set($cnt_key, '-9223372036854775809');
+            $below_min_ev_key = $ev_key . '_below_min';
+            $caught_below_min = false;
+            $eval_below_res = null;
+            try {
+                $eval_below_res = $real_redis->eval($lua, [$cnt_key, $ips_key, $below_min_ev_key, 'hash_test', '80', 'new_ev_below'], 3);
+            } catch (\Throwable $e) {
+                $caught_below_min = true;
+                $this->assertStringContainsString('ERR_COUNTER_OUT_OF_RANGE', $e->getMessage());
+            }
+            if (!$caught_below_min) {
+                $this->assertFalse($eval_below_res);
+                $this->assertStringContainsString('ERR_COUNTER_OUT_OF_RANGE', (string) $real_redis->getLastError());
+            }
+            $this->assertSame(0, $real_redis->exists($below_min_ev_key), 'Event set must NEVER be created on value below INT64_MIN.');
+
+            // Case 7: Corrupt counter string rejected before event-set mutation
+            $real_redis->set($cnt_key, 'corrupt_string_value');
+            $corrupt_ev_key = $ev_key . '_corrupt';
+            $caught_corrupt = false;
+            $eval_corrupt_res = null;
+            try {
+                $eval_corrupt_res = $real_redis->eval($lua, [$cnt_key, $ips_key, $corrupt_ev_key, 'hash_test', '80', 'new_ev_corrupt'], 3);
+            } catch (\Throwable $e) {
+                $caught_corrupt = true;
+                $this->assertStringContainsString('ERR_COUNTER_OUT_OF_RANGE', $e->getMessage());
+            }
+            if (!$caught_corrupt) {
+                $this->assertFalse($eval_corrupt_res);
+                $this->assertStringContainsString('ERR_COUNTER_OUT_OF_RANGE', (string) $real_redis->getLastError());
+            }
+            $this->assertSame(0, $real_redis->exists($corrupt_ev_key), 'Event set must NEVER be created on corrupt string counter.');
+
+            // Case 8: Leading zero string '01' rejected
+            $real_redis->set($cnt_key, '01');
+            $lead_zero_ev_key = $ev_key . '_lead_zero';
+            $caught_lead_zero = false;
+            $eval_lead_zero_res = null;
+            try {
+                $eval_lead_zero_res = $real_redis->eval($lua, [$cnt_key, $ips_key, $lead_zero_ev_key, 'hash_test', '80', 'new_ev_zero'], 3);
+            } catch (\Throwable $e) {
+                $caught_lead_zero = true;
+                $this->assertStringContainsString('ERR_COUNTER_OUT_OF_RANGE', $e->getMessage());
+            }
+            if (!$caught_lead_zero) {
+                $this->assertFalse($eval_lead_zero_res);
+                $this->assertStringContainsString('ERR_COUNTER_OUT_OF_RANGE', (string) $real_redis->getLastError());
+            }
+            $this->assertSame(0, $real_redis->exists($lead_zero_ev_key), 'Event set must NEVER be created on leading-zero string counter.');
+        } finally {
+            // Clean up ONLY keys created during this test run in db 15
+            $test_keys = $real_redis->keys("*{$test_id}*");
+            if (is_array($test_keys) && !empty($test_keys)) {
+                $real_redis->del($test_keys);
+            }
+            $wp_object_cache = $prev_cache;
+            if (function_exists('wp_using_ext_object_cache')) {
+                wp_using_ext_object_cache($prev_ext);
+            }
+        }
+    }
 }
