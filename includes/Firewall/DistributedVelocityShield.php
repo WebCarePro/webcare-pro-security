@@ -1487,6 +1487,9 @@ class DistributedVelocityShield {
     /**
      * Atomically set an external cache key ONLY if the lock key is still owned by the owner token.
      * Prevents TOCTOU race conditions where a worker's lock lease expires before state write.
+     * Strictly requires a backend supporting multi-key atomic scripts (Redis Lua EVAL).
+     * If Redis EVAL is unavailable (e.g. Memcached, APCu, generic object caches), fails closed (returns false)
+     * without executing non-atomic get-then-set fallbacks.
      *
      * @param string $lock_key
      * @param string $owner_token
@@ -1518,35 +1521,21 @@ class DistributedVelocityShield {
                         return (int) $res > 0;
                     }
                 } catch (\Throwable) {
-                    // Fall through to strict safe write
+                    return false;
                 }
-            }
-
-            // Memcached CAS-based atomic fenced write if exposed
-            if (isset($wp_object_cache->m) && is_object($wp_object_cache->m) && method_exists($wp_object_cache->m, 'getByKey')) {
-                $mc = $wp_object_cache->m;
-                $cas_token = null;
-                $held = @$mc->get($lock_key, null, $cas_token);
-                if (is_string($held) && hash_equals($held, $owner_token)) {
-                    return (bool) wp_cache_set($target_key, $target_val, $group, $ttl);
-                }
-                return false;
             }
         }
 
-        // Generic object cache fallback: verify token right before writing; if token does not match, reject write
-        $held = wp_cache_get($lock_key, $group);
-        if (is_string($held) && hash_equals($held, $owner_token)) {
-            return (bool) wp_cache_set($target_key, $target_val, $group, $ttl);
-        }
-
+        // Memcached & Generic Object Cache: Fail closed. Neither Memcached nor generic wp_cache_*
+        // supports multi-key atomic fenced writes. Never fall back to non-atomic check-then-write.
         return false;
     }
 
     /**
      * Atomically release an external cache lock using atomic compare-and-delete.
-     * Strictly avoids non-atomic check-then-delete races. If atomic release is unsupported,
-     * fails safely by allowing the 10-second TTL lease to expire cleanly without deleting another worker's lock.
+     * Strictly avoids non-atomic check-then-delete races. Allows explicit lock release ONLY
+     * on backends with verified atomic compare-and-delete in the exact key namespace (Redis Lua).
+     * For Memcached / generic object caches, fails safe (returns false) and lets the short lease TTL expire.
      *
      * @param string $lock_key
      * @param string $owner_token
@@ -1574,35 +1563,21 @@ class DistributedVelocityShield {
                         return (int) $res > 0;
                     }
                 } catch (\Throwable) {
-                    // Fall through to safe failure
-                }
-            }
-
-            // 2. Memcached CAS compare-and-delete if Memcached client is exposed
-            if (isset($wp_object_cache->m) && is_object($wp_object_cache->m) && method_exists($wp_object_cache->m, 'deleteByKey')) {
-                $mc = $wp_object_cache->m;
-                $cas_token = null;
-                $held = @$mc->get($lock_key, null, $cas_token);
-                if (is_string($held) && hash_equals($held, $owner_token) && $cas_token !== null && method_exists($mc, 'cas')) {
-                    // Overwrite with empty marker and short expire, or delete
-                    if (@$mc->cas($cas_token, $lock_key, '', 1)) {
-                        @$mc->delete($lock_key);
-                        return true;
-                    }
                     return false;
                 }
             }
         }
 
-        // 3. Fall-safe policy: NEVER execute a non-atomic check-then-delete sequence.
-        // If atomic CAS/Lua is unavailable, leave the 10-second lock lease to expire naturally
-        // to guarantee zero risk of deleting a subsequent worker's lock.
+        // 2. Memcached & Generic Object Cache: Fail safe by returning false and letting the 10s TTL expire.
+        // Never attempt raw Memcached client calls that bypass object-cache key prefixing and server hashing,
+        // and never perform non-atomic get-then-delete sequences.
         return false;
     }
 
     /**
-     * Atomically store an APCu key ONLY if the lock key is still owned by the owner token.
-     * Prevents TOCTOU race conditions where a worker's lock lease expires before state write.
+     * Fenced APCu store. APCu does not support multi-key atomic CAS transactions.
+     * Fails closed (returns false) immediately without executing non-atomic fetch-store sequences
+     * or destructive post-write rollbacks.
      *
      * @param string $lock_key
      * @param int    $owner_token
@@ -1612,32 +1587,13 @@ class DistributedVelocityShield {
      * @return bool
      */
     private static function atomic_fenced_apcu_store(string $lock_key, int $owner_token, string $target_key, mixed $target_val, int $ttl): bool {
-        // Atomic ownership verification: check held token
-        $held = @apcu_fetch($lock_key);
-        if (!is_numeric($held) || (int) $held !== $owner_token) {
-            return false;
-        }
-
-        // Store target value
-        $stored = (bool) @apcu_store($target_key, $target_val, $ttl);
-        if (!$stored) {
-            return false;
-        }
-
-        // Post-mutation confirmation: verify lock was not overtaken during store
-        $post_held = @apcu_fetch($lock_key);
-        if (!is_numeric($post_held) || (int) $post_held !== $owner_token) {
-            // Lock was overtaken during or immediately after store - roll back target write
-            @apcu_delete($target_key);
-            return false;
-        }
-
-        return true;
+        // APCu lacks multi-key CAS. Fail closed to prevent destructive race conditions or phantom rollbacks.
+        return false;
     }
 
     /**
      * Atomically release an APCu lock using atomic compare-and-swap (apcu_cas).
-     * Fails safely if apcu_cas is unavailable rather than executing an unsafe check-then-delete.
+     * Strictly requires apcu_cas(); fails safely by returning false if unavailable.
      *
      * @param string $lock_key
      * @param int    $owner_token
@@ -1654,7 +1610,6 @@ class DistributedVelocityShield {
             return false;
         }
 
-        // Fall-safe policy: NEVER perform a non-atomic check-then-delete sequence.
         // Without apcu_cas, allow the 10-second lease to expire naturally.
         return false;
     }

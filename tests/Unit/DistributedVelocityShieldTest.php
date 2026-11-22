@@ -1,0 +1,213 @@
+<?php
+declare(strict_types=1);
+
+namespace WebCareProScanner\Tests\Unit;
+
+use PHPUnit\Framework\TestCase;
+use WebCareProScanner\Firewall\DistributedVelocityShield;
+use WebCareProScanner\System\AuditLogger;
+
+/**
+ * Concurrency, lock safety, and atomic fenced write regression tests for DistributedVelocityShield.
+ */
+class DistributedVelocityShieldTest extends TestCase {
+
+    protected function setUp(): void {
+        parent::setUp();
+        wp_set_current_user(0);
+    }
+
+    /**
+     * Test that atomic_fenced_ext_cache_set on Memcached or generic object cache returns false
+     * and strictly NEVER calls wp_cache_set() when multi-key atomic Redis Lua is unavailable.
+     */
+    public function test_fenced_ext_cache_set_fails_closed_without_redis_lua(): void {
+        $refl = new \ReflectionClass(DistributedVelocityShield::class);
+        $method = $refl->getMethod('atomic_fenced_ext_cache_set');
+        $method->setAccessible(true);
+
+        $lock_key = 'dvs_test_mock_lock_' . bin2hex(random_bytes(4));
+        $owner_token = 'token_valid_123';
+        $target_key = 'dvs_test_mock_target_' . bin2hex(random_bytes(4));
+        $target_val = 'test_value_payload';
+        $group = 'webcareproscan_dvs';
+
+        // 1. Simulate generic object cache without Redis client
+        global $wp_object_cache;
+        $prev_cache = $wp_object_cache;
+
+        // Mock object cache without redis property or method
+        $mock_generic_cache = new \stdClass();
+        $wp_object_cache = $mock_generic_cache;
+
+        try {
+            $result = $method->invoke(null, $lock_key, $owner_token, $target_key, $target_val, $group, 60);
+            $this->assertFalse($result, 'atomic_fenced_ext_cache_set must fail closed (return false) on generic object cache.');
+            $this->assertFalse(wp_cache_get($target_key, $group), 'Target key must not be written in cache on fail-closed backend.');
+        } finally {
+            $wp_object_cache = $prev_cache;
+        }
+
+        // 2. Simulate Memcached wrapper object ($wp_object_cache->m)
+        $mock_memcached_cache = new \stdClass();
+        $mock_memcached_cache->m = new class {
+            public int $set_calls = 0;
+            public function getByKey($server_key, $key, $cb, &$cas) { return 'token_valid_123'; }
+            public function get($key, $cb, &$cas) { return 'token_valid_123'; }
+            public function set($key, $val, $exp) { $this->set_calls++; return true; }
+        };
+        $wp_object_cache = $mock_memcached_cache;
+
+        try {
+            $result = $method->invoke(null, $lock_key, $owner_token, $target_key, $target_val, $group, 60);
+            $this->assertFalse($result, 'atomic_fenced_ext_cache_set must fail closed on Memcached since multi-key CAS is unsupported.');
+            $this->assertSame(0, $mock_memcached_cache->m->set_calls, 'Memcached client must not receive non-atomic set calls.');
+        } finally {
+            $wp_object_cache = $prev_cache;
+        }
+    }
+
+    /**
+     * Test that atomic_fenced_apcu_store returns false immediately without calling apcu_store()
+     * or executing destructive post-write apcu_delete() rollbacks.
+     */
+    public function test_fenced_apcu_store_fails_closed_without_destructive_rollbacks(): void {
+        $refl = new \ReflectionClass(DistributedVelocityShield::class);
+        $method = $refl->getMethod('atomic_fenced_apcu_store');
+        $method->setAccessible(true);
+
+        $lock_key = 'dvs_mock_apcu_lock_' . bin2hex(random_bytes(4));
+        $owner_token = 88888888;
+        $target_key = 'dvs_mock_apcu_target_' . bin2hex(random_bytes(4));
+        $target_val = 'apcu_sample_payload';
+
+        // Pre-seed target key to verify it is NEVER deleted or destroyed
+        if (function_exists('apcu_store') && ini_get('apc.enabled') && (php_sapi_name() !== 'cli' || ini_get('apc.enable_cli'))) {
+            apcu_store($target_key, 'existing_worker_data', 60);
+        }
+
+        $result = $method->invoke(null, $lock_key, $owner_token, $target_key, $target_val, 60);
+        $this->assertFalse($result, 'atomic_fenced_apcu_store must fail closed immediately because APCu lacks multi-key CAS.');
+
+        if (function_exists('apcu_fetch') && ini_get('apc.enabled') && (php_sapi_name() !== 'cli' || ini_get('apc.enable_cli'))) {
+            $this->assertSame('existing_worker_data', apcu_fetch($target_key), 'Pre-existing target key must NEVER be destroyed by post-write rollbacks.');
+            apcu_delete($target_key);
+        }
+    }
+
+    /**
+     * Test that release_ext_cache_lock returns false and lets the lease expire naturally
+     * when the backend is Memcached or a generic object cache without Redis Lua.
+     */
+    public function test_release_ext_cache_lock_fails_safe_on_memcached_and_generic_cache(): void {
+        $refl = new \ReflectionClass(DistributedVelocityShield::class);
+        $method = $refl->getMethod('release_ext_cache_lock');
+        $method->setAccessible(true);
+
+        $lock_key = 'dvs_test_rel_lock_' . bin2hex(random_bytes(4));
+        $owner_token = 'token_owner_abc';
+        $group = 'webcareproscan_dvs';
+
+        global $wp_object_cache;
+        $prev_cache = $wp_object_cache;
+
+        // Mock generic cache without redis
+        $wp_object_cache = new \stdClass();
+
+        try {
+            // Calling release on generic object cache must return false without deleting the key
+            $released = $method->invoke(null, $lock_key, $owner_token, $group);
+            $this->assertFalse($released, 'release_ext_cache_lock must return false on generic cache to allow safe TTL expiry.');
+        } finally {
+            $wp_object_cache = $prev_cache;
+        }
+
+        // Mock Memcached wrapper without redis
+        $mock_mc = new \stdClass();
+        $mock_mc->m = new class {
+            public int $del_calls = 0;
+            public function delete($key) { $this->del_calls++; return true; }
+            public function deleteByKey($s, $key) { $this->del_calls++; return true; }
+        };
+        $wp_object_cache = $mock_mc;
+
+        try {
+            $released = $method->invoke(null, $lock_key, $owner_token, $group);
+            $this->assertFalse($released, 'release_ext_cache_lock must return false on Memcached and never bypass key prefixing.');
+            $this->assertSame(0, $mock_mc->m->del_calls, 'Raw Memcached client delete methods must never be called.');
+        } finally {
+            $wp_object_cache = $prev_cache;
+        }
+    }
+
+    /**
+     * Test file-lock exhaustion behavior: holding LOCK_EX in a fixture beyond retry budget
+     * drops velocity event without corrupting file and logs dvs_file_lock_exhausted.
+     */
+    public function test_file_lock_exhaustion_drops_event_and_logs_audit_diagnostic(): void {
+        $cache_key = 'dvs_test_flock_exhaust_' . bin2hex(random_bytes(4));
+        $now = time();
+        $bucket_id = (int) floor($now / 10);
+        $ip_hash = 'testhash999';
+
+        $upload_dir = wp_upload_dir();
+        $base_dir = (empty($upload_dir['error']) && !empty($upload_dir['basedir'])) ? $upload_dir['basedir'] : '';
+        $this->assertNotEmpty($base_dir, 'Upload directory must be available.');
+
+        $dir = rtrim($base_dir, '/\\') . '/webcare-pro-security/rate-limits';
+        if (!is_dir($dir)) {
+            wp_mkdir_p($dir);
+        }
+        $file = $dir . '/dvs_' . substr(md5($cache_key), 0, 8) . '.php';
+
+        // 1. Pre-seed file with initial known valid payload
+        $initial_payload = "<?php exit; ?>\n" . json_encode([
+            $bucket_id => ['count' => 1, 'ips' => [$ip_hash]]
+        ]);
+        file_put_contents($file, $initial_payload);
+
+        // 2. Hold LOCK_EX exclusively on this file to force lock exhaustion on competing workers
+        $competing_fp = fopen($file, 'c+');
+        $this->assertIsResource($competing_fp);
+        $locked = flock($competing_fp, LOCK_EX | LOCK_NB);
+        $this->assertTrue($locked, 'Test runner must acquire exclusive lock on test fixture file.');
+
+        // 3. Clear existing audit log file if present
+        $audit_log_file = untrailingslashit($upload_dir['basedir']) . '/webcare-pro-security/.logs/audit.log.php';
+        if (file_exists($audit_log_file)) {
+            @unlink($audit_log_file);
+        }
+
+        $refl = new \ReflectionClass(DistributedVelocityShield::class);
+        $fileInc = $refl->getMethod('file_atomic_dvs_increment');
+        $fileInc->setAccessible(true);
+
+        try {
+            // Worker attempts to increment under lock exhaustion
+            $startTime = microtime(true);
+            $fileInc->invoke(null, $cache_key, $bucket_id, 'different_ip');
+            $elapsed = microtime(true) - $startTime;
+
+            // Worker must have waited for its 20 retries (~200ms)
+            $this->assertGreaterThanOrEqual(0.18, $elapsed, 'Worker must respect bounded wait retries (200ms).');
+        } finally {
+            flock($competing_fp, LOCK_UN);
+            fclose($competing_fp);
+        }
+
+        // 4. Verify file payload remained completely unmodified (event dropped safely)
+        $content = file_get_contents($file);
+        $this->assertSame($initial_payload, $content, 'File contents must remain unmodified when lock acquisition times out.');
+
+        // 5. Verify exact AuditLogger diagnostic message in audit log file
+        $this->assertFileExists($audit_log_file, 'AuditLogger raw log file must exist after exhaustion event.');
+        $audit_content = file_get_contents($audit_log_file);
+        $this->assertStringContainsString('dvs_file_lock_exhausted', $audit_content, 'Audit log must record dvs_file_lock_exhausted event type.');
+        $this->assertStringContainsString('DVS file write-lock acquisition timed out after 20 retries (200ms). Velocity event dropped.', $audit_content, 'Audit log must contain exact diagnostic message.');
+
+        // Clean up test file
+        if (file_exists($file)) {
+            @unlink($file);
+        }
+    }
+}

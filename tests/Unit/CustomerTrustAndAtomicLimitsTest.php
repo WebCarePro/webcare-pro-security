@@ -1092,7 +1092,9 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
             wp_cache_delete($slot_key, $group);
         }
 
-        // APCu deterministic fencing check
+        // APCu deterministic fencing check:
+        // Because APCu lacks multi-key CAS transactions, atomic_fenced_apcu_store strictly fails closed (returns false)
+        // rather than risking non-atomic writes or destructive post-write rollbacks.
         if (function_exists('apcu_store') && ini_get('apc.enabled') && (php_sapi_name() !== 'cli' || ini_get('apc.enable_cli'))) {
             $apc_lock_key = "dvs_{$cache_key}_lock_{$bucket_id}_{$ip_hash}";
             $apc_target_key = "dvs_{$cache_key}_slot_{$bucket_id}_99";
@@ -1102,15 +1104,14 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
             // Worker 2 currently owns the lock in APCu
             apcu_store($apc_lock_key, $w2_int, 10);
 
-            // Worker 1 resumes and attempts atomic fenced store: MUST FAIL
+            // Worker 1 resumes and attempts atomic fenced store: MUST FAIL CLOSED
             $apc_w1_committed = $atomicFencedApcuStore->invoke(null, $apc_lock_key, $w1_int, $apc_target_key, 'stale_apc_payload', 80);
             $this->assertFalse($apc_w1_committed, 'Worker 1 with stale token must fail atomic fenced APCu store.');
-            $this->assertFalse(apcu_exists($apc_target_key), 'Target key must not exist after rejected stale store.');
+            $this->assertFalse(apcu_exists($apc_target_key), 'Target key must not exist after rejected store.');
 
-            // Worker 2 commits state: MUST SUCCEED
+            // Worker 2 attempts atomic fenced store: also fails closed on APCu because APCu does not support multi-key atomic CAS
             $apc_w2_committed = $atomicFencedApcuStore->invoke(null, $apc_lock_key, $w2_int, $apc_target_key, 'valid_apc_payload', 80);
-            $this->assertTrue($apc_w2_committed, 'Active lock owner must succeed in atomic fenced APCu store.');
-            $this->assertSame('valid_apc_payload', apcu_fetch($apc_target_key));
+            $this->assertFalse($apc_w2_committed, 'APCu fenced write must strictly fail closed (multi-key CAS unsupported).');
 
             apcu_delete($apc_lock_key);
             apcu_delete($apc_target_key);
