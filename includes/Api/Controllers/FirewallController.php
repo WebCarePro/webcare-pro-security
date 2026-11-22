@@ -1413,9 +1413,12 @@ final class FirewallController extends AbstractApiController {
             );
         }
 
+        $status = \WebCareProScanner\Firewall\FirewallEngine::get_status();
+
         return rest_ensure_response([
             'success' => $cleared,
             'message' => 'Firewall incident logs cleared successfully.',
+            'status'  => $status,
         ]);
     }
 

@@ -169,6 +169,61 @@ final class WafVaultManager {
     }
 
     /**
+     * Atomically reset blocked counters in vault/stats-summary.json and purge daily index logs.
+     *
+     * @return array{lifetime_blocked: int, today: string, today_blocked: int, updated_at: int}
+     */
+    public static function reset_stats_summary(): array {
+        $dir  = self::get_vault_dir();
+        $file = $dir . '/stats-summary.json';
+
+        $today = gmdate('Y-m-d');
+        $data  = [
+            'lifetime_blocked' => 0,
+            'today'            => $today,
+            'today_blocked'    => 0,
+            'updated_at'       => time(),
+        ];
+
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
+        $fp = @fopen($file, 'c+');
+        if ($fp && flock($fp, LOCK_EX)) {
+            ftruncate($fp, 0);
+            rewind($fp);
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
+            fwrite($fp, (string) wp_json_encode($data, JSON_PRETTY_PRINT));
+            fflush($fp);
+            flock($fp, LOCK_UN);
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+            fclose($fp);
+        } elseif ($fp) {
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+            fclose($fp);
+        }
+
+        // Also clean up vault/logs/daily-index.json to keep telemetry clean
+        $daily_index = $dir . '/logs/daily-index.json';
+        if (file_exists($daily_index)) {
+            $dfp = @fopen($daily_index, 'c+');
+            if ($dfp && flock($dfp, LOCK_EX)) {
+                ftruncate($dfp, 0);
+                rewind($dfp);
+                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
+                fwrite($dfp, (string) wp_json_encode([], JSON_PRETTY_PRINT));
+                fflush($dfp);
+                flock($dfp, LOCK_UN);
+                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+                fclose($dfp);
+            } elseif ($dfp) {
+                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+                fclose($dfp);
+            }
+        }
+
+        return $data;
+    }
+
+    /**
      * Update daily index summary in vault/logs/daily-index.json for fast O(1) totals and metrics.
      *
      * @param array<string, mixed> $record

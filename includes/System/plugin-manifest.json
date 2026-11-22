@@ -1,6 +1,6 @@
 {
   "version": "3.23.8",
-  "generated_at": "2026-11-22T11:05:51.987Z",
+  "generated_at": "2026-11-22T11:35:52.193Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -64,12 +64,12 @@
       "size": 238071
     },
     "build/firewall.asset.php": {
-      "sha256": "9ab9231c5957ea066551f2a01f80daf2e4d87852f027665ed38a47e7f5ff2264",
+      "sha256": "ad06a8d108f43a29b34bff4195400da4737fbba5e2c6dbf6c5a05f6762fd9610",
       "size": 163
     },
     "build/firewall.js": {
-      "sha256": "ddc2fb74e11fe8eb861359cc6841613b003068b5caf0d909a8b27d4bc8df31c9",
-      "size": 969561
+      "sha256": "719c0ba757829f4db64cfb2235f9ba4fd27a9f3bdb5dc1f5a27b03a6a1da3105",
+      "size": 969631
     },
     "build/global-rtl.css": {
       "sha256": "6b3b7423ba32579262fb7a31a4b0d5eaba8d87bc89c486857eb956c1853df538",
@@ -88,12 +88,12 @@
       "size": 1405
     },
     "build/index.asset.php": {
-      "sha256": "347244e3774946dc33d6d73a50ed97148ef8a8d977af48b5c5da7eacd737dac4",
+      "sha256": "9a4890038fda2adf316eb6c7ed5041075f6e28c6952f074945cc9b18cf2165a9",
       "size": 174
     },
     "build/index.js": {
-      "sha256": "f911383d3fe8d69cdb25fb6872ff4c9d0aba69a1a56de1716ac140d038f0fbe1",
-      "size": 2754648
+      "sha256": "bc650d07bc08be21cf9aed5cf1da18df8285202bb16a1a73e46b9ad0eeafb6fc",
+      "size": 2754883
     },
     "build/modular-waf.asset.php": {
       "sha256": "f1f72093fffcad1364224fb950879a3bae2419600199a2a6847f059188d684bf",
@@ -112,12 +112,12 @@
       "size": 136009
     },
     "build/scan.asset.php": {
-      "sha256": "c0578ee782148620efcee8f234a7ee69fb33e8209450209b81e3a33ec3260a72",
+      "sha256": "d544e31c83c7243f463ea590613fc58ca2a0c311c2227deeb64945bb4c4483c7",
       "size": 174
     },
     "build/scan.js": {
-      "sha256": "7d52f0f1ca829b0aff908c2a6622f5b1456c6471dcdcef4090f7448f8f0e60d3",
-      "size": 2746183
+      "sha256": "5ed6bb2346bf7101d5d7b2c2bc91b148d58972caba723a59092c77ded98d563c",
+      "size": 2746418
     },
     "build/settings.asset.php": {
       "sha256": "898f02b5b6bc9183799b8e5ee70ba1fbe4268610d2d705e5d829ea2c9f0b6710",
@@ -136,12 +136,12 @@
       "size": 441468
     },
     "build/waf-logs.asset.php": {
-      "sha256": "654314a8d6f78c3838d1eecbf91aa6312b1960a4354c3137ff4aa7a10666d980",
+      "sha256": "de105a2b00539f29288c69314e92166d350e58b1e6e3ada4b901b5d420951bd3",
       "size": 163
     },
     "build/waf-logs.js": {
-      "sha256": "2a6b034df41206557c6ed29fedef1269c214f85b884a2c7929897c911afda60a",
-      "size": 267356
+      "sha256": "8f53fc12eb1ab5cbd8c7447f9a1cfa2ceeda88e0df0225081807586f51a1b4d2",
+      "size": 267523
     },
     "build/wizard.asset.php": {
       "sha256": "d841e7fab2fd4c30f17a7c82aa69de4a5eaf15f19a7c3449de9d34d02a9e63e0",
@@ -184,8 +184,8 @@
       "size": 35124
     },
     "includes/Api/Controllers/FirewallController.php": {
-      "sha256": "6f36a46db3ed568af3a64439bb3304945bbd4bd0252cfa8bd63e87e033ba4f42",
-      "size": 106169
+      "sha256": "af9d7de25aa05c8c4a77d2615b8e56e87fe675b962431fa065f44bad42aeeea6",
+      "size": 106280
     },
     "includes/Api/Controllers/IntegrityController.php": {
       "sha256": "fffc29dd7d99571c81ebb9631a0a9835eb7a7aae687b9431abe841d16077b881",
@@ -568,8 +568,8 @@
       "size": 53537
     },
     "includes/Firewall/Core/WafVaultManager.php": {
-      "sha256": "5f0e335a1966dfb9f633870929d16c3f37c27f2ea270577cf8aabaf68e909e85",
-      "size": 14039
+      "sha256": "8009c7dae72ff409aa8c308cdffd071df380e1027f026b0956e0bda3d1f4cc2e",
+      "size": 16251
     },
     "includes/Firewall/CVEIntelligenceService.php": {
       "sha256": "9ca731f90b147c1106342bebd2dd01d3000ef3120eee556f2431e76e0b2618eb",
@@ -712,8 +712,8 @@
       "size": 21084
     },
     "includes/Firewall/WafFileLogger.php": {
-      "sha256": "8a2c8c49e321665b4c5220dc1659fca8e7082d3b657d8bf3098bf7ac7b56ff2a",
-      "size": 54875
+      "sha256": "042c4ec1fe892471ba638c6fee92b9d794f75e9fa434008752f32efec170bdfd",
+      "size": 55879
     },
     "includes/Forensics/AttackChainEngine.php": {
       "sha256": "3bf4e688f9c42eecaa4cad29be378f2f116896ee497508d5874033d4ff31a5a9",

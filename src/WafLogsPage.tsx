@@ -995,7 +995,18 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
             setLogs([]);
             setTotalCount(0);
             setSelectedLogIds([]);
-            fetchStats();
+            setStats({
+              total_intercepted: 0,
+              blocked_24h: 0,
+              detected_learning: 0,
+              unique_attack_ips: 0,
+              top_categories: [],
+              top_ips: [],
+              top_targets: [],
+              methods_breakdown: [],
+              hourly_trend: [],
+            });
+            await fetchStats();
           }
         } catch (err: any) {
           setActionMessage({ type: 'error', text: err?.message || 'Failed to clear logs.' });

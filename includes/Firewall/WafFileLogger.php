@@ -1241,19 +1241,36 @@ class WafFileLogger {
      */
     public static function clear_all_logs(): bool {
         $dir = self::get_storage_dir();
-        if (!is_dir($dir)) {
-            return true;
-        }
-
-        $files = scandir($dir);
-        foreach ($files as $file) {
-            if (preg_match('/-waf-logs\.json(?:\.\d+)?$/', $file)) {
-                $filepath = $dir . '/' . $file;
-                wp_delete_file($filepath);
+        if (is_dir($dir)) {
+            $files = scandir($dir);
+            if (is_array($files)) {
+                foreach ($files as $file) {
+                    if (preg_match('/-waf-logs\.json(?:\.\d+)?$/', $file)) {
+                        $filepath = $dir . '/' . $file;
+                        wp_delete_file($filepath);
+                    }
+                }
             }
         }
 
+        // Reset fast O(1) lifetime and daily counters in Vault
+        if (class_exists('\\WebCareProScanner\\Firewall\\Core\\WafVaultManager')) {
+            \WebCareProScanner\Firewall\Core\WafVaultManager::reset_stats_summary();
+        }
+
         update_option('webcareproscan_lifetime_blocked_counter', 0, false);
+
+        // Clear legacy database table if it exists
+        global $wpdb;
+        if ($wpdb !== null && is_object($wpdb) && method_exists($wpdb, 'get_var')) {
+            $table = $wpdb->prefix . 'webcareproscan_firewall_logs';
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            $table_exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table));
+            if ($table_exists === $table) {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+                $wpdb->query("TRUNCATE TABLE `{$table}`");
+            }
+        }
 
         return true;
     }

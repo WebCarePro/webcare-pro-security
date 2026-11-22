@@ -2397,9 +2397,19 @@ export const FirewallPage = ({
           const res = await apiRequest({ path: '/firewall/clear-logs', method: 'POST' });
           if (res && res.success) {
             setLogs([]);
-            if (status) {
-              setStatus({ ...status, total_blocks: 0, blocks_24h: 0, top_rules: [] });
+            if (res.status) {
+              setStatus(res.status);
+            } else if (status) {
+              setStatus({
+                ...status,
+                total_blocks: 0,
+                blocks_24h: 0,
+                blocks_today: 0,
+                unique_attack_ips: 0,
+                top_rules: []
+              });
             }
+            await loadFirewallData(true);
             showFirewallNotice('success', 'Firewall incident logs cleared successfully.');
           }
         } catch (err: any) {
