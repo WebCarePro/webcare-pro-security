@@ -15,7 +15,7 @@ import { useEffect, useRef } from '@wordpress/element';
  * @param enabled Whether polling is active
  */
 export function useVisibilityPolling(
-  callback: () => void | Promise<void>,
+  callback: (signal?: AbortSignal) => void | Promise<void>,
   intervalMs: number | null | undefined,
   enabled: boolean = true
 ): void {
@@ -23,6 +23,7 @@ export function useVisibilityPolling(
   savedCallback.current = callback;
   const inFlightRef = useRef<boolean>(false);
   const generationRef = useRef<number>(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (!enabled || !intervalMs || intervalMs <= 0) {
@@ -41,16 +42,30 @@ export function useVisibilityPolling(
 
       inFlightRef.current = true;
       const currentGen = ++generationRef.current;
+      
+      // Abort any prior in-flight controller and instantiate new AbortController
+      if (abortControllerRef.current) {
+        try {
+          abortControllerRef.current.abort();
+        } catch (_) {}
+      }
+      abortControllerRef.current = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const signal = abortControllerRef.current ? abortControllerRef.current.signal : undefined;
+
       Promise.resolve()
-        .then(() => savedCallback.current())
+        .then(() => savedCallback.current(signal))
         .catch((err) => {
+          if (err && (err.name === 'AbortError' || err.code === 20)) {
+            return;
+          }
           if (process.env.NODE_ENV !== 'production') {
             console.warn('[WebCare] Visibility polling callback failed:', err);
           }
         })
         .finally(() => {
-          if (isMounted && currentGen === generationRef.current) {
+          if (currentGen === generationRef.current) {
             inFlightRef.current = false;
+            abortControllerRef.current = null;
           }
         });
     };
@@ -70,9 +85,17 @@ export function useVisibilityPolling(
 
     return () => {
       isMounted = false;
-      // Invalidate the generation so any in-flight promise from this cycle cannot reset or overlap with a remounted cycle
+      // Invalidate the generation so any in-flight promise from this cycle cannot reset state
       generationRef.current++;
-      inFlightRef.current = false;
+      // Actively cancel and abort any active network request on unmount / re-render
+      if (abortControllerRef.current) {
+        try {
+          abortControllerRef.current.abort();
+        } catch (_) {}
+        abortControllerRef.current = null;
+      }
+      // Keep inFlightRef true until async finally resolves, preventing overlapping requests on remount
+      // while an asynchronous callback is still executing
       clearInterval(intervalId);
       if (typeof document !== 'undefined') {
         document.removeEventListener('visibilitychange', handleVisibilityChange);

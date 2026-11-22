@@ -1049,6 +1049,7 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
           rule_id: ruleId,
           param_key: paramKey,
           user_role: userRole,
+          method: log.http_method || 'POST',
           ip: log.ip_address,
           label: `1-Click Trusted Action for ${log.username || 'Customer'} on ${rawUri}${paramKey ? ` (param: ${paramKey})` : ''}`,
         }

@@ -353,44 +353,34 @@ class RescueAssistantManager {
                 }
             }
 
-            // 2. Method validation: if allowlist specifies a method, incoming request must match
-            if ($req_meth !== '' && $req_meth !== $method_uc) {
+            // 2. Method validation: HTTP method is mandatory. Reject if trust entry has no method or request method mismatches.
+            if ($req_meth === '' || $req_meth !== $method_uc) {
                 continue;
             }
 
             // 3. Parameter key validation: if allowlist specifies a param_key, check parameter context.
             // Strict scope requirement: If the allowlist entry requires a param_key, reject the match
             // if the caller's parameter context is empty or does not match req_pkey.
+            // If the incoming request has a non-empty param_key (parameter-specific detector), the trust entry MUST also specify that exact param_key.
             if ($req_pkey !== '') {
                 if ($pkey_lc === '' || $pkey_lc !== $req_pkey) {
                     continue;
                 }
+            } elseif ($pkey_lc !== '') {
+                // Incoming detector is parameter-specific, but trust entry lacks a parameter constraint: reject match
+                continue;
             }
 
             // 4. Per-Detector Co-Verification Invariant (v3.23.2):
             // Every customer trust exemption must match the intended detector ($item_rule === $rule_lc).
             // A route/action trust entry for detector A must NEVER suppress an unrelated detector B.
             // If the trust item specifies a rule_id, it must match the current rule_id strictly.
-            if ($item_rule !== '' && $rule_lc !== '' && $item_rule !== $rule_lc) {
+            if ($item_rule === '' || $rule_lc === '' || $item_rule !== $rule_lc) {
                 continue;
             }
 
-            // 5. Rule-only exemption (Disallowed as unrestricted global exemption; requires rule_id match)
-            if ($item_rule !== '' && $item_rule === $rule_lc && $val === '') {
-                // An entry without a route/action value only matches if the item explicitly has type 'rule'
-                if ($item_type === 'rule') {
-                    return true;
-                }
-                continue;
-            }
-
+            // 5. Global rule-only exemptions are prohibited in customer trust (strictly requires route/action target)
             if ($val === '') {
-                continue;
-            }
-
-            // When an incoming rule_id is provided, the trust entry MUST also match that rule_id
-            // (or have stored that rule_id) so route trust never suppresses unrelated detectors.
-            if ($rule_lc !== '' && $item_rule === '') {
                 continue;
             }
 
@@ -475,12 +465,22 @@ class RescueAssistantManager {
         $user_role = sanitize_key(trim((string) ($params['user_role'] ?? '')));
         $method    = strtoupper(sanitize_key(trim((string) ($params['method'] ?? ''))));
 
-        if ($value === '' && $rule_id === '') {
-            return ['success' => false, 'message' => __('Action target or rule identifier is required.', 'webcare-pro-security')];
+        if ($value === '' || $rule_id === '') {
+            return ['success' => false, 'message' => __('Both action route target and rule identifier are strictly required for scoped customer trust.', 'webcare-pro-security')];
+        }
+
+        // Method validation: Customer trust must specify a valid, non-empty HTTP method
+        $valid_methods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
+        if ($method === '' || !in_array($method, $valid_methods, true)) {
+            return [
+                'success' => false,
+                'code'    => 'invalid_method',
+                'message' => __('Security Invariant: A valid, non-empty HTTP method is required for scoped customer trust.', 'webcare-pro-security'),
+            ];
         }
 
         // Centralized Zero-Tolerance Invariant: Confirmed exploit rules can NEVER be exempted
-        if ($rule_id !== '' && self::is_zero_tolerance_rule($rule_id)) {
+        if (self::is_zero_tolerance_rule($rule_id)) {
             return [
                 'success' => false,
                 'code'    => 'zero_tolerance_rule',

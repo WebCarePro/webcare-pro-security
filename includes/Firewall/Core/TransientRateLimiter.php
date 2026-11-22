@@ -45,34 +45,50 @@ final class TransientRateLimiter {
             $success = false;
             $count = apcu_inc($cache_key, 1, $success);
             if (!$success || $count === false) {
-                apcu_store($cache_key, 1, $window_seconds);
-                $count = 1;
+                if (apcu_add($cache_key, 1, $window_seconds)) {
+                    $count = 1;
+                } else {
+                    $count = apcu_inc($cache_key, 1, $success);
+                    if (!$success || $count === false) {
+                        $count = null; // Degrade to file transaction rather than non-atomic reset
+                    }
+                }
             }
 
-            $allowed = ($count <= $limit);
-            return [
-                'allowed'     => $allowed,
-                'retry_after' => $allowed ? 0 : $remaining_window_ttl,
-                'current'     => (int) $count,
-                'limit'       => $limit,
-            ];
+            if ($count !== null) {
+                $allowed = ($count <= $limit);
+                return [
+                    'allowed'     => $allowed,
+                    'retry_after' => $allowed ? 0 : $remaining_window_ttl,
+                    'current'     => (int) $count,
+                    'limit'       => $limit,
+                ];
+            }
         }
 
         if (function_exists('wp_using_ext_object_cache') && wp_using_ext_object_cache()) {
             wp_cache_add($cache_key, 0, 'webcareproscan_rl', $window_seconds);
             $count = wp_cache_incr($cache_key, 1, 'webcareproscan_rl');
             if ($count === false) {
-                wp_cache_set($cache_key, 1, 'webcareproscan_rl', $window_seconds);
-                $count = 1;
+                if (wp_cache_add($cache_key, 1, 'webcareproscan_rl', $window_seconds)) {
+                    $count = 1;
+                } else {
+                    $count = wp_cache_incr($cache_key, 1, 'webcareproscan_rl');
+                    if ($count === false) {
+                        $count = null; // Degrade to file transaction rather than non-atomic reset
+                    }
+                }
             }
 
-            $allowed = ($count <= $limit);
-            return [
-                'allowed'     => $allowed,
-                'retry_after' => $allowed ? 0 : $remaining_window_ttl,
-                'current'     => (int) $count,
-                'limit'       => $limit,
-            ];
+            if ($count !== null) {
+                $allowed = ($count <= $limit);
+                return [
+                    'allowed'     => $allowed,
+                    'retry_after' => $allowed ? 0 : $remaining_window_ttl,
+                    'current'     => (int) $count,
+                    'limit'       => $limit,
+                ];
+            }
         }
 
         if (class_exists('\\WebCareProScanner\\Firewall\\AdaptiveRateLimiter')) {

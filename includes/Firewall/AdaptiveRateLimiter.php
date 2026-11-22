@@ -168,84 +168,92 @@ class AdaptiveRateLimiter {
 
         $is_apcu = function_exists('apcu_inc') && function_exists('apcu_add') && ini_get('apc.enabled') && (php_sapi_name() !== 'cli' || ini_get('apc.enable_cli'));
 
+        $counts = null;
+
         if ($is_apcu) {
-            // Atomic APCu counter
+            // Atomic APCu counter with retry
             apcu_add($curr_key, 0, $ttl);
             $inc_success = false;
             $curr_count = apcu_inc($curr_key, 1, $inc_success);
             if (!$inc_success || $curr_count === false) {
-                // Concurrency defense: Check if key exists before writing 1.
-                // Never reset an existing counter to 1 under concurrent increment race/failure.
-                $existing_val = apcu_fetch($curr_key);
-                if ($existing_val !== false && is_numeric($existing_val)) {
-                    $curr_count = (int) $existing_val + 1;
-                    apcu_store($curr_key, $curr_count, $ttl);
-                } else {
-                    apcu_store($curr_key, 1, $ttl);
+                // If increment failed, retry atomic apcu_add(..., 1) or second apcu_inc
+                if (apcu_add($curr_key, 1, $ttl)) {
                     $curr_count = 1;
+                } else {
+                    $curr_count = apcu_inc($curr_key, 1, $inc_success);
+                    if (!$inc_success || $curr_count === false) {
+                        $curr_count = null; // Degrade to file transaction rather than non-atomic read-modify-write
+                    }
                 }
             }
 
-            $prev_raw = apcu_fetch($prev_key);
-            $prev_count = ($prev_raw !== false && is_numeric($prev_raw)) ? (int) $prev_raw : 0;
+            if ($curr_count !== null) {
+                $prev_raw = apcu_fetch($prev_key);
+                $prev_count = ($prev_raw !== false && is_numeric($prev_raw)) ? (int) $prev_raw : 0;
+                $counts = ['curr' => (int) $curr_count, 'prev' => $prev_count];
+            }
         } elseif (wp_using_ext_object_cache()) {
-            // Atomic persistent object cache (Redis/Memcached)
+            // Atomic persistent object cache (Redis/Memcached) with retry
             wp_cache_add($curr_key, 0, 'webcareproscan_rl', $ttl);
             $curr_count = wp_cache_incr($curr_key, 1, 'webcareproscan_rl');
             if ($curr_count === false) {
-                // Concurrency defense: Check if key exists before writing 1.
-                // Never reset an existing counter to 1 under concurrent increment race/failure.
-                $existing_val = wp_cache_get($curr_key, 'webcareproscan_rl');
-                if ($existing_val !== false && is_numeric($existing_val)) {
-                    $curr_count = (int) $existing_val + 1;
-                    wp_cache_set($curr_key, $curr_count, 'webcareproscan_rl', $ttl);
-                } else {
-                    wp_cache_set($curr_key, 1, 'webcareproscan_rl', $ttl);
+                if (wp_cache_add($curr_key, 1, 'webcareproscan_rl', $ttl)) {
                     $curr_count = 1;
+                } else {
+                    $curr_count = wp_cache_incr($curr_key, 1, 'webcareproscan_rl');
+                    if ($curr_count === false) {
+                        $curr_count = null; // Degrade to file transaction rather than non-atomic read-modify-write
+                    }
                 }
             }
 
-            $prev_raw = wp_cache_get($prev_key, 'webcareproscan_rl');
-            $prev_count = ($prev_raw !== false && is_numeric($prev_raw)) ? (int) $prev_raw : 0;
-        } else {
-            // Atomic single-transaction file lock fallback
+            if ($curr_count !== null) {
+                $prev_raw = wp_cache_get($prev_key, 'webcareproscan_rl');
+                $prev_count = ($prev_raw !== false && is_numeric($prev_raw)) ? (int) $prev_raw : 0;
+                $counts = ['curr' => (int) $curr_count, 'prev' => $prev_count];
+            }
+        }
+
+        // If in-memory atomic backend was not configured or failed to atomically increment, use atomic file transaction
+        if ($counts === null) {
             $counts = self::file_atomic_window_increment($base_key, $current_window_idx, $ttl);
-            if ($counts !== null) {
-                $curr_count = $counts['curr'];
-                $prev_count = $counts['prev'];
-            } else {
-                // Controlled fail-safe policy under storage contention (P1)
-                // Never silently downgrade to a non-atomic transient counter.
-                if (class_exists('\\WebCareProScanner\\System\\WebCareActivityLogger')) {
-                    \WebCareProScanner\System\WebCareActivityLogger::warning('rate_limit_lock_contention', 'firewall', [
-                        'bucket'      => $bucket,
-                        'ip'          => $ip,
-                        'description' => sprintf('Rate limit lock contention on bucket %s for IP %s; applied fail-safe policy.', $bucket, $ip),
-                    ]);
-                }
+        }
 
-                // Sensitive authentication bucket fails closed (429) to prevent brute-force exploitation
-                if ($bucket === self::BUCKET_AUTH) {
-                    return [
-                        'allowed'     => false,
-                        'remaining'   => 0,
-                        'retry_after' => max(5, $window - $elapsed_in_window),
-                        'current'     => $limit + 1,
-                        'limit'       => $limit,
-                        'window'      => $window,
-                    ];
-                }
+        if ($counts !== null) {
+            $curr_count = $counts['curr'];
+            $prev_count = $counts['prev'];
+        } else {
+            // Controlled fail-safe policy under storage contention (P1)
+            // Never silently downgrade to a non-atomic transient counter.
+            if (class_exists('\\WebCareProScanner\\System\\WebCareActivityLogger')) {
+                \WebCareProScanner\System\WebCareActivityLogger::warning('rate_limit_lock_contention', 'firewall', [
+                    'bucket'      => $bucket,
+                    'ip'          => $ip,
+                    'description' => sprintf('Rate limit lock contention on bucket %s for IP %s; applied fail-safe policy.', $bucket, $ip),
+                ]);
+            }
 
-                // Ordinary shopper/public traffic: allow-with-degraded-log
+            // Sensitive authentication bucket fails closed (429) to prevent brute-force exploitation
+            if ($bucket === self::BUCKET_AUTH) {
                 return [
-                    'allowed'     => true,
-                    'remaining'   => 1,
-                    'retry_after' => 0,
-                    'current'     => 1,
+                    'allowed'     => false,
+                    'remaining'   => 0,
+                    'retry_after' => max(5, $window - $elapsed_in_window),
+                    'current'     => $limit + 1,
                     'limit'       => $limit,
                     'window'      => $window,
                 ];
             }
+
+            // Ordinary shopper/public traffic: allow-with-degraded-log
+            return [
+                'allowed'     => true,
+                'remaining'   => 1,
+                'retry_after' => 0,
+                'current'     => 1,
+                'limit'       => $limit,
+                'window'      => $window,
+            ];
         }
 
         // Sliding window effective count: C_{prev} * (1 - elapsed/W) + C_{curr}
@@ -781,8 +789,7 @@ class AdaptiveRateLimiter {
             return $updated > 0;
         }
 
-        // Safe fallback if $wpdb is unavailable
-        delete_option($opt_key);
-        return (bool) add_option($opt_key, $target_exp, '', 'no');
+        // Concurrency defense: If database is unavailable, fail closed rather than executing non-atomic delete_option() + add_option()
+        return false;
     }
 }

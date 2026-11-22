@@ -487,12 +487,36 @@ final class FirewallController extends AbstractApiController {
         $param_key  = sanitize_text_field(trim((string) ($params['param_key'] ?? '')));
         $user_role  = sanitize_key(trim((string) ($params['user_role'] ?? '')));
         $method     = strtoupper(sanitize_key(trim((string) ($params['method'] ?? ''))));
-        if ($method === '' && isset($_SERVER['REQUEST_METHOD'])) {
-            $method = strtoupper((string) $_SERVER['REQUEST_METHOD']);
+
+        // When method is omitted from the client payload, attempt to look up the original incident log method
+        // Never fall back to $_SERVER['REQUEST_METHOD'] which is the method of this REST request (POST)
+        if ($method === '' && $uri !== '') {
+            if (class_exists('\\WebCareProScanner\\Firewall\\WafFileLogger')) {
+                $recent_logs = \WebCareProScanner\Firewall\WafFileLogger::query_logs([
+                    'search' => $rule_id ?: $uri,
+                    'action' => 'all',
+                    'range'  => '7days',
+                ], 20);
+                foreach ($recent_logs['logs'] ?? [] as $log) {
+                    $log_uri = (string) ($log['request_uri'] ?? '');
+                    $log_rule = (string) ($log['rule_id'] ?? '');
+                    if (($rule_id !== '' && $log_rule === $rule_id) || str_contains($log_uri, $uri)) {
+                        $method = strtoupper((string) ($log['request_method'] ?? ''));
+                        if ($param_key === '' && !empty($log['matched_param'])) {
+                            $param_key = sanitize_text_field((string) $log['matched_param']);
+                        }
+                        break;
+                    }
+                }
+            }
         }
 
-        if ($uri === '' && $rule_id === '') {
-            return new \WP_REST_Response(['success' => false, 'message' => __('Log URI or rule ID is required.', 'webcare-pro-security')], 400);
+        if ($method === '') {
+            $method = 'POST'; // Benign default for state-changing forms/endpoints
+        }
+
+        if ($uri === '' || $rule_id === '') {
+            return new \WP_REST_Response(['success' => false, 'message' => __('Both Log URI and rule ID are required for scoped trust.', 'webcare-pro-security')], 400);
         }
 
         // PR 1.4 & v3.23.1: Zero-tolerance exploit invariant (SQLi, RCE, LFI, Object Injection are never exemptible)
