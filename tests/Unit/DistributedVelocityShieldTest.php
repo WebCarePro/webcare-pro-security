@@ -889,7 +889,8 @@ class DistributedVelocityShieldTest extends TestCase {
 
     /**
      * Test Step 4.3: Corrupted non-integer counter preflight validation.
-     * Put a non-integer string 'corrupt' in KEYS[1] and assert Lua rejects before inserting $event_id into KEYS[3].
+     * Put a non-integer string 'corrupt' or an overflow value '9223372036854775807' in KEYS[1]
+     * and assert Lua rejects before inserting $event_id into KEYS[3].
      */
     public function test_corrupted_counter_preflight_rejection(): void {
         global $wp_object_cache;
@@ -906,8 +907,32 @@ class DistributedVelocityShieldTest extends TestCase {
                 $event_id  = $args[5] ?? 'default_ev';
 
                 $existing_cnt = $this->keys[$count_key] ?? null;
-                if ($existing_cnt !== null && !preg_match('/^-?\d+$/', (string) $existing_cnt)) {
-                    throw new \RuntimeException('ERR_NON_INTEGER_COUNTER');
+                if ($existing_cnt !== null) {
+                    $s = (string) $existing_cnt;
+                    $neg = '';
+                    $digits = '';
+                    if (preg_match('/^(-?)(.+)$/', $s, $m)) {
+                        $neg = $m[1];
+                        $digits = $m[2];
+                    }
+                    $is_valid = false;
+                    if (ctype_digit($digits)) {
+                        if (!(strlen($digits) > 1 && $digits[0] === '0') && !($neg === '-' && $digits === '0') && !(strlen($digits) > 19)) {
+                            if (strlen($digits) === 19) {
+                                if ($neg === '-') {
+                                    $is_valid = strcmp($digits, '9223372036854775808') <= 0;
+                                } else {
+                                    $is_valid = strcmp($digits, '9223372036854775806') <= 0;
+                                }
+                            } else {
+                                $is_valid = true;
+                            }
+                        }
+                    }
+
+                    if (!$is_valid) {
+                        throw new \RuntimeException('ERR_COUNTER_OUT_OF_RANGE');
+                    }
                 }
 
                 // If not rejected, would add event_id
@@ -953,14 +978,20 @@ class DistributedVelocityShieldTest extends TestCase {
         $appendMethod->setAccessible(true);
 
         try {
+            // 1. Non-integer corruption rejection
             $res = $appendMethod->invoke(null, $cache_key, '192.0.2.11', 'Corrupt preflight test', []);
-            // Must fail closed with degraded response
             $this->assertSame(0, $res['count']);
             $this->assertFalse($res['complete']);
             $this->assertTrue($res['degraded']);
-
-            // Verify event set was NEVER poisoned with event_id
             $this->assertEmpty($mock_redis->sets[$ev_key] ?? [], 'Event set must never be mutated when counter is corrupted.');
+
+            // 2. Exact INT64_MAX (9223372036854775807) overflow rejection before SADD
+            $mock_redis->keys[$count_key] = '9223372036854775807';
+            $res_overflow = $appendMethod->invoke(null, $cache_key, '192.0.2.12', 'INT64_MAX overflow test', []);
+            $this->assertSame(0, $res_overflow['count']);
+            $this->assertFalse($res_overflow['complete']);
+            $this->assertTrue($res_overflow['degraded']);
+            $this->assertEmpty($mock_redis->sets[$ev_key] ?? [], 'Event set must never be mutated when counter is at INT64_MAX.');
         } finally {
             $wp_object_cache = $prev_cache;
             if (function_exists('wp_using_ext_object_cache')) {
