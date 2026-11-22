@@ -116,6 +116,8 @@ class AuditLogger {
             'waf_incident',
             'route_graduated',
             'learning_mode_route_learned',
+            'dvs_file_lock_exhausted',
+            'dvs_file_read_lock_exhausted',
         ];
 
         foreach ($traffic_actions as $ta) {

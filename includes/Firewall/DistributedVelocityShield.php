@@ -949,8 +949,9 @@ class DistributedVelocityShield {
             wp_cache_incr($bucket_key, 1, $group);
 
             // Record unique IP atomically via discrete per-IP presence key (zero read-modify-write array race)
+            // Stored value holds the assigned slot index (or 0 while pending registration)
             $ip_presence_key = "{$cache_key}_ip_{$bucket_id}_{$ip_hash}";
-            $is_new_ip_in_bucket = wp_cache_add($ip_presence_key, 1, $group, $ttl);
+            $is_new_ip_in_bucket = wp_cache_add($ip_presence_key, 0, $group, $ttl);
 
             if ($is_new_ip_in_bucket) {
                 // Atomically assign index slot for enumeration across discrete keys
@@ -964,9 +965,26 @@ class DistributedVelocityShield {
                     $slot_written = (bool) wp_cache_set($slot_key, $ip_hash, $group, $ttl);
                 }
 
-                // If slot allocation or storage failed, delete presence key so next attempt can retry cleanly
-                if ($slot === false || !$slot_written) {
+                if ($slot !== false && $slot_written) {
+                    // Update presence marker to confirmed slot index
+                    wp_cache_set($ip_presence_key, (int) $slot, $group, $ttl);
+                } else {
+                    // Rollback presence marker on detected failure
                     wp_cache_delete($ip_presence_key, $group);
+                }
+            } else {
+                // Crash recovery: if marker exists but holds 0 (previous worker terminated mid-flight), re-attempt slot allocation
+                $existing_marker = wp_cache_get($ip_presence_key, $group);
+                if ($existing_marker === 0 || $existing_marker === '0') {
+                    $bucket_uniq_key = "{$cache_key}_uniq_{$bucket_id}";
+                    wp_cache_add($bucket_uniq_key, 0, $group, $ttl);
+                    $slot = wp_cache_incr($bucket_uniq_key, 1, $group);
+                    if ($slot !== false) {
+                        $slot_key = "{$cache_key}_slot_{$bucket_id}_{$slot}";
+                        if (wp_cache_set($slot_key, $ip_hash, $group, $ttl)) {
+                            wp_cache_set($ip_presence_key, (int) $slot, $group, $ttl);
+                        }
+                    }
                 }
             }
 
@@ -986,7 +1004,7 @@ class DistributedVelocityShield {
 
             // Record unique IP atomically via discrete presence key (apcu_add returns true ONLY if key was newly created)
             $apc_ip_presence_key = "dvs_{$cache_key}_ip_{$bucket_id}_{$ip_hash}";
-            $is_new_ip_in_bucket = @apcu_add($apc_ip_presence_key, 1, $ttl);
+            $is_new_ip_in_bucket = @apcu_add($apc_ip_presence_key, 0, $ttl);
 
             if ($is_new_ip_in_bucket) {
                 $apc_uniq_key = "dvs_{$cache_key}_uniq_{$bucket_id}";
@@ -1001,9 +1019,26 @@ class DistributedVelocityShield {
                     $slot_written = (bool) @apcu_store($slot_key, $ip_hash, $ttl);
                 }
 
-                // If slot allocation or storage failed, delete presence key so next attempt can retry cleanly
-                if ($slot === false || !$slot_written) {
+                if ($slot !== false && $slot_written) {
+                    @apcu_store($apc_ip_presence_key, (int) $slot, $ttl);
+                } else {
                     @apcu_delete($apc_ip_presence_key);
+                }
+            } else {
+                // Crash recovery: if marker exists but holds 0 (unconfirmed), repair slot registration
+                $existing_marker = @apcu_fetch($apc_ip_presence_key);
+                if ($existing_marker === 0 || $existing_marker === '0') {
+                    $apc_uniq_key = "dvs_{$cache_key}_uniq_{$bucket_id}";
+                    if (!apcu_exists($apc_uniq_key)) {
+                        @apcu_add($apc_uniq_key, 0, $ttl);
+                    }
+                    $slot = apcu_inc($apc_uniq_key, 1);
+                    if ($slot !== false) {
+                        $slot_key = "dvs_{$cache_key}_slot_{$bucket_id}_{$slot}";
+                        if (@apcu_store($slot_key, $ip_hash, $ttl)) {
+                            @apcu_store($apc_ip_presence_key, (int) $slot, $ttl);
+                        }
+                    }
                 }
             }
 
