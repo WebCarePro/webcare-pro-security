@@ -501,11 +501,12 @@ final class FirewallController extends AbstractApiController {
             return new \WP_REST_Response(['success' => false, 'message' => __('WAF file logger unavailable.', 'webcare-pro-security')], 500);
         }
 
-        // Authoritatively query and resolve the exact incident by incident_id
+        // Authoritatively query and resolve the exact incident across the entire retained WAF log store
+        // Uses 'range' => 'all' so incident lookup spans all retained daily WAF partitions, independent of activity-log retention
         $recent_logs = \WebCareProScanner\Firewall\WafFileLogger::query_logs([
             'search' => $incident_id,
             'action' => 'all',
-            'range'  => '7days',
+            'range'  => 'all',
         ], 50);
 
         $incident_record = null;

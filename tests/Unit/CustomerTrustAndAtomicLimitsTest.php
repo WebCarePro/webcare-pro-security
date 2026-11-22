@@ -438,7 +438,11 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
         $dataNotFound = $resNotFound->get_data();
         $this->assertSame('incident_not_found', $dataNotFound['code']);
 
-        // 3. Log a valid incident with specific method (PUT) and parameter key (billing_city)
+        // 3. Establish request context (method and URI) before creating the WAF incident fixture
+        $_SERVER['REQUEST_METHOD'] = 'PUT';
+        $_SERVER['REQUEST_URI']    = '/checkout';
+
+        // Log a valid incident with specific method (PUT) and parameter key (billing_city)
         $incId = \WebCareProScanner\Firewall\WafFileLogger::log_incident([
             'id'               => 'WAF-HEURISTIC-DETECTOR',
             'name'             => 'Heuristic Test Rule',
@@ -448,9 +452,19 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
         ], 'blocked');
         $this->assertNotNull($incId);
 
+        // Verify the incident was stored and matches expected authoritative attributes
+        $queryResult = \WebCareProScanner\Firewall\WafFileLogger::query_logs([
+            'search' => $incId,
+            'action' => 'all',
+            'range'  => 'all',
+        ], 1);
+        $this->assertNotEmpty($queryResult['logs']);
+        $storedInc = $queryResult['logs'][0];
+        $this->assertSame('PUT', $storedInc['request_method']);
+        $this->assertSame('/checkout', $storedInc['request_uri']);
+        $this->assertSame('billing_city', $storedInc['matched_param_key']);
+
         // 4. Client forging method (GET instead of incident's method) must be rejected
-        $_SERVER['REQUEST_METHOD'] = 'PUT';
-        $_SERVER['REQUEST_URI'] = '/checkout';
         $reqForgedMethod = new \WP_REST_Request('POST', '/webcare-pro-scanner/v1/firewall/logs/trust-action');
         $reqForgedMethod->set_header('content-type', 'application/json');
         $reqForgedMethod->set_body((string) wp_json_encode([
