@@ -940,8 +940,8 @@ class DistributedVelocityShield {
         $group = 'webcareproscan_dvs';
         $ip_hash = substr(md5($ip), 0, 12);
 
-        // 1. External Object Cache (Redis / Memcached)
-        if (function_exists('wp_using_ext_object_cache') && wp_using_ext_object_cache()) {
+        // 1. External Object Cache with verified Atomic Redis Lua backend
+        if (self::has_atomic_redis_lua_backend()) {
             $bucket_key = "{$cache_key}_{$bucket_id}";
             $ttl = self::SLIDING_WINDOW_SECONDS + self::BUCKET_DURATION * 2; // 80s
 
@@ -1005,93 +1005,22 @@ class DistributedVelocityShield {
                             }
                         }
                     } finally {
-                        // Atomic compare-and-delete lock release: strictly atomic where supported; fails safe (leaked to TTL) otherwise
+                        // Atomic compare-and-delete lock release via Redis Lua
                         self::release_ext_cache_lock($lock_key, $owner_token, $group);
                     }
                 }
             }
 
-            return self::get_sliding_metrics($cache_key);
+            $redis_metrics = self::get_sliding_metrics($cache_key);
+            // If Redis metrics succeeded, return immediately; otherwise fall through to atomic file transaction
+            if ($redis_metrics['count'] > 0) {
+                return $redis_metrics;
+            }
         }
 
-        // 2. High-concurrency APCu in-memory storage (Single-Node)
-        $is_apcu = function_exists('apcu_fetch') && function_exists('apcu_inc') && ini_get('apc.enabled') && (php_sapi_name() !== 'cli' || ini_get('apc.enable_cli'));
-        if ($is_apcu) {
-            $apc_bucket_key = "dvs_{$cache_key}_{$bucket_id}";
-            $ttl = self::SLIDING_WINDOW_SECONDS + self::BUCKET_DURATION * 2;
-
-            if (!apcu_exists($apc_bucket_key)) {
-                @apcu_add($apc_bucket_key, 0, $ttl);
-            }
-            apcu_inc($apc_bucket_key, 1);
-
-            $apc_ip_presence_key = "dvs_{$cache_key}_ip_{$bucket_id}_{$ip_hash}";
-            $existing_marker = @apcu_fetch($apc_ip_presence_key);
-
-            $needs_reg = false;
-            if ($existing_marker === false || $existing_marker === null) {
-                $needs_reg = true;
-            } elseif ($existing_marker === 0 || $existing_marker === '0') {
-                $needs_reg = true;
-            } elseif (is_numeric($existing_marker) && (int) $existing_marker > 0) {
-                $referenced_slot_key = "dvs_{$cache_key}_slot_{$bucket_id}_" . (int) $existing_marker;
-                if (!@apcu_exists($referenced_slot_key)) {
-                    $needs_reg = true;
-                }
-            }
-
-            if ($needs_reg) {
-                $lock_key = "dvs_{$cache_key}_lock_{$bucket_id}_{$ip_hash}";
-                // Use non-zero integer token for APCu atomic compare-and-swap (apcu_cas) support
-                $owner_token = (int) (random_int(100000000, 999999999) . random_int(1000, 9999));
-                $acquired = (bool) @apcu_add($lock_key, $owner_token, 10);
-
-                if ($acquired) {
-                    try {
-                        // Double-check state under lock
-                        $current_marker = @apcu_fetch($apc_ip_presence_key);
-                        $still_needs_reg = false;
-                        if ($current_marker === false || $current_marker === null || $current_marker === 0 || $current_marker === '0') {
-                            $still_needs_reg = true;
-                        } elseif (is_numeric($current_marker) && (int) $current_marker > 0) {
-                            $check_slot_key = "dvs_{$cache_key}_slot_{$bucket_id}_" . (int) $current_marker;
-                            if (!@apcu_exists($check_slot_key)) {
-                                $still_needs_reg = true;
-                            }
-                        }
-
-                        if ($still_needs_reg) {
-                            $apc_uniq_key = "dvs_{$cache_key}_uniq_{$bucket_id}";
-                            if (!apcu_exists($apc_uniq_key)) {
-                                @apcu_add($apc_uniq_key, 0, $ttl);
-                            }
-                            $slot = apcu_inc($apc_uniq_key, 1);
-
-                            if ($slot !== false) {
-                                $slot_key = "dvs_{$cache_key}_slot_{$bucket_id}_{$slot}";
-                                // Atomic fenced write: write slot ONLY if lock key still matches owner token
-                                $slot_written = self::atomic_fenced_apcu_store($lock_key, $owner_token, $slot_key, $ip_hash, $ttl);
-
-                                if ($slot_written) {
-                                    // Atomic fenced promotion: promote marker ONLY if lock key still matches owner token
-                                    $promoted = self::atomic_fenced_apcu_store($lock_key, $owner_token, $apc_ip_presence_key, (int) $slot, $ttl);
-                                    if (!$promoted) {
-                                        @apcu_delete($apc_ip_presence_key);
-                                    }
-                                }
-                            }
-                        }
-                    } finally {
-                        // Strictly atomic compare-and-swap lock release via apcu_cas; never non-atomic fallback
-                        self::release_apcu_lock($lock_key, $owner_token);
-                    }
-                }
-            }
-
-            return self::get_sliding_metrics($cache_key);
-        }
-
-        // 3. File transaction fallback with single-transaction flock(LOCK_EX)
+        // 2. Atomic flock(LOCK_EX) single-transaction file backend
+        // Route non-Redis backends (APCu, Memcached, generic object cache, or no external cache)
+        // directly to atomic file transactions, eliminating all non-atomic fallbacks and TOCTOU races.
         self::file_atomic_dvs_increment($cache_key, $bucket_id, $ip_hash);
         return self::get_sliding_metrics($cache_key);
     }
@@ -1200,8 +1129,8 @@ class DistributedVelocityShield {
         $total_count = 0;
         $all_unique_ips = [];
 
-        // Check external object cache
-        if (function_exists('wp_using_ext_object_cache') && wp_using_ext_object_cache()) {
+        // 1. External object cache with verified atomic Redis Lua backend
+        if (self::has_atomic_redis_lua_backend()) {
             $group = 'webcareproscan_dvs';
             for ($i = 0; $i < self::BUCKET_SLICES; $i++) {
                 $b_id = $current_bucket - $i;
@@ -1219,96 +1148,17 @@ class DistributedVelocityShield {
                     }
                 }
             }
-            return [
-                'count'      => $total_count,
-                'unique_ips' => count($all_unique_ips),
-            ];
-        }
-
-        // Check APCu
-        $is_apcu = function_exists('apcu_fetch') && ini_get('apc.enabled') && (php_sapi_name() !== 'cli' || ini_get('apc.enable_cli'));
-        if ($is_apcu) {
-            for ($i = 0; $i < self::BUCKET_SLICES; $i++) {
-                $b_id = $current_bucket - $i;
-                $val = apcu_fetch("dvs_{$cache_key}_{$b_id}");
-                if (is_numeric($val)) {
-                    $total_count += (int) $val;
-                }
-                $uniq_cnt = apcu_fetch("dvs_{$cache_key}_uniq_{$b_id}");
-                $slot_max = is_numeric($uniq_cnt) ? (int) $uniq_cnt : 0;
-                for ($s = 1; $s <= $slot_max; $s++) {
-                    $ip_h = apcu_fetch("dvs_{$cache_key}_slot_{$b_id}_{$s}");
-                    if (is_string($ip_h) && $ip_h !== '') {
-                        $all_unique_ips[$ip_h] = true;
-                    }
-                }
-            }
-            return [
-                'count'      => $total_count,
-                'unique_ips' => count($all_unique_ips),
-            ];
-        }
-
-        // Check file storage with shared read lock (LOCK_SH) to prevent reading during truncation/replacement
-        $upload_dir = wp_upload_dir();
-        $base_dir = (empty($upload_dir['error']) && !empty($upload_dir['basedir'])) ? $upload_dir['basedir'] : '';
-        if (!empty($base_dir)) {
-            $file = rtrim($base_dir, '/\\') . '/webcare-pro-security/rate-limits/dvs_' . substr(md5($cache_key), 0, 8) . '.php';
-            if (file_exists($file)) {
-                $fp = @fopen($file, 'rb');
-                if ($fp) {
-                    $read_locked = false;
-                    for ($r = 0; $r < 15; $r++) {
-                        if (@flock($fp, LOCK_SH | LOCK_NB)) {
-                            $read_locked = true;
-                            break;
-                        }
-                        usleep(10000); // 15 * 10ms = 150ms retry
-                    }
-
-                    $raw = '';
-                    if ($read_locked) {
-                        while (!feof($fp)) {
-                            $chunk = fread($fp, 8192);
-                            if ($chunk === false) {
-                                break;
-                            }
-                            $raw .= $chunk;
-                        }
-                        @flock($fp, LOCK_UN);
-                    } else {
-                        // Explicit, observable degradation policy under read-lock contention
-                        if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
-                            \WebCareProScanner\System\AuditLogger::log(
-                                'dvs_file_read_lock_exhausted',
-                                sprintf('DVS read lock timed out for %s; applying fail-safe degraded response.', substr($cache_key, 0, 32))
-                            );
-                        } else {
-                            error_log(sprintf('[WebCare Pro] DVS file read-lock timed out for %s.', substr($cache_key, 0, 32)));
-                        }
-                        $raw = '';
-                    }
-                    @fclose($fp);
-
-                    if ($raw !== '' && str_starts_with($raw, "<?php exit; ?>\n")) {
-                        $parsed = json_decode(substr($raw, 15), true);
-                        if (is_array($parsed)) {
-                            for ($i = 0; $i < self::BUCKET_SLICES; $i++) {
-                                $b_id = $current_bucket - $i;
-                                if (isset($parsed[$b_id]) && is_array($parsed[$b_id])) {
-                                    $total_count += (int) ($parsed[$b_id]['count'] ?? 0);
-                                    if (isset($parsed[$b_id]['ips']) && is_array($parsed[$b_id]['ips'])) {
-                                        foreach ($parsed[$b_id]['ips'] as $ip_hash) {
-                                            $all_unique_ips[$ip_hash] = true;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+            if ($total_count > 0 || count($all_unique_ips) > 0) {
+                return [
+                    'count'      => $total_count,
+                    'unique_ips' => count($all_unique_ips),
+                ];
             }
         }
+
+        // 2. Atomic flock(LOCK_SH) single-transaction file backend for non-Redis environments
+        // (APCu, Memcached, generic object cache, or no external cache)
+        $file_metrics = self::get_file_sliding_metrics($cache_key);
 
         // Also check if legacy transient events were seeded (for backwards compatibility / unit tests)
         $transient_events = get_transient($cache_key);
@@ -1316,19 +1166,19 @@ class DistributedVelocityShield {
             $cutoff = $now - self::SLIDING_WINDOW_SECONDS;
             foreach ($transient_events as $te) {
                 if (is_array($te) && isset($te['time']) && $te['time'] >= $cutoff) {
-                    $total_count++;
+                    $file_metrics['count']++;
                     $ip = (string) ($te['ip'] ?? '');
                     if ($ip !== '') {
                         $all_unique_ips[substr(md5($ip), 0, 12)] = true;
                     }
                 }
             }
+            if (!empty($all_unique_ips)) {
+                $file_metrics['unique_ips'] = max($file_metrics['unique_ips'], count($all_unique_ips));
+            }
         }
 
-        return [
-            'count'      => $total_count,
-            'unique_ips' => count($all_unique_ips),
-        ];
+        return $file_metrics;
     }
 
     /**
@@ -1345,6 +1195,33 @@ class DistributedVelocityShield {
             return [];
         }
         return array_fill(0, $metrics['count'], ['ip' => 'tracked_client', 'time' => time()]);
+    }
+
+    /**
+     * Determine if an atomic Redis Lua backend is active and available.
+     * Returns true ONLY when wp_using_ext_object_cache() is active AND a verified Redis client
+     * supporting eval() is resolved.
+     *
+     * @return bool
+     */
+    private static function has_atomic_redis_lua_backend(): bool {
+        if (!function_exists('wp_using_ext_object_cache') || !wp_using_ext_object_cache()) {
+            return false;
+        }
+
+        global $wp_object_cache;
+        if (!is_object($wp_object_cache)) {
+            return false;
+        }
+
+        $redis = null;
+        if (isset($wp_object_cache->redis) && is_object($wp_object_cache->redis)) {
+            $redis = $wp_object_cache->redis;
+        } elseif (method_exists($wp_object_cache, 'redis')) {
+            $redis = $wp_object_cache->redis();
+        }
+
+        return $redis !== null && method_exists($redis, 'eval');
     }
 
     /**

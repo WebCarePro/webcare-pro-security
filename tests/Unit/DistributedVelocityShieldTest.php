@@ -32,29 +32,71 @@ class DistributedVelocityShieldTest extends TestCase {
         $target_val = 'test_value_payload';
         $group = 'webcareproscan_dvs';
 
-        // 1. Simulate generic object cache without Redis client
+        // 1. Simulate generic object cache without Redis client using a proper object-cache mock
         global $wp_object_cache;
         $prev_cache = $wp_object_cache;
 
-        // Mock object cache without redis property or method
-        $mock_generic_cache = new \stdClass();
+        $mock_generic_cache = new class {
+            public int $set_calls = 0;
+            public int $get_calls = 0;
+            public array $storage = [];
+
+            public function get($key, $group = 'default', $force = false, &$found = null) {
+                $this->get_calls++;
+                $found = isset($this->storage[$group][$key]);
+                return $this->storage[$group][$key] ?? false;
+            }
+
+            public function set($key, $data, $group = 'default', $expire = 0) {
+                $this->set_calls++;
+                $this->storage[$group][$key] = $data;
+                return true;
+            }
+
+            public function add($key, $data, $group = 'default', $expire = 0) {
+                if (isset($this->storage[$group][$key])) {
+                    return false;
+                }
+                $this->storage[$group][$key] = $data;
+                return true;
+            }
+
+            public function delete($key, $group = 'default') {
+                unset($this->storage[$group][$key]);
+                return true;
+            }
+
+            public function incr($key, $offset = 1, $group = 'default') {
+                $current = (int) ($this->storage[$group][$key] ?? 0);
+                $this->storage[$group][$key] = $current + $offset;
+                return $this->storage[$group][$key];
+            }
+        };
+
         $wp_object_cache = $mock_generic_cache;
 
         try {
             $result = $method->invoke(null, $lock_key, $owner_token, $target_key, $target_val, $group, 60);
             $this->assertFalse($result, 'atomic_fenced_ext_cache_set must fail closed (return false) on generic object cache.');
-            $this->assertFalse(wp_cache_get($target_key, $group), 'Target key must not be written in cache on fail-closed backend.');
+            $this->assertSame(0, $mock_generic_cache->set_calls, 'Target key must not receive write calls on fail-closed backend.');
+            $this->assertFalse(wp_cache_get($target_key, $group), 'Target key must not exist in cache.');
         } finally {
             $wp_object_cache = $prev_cache;
         }
 
         // 2. Simulate Memcached wrapper object ($wp_object_cache->m)
-        $mock_memcached_cache = new \stdClass();
-        $mock_memcached_cache->m = new class {
-            public int $set_calls = 0;
-            public function getByKey($server_key, $key, $cb, &$cas) { return 'token_valid_123'; }
-            public function get($key, $cb, &$cas) { return 'token_valid_123'; }
-            public function set($key, $val, $exp) { $this->set_calls++; return true; }
+        $mock_memcached_cache = new class {
+            public $m;
+            public function __construct() {
+                $this->m = new class {
+                    public int $set_calls = 0;
+                    public function getByKey($server_key, $key, $cb = null, &$cas = null) { return 'token_valid_123'; }
+                    public function get($key, $cb = null, &$cas = null) { return 'token_valid_123'; }
+                    public function set($key, $val, $exp = 0) { $this->set_calls++; return true; }
+                };
+            }
+            public function get($key, $group = 'default', $force = false, &$found = null) { return false; }
+            public function set($key, $data, $group = 'default', $expire = 0) { return true; }
         };
         $wp_object_cache = $mock_memcached_cache;
 
@@ -141,8 +183,42 @@ class DistributedVelocityShieldTest extends TestCase {
     }
 
     /**
+     * Test that non-Redis backends (APCu, Memcached, generic object cache) accurately count unique_ips
+     * via the single-lock atomic flock(LOCK_EX) file backend without silently returning 0.
+     */
+    public function test_non_redis_backend_routes_to_atomic_file_and_counts_unique_ips_accurately(): void {
+        $cache_key = 'dvs_test_non_redis_' . bin2hex(random_bytes(4));
+        $ip1 = '198.51.100.11';
+        $ip2 = '198.51.100.12';
+
+        $refl = new \ReflectionClass(DistributedVelocityShield::class);
+        $appendMethod = $refl->getMethod('append_sliding_event');
+        $appendMethod->setAccessible(true);
+        $getMetricsMethod = $refl->getMethod('get_sliding_metrics');
+        $getMetricsMethod->setAccessible(true);
+
+        // Append events for IP 1 and IP 2
+        $res1 = $appendMethod->invoke(null, $cache_key, $ip1, 'Auth failure 1', []);
+        $this->assertSame(1, $res1['count']);
+        $this->assertSame(1, $res1['unique_ips']);
+
+        $res2 = $appendMethod->invoke(null, $cache_key, $ip1, 'Auth failure 2 from same IP', []);
+        $this->assertSame(2, $res2['count']);
+        $this->assertSame(1, $res2['unique_ips']);
+
+        $res3 = $appendMethod->invoke(null, $cache_key, $ip2, 'Auth failure 3 from distinct IP', []);
+        $this->assertSame(3, $res3['count']);
+        $this->assertSame(2, $res3['unique_ips'], 'DVS must accurately count exactly 2 unique IPs via file backend.');
+
+        $final_metrics = $getMetricsMethod->invoke(null, $cache_key);
+        $this->assertSame(3, $final_metrics['count']);
+        $this->assertSame(2, $final_metrics['unique_ips'], 'get_sliding_metrics must accurately return exactly 2 unique IPs.');
+    }
+
+    /**
      * Test file-lock exhaustion behavior: holding LOCK_EX in a fixture beyond retry budget
      * drops velocity event without corrupting file and logs dvs_file_lock_exhausted.
+     * Uses an isolated temporary directory for AuditLogger to protect production logs.
      */
     public function test_file_lock_exhaustion_drops_event_and_logs_audit_diagnostic(): void {
         $cache_key = 'dvs_test_flock_exhaust_' . bin2hex(random_bytes(4));
@@ -172,11 +248,12 @@ class DistributedVelocityShieldTest extends TestCase {
         $locked = flock($competing_fp, LOCK_EX | LOCK_NB);
         $this->assertTrue($locked, 'Test runner must acquire exclusive lock on test fixture file.');
 
-        // 3. Clear existing audit log file if present
-        $audit_log_file = untrailingslashit($upload_dir['basedir']) . '/webcare-pro-security/.logs/audit.log.php';
-        if (file_exists($audit_log_file)) {
-            @unlink($audit_log_file);
-        }
+        // 3. Isolate AuditLogger using temporary directory override
+        $isolated_audit_dir = sys_get_temp_dir() . '/webcare_test_audit_' . bin2hex(random_bytes(4));
+        wp_mkdir_p($isolated_audit_dir);
+
+        $prev_custom_dir = AuditLogger::$custom_log_dir;
+        AuditLogger::$custom_log_dir = $isolated_audit_dir;
 
         $refl = new \ReflectionClass(DistributedVelocityShield::class);
         $fileInc = $refl->getMethod('file_atomic_dvs_increment');
@@ -190,24 +267,37 @@ class DistributedVelocityShieldTest extends TestCase {
 
             // Worker must have waited for its 20 retries (~200ms)
             $this->assertGreaterThanOrEqual(0.18, $elapsed, 'Worker must respect bounded wait retries (200ms).');
+
+            // 4. Verify file payload remained completely unmodified (event dropped safely)
+            $content = file_get_contents($file);
+            $this->assertSame($initial_payload, $content, 'File contents must remain unmodified when lock acquisition times out.');
+
+            // 5. Verify exact AuditLogger diagnostic message in isolated test audit log file
+            $audit_log_file = $isolated_audit_dir . '/audit.log.php';
+            $this->assertFileExists($audit_log_file, 'Isolated AuditLogger log file must exist after exhaustion event.');
+            $audit_content = file_get_contents($audit_log_file);
+            $this->assertStringContainsString('dvs_file_lock_exhausted', $audit_content, 'Audit log must record dvs_file_lock_exhausted event type.');
+            $this->assertStringContainsString('DVS file write-lock acquisition timed out after 20 retries (200ms). Velocity event dropped.', $audit_content, 'Audit log must contain exact diagnostic message.');
         } finally {
             flock($competing_fp, LOCK_UN);
             fclose($competing_fp);
-        }
 
-        // 4. Verify file payload remained completely unmodified (event dropped safely)
-        $content = file_get_contents($file);
-        $this->assertSame($initial_payload, $content, 'File contents must remain unmodified when lock acquisition times out.');
+            // Restore AuditLogger custom dir and cleanup temp directory
+            AuditLogger::$custom_log_dir = $prev_custom_dir;
+            if (file_exists($isolated_audit_dir . '/audit.log.php')) {
+                @unlink($isolated_audit_dir . '/audit.log.php');
+            }
+            if (file_exists($isolated_audit_dir . '/.htaccess')) {
+                @unlink($isolated_audit_dir . '/.htaccess');
+            }
+            if (file_exists($isolated_audit_dir . '/index.php')) {
+                @unlink($isolated_audit_dir . '/index.php');
+            }
+            @rmdir($isolated_audit_dir);
 
-        // 5. Verify exact AuditLogger diagnostic message in audit log file
-        $this->assertFileExists($audit_log_file, 'AuditLogger raw log file must exist after exhaustion event.');
-        $audit_content = file_get_contents($audit_log_file);
-        $this->assertStringContainsString('dvs_file_lock_exhausted', $audit_content, 'Audit log must record dvs_file_lock_exhausted event type.');
-        $this->assertStringContainsString('DVS file write-lock acquisition timed out after 20 retries (200ms). Velocity event dropped.', $audit_content, 'Audit log must contain exact diagnostic message.');
-
-        // Clean up test file
-        if (file_exists($file)) {
-            @unlink($file);
+            if (file_exists($file)) {
+                @unlink($file);
+            }
         }
     }
 }

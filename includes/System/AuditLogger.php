@@ -7,13 +7,24 @@ if (!defined('ABSPATH')) {
 
 class AuditLogger {
 
+    /**
+     * Optional custom log directory override for testing and isolated environments.
+     *
+     * @var string|null
+     */
+    public static ?string $custom_log_dir = null;
+
     private $log_dir;
     private $log_file;
 
     public function __construct() {
-        $upload_dir = wp_upload_dir();
-        // Dot-prefixed protected directory blocked by Nginx /\.(?!well-known).* rules
-        $this->log_dir = untrailingslashit($upload_dir['basedir']) . '/webcare-pro-security/.logs';
+        if (self::$custom_log_dir !== null && self::$custom_log_dir !== '') {
+            $this->log_dir = untrailingslashit(self::$custom_log_dir);
+        } else {
+            $upload_dir = wp_upload_dir();
+            // Dot-prefixed protected directory blocked by Nginx /\.(?!well-known).* rules
+            $this->log_dir = untrailingslashit($upload_dir['basedir']) . '/webcare-pro-security/.logs';
+        }
         $this->log_file = $this->log_dir . '/audit.log.php';
     }
 
