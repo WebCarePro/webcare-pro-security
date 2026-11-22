@@ -185,8 +185,44 @@ class DistributedVelocityShieldTest extends TestCase {
     /**
      * Test that non-Redis backends (APCu, Memcached, generic object cache) accurately count unique_ips
      * via the single-lock atomic flock(LOCK_EX) file backend without silently returning 0.
+     * Uses an isolated temp directory for DVS storage and an explicit non-Redis object cache mock.
      */
     public function test_non_redis_backend_routes_to_atomic_file_and_counts_unique_ips_accurately(): void {
+        global $wp_object_cache;
+        $prev_cache = $wp_object_cache;
+        $prev_custom_storage = DistributedVelocityShield::$custom_storage_dir;
+
+        $temp_storage_dir = sys_get_temp_dir() . '/webcare_test_dvs_non_redis_' . bin2hex(random_bytes(4));
+        wp_mkdir_p($temp_storage_dir);
+        DistributedVelocityShield::$custom_storage_dir = $temp_storage_dir;
+
+        // Explicitly install a deterministic non-Redis object cache mock
+        $wp_object_cache = new class {
+            public array $items = [];
+            public function get($key, $group = 'default', $force = false, &$found = null) {
+                $found = isset($this->items["{$group}:{$key}"]);
+                return $this->items["{$group}:{$key}"] ?? false;
+            }
+            public function set($key, $val, $group = 'default', $exp = 0) {
+                $this->items["{$group}:{$key}"] = $val;
+                return true;
+            }
+            public function add($key, $val, $group = 'default', $exp = 0) {
+                if (isset($this->items["{$group}:{$key}"])) return false;
+                $this->items["{$group}:{$key}"] = $val;
+                return true;
+            }
+            public function incr($key, $offset = 1, $group = 'default') {
+                $current = $this->items["{$group}:{$key}"] ?? 0;
+                $this->items["{$group}:{$key}"] = $current + $offset;
+                return $this->items["{$group}:{$key}"];
+            }
+            public function delete($key, $group = 'default') {
+                unset($this->items["{$group}:{$key}"]);
+                return true;
+            }
+        };
+
         $cache_key = 'dvs_test_non_redis_' . bin2hex(random_bytes(4));
         $ip1 = '198.51.100.11';
         $ip2 = '198.51.100.12';
@@ -197,22 +233,38 @@ class DistributedVelocityShieldTest extends TestCase {
         $getMetricsMethod = $refl->getMethod('get_sliding_metrics');
         $getMetricsMethod->setAccessible(true);
 
-        // Append events for IP 1 and IP 2
-        $res1 = $appendMethod->invoke(null, $cache_key, $ip1, 'Auth failure 1', []);
-        $this->assertSame(1, $res1['count']);
-        $this->assertSame(1, $res1['unique_ips']);
+        try {
+            // Append events for IP 1 and IP 2
+            $res1 = $appendMethod->invoke(null, $cache_key, $ip1, 'Auth failure 1', []);
+            $this->assertSame(1, $res1['count']);
+            $this->assertSame(1, $res1['unique_ips']);
 
-        $res2 = $appendMethod->invoke(null, $cache_key, $ip1, 'Auth failure 2 from same IP', []);
-        $this->assertSame(2, $res2['count']);
-        $this->assertSame(1, $res2['unique_ips']);
+            $res2 = $appendMethod->invoke(null, $cache_key, $ip1, 'Auth failure 2 from same IP', []);
+            $this->assertSame(2, $res2['count']);
+            $this->assertSame(1, $res2['unique_ips']);
 
-        $res3 = $appendMethod->invoke(null, $cache_key, $ip2, 'Auth failure 3 from distinct IP', []);
-        $this->assertSame(3, $res3['count']);
-        $this->assertSame(2, $res3['unique_ips'], 'DVS must accurately count exactly 2 unique IPs via file backend.');
+            $res3 = $appendMethod->invoke(null, $cache_key, $ip2, 'Auth failure 3 from distinct IP', []);
+            $this->assertSame(3, $res3['count']);
+            $this->assertSame(2, $res3['unique_ips'], 'DVS must accurately count exactly 2 unique IPs via file backend.');
 
-        $final_metrics = $getMetricsMethod->invoke(null, $cache_key);
-        $this->assertSame(3, $final_metrics['count']);
-        $this->assertSame(2, $final_metrics['unique_ips'], 'get_sliding_metrics must accurately return exactly 2 unique IPs.');
+            $final_metrics = $getMetricsMethod->invoke(null, $cache_key);
+            $this->assertSame(3, $final_metrics['count']);
+            $this->assertSame(2, $final_metrics['unique_ips'], 'get_sliding_metrics must accurately return exactly 2 unique IPs.');
+        } finally {
+            $wp_object_cache = $prev_cache;
+            DistributedVelocityShield::$custom_storage_dir = $prev_custom_storage;
+
+            // Clean up temporary files in test directory
+            if (is_dir($temp_storage_dir)) {
+                $files = glob($temp_storage_dir . '/*');
+                if (is_array($files)) {
+                    foreach ($files as $f) {
+                        @unlink($f);
+                    }
+                }
+                @rmdir($temp_storage_dir);
+            }
+        }
     }
 
     /**
@@ -351,6 +403,7 @@ class DistributedVelocityShieldTest extends TestCase {
             wp_mkdir_p($dir);
         }
         $file = $dir . '/dvs_' . substr(md5($cache_key), 0, 8) . '.php';
+        $lock_file = $file . '.lock';
 
         // 1. Pre-seed file with initial known valid payload
         $initial_payload = "<?php exit; ?>\n" . json_encode([
@@ -358,11 +411,11 @@ class DistributedVelocityShieldTest extends TestCase {
         ]);
         file_put_contents($file, $initial_payload);
 
-        // 2. Hold LOCK_EX exclusively on this file to force lock exhaustion on competing workers
-        $competing_fp = fopen($file, 'c+');
+        // 2. Hold LOCK_EX exclusively on the .lock sidecar file to force lock exhaustion on competing workers
+        $competing_fp = fopen($lock_file, 'c+');
         $this->assertIsResource($competing_fp);
         $locked = flock($competing_fp, LOCK_EX | LOCK_NB);
-        $this->assertTrue($locked, 'Test runner must acquire exclusive lock on test fixture file.');
+        $this->assertTrue($locked, 'Test runner must acquire exclusive lock on test fixture lock file.');
 
         // 3. Isolate AuditLogger using temporary directory override
         $isolated_audit_dir = sys_get_temp_dir() . '/webcare_test_audit_' . bin2hex(random_bytes(4));
@@ -413,6 +466,9 @@ class DistributedVelocityShieldTest extends TestCase {
 
             if (file_exists($file)) {
                 @unlink($file);
+            }
+            if (file_exists($lock_file)) {
+                @unlink($lock_file);
             }
         }
     }

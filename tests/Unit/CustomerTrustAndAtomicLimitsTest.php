@@ -1144,13 +1144,14 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
         $this->assertGreaterThanOrEqual(2, $metrics['unique_ips'], 'File fallback must accurately count unique IP addresses.');
 
         // 2. Controlled competing lock holder simulation:
-        // Acquire an exclusive flock on the exact DVS storage file to simulate another process holding the lock.
+        // Acquire an exclusive flock on the dedicated .lock sidecar file to simulate another process holding the write lock.
         $upload_dir = wp_upload_dir();
         $base_dir = (empty($upload_dir['error']) && !empty($upload_dir['basedir'])) ? $upload_dir['basedir'] : '';
         if (!empty($base_dir)) {
             $file = rtrim($base_dir, '/\\') . '/webcare-pro-security/rate-limits/dvs_' . substr(md5($cache_key), 0, 8) . '.php';
+            $lock_file = $file . '.lock';
             if (file_exists($file)) {
-                $competing_fp = fopen($file, 'r+');
+                $competing_fp = fopen($lock_file, 'c+');
                 if ($competing_fp && flock($competing_fp, LOCK_EX | LOCK_NB)) {
                     // While the lock is held by competing process, verify that another worker times out gracefully
                     $startTime = microtime(true);

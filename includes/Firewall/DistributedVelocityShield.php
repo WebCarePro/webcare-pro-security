@@ -46,6 +46,12 @@ class DistributedVelocityShield {
     public const DEFAULT_UNDER_ATTACK_DURATION    = 900; // 15 minutes in seconds
 
     /**
+     * Optional custom storage directory override for isolated unit tests.
+     * When null, falls back to default wp-content/uploads/webcare-pro-security/rate-limits.
+     */
+    public static ?string $custom_storage_dir = null;
+
+    /**
      * Initialize hooks.
      */
     public static function init(): void {
@@ -942,15 +948,16 @@ class DistributedVelocityShield {
 
         // 1. External Object Cache with verified Atomic Redis Lua backend
         if (self::has_atomic_redis_lua_backend()) {
-            $bucket_key = "{$cache_key}_{$bucket_id}";
-            $set_key = "{$cache_key}_ips_{$bucket_id}";
+            $hash_tag   = '{dvs:' . $cache_key . ':' . $bucket_id . '}';
+            $bucket_key = $hash_tag . ':cnt';
+            $set_key    = $hash_tag . ':ips';
             $ttl = self::SLIDING_WINDOW_SECONDS + self::BUCKET_DURATION * 2; // 80s
 
             $redis_client = self::get_redis_client();
             if ($redis_client !== null) {
                 global $wp_object_cache;
                 $prefix_count = method_exists($wp_object_cache, 'build_key') ? $wp_object_cache->build_key($bucket_key, $group) : "{$group}:{$bucket_key}";
-                $prefix_set = method_exists($wp_object_cache, 'build_key') ? $wp_object_cache->build_key($set_key, $group) : "{$group}:{$set_key}";
+                $prefix_set   = method_exists($wp_object_cache, 'build_key') ? $wp_object_cache->build_key($set_key, $group) : "{$group}:{$set_key}";
 
                 $lua = "local c = redis.call('INCR', KEYS[1])\n"
                      . "if c == 1 then redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2])) end\n"
@@ -960,11 +967,12 @@ class DistributedVelocityShield {
 
                 try {
                     $res = @$redis_client->eval($lua, [$prefix_count, $prefix_set, $ip_hash, (string) $ttl], 2);
-                    if (is_array($res) && !empty($res)) {
+                    if (is_array($res) && count($res) >= 2 && is_numeric($res[0]) && is_numeric($res[1])) {
                         $redis_metrics = self::get_sliding_metrics($cache_key);
-                        if ($redis_metrics['count'] > 0) {
-                            return $redis_metrics;
-                        }
+                        return [
+                            'count'      => max((int) $res[0], (int) ($redis_metrics['count'] ?? 0)),
+                            'unique_ips' => max((int) $res[1], (int) ($redis_metrics['unique_ips'] ?? 0)),
+                        ];
                     }
                 } catch (\Throwable) {
                     // Fall through to atomic file transaction
@@ -980,28 +988,52 @@ class DistributedVelocityShield {
     }
 
     /**
-     * File transaction atomic bucket increment.
+     * Resolve the DVS file storage directory.
+     * Honors self::$custom_storage_dir when set (e.g. during unit tests).
+     *
+     * @return string
      */
-    private static function file_atomic_dvs_increment(string $cache_key, int $bucket_id, string $ip_hash): void {
-        $upload_dir = wp_upload_dir();
-        $base_dir = (empty($upload_dir['error']) && !empty($upload_dir['basedir'])) ? $upload_dir['basedir'] : '';
-        if (empty($base_dir)) {
-            return;
+    private static function get_storage_dir(): string {
+        if (self::$custom_storage_dir !== null && self::$custom_storage_dir !== '') {
+            $dir = self::$custom_storage_dir;
+        } else {
+            $upload_dir = wp_upload_dir();
+            $base_dir = (empty($upload_dir['error']) && !empty($upload_dir['basedir'])) ? $upload_dir['basedir'] : '';
+            if (empty($base_dir)) {
+                return '';
+            }
+            $dir = rtrim($base_dir, '/\\') . '/webcare-pro-security/rate-limits';
         }
-        $dir = rtrim($base_dir, '/\\') . '/webcare-pro-security/rate-limits';
+
         if (!is_dir($dir)) {
             wp_mkdir_p($dir);
         }
-        $file = $dir . "/dvs_" . substr(md5($cache_key), 0, 8) . ".php";
 
-        $fp = @fopen($file, 'c+');
-        if (!$fp) {
+        return $dir;
+    }
+
+    /**
+     * File transaction atomic bucket increment.
+     * Uses a dedicated sidecar lock file (.lock) and crash-safe temporary file atomic rename()
+     * to ensure live data files are never truncated or left in a corrupt state if execution halts.
+     */
+    private static function file_atomic_dvs_increment(string $cache_key, int $bucket_id, string $ip_hash): void {
+        $dir = self::get_storage_dir();
+        if ($dir === '') {
+            return;
+        }
+
+        $data_file = $dir . '/dvs_' . substr(md5($cache_key), 0, 8) . '.php';
+        $lock_file = $data_file . '.lock';
+
+        $lock_fp = @fopen($lock_file, 'c+');
+        if (!$lock_fp) {
             return;
         }
 
         $locked = false;
         for ($i = 0; $i < 20; $i++) {
-            if (@flock($fp, LOCK_EX | LOCK_NB)) {
+            if (@flock($lock_fp, LOCK_EX | LOCK_NB)) {
                 $locked = true;
                 break;
             }
@@ -1009,7 +1041,7 @@ class DistributedVelocityShield {
         }
 
         if (!$locked) {
-            @fclose($fp);
+            @fclose($lock_fp);
             // Operational system logging for lock contention (never human admin activity log)
             if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
                 \WebCareProScanner\System\AuditLogger::log(
@@ -1022,53 +1054,88 @@ class DistributedVelocityShield {
             return;
         }
 
-        $raw = '';
-        while (!feof($fp)) {
-            $chunk = fread($fp, 8192);
-            if ($chunk === false) {
-                @flock($fp, LOCK_UN);
-                @fclose($fp);
+        try {
+            $raw = '';
+            if (file_exists($data_file)) {
+                $content = @file_get_contents($data_file);
+                if (is_string($content)) {
+                    $raw = $content;
+                }
+            }
+
+            $data = [];
+            if ($raw !== '' && str_starts_with($raw, "<?php exit; ?>\n")) {
+                $parsed = json_decode(substr($raw, 15), true);
+                if (is_array($parsed)) {
+                    $data = $parsed;
+                }
+            }
+
+            $now = time();
+            $current_bucket = (int) floor($now / self::BUCKET_DURATION);
+            // Prune older than 8 buckets (80 seconds)
+            foreach ($data as $b_id => $v) {
+                if ((int) $b_id < ($current_bucket - 8)) {
+                    unset($data[$b_id]);
+                }
+            }
+
+            if (!isset($data[$bucket_id]) || !is_array($data[$bucket_id])) {
+                $data[$bucket_id] = ['count' => 0, 'ips' => []];
+            }
+
+            $data[$bucket_id]['count'] = (int) ($data[$bucket_id]['count'] ?? 0) + 1;
+            if (!is_array($data[$bucket_id]['ips'])) {
+                $data[$bucket_id]['ips'] = [];
+            }
+            if (!in_array($ip_hash, $data[$bucket_id]['ips'], true)) {
+                $data[$bucket_id]['ips'][] = $ip_hash;
+            }
+
+            $payload = "<?php exit; ?>\n" . json_encode($data);
+            $tmp = $data_file . '.tmp.' . bin2hex(random_bytes(4));
+
+            $tmp_fp = @fopen($tmp, 'wb');
+            if (!$tmp_fp) {
+                if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                    \WebCareProScanner\System\AuditLogger::log(
+                        'dvs_tmp_file_create_failed',
+                        'Failed to create temporary file for DVS atomic rename.'
+                    );
+                }
                 return;
             }
-            $raw .= $chunk;
-        }
 
-        $data = [];
-        if ($raw !== '' && str_starts_with($raw, "<?php exit; ?>\n")) {
-            $parsed = json_decode(substr($raw, 15), true);
-            if (is_array($parsed)) {
-                $data = $parsed;
+            $written = @fwrite($tmp_fp, $payload);
+            $flushed = @fflush($tmp_fp);
+            $closed  = @fclose($tmp_fp);
+
+            if ($written !== strlen($payload) || $flushed !== true || $closed !== true) {
+                @unlink($tmp);
+                if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                    \WebCareProScanner\System\AuditLogger::log(
+                        'dvs_tmp_file_write_failed',
+                        'Incomplete write or flush to DVS temporary file. Write aborted.'
+                    );
+                }
+                return;
             }
-        }
 
-        $now = time();
-        $current_bucket = (int) floor($now / self::BUCKET_DURATION);
-        // Prune older than 8 buckets (80 seconds)
-        foreach ($data as $b_id => $v) {
-            if ((int) $b_id < ($current_bucket - 8)) {
-                unset($data[$b_id]);
+            @chmod($tmp, 0600);
+
+            if (!@rename($tmp, $data_file)) {
+                @unlink($tmp);
+                if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                    \WebCareProScanner\System\AuditLogger::log(
+                        'dvs_atomic_rename_failed',
+                        'Failed to atomically rename DVS temporary file to live data file.'
+                    );
+                }
             }
+        } finally {
+            @flock($lock_fp, LOCK_UN);
+            @fclose($lock_fp);
         }
-
-        if (!isset($data[$bucket_id]) || !is_array($data[$bucket_id])) {
-            $data[$bucket_id] = ['count' => 0, 'ips' => []];
-        }
-
-        $data[$bucket_id]['count'] = (int) ($data[$bucket_id]['count'] ?? 0) + 1;
-        if (!is_array($data[$bucket_id]['ips'])) {
-            $data[$bucket_id]['ips'] = [];
-        }
-        if (!in_array($ip_hash, $data[$bucket_id]['ips'], true)) {
-            $data[$bucket_id]['ips'][] = $ip_hash;
-        }
-
-        $payload = "<?php exit; ?>\n" . json_encode($data);
-        rewind($fp);
-        ftruncate($fp, 0);
-        fwrite($fp, $payload);
-        fflush($fp);
-        @flock($fp, LOCK_UN);
-        @fclose($fp);
     }
 
     /**
@@ -1091,7 +1158,8 @@ class DistributedVelocityShield {
 
             for ($i = 0; $i < self::BUCKET_SLICES; $i++) {
                 $b_id = $current_bucket - $i;
-                $bucket_key = "{$cache_key}_{$b_id}";
+                $hash_tag = '{dvs:' . $cache_key . ':' . $b_id . '}';
+                $bucket_key = $hash_tag . ':cnt';
                 $prefix_count = method_exists($wp_object_cache, 'build_key') ? $wp_object_cache->build_key($bucket_key, $group) : "{$group}:{$bucket_key}";
 
                 $slice_count = 0;
@@ -1117,7 +1185,7 @@ class DistributedVelocityShield {
                 $total_count += $slice_count;
 
                 // Retrieve discrete unique IPs from slice Set
-                $set_key = "{$cache_key}_ips_{$b_id}";
+                $set_key = $hash_tag . ':ips';
                 $prefix_set = method_exists($wp_object_cache, 'build_key') ? $wp_object_cache->build_key($set_key, $group) : "{$group}:{$set_key}";
                 try {
                     $members = null;
@@ -1200,6 +1268,8 @@ class DistributedVelocityShield {
 
     /**
      * Resolve the underlying Redis client from WordPress object cache if available.
+     * Only accepts known PhpRedis-compatible clients (\Redis, \RedisCluster, \Relay\Relay, or explicit test doubles)
+     * that expose eval(), get(), and sMembers()/smembers(). Returns null for unknown clients.
      *
      * @return object|null
      */
@@ -1220,7 +1290,25 @@ class DistributedVelocityShield {
             $redis = $wp_object_cache->redis();
         }
 
-        if ($redis !== null && method_exists($redis, 'eval')) {
+        if (!is_object($redis)) {
+            return null;
+        }
+
+        // Validate PhpRedis / Relay / RedisCluster class hierarchy or test double exposing required methods
+        $is_known_client = ($redis instanceof \Redis)
+            || ($redis instanceof \RedisCluster)
+            || (class_exists('\\Relay\\Relay', false) && $redis instanceof \Relay\Relay)
+            || (defined('WEBCAREPROSCAN_TESTING') && (method_exists($redis, 'eval') && method_exists($redis, 'get') && (method_exists($redis, 'sMembers') || method_exists($redis, 'smembers'))));
+
+        if (!$is_known_client) {
+            return null;
+        }
+
+        if (
+            method_exists($redis, 'eval') &&
+            method_exists($redis, 'get') &&
+            (method_exists($redis, 'sMembers') || method_exists($redis, 'smembers'))
+        ) {
             return $redis;
         }
 
@@ -1286,10 +1374,9 @@ class DistributedVelocityShield {
         $total_count = 0;
         $all_unique_ips = [];
 
-        $upload_dir = wp_upload_dir();
-        $base_dir = (empty($upload_dir['error']) && !empty($upload_dir['basedir'])) ? $upload_dir['basedir'] : '';
-        if (!empty($base_dir)) {
-            $file = rtrim($base_dir, '/\\') . '/webcare-pro-security/rate-limits/dvs_' . substr(md5($cache_key), 0, 8) . '.php';
+        $dir = self::get_storage_dir();
+        if ($dir !== '') {
+            $file = $dir . '/dvs_' . substr(md5($cache_key), 0, 8) . '.php';
             if (file_exists($file)) {
                 $fp = @fopen($file, 'rb');
                 if ($fp) {

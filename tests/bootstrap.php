@@ -1,6 +1,10 @@
 <?php
 declare(strict_types=1);
 
+if (!defined('WEBCAREPROSCAN_TESTING')) {
+    define('WEBCAREPROSCAN_TESTING', true);
+}
+
 if (!defined('ABSPATH')) {
     define('ABSPATH', sys_get_temp_dir() . '/wp-mock/');
 }
