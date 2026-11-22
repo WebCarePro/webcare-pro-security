@@ -965,25 +965,50 @@ class DistributedVelocityShield {
                     $slot_written = (bool) wp_cache_set($slot_key, $ip_hash, $group, $ttl);
                 }
 
+                $promoted = false;
                 if ($slot !== false && $slot_written) {
                     // Update presence marker to confirmed slot index
-                    wp_cache_set($ip_presence_key, (int) $slot, $group, $ttl);
-                } else {
-                    // Rollback presence marker on detected failure
+                    $promoted = (bool) wp_cache_set($ip_presence_key, (int) $slot, $group, $ttl);
+                }
+
+                // If slot allocation, storage, or marker promotion failed, delete presence key so next attempt retries cleanly
+                if (!$promoted) {
                     wp_cache_delete($ip_presence_key, $group);
                 }
             } else {
-                // Crash recovery: if marker exists but holds 0 (previous worker terminated mid-flight), re-attempt slot allocation
+                // Check if marker exists but needs recovery (unconfirmed 0 or referenced slot evicted)
                 $existing_marker = wp_cache_get($ip_presence_key, $group);
+                $needs_repair = false;
                 if ($existing_marker === 0 || $existing_marker === '0') {
-                    $bucket_uniq_key = "{$cache_key}_uniq_{$bucket_id}";
-                    wp_cache_add($bucket_uniq_key, 0, $group, $ttl);
-                    $slot = wp_cache_incr($bucket_uniq_key, 1, $group);
-                    if ($slot !== false) {
-                        $slot_key = "{$cache_key}_slot_{$bucket_id}_{$slot}";
-                        if (wp_cache_set($slot_key, $ip_hash, $group, $ttl)) {
-                            wp_cache_set($ip_presence_key, (int) $slot, $group, $ttl);
+                    $needs_repair = true;
+                } elseif (is_numeric($existing_marker) && (int) $existing_marker > 0) {
+                    // Validate that the confirmed marker's referenced slot has not been independently evicted
+                    $referenced_slot_key = "{$cache_key}_slot_{$bucket_id}_" . (int) $existing_marker;
+                    $referenced_ip = wp_cache_get($referenced_slot_key, $group);
+                    if ($referenced_ip === false || $referenced_ip === null) {
+                        $needs_repair = true;
+                    }
+                }
+
+                if ($needs_repair) {
+                    // Serialize recovery with atomic per-IP recovery mutex (10s lease)
+                    $recov_lock_key = "{$cache_key}_rlock_{$bucket_id}_{$ip_hash}";
+                    $acquired_recov = wp_cache_add($recov_lock_key, 1, $group, 10);
+                    if ($acquired_recov) {
+                        $bucket_uniq_key = "{$cache_key}_uniq_{$bucket_id}";
+                        wp_cache_add($bucket_uniq_key, 0, $group, $ttl);
+                        $slot = wp_cache_incr($bucket_uniq_key, 1, $group);
+                        $repaired = false;
+                        if ($slot !== false) {
+                            $slot_key = "{$cache_key}_slot_{$bucket_id}_{$slot}";
+                            if (wp_cache_set($slot_key, $ip_hash, $group, $ttl)) {
+                                $repaired = (bool) wp_cache_set($ip_presence_key, (int) $slot, $group, $ttl);
+                            }
                         }
+                        if (!$repaired) {
+                            wp_cache_delete($ip_presence_key, $group);
+                        }
+                        wp_cache_delete($recov_lock_key, $group);
                     }
                 }
             }
@@ -1019,25 +1044,48 @@ class DistributedVelocityShield {
                     $slot_written = (bool) @apcu_store($slot_key, $ip_hash, $ttl);
                 }
 
+                $promoted = false;
                 if ($slot !== false && $slot_written) {
-                    @apcu_store($apc_ip_presence_key, (int) $slot, $ttl);
-                } else {
+                    $promoted = (bool) @apcu_store($apc_ip_presence_key, (int) $slot, $ttl);
+                }
+
+                if (!$promoted) {
                     @apcu_delete($apc_ip_presence_key);
                 }
             } else {
-                // Crash recovery: if marker exists but holds 0 (unconfirmed), repair slot registration
+                // Check if marker exists but needs recovery (unconfirmed 0 or referenced slot evicted)
                 $existing_marker = @apcu_fetch($apc_ip_presence_key);
+                $needs_repair = false;
                 if ($existing_marker === 0 || $existing_marker === '0') {
-                    $apc_uniq_key = "dvs_{$cache_key}_uniq_{$bucket_id}";
-                    if (!apcu_exists($apc_uniq_key)) {
-                        @apcu_add($apc_uniq_key, 0, $ttl);
+                    $needs_repair = true;
+                } elseif (is_numeric($existing_marker) && (int) $existing_marker > 0) {
+                    $referenced_slot_key = "dvs_{$cache_key}_slot_{$bucket_id}_" . (int) $existing_marker;
+                    if (!@apcu_exists($referenced_slot_key)) {
+                        $needs_repair = true;
                     }
-                    $slot = apcu_inc($apc_uniq_key, 1);
-                    if ($slot !== false) {
-                        $slot_key = "dvs_{$cache_key}_slot_{$bucket_id}_{$slot}";
-                        if (@apcu_store($slot_key, $ip_hash, $ttl)) {
-                            @apcu_store($apc_ip_presence_key, (int) $slot, $ttl);
+                }
+
+                if ($needs_repair) {
+                    // Serialize recovery with atomic per-IP recovery mutex (10s lease)
+                    $apc_recov_lock_key = "dvs_{$cache_key}_rlock_{$bucket_id}_{$ip_hash}";
+                    $acquired_recov = @apcu_add($apc_recov_lock_key, 1, 10);
+                    if ($acquired_recov) {
+                        $apc_uniq_key = "dvs_{$cache_key}_uniq_{$bucket_id}";
+                        if (!apcu_exists($apc_uniq_key)) {
+                            @apcu_add($apc_uniq_key, 0, $ttl);
                         }
+                        $slot = apcu_inc($apc_uniq_key, 1);
+                        $repaired = false;
+                        if ($slot !== false) {
+                            $slot_key = "dvs_{$cache_key}_slot_{$bucket_id}_{$slot}";
+                            if (@apcu_store($slot_key, $ip_hash, $ttl)) {
+                                $repaired = (bool) @apcu_store($apc_ip_presence_key, (int) $slot, $ttl);
+                            }
+                        }
+                        if (!$repaired) {
+                            @apcu_delete($apc_ip_presence_key);
+                        }
+                        @apcu_delete($apc_recov_lock_key);
                     }
                 }
             }

@@ -163,7 +163,8 @@ final class ProtocolAndBotEvaluatorTest extends TestCase {
             uri: '/wp-json/stripe/webhook',
             userAgent: '',
             server: [
-                'HTTP_REFERER' => '',
+                'HTTP_REFERER'          => '',
+                'HTTP_STRIPE_SIGNATURE' => 't=' . time() . ',v1=test_sig',
             ]
         );
         $this->assertNull($evaluator->evaluate_runtime_request($stripeCtx));
@@ -213,5 +214,75 @@ final class ProtocolAndBotEvaluatorTest extends TestCase {
 
         $verdict = $evaluator->evaluate_runtime_request($ctx);
         $this->assertNull($verdict);
+    }
+
+    public function test_webhook_candidate_rejected_on_standard_checkout_route_when_ua_is_empty(): void {
+        $evaluator = new ProtocolAndBotEvaluator();
+        $settings = SettingsManager::get_settings();
+        $settings['waf_enabled'] = true;
+        $settings['waf_mode'] = 'enabled';
+        $settings['waf_block_empty_post_ua_referer'] = true;
+        $settings['waf_ecommerce_safe_mode'] = false; // Disable generic bypass to test candidate isolation
+        update_option('webcareproscan_settings', $settings);
+
+        // Candidate IP (e.g. Stripe IP) with signature header, but hitting standard checkout instead of webhook endpoint
+        $stripeIp = CommerceSessionGuard::STRIPE_WEBHOOK_IPS[0];
+        $checkoutCtx = new RequestContext(
+            ip: $stripeIp,
+            method: 'POST',
+            uri: '/checkout/',
+            userAgent: '',
+            server: [
+                'HTTP_REFERER'          => '',
+                'HTTP_STRIPE_SIGNATURE' => 't=123456789,v1=candidate_unverified',
+            ]
+        );
+
+        $verdict = $evaluator->evaluate_runtime_request($checkoutCtx);
+        $this->assertInstanceOf(WafVerdict::class, $verdict);
+        $this->assertSame('block', $verdict->get_action_value());
+        $this->assertSame('WAF-EMPTY-POST-UA-REFERER', $verdict->ruleId);
+    }
+
+    public function test_negative_webhook_substring_in_arbitrary_path_and_query_does_not_exempt(): void {
+        $evaluator = new ProtocolAndBotEvaluator();
+        $settings = SettingsManager::get_settings();
+        $settings['waf_enabled'] = true;
+        $settings['waf_mode'] = 'enabled';
+        $settings['waf_block_empty_post_ua_referer'] = true;
+        $settings['waf_ecommerce_safe_mode'] = false;
+        update_option('webcareproscan_settings', $settings);
+
+        $stripeIp = CommerceSessionGuard::STRIPE_WEBHOOK_IPS[0];
+
+        // 1. Unrelated path containing 'webhook' as a substring (e.g. /my-webhook-article/)
+        $ctx1 = new RequestContext(
+            ip: $stripeIp,
+            method: 'POST',
+            uri: '/my-webhook-article/',
+            userAgent: '',
+            server: [
+                'HTTP_REFERER'          => '',
+                'HTTP_STRIPE_SIGNATURE' => 't=123456789,v1=candidate_unverified',
+            ]
+        );
+        $verdict1 = $evaluator->evaluate_runtime_request($ctx1);
+        $this->assertInstanceOf(WafVerdict::class, $verdict1);
+        $this->assertSame('WAF-EMPTY-POST-UA-REFERER', $verdict1->ruleId);
+
+        // 2. Query string containing 'webhook=1' or 'ipn=1' on arbitrary page
+        $ctx2 = new RequestContext(
+            ip: $stripeIp,
+            method: 'POST',
+            uri: '/blog/?webhook=1&ipn=1',
+            userAgent: '',
+            server: [
+                'HTTP_REFERER'          => '',
+                'HTTP_STRIPE_SIGNATURE' => 't=123456789,v1=candidate_unverified',
+            ]
+        );
+        $verdict2 = $evaluator->evaluate_runtime_request($ctx2);
+        $this->assertInstanceOf(WafVerdict::class, $verdict2);
+        $this->assertSame('WAF-EMPTY-POST-UA-REFERER', $verdict2->ruleId);
     }
 }

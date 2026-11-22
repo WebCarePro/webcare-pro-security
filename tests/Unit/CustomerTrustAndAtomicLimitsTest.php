@@ -888,4 +888,88 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
             }
         }
     }
+
+    public function test_dvs_unique_ip_aggregation_counts_distinct_ips_without_race(): void {
+        $cache_key = 'dvs_test_race_' . bin2hex(random_bytes(4));
+
+        // Simulate 3 distinct IPs logging failure
+        $ip1 = '198.51.100.1';
+        $ip2 = '198.51.100.2';
+        $ip3 = '198.51.100.3';
+
+        // Call record_auth_failure with test IPs
+        \WebCareProScanner\Firewall\DistributedVelocityShield::record_auth_failure($ip1, 'user1', 'Password failed');
+        \WebCareProScanner\Firewall\DistributedVelocityShield::record_auth_failure($ip2, 'user2', 'Password failed');
+        \WebCareProScanner\Firewall\DistributedVelocityShield::record_auth_failure($ip3, 'user3', 'Password failed');
+
+        $metrics = \WebCareProScanner\Firewall\DistributedVelocityShield::get_live_velocity();
+        $this->assertGreaterThanOrEqual(3, $metrics['auth']['unique_ips']);
+        $this->assertGreaterThanOrEqual(3, $metrics['auth']['failures_last_min']);
+    }
+
+    public function test_dvs_cross_slice_deduplication_does_not_inflate_single_ip(): void {
+        // Verify that a single IP repeating across multiple sub-window slices yields unique_ips = 1
+        $cache_key = 'dvs_test_single_ip_' . bin2hex(random_bytes(4));
+        $single_ip = '198.51.100.77';
+
+        // Direct reflection access to test append_sliding_event and get_sliding_metrics
+        $refl = new \ReflectionClass(\WebCareProScanner\Firewall\DistributedVelocityShield::class);
+        $appendMethod = $refl->getMethod('append_sliding_event');
+        $appendMethod->setAccessible(true);
+        $getMetricsMethod = $refl->getMethod('get_sliding_metrics');
+        $getMetricsMethod->setAccessible(true);
+
+        // Append 4 events for the same IP
+        $appendMethod->invoke(null, $cache_key, $single_ip, 'Failed auth 1', []);
+        $appendMethod->invoke(null, $cache_key, $single_ip, 'Failed auth 2', []);
+        $appendMethod->invoke(null, $cache_key, $single_ip, 'Failed auth 3', []);
+        $appendMethod->invoke(null, $cache_key, $single_ip, 'Failed auth 4', []);
+
+        $metrics = $getMetricsMethod->invoke(null, $cache_key);
+        $this->assertSame(4, $metrics['count']);
+        $this->assertSame(1, $metrics['unique_ips'], 'Single repeating IP must strictly yield unique_ips = 1, never inflated by slice count.');
+    }
+
+    public function test_dvs_operational_lock_events_excluded_from_activity_log_bridge(): void {
+        \wp_set_current_user(1);
+        $user = \wp_get_current_user();
+        $user->roles = ['administrator'];
+        $user->allcaps = ['manage_options' => true];
+
+        // Ensure activity logger tracking array is clean
+        \WebCareProScanner\System\WebCareActivityLogger::$logged_actions_in_request = [];
+
+        // Log DVS lock exhaustion operational events
+        \WebCareProScanner\System\AuditLogger::log('dvs_file_lock_exhausted', 'DVS write-lock test');
+        \WebCareProScanner\System\AuditLogger::log('dvs_file_read_lock_exhausted', 'DVS read-lock test');
+
+        $logged = \WebCareProScanner\System\WebCareActivityLogger::$logged_actions_in_request;
+        $this->assertArrayNotHasKey('dvs_file_lock_exhausted', $logged, 'DVS write-lock exhaustion must be excluded from admin activity log.');
+        $this->assertArrayNotHasKey('dvs_file_read_lock_exhausted', $logged, 'DVS read-lock exhaustion must be excluded from admin activity log.');
+
+        \wp_set_current_user(0);
+    }
+
+    public function test_dvs_concurrent_recovery_and_slot_eviction_handling(): void {
+        $cache_key = 'dvs_test_repair_' . bin2hex(random_bytes(4));
+        $test_ip = '198.51.100.91';
+
+        $refl = new \ReflectionClass(\WebCareProScanner\Firewall\DistributedVelocityShield::class);
+        $appendMethod = $refl->getMethod('append_sliding_event');
+        $appendMethod->setAccessible(true);
+        $getMetricsMethod = $refl->getMethod('get_sliding_metrics');
+        $getMetricsMethod->setAccessible(true);
+
+        // Append initial event
+        $appendMethod->invoke(null, $cache_key, $test_ip, 'Initial auth failure', []);
+        $initial = $getMetricsMethod->invoke(null, $cache_key);
+        $this->assertSame(1, $initial['count']);
+        $this->assertSame(1, $initial['unique_ips']);
+
+        // Simulate subsequent event with existing presence marker
+        $appendMethod->invoke(null, $cache_key, $test_ip, 'Second auth failure', []);
+        $second = $getMetricsMethod->invoke(null, $cache_key);
+        $this->assertSame(2, $second['count']);
+        $this->assertSame(1, $second['unique_ips'], 'DVS must remain exactly 1 unique IP under subsequent requests.');
+    }
 }
