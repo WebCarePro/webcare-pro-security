@@ -1091,14 +1091,16 @@ class DistributedVelocityShieldTest extends TestCase {
             if (!@$redis->connect('127.0.0.1', 6379, 1.0)) {
                 return null;
             }
-            if ($redis->ping() !== '+PONG' && $redis->ping() !== true) {
-                return null;
-            }
         } catch (\Throwable) {
-            return null; // Unreachable Redis -> test skips
+            return null; // Only unreachable TCP connection skips
         }
 
-        // Outside catch: DB 15 failure propagates and fails the test instead of getting caught and skipped
+        $pong = $redis->ping();
+        if ($pong !== '+PONG' && $pong !== true) {
+            throw new \RuntimeException('Redis connected but PING failed.');
+        }
+
+        // DB 15 failure propagates and fails the test instead of getting caught and skipped
         if ($redis->select(15) !== true) {
             throw new \RuntimeException('Unable to select isolated Redis DB 15.');
         }
@@ -1314,20 +1316,26 @@ class DistributedVelocityShieldTest extends TestCase {
             $this->assertSame(0, $real_redis->exists($lead_zero_ev_key), 'Event set must NEVER be created on leading-zero string counter.');
         } finally {
             // Clean up ONLY keys created during this test run in db 15 using cursor-driven SCAN loop with SCAN_RETRY
-            if (defined('\\Redis::OPT_SCAN') && defined('\\Redis::SCAN_RETRY')) {
-                $real_redis->setOption(\Redis::OPT_SCAN, \Redis::SCAN_RETRY);
-            }
-            $it = null;
-            $pattern = "*{$test_id}*";
-            do {
-                $keys = $real_redis->scan($it, $pattern, 100);
-                if (is_array($keys) && !empty($keys)) {
-                    $real_redis->del($keys);
+            try {
+                if (defined('\\Redis::OPT_SCAN') && defined('\\Redis::SCAN_RETRY')) {
+                    $real_redis->setOption(\Redis::OPT_SCAN, \Redis::SCAN_RETRY);
                 }
-            } while ($it > 0);
-            $wp_object_cache = $prev_cache;
-            if (function_exists('wp_using_ext_object_cache')) {
-                wp_using_ext_object_cache($prev_ext);
+                $it = null;
+                $pattern = "*{$test_id}*";
+                do {
+                    $keys = $real_redis->scan($it, $pattern, 100);
+                    if ($keys === false) {
+                        break;
+                    }
+                    if (is_array($keys) && !empty($keys)) {
+                        $real_redis->del($keys);
+                    }
+                } while ($it > 0);
+            } finally {
+                $wp_object_cache = $prev_cache;
+                if (function_exists('wp_using_ext_object_cache')) {
+                    wp_using_ext_object_cache($prev_ext);
+                }
             }
         }
     }
