@@ -170,8 +170,13 @@ final class SystemDoctor {
             ? \WebCareProScanner\Firewall\WafFileLogger::ensure_directory_secured()
             : (file_exists($log_storage_dir . '/.htaccess') && file_exists($log_storage_dir . '/web.config'));
 
-        // Precise filesystem directory boundary check (not raw string prefix)
-        $is_outside_webroot = !str_starts_with($log_storage_dir_norm . '/', $site_abspath_norm . '/');
+        // Symlink-aware and normalized filesystem directory boundary check
+        $real_storage      = @realpath($log_storage_dir) ?: $log_storage_dir;
+        $real_abspath      = @realpath(ABSPATH) ?: ABSPATH;
+        $real_storage_norm = rtrim(wp_normalize_path($real_storage), '/');
+        $real_abspath_norm = rtrim(wp_normalize_path($real_abspath), '/');
+
+        $is_outside_webroot = !str_starts_with($real_storage_norm . '/', $real_abspath_norm . '/');
 
         $waf_prot_status   = 'fail';
         $waf_prot_message  = '';

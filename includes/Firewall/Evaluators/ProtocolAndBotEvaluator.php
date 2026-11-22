@@ -387,14 +387,17 @@ final readonly class ProtocolAndBotEvaluator implements WafEvaluatorInterface {
         $is_webhook_candidate = ($webhook_status === 'provider_candidate');
 
         // Missing UA / Referer exemption:
-        // Fully verified webhooks are granted exemption.
-        // Candidates from verified payment provider IPs (e.g. Stripe/PayPal) are exempted if addressing a webhook/commerce URI or carrying provider protocol headers.
-        $is_webhook_route = str_contains($request_uri, '/stripe/')
+        // Fully verified webhooks (valid HMAC signature against configured secret) are granted exemption.
+        // Candidates from verified payment provider IPs (e.g. Stripe/PayPal) are exempted ONLY if addressing a strictly recognized webhook/IPN endpoint.
+        // General commerce and membership checkout/cart routes must NEVER inherit candidate exemption.
+        $is_strict_webhook_route = str_contains($request_uri, '/stripe/')
             || str_contains($request_uri, '/paypal/')
             || str_contains($request_uri, 'webhook')
             || str_contains($request_uri, 'ipn')
-            || CommerceSessionGuard::is_commerce_or_membership_request($request_uri);
-        $is_webhook_exempt = $is_verified_webhook || ($is_webhook_candidate && $is_webhook_route);
+            || str_contains($request_uri, 'wc-api=')
+            || str_contains($request_uri, '/wc-api/');
+
+        $is_webhook_exempt = $is_verified_webhook || ($is_webhook_candidate && $is_strict_webhook_route);
 
         if (!empty($settings['waf_block_empty_post_ua_referer']) && $is_post && !$is_options && !$is_webhook_exempt) {
             $is_commerce_safe = !empty($settings['waf_ecommerce_safe_mode']) && CommerceSessionGuard::is_commerce_or_membership_request($request_uri);
