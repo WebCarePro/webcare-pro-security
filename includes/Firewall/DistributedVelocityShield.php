@@ -948,35 +948,83 @@ class DistributedVelocityShield {
 
         // 1. External Object Cache with verified Atomic Redis Lua backend
         if (self::has_atomic_redis_lua_backend()) {
-            $hash_tag   = '{dvs:' . $cache_key . ':' . $bucket_id . '}';
-            $bucket_key = $hash_tag . ':cnt';
-            $set_key    = $hash_tag . ':ips';
-            $ttl = self::SLIDING_WINDOW_SECONDS + self::BUCKET_DURATION * 2; // 80s
+            $hash_tag       = '{dvs:' . $cache_key . ':' . $bucket_id . '}';
+            $bucket_key     = $hash_tag . ':cnt';
+            $set_key        = $hash_tag . ':ips';
+            $event_set_key  = $hash_tag . ':ev';
+            $event_id       = bin2hex(random_bytes(8));
+            $ttl            = self::SLIDING_WINDOW_SECONDS + self::BUCKET_DURATION * 2; // 80s
 
             $redis_client = self::get_redis_client();
             if ($redis_client !== null) {
                 global $wp_object_cache;
                 $prefix_count = method_exists($wp_object_cache, 'build_key') ? $wp_object_cache->build_key($bucket_key, $group) : "{$group}:{$bucket_key}";
                 $prefix_set   = method_exists($wp_object_cache, 'build_key') ? $wp_object_cache->build_key($set_key, $group) : "{$group}:{$set_key}";
+                $prefix_ev    = method_exists($wp_object_cache, 'build_key') ? $wp_object_cache->build_key($event_set_key, $group) : "{$group}:{$event_set_key}";
 
-                $lua = "local c = redis.call('INCR', KEYS[1])\n"
+                $lua = "local t1 = redis.call('TYPE', KEYS[1])['ok']\n"
+                     . "if t1 ~= 'none' and t1 ~= 'string' then return redis.error_reply('WRONGTYPE_PREFLIGHT') end\n"
+                     . "local t2 = redis.call('TYPE', KEYS[2])['ok']\n"
+                     . "if t2 ~= 'none' and t2 ~= 'set' then return redis.error_reply('WRONGTYPE_PREFLIGHT') end\n"
+                     . "local t3 = redis.call('TYPE', KEYS[3])['ok']\n"
+                     . "if t3 ~= 'none' and t3 ~= 'set' then return redis.error_reply('WRONGTYPE_PREFLIGHT') end\n"
+                     . "local added = redis.call('SADD', KEYS[3], ARGV[3])\n"
+                     . "if added == 0 then\n"
+                     . "    local cur = redis.call('GET', KEYS[1])\n"
+                     . "    return {tonumber(cur) or 0, redis.call('SCARD', KEYS[2])}\n"
+                     . "end\n"
+                     . "local c = redis.call('INCR', KEYS[1])\n"
                      . "if c == 1 then redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2])) end\n"
                      . "redis.call('SADD', KEYS[2], ARGV[1])\n"
                      . "redis.call('EXPIRE', KEYS[2], tonumber(ARGV[2]))\n"
+                     . "redis.call('EXPIRE', KEYS[3], tonumber(ARGV[2]))\n"
                      . "return {c, redis.call('SCARD', KEYS[2])}";
 
+                $eval_args = [$prefix_count, $prefix_set, $prefix_ev, $ip_hash, (string) $ttl, $event_id];
+                $res = null;
+
+                // First attempt
                 try {
-                    $res = @$redis_client->eval($lua, [$prefix_count, $prefix_set, $ip_hash, (string) $ttl], 2);
-                    if (is_array($res) && count($res) >= 2 && is_numeric($res[0]) && is_numeric($res[1])) {
-                        $redis_metrics = self::get_sliding_metrics($cache_key);
-                        return [
-                            'count'      => max((int) $res[0], (int) ($redis_metrics['count'] ?? 0)),
-                            'unique_ips' => max((int) $res[1], (int) ($redis_metrics['unique_ips'] ?? 0)),
-                        ];
-                    }
+                    $res = @$redis_client->eval($lua, $eval_args, 3);
                 } catch (\Throwable) {
-                    // Fall through to atomic file transaction
+                    $res = null;
                 }
+
+                // If first attempt returned invalid or failed, retry ONCE with the exact same event_id
+                if (!is_array($res) || count($res) < 2 || !is_numeric($res[0]) || !is_numeric($res[1])) {
+                    try {
+                        $res = @$redis_client->eval($lua, $eval_args, 3);
+                    } catch (\Throwable) {
+                        $res = null;
+                    }
+                }
+
+                if (is_array($res) && count($res) >= 2 && is_numeric($res[0]) && is_numeric($res[1])) {
+                    $redis_metrics = self::get_sliding_metrics($cache_key);
+                    return [
+                        'count'      => max((int) $res[0], (int) ($redis_metrics['count'] ?? 0)),
+                        'unique_ips' => max((int) $res[1], (int) ($redis_metrics['unique_ips'] ?? 0)),
+                        'complete'   => (bool) ($redis_metrics['complete'] ?? true),
+                        'degraded'   => (bool) ($redis_metrics['degraded'] ?? false),
+                    ];
+                }
+
+                // Ambiguous failure persists after retry: log and fail closed (never silent split-store write to file)
+                if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                    \WebCareProScanner\System\AuditLogger::log(
+                        'dvs_redis_eval_failed',
+                        sprintf('Redis EVAL velocity tracking failed after retry for %s; degraded response returned without file split-write.', substr($cache_key, 0, 32))
+                    );
+                } else {
+                    error_log(sprintf('[WebCare Pro] Redis EVAL velocity tracking failed after retry for %s.', substr($cache_key, 0, 32)));
+                }
+
+                return [
+                    'count'      => 0,
+                    'unique_ips' => 0,
+                    'complete'   => false,
+                    'degraded'   => true,
+                ];
             }
         }
 
@@ -1142,7 +1190,7 @@ class DistributedVelocityShield {
      * Aggregate sliding window atomic bucket counts across the active 60-second window.
      *
      * @param string $cache_key
-     * @return array{count: int, unique_ips: int}
+     * @return array{count: int, unique_ips: int, complete: bool, degraded: bool}
      */
     public static function get_sliding_metrics(string $cache_key): array {
         $now = time();
@@ -1155,6 +1203,7 @@ class DistributedVelocityShield {
             $redis_client = self::get_redis_client();
             $group = 'webcareproscan_dvs';
             global $wp_object_cache;
+            $failed_slices = 0;
 
             for ($i = 0; $i < self::BUCKET_SLICES; $i++) {
                 $b_id = $current_bucket - $i;
@@ -1163,30 +1212,35 @@ class DistributedVelocityShield {
                 $prefix_count = method_exists($wp_object_cache, 'build_key') ? $wp_object_cache->build_key($bucket_key, $group) : "{$group}:{$bucket_key}";
 
                 $slice_count = 0;
+                $slice_count_ok = false;
+                $slice_read_attempted = false;
                 try {
                     $c_val = null;
                     if ($redis_client !== null && method_exists($redis_client, 'get')) {
-                        $c_val = @$redis_client->get($prefix_count);
+                        $slice_read_attempted = true;
+                        $c_val = $redis_client->get($prefix_count);
                     }
                     if (is_numeric($c_val)) {
                         $slice_count = (int) $c_val;
-                    } else {
+                        $slice_count_ok = true;
+                    } elseif ($c_val === null || $c_val === false) {
                         $val = wp_cache_get($bucket_key, $group);
                         if (is_numeric($val)) {
                             $slice_count = (int) $val;
+                            $slice_count_ok = true;
+                        } elseif ($val === false) {
+                            $slice_count_ok = true; // Key expired or absent
                         }
                     }
                 } catch (\Throwable) {
-                    $val = wp_cache_get($bucket_key, $group);
-                    if (is_numeric($val)) {
-                        $slice_count = (int) $val;
-                    }
+                    $slice_count_ok = false;
                 }
                 $total_count += $slice_count;
 
                 // Retrieve discrete unique IPs from slice Set
                 $set_key = $hash_tag . ':ips';
                 $prefix_set = method_exists($wp_object_cache, 'build_key') ? $wp_object_cache->build_key($set_key, $group) : "{$group}:{$set_key}";
+                $slice_set_ok = false;
                 try {
                     $members = null;
                     if ($redis_client !== null && method_exists($redis_client, 'sMembers')) {
@@ -1200,16 +1254,37 @@ class DistributedVelocityShield {
                                 $all_unique_ips[$ip_h] = true;
                             }
                         }
+                        $slice_set_ok = true;
+                    } elseif ($members === false || $members === null) {
+                        // Key not present or empty slice
+                        $slice_set_ok = true;
                     }
                 } catch (\Throwable) {
-                    // Ignore single slice error
+                    $slice_set_ok = false;
+                }
+
+                if (!$slice_count_ok || !$slice_set_ok) {
+                    $failed_slices++;
                 }
             }
 
-            if ($total_count > 0 || count($all_unique_ips) > 0) {
+            if ($failed_slices > 0) {
+                if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                    \WebCareProScanner\System\AuditLogger::log(
+                        'dvs_redis_partial_read',
+                        sprintf('DVS Redis slice metrics encountered %d failed slices out of %d for %s; degraded response returned.', $failed_slices, self::BUCKET_SLICES, substr($cache_key, 0, 32))
+                    );
+                } else {
+                    error_log(sprintf('[WebCare Pro] DVS Redis slice metrics encountered %d failed slices for %s.', $failed_slices, substr($cache_key, 0, 32)));
+                }
+            }
+
+            if ($total_count > 0 || count($all_unique_ips) > 0 || $failed_slices > 0) {
                 return [
                     'count'      => $total_count,
                     'unique_ips' => count($all_unique_ips),
+                    'complete'   => ($failed_slices === 0),
+                    'degraded'   => ($failed_slices > 0),
                 ];
             }
         }
@@ -1435,6 +1510,8 @@ class DistributedVelocityShield {
         return [
             'count'      => $total_count,
             'unique_ips' => count($all_unique_ips),
+            'complete'   => true,
+            'degraded'   => false,
         ];
     }
 

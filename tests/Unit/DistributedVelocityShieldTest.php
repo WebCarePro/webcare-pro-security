@@ -284,8 +284,23 @@ class DistributedVelocityShieldTest extends TestCase {
                 $this->eval_calls++;
                 $count_key = $args[0];
                 $set_key = $args[1];
-                $ip_hash = $args[2];
-                $ttl = (int) $args[3];
+                $ev_key = $args[2];
+                $ip_hash = $args[3];
+                $ttl = (int) $args[4];
+                $event_id = $args[5] ?? 'default_ev';
+
+                if (!isset($this->sets[$ev_key])) {
+                    $this->sets[$ev_key] = [];
+                }
+
+                // Deduplicate replay of same event_id
+                if (isset($this->sets[$ev_key][$event_id])) {
+                    return [
+                        $this->counters[$count_key] ?? 0,
+                        count($this->sets[$set_key] ?? []),
+                    ];
+                }
+                $this->sets[$ev_key][$event_id] = true;
 
                 if (!isset($this->counters[$count_key])) {
                     $this->counters[$count_key] = 0;
@@ -469,6 +484,213 @@ class DistributedVelocityShieldTest extends TestCase {
             }
             if (file_exists($lock_file)) {
                 @unlink($lock_file);
+            }
+        }
+    }
+
+    /**
+     * Test idempotent Redis Lua execution: replaying the same event_id does not double-increment,
+     * and an ambiguous Redis EVAL failure does NOT split-write to the local file backend.
+     */
+    public function test_redis_lua_idempotency_and_no_file_split_write_on_eval_failure(): void {
+        global $wp_object_cache;
+        $prev_cache = $wp_object_cache;
+        $prev_custom_storage = DistributedVelocityShield::$custom_storage_dir;
+
+        $temp_storage_dir = sys_get_temp_dir() . '/webcare_test_dvs_no_split_' . bin2hex(random_bytes(4));
+        wp_mkdir_p($temp_storage_dir);
+        DistributedVelocityShield::$custom_storage_dir = $temp_storage_dir;
+
+        $mock_redis = new class {
+            public int $eval_calls = 0;
+            public array $counters = [];
+            public array $sets = [];
+            public bool $fail_eval = false;
+
+            public function eval($script, $args = [], $num_keys = 0) {
+                $this->eval_calls++;
+                if ($this->fail_eval) {
+                    throw new \RuntimeException('Redis connection timeout during EVAL');
+                }
+
+                $count_key = $args[0];
+                $set_key   = $args[1];
+                $ev_key    = $args[2];
+                $ip_hash   = $args[3];
+                $ttl       = (int) $args[4];
+                $event_id  = $args[5] ?? 'default_ev';
+
+                if (!isset($this->sets[$ev_key])) {
+                    $this->sets[$ev_key] = [];
+                }
+
+                // Deduplicate replay of same event_id
+                if (isset($this->sets[$ev_key][$event_id])) {
+                    return [
+                        $this->counters[$count_key] ?? 0,
+                        count($this->sets[$set_key] ?? []),
+                    ];
+                }
+                $this->sets[$ev_key][$event_id] = true;
+
+                if (!isset($this->counters[$count_key])) {
+                    $this->counters[$count_key] = 0;
+                }
+                $this->counters[$count_key]++;
+
+                if (!isset($this->sets[$set_key])) {
+                    $this->sets[$set_key] = [];
+                }
+                $this->sets[$set_key][$ip_hash] = true;
+
+                return [
+                    $this->counters[$count_key],
+                    count($this->sets[$set_key]),
+                ];
+            }
+
+            public function sMembers($key) {
+                return array_keys($this->sets[$key] ?? []);
+            }
+
+            public function get($key) {
+                return $this->counters[$key] ?? null;
+            }
+        };
+
+        $mock_object_cache = new class($mock_redis) {
+            public $redis;
+            public function __construct($r) { $this->redis = $r; }
+            public function build_key($key, $group) { return "{$group}:{$key}"; }
+            public function get($key, $group = 'default', $force = false, &$found = null) {
+                $k = $this->build_key($key, $group);
+                $found = isset($this->redis->counters[$k]);
+                return $this->redis->counters[$k] ?? false;
+            }
+            public function set($key, $val, $group = 'default', $exp = 0) { return true; }
+            public function add($key, $val, $group = 'default', $exp = 0) { return true; }
+            public function incr($key, $offset = 1, $group = 'default') { return 1; }
+            public function delete($key, $group = 'default') { return true; }
+        };
+
+        $wp_object_cache = $mock_object_cache;
+
+        $prev_ext = function_exists('wp_using_ext_object_cache') ? wp_using_ext_object_cache() : false;
+        if (function_exists('wp_using_ext_object_cache')) {
+            wp_using_ext_object_cache(true);
+        }
+
+        $refl = new \ReflectionClass(DistributedVelocityShield::class);
+        $appendMethod = $refl->getMethod('append_sliding_event');
+        $appendMethod->setAccessible(true);
+
+        $cache_key = 'dvs_test_idempotent_' . bin2hex(random_bytes(4));
+        $ip = '192.0.2.77';
+
+        try {
+            // 1. First record succeeds via Redis
+            $res1 = $appendMethod->invoke(null, $cache_key, $ip, 'Failure 1', []);
+            $this->assertSame(1, $res1['count']);
+            $this->assertSame(1, $res1['unique_ips']);
+            $this->assertTrue($res1['complete']);
+            $this->assertFalse($res1['degraded']);
+
+            // 2. Simulate EVAL failure after retry
+            $mock_redis->fail_eval = true;
+            $res2 = $appendMethod->invoke(null, $cache_key, $ip, 'Failure 2 with Redis down', []);
+
+            // Ambiguous failure must return degraded response without split-writing to file backend
+            $this->assertSame(0, $res2['count']);
+            $this->assertSame(0, $res2['unique_ips']);
+            $this->assertFalse($res2['complete']);
+            $this->assertTrue($res2['degraded']);
+
+            // Verify no files were created in local storage directory
+            $files = glob($temp_storage_dir . '/*');
+            $this->assertEmpty($files, 'Ambiguous Redis EVAL failure must never split-write into local file store.');
+        } finally {
+            $wp_object_cache = $prev_cache;
+            DistributedVelocityShield::$custom_storage_dir = $prev_custom_storage;
+            if (function_exists('wp_using_ext_object_cache')) {
+                wp_using_ext_object_cache($prev_ext);
+            }
+
+            if (is_dir($temp_storage_dir)) {
+                $files = glob($temp_storage_dir . '/*');
+                if (is_array($files)) {
+                    foreach ($files as $f) {
+                        @unlink($f);
+                    }
+                }
+                @rmdir($temp_storage_dir);
+            }
+        }
+    }
+
+    /**
+     * Test that a partial/failed slice read in get_sliding_metrics() returns complete=false and degraded=true.
+     */
+    public function test_partial_slice_read_returns_degraded_status(): void {
+        global $wp_object_cache;
+        $prev_cache = $wp_object_cache;
+
+        $mock_redis = new class {
+            public int $get_calls = 0;
+            public function get($key) {
+                $this->get_calls++;
+                // Simulate failure on every 3rd slice call
+                if ($this->get_calls % 3 === 0) {
+                    throw new \RuntimeException('Redis slice read timeout');
+                }
+                return '2';
+            }
+            public function sMembers($key) {
+                return ['testhash1'];
+            }
+            public function eval($script, $args = [], $num_keys = 0) {
+                return [1, 1];
+            }
+        };
+
+        $mock_object_cache = new class($mock_redis) {
+            public $redis;
+            public function __construct($r) { $this->redis = $r; }
+            public function build_key($key, $group) { return "{$group}:{$key}"; }
+            public function get($key, $group = 'default', $force = false, &$found = null) {
+                throw new \RuntimeException('Object cache fallback failure');
+            }
+            public function set($key, $val, $group = 'default', $exp = 0) { return true; }
+            public function add($key, $val, $group = 'default', $exp = 0) { return true; }
+            public function incr($key, $offset = 1, $group = 'default') { return 1; }
+            public function delete($key, $group = 'default') { return true; }
+        };
+
+        $wp_object_cache = $mock_object_cache;
+
+        $prev_ext = function_exists('wp_using_ext_object_cache') ? wp_using_ext_object_cache() : false;
+        if (function_exists('wp_using_ext_object_cache')) {
+            wp_using_ext_object_cache(true);
+        }
+
+        $refl = new \ReflectionClass(DistributedVelocityShield::class);
+        $getMetricsMethod = $refl->getMethod('get_sliding_metrics');
+        $getMetricsMethod->setAccessible(true);
+
+        $cache_key = 'dvs_test_partial_slice_' . bin2hex(random_bytes(4));
+
+        try {
+            $hasRedisMethod = $refl->getMethod('has_atomic_redis_lua_backend');
+            $hasRedisMethod->setAccessible(true);
+            $this->assertTrue($hasRedisMethod->invoke(null), 'has_atomic_redis_lua_backend must be true for test_partial_slice_read_returns_degraded_status');
+
+            $metrics = $getMetricsMethod->invoke(null, $cache_key);
+            $this->assertFalse($metrics['complete'], 'Partial read with failed slices must mark complete as false.');
+            $this->assertTrue($metrics['degraded'], 'Partial read with failed slices must mark degraded as true.');
+            $this->assertGreaterThan(0, $metrics['count'], 'Partial metrics must still sum accessible slice counts.');
+        } finally {
+            $wp_object_cache = $prev_cache;
+            if (function_exists('wp_using_ext_object_cache')) {
+                wp_using_ext_object_cache($prev_ext);
             }
         }
     }
