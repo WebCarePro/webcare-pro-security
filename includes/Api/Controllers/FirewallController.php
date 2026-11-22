@@ -489,59 +489,138 @@ final class FirewallController extends AbstractApiController {
         $method      = strtoupper(sanitize_key(trim((string) ($params['method'] ?? ''))));
         $incident_id = sanitize_text_field(trim((string) ($params['incident_id'] ?? '')));
 
-        // When method or parameter is omitted, authoritatively look up the exact logged incident
-        if (($method === '' || $param_key === '') && class_exists('\\WebCareProScanner\\Firewall\\WafFileLogger')) {
-            $query_args = [
-                'action' => 'all',
-                'range'  => '7days',
-            ];
-            if ($incident_id !== '') {
-                $query_args['search'] = $incident_id;
-            } elseif ($rule_id !== '') {
-                $query_args['search'] = $rule_id;
-            } else {
-                $query_args['search'] = $uri;
-            }
+        if ($incident_id === '') {
+            return new \WP_REST_Response([
+                'success' => false,
+                'code'    => 'missing_incident_id',
+                'message' => __('Authoritative incident ID is strictly required to establish verified method and parameter context.', 'webcare-pro-security'),
+            ], 400);
+        }
 
-            $recent_logs = \WebCareProScanner\Firewall\WafFileLogger::query_logs($query_args, 20);
-            foreach ($recent_logs['logs'] ?? [] as $log) {
-                $log_inc_id  = (string) ($log['incident_id'] ?? ($log['id'] ?? ''));
-                $log_uri     = (string) ($log['request_uri'] ?? '');
-                $log_rule    = (string) ($log['rule_id'] ?? '');
+        if (!class_exists('\\WebCareProScanner\\Firewall\\WafFileLogger')) {
+            return new \WP_REST_Response(['success' => false, 'message' => __('WAF file logger unavailable.', 'webcare-pro-security')], 500);
+        }
 
-                $matched = false;
-                if ($incident_id !== '' && ($log_inc_id === $incident_id || (string) ($log['id'] ?? '') === $incident_id)) {
-                    $matched = true;
-                } elseif ($incident_id === '' && $rule_id !== '' && $log_rule === $rule_id && ($uri === '' || $log_uri === $uri || str_starts_with($log_uri, $uri))) {
-                    $matched = true;
-                }
+        // Authoritatively query and resolve the exact incident by incident_id
+        $recent_logs = \WebCareProScanner\Firewall\WafFileLogger::query_logs([
+            'search' => $incident_id,
+            'action' => 'all',
+            'range'  => '7days',
+        ], 50);
 
-                if ($matched) {
-                    if ($method === '' && !empty($log['request_method'])) {
-                        $method = strtoupper((string) $log['request_method']);
-                    }
-                    if ($param_key === '') {
-                        $resolved_pk = (string) ($log['matched_param_key'] ?? ($log['matched_param'] ?? ''));
-                        if ($resolved_pk !== '') {
-                            $param_key = sanitize_text_field($resolved_pk);
-                        }
-                    }
-                    break;
-                }
+        $incident_record = null;
+        foreach ($recent_logs['logs'] ?? [] as $log) {
+            $log_inc_id = (string) ($log['incident_id'] ?? ($log['id'] ?? ''));
+            if ($log_inc_id === $incident_id || (string) ($log['id'] ?? '') === $incident_id) {
+                $incident_record = $log;
+                break;
             }
         }
 
-        // Mandatory method validation: Never silently substitute POST for an unknown or missing method
+        if ($incident_record === null) {
+            return new \WP_REST_Response([
+                'success' => false,
+                'code'    => 'incident_not_found',
+                'message' => sprintf(__('Incident record "%s" was not found in audit logs. Cannot establish verified trust context.', 'webcare-pro-security'), $incident_id),
+            ], 404);
+        }
+
+        // Extract and verify server-authoritative incident values
+        $authoritative_method = strtoupper(trim((string) ($incident_record['request_method'] ?? '')));
+        $authoritative_rule   = trim((string) ($incident_record['rule_id'] ?? ''));
+        $raw_inc_uri          = (string) ($incident_record['request_uri'] ?? '');
+        $authoritative_path   = (string) wp_parse_url($raw_inc_uri, PHP_URL_PATH);
+        if ($authoritative_path === '') {
+            $authoritative_path = (string) strtok($raw_inc_uri, '?');
+        }
+        if ($authoritative_path === '') {
+            $authoritative_path = '/';
+        }
+
+        // Authoritative parameter key resolution: use matched_param_key exclusively.
+        // Never fall back to matched_param or payload match values for historical records.
+        $authoritative_param_key = trim((string) ($incident_record['matched_param_key'] ?? ''));
+
+        // Validate client parameters against authoritative incident record to prevent parameter/method forgery
+        if ($method !== '' && $method !== $authoritative_method) {
+            return new \WP_REST_Response([
+                'success' => false,
+                'code'    => 'method_mismatch',
+                'message' => sprintf(
+                    __('Supplied method "%1$s" does not match authoritative incident method "%2$s".', 'webcare-pro-security'),
+                    $method,
+                    $authoritative_method
+                ),
+            ], 400);
+        }
+        $method = $authoritative_method;
+
+        if ($rule_id !== '' && $rule_id !== $authoritative_rule) {
+            return new \WP_REST_Response([
+                'success' => false,
+                'code'    => 'rule_mismatch',
+                'message' => sprintf(
+                    __('Supplied rule ID "%1$s" does not match authoritative incident rule ID "%2$s".', 'webcare-pro-security'),
+                    $rule_id,
+                    $authoritative_rule
+                ),
+            ], 400);
+        }
+        $rule_id = $authoritative_rule;
+
+        $client_clean_path = (string) wp_parse_url($uri, PHP_URL_PATH);
+        if ($client_clean_path === '') {
+            $client_clean_path = (string) strtok($uri, '?');
+        }
+        if ($client_clean_path !== '' && $client_clean_path !== $authoritative_path) {
+            return new \WP_REST_Response([
+                'success' => false,
+                'code'    => 'uri_mismatch',
+                'message' => sprintf(
+                    __('Supplied URI path "%1$s" does not match authoritative incident path "%2$s".', 'webcare-pro-security'),
+                    $client_clean_path,
+                    $authoritative_path
+                ),
+            ], 400);
+        }
+        $target_uri = $authoritative_path;
+
+        // If the client requested parameter-specific scoping, verify the parameter key against authoritative incident
+        if ($param_key !== '') {
+            if ($authoritative_param_key === '') {
+                return new \WP_REST_Response([
+                    'success' => false,
+                    'code'    => 'param_key_unavailable',
+                    'message' => __('Authoritative parameter key is unavailable for this incident record. Cannot create parameter-scoped exemption without verified parameter key.', 'webcare-pro-security'),
+                ], 400);
+            }
+            if ($param_key !== $authoritative_param_key) {
+                return new \WP_REST_Response([
+                    'success' => false,
+                    'code'    => 'param_key_mismatch',
+                    'message' => sprintf(
+                        __('Supplied parameter key "%1$s" does not match authoritative incident parameter key "%2$s".', 'webcare-pro-security'),
+                        $param_key,
+                        $authoritative_param_key
+                    ),
+                ], 400);
+            }
+        } else {
+            // Adopt authoritative parameter key if present on the incident
+            $param_key = $authoritative_param_key;
+        }
+
+        // Mandatory method validation
         $valid_methods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
         if ($method === '' || !in_array($method, $valid_methods, true)) {
             return new \WP_REST_Response([
                 'success' => false,
                 'code'    => 'invalid_method',
-                'message' => __('Authoritative incident HTTP method is required. Cannot trust action without a verified method.', 'webcare-pro-security'),
+                'message' => __('Authoritative incident HTTP method is invalid or unrecorded. Cannot trust action without a verified method.', 'webcare-pro-security'),
             ], 400);
         }
 
-        if ($uri === '' || $rule_id === '') {
+        if ($target_uri === '' || $rule_id === '') {
             return new \WP_REST_Response(['success' => false, 'message' => __('Both Log URI and rule ID are required for scoped trust.', 'webcare-pro-security')], 400);
         }
 
@@ -555,17 +634,15 @@ final class FirewallController extends AbstractApiController {
         }
 
         if (class_exists('\\WebCareProScanner\\Firewall\\RescueAssistantManager')) {
-            $clean_path = (string) wp_parse_url($uri, PHP_URL_PATH);
-            $target_val = $clean_path !== '' ? $clean_path : '/';
             $trust_res = \WebCareProScanner\Firewall\RescueAssistantManager::trust_and_allow_action([
                 'type'       => 'uri',
-                'value'      => $target_val,
+                'value'      => $target_uri,
                 'rule_id'    => $rule_id,
                 'method'     => $method,
                 'label'      => $label ?: sprintf(__('1-Click Trust from WAF Log (%s)', 'webcare-pro-security'), $rule_id),
-                'ip'         => $ip,
+                'ip'         => $ip ?: (string) ($incident_record['ip_address'] ?? ''),
                 'param_key'  => $param_key,
-                'user_role'  => $user_role,
+                'user_role'  => $user_role ?: (string) ($incident_record['user_role'] ?? ''),
             ]);
             $status_code = !empty($trust_res['success']) ? 200 : ((isset($trust_res['code']) && $trust_res['code'] === 'zero_tolerance_rule') ? 403 : 400);
             return new \WP_REST_Response($trust_res, $status_code);

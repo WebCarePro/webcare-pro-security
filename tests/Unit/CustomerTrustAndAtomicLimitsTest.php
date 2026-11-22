@@ -409,4 +409,87 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
             ''
         ));
     }
+
+    public function test_firewall_controller_trust_log_action_requires_incident_id_and_rejects_forgery(): void {
+        // 1. Missing incident_id must be rejected
+        $reqNoId = new \WP_REST_Request('POST', '/webcare-pro-scanner/v1/firewall/logs/trust-action');
+        $reqNoId->set_header('content-type', 'application/json');
+        $reqNoId->set_body((string) wp_json_encode([
+            'uri'     => '/my-account',
+            'rule_id' => 'WAF-HEURISTIC-DETECTOR',
+            'method'  => 'POST',
+        ]));
+        $resNoId = \WebCareProScanner\Api\Controllers\FirewallController::trust_log_action($reqNoId);
+        $this->assertSame(400, $resNoId->get_status());
+        $dataNoId = $resNoId->get_data();
+        $this->assertSame('missing_incident_id', $dataNoId['code']);
+
+        // 2. Incident record not found must return 404
+        $reqNotFound = new \WP_REST_Request('POST', '/webcare-pro-scanner/v1/firewall/logs/trust-action');
+        $reqNotFound->set_header('content-type', 'application/json');
+        $reqNotFound->set_body((string) wp_json_encode([
+            'incident_id' => 'WEBCARE-NONEXISTENT',
+            'uri'         => '/my-account',
+            'rule_id'     => 'WAF-HEURISTIC-DETECTOR',
+            'method'      => 'POST',
+        ]));
+        $resNotFound = \WebCareProScanner\Api\Controllers\FirewallController::trust_log_action($reqNotFound);
+        $this->assertSame(404, $resNotFound->get_status());
+        $dataNotFound = $resNotFound->get_data();
+        $this->assertSame('incident_not_found', $dataNotFound['code']);
+
+        // 3. Log a valid incident with specific method (PUT) and parameter key (billing_city)
+        $incId = \WebCareProScanner\Firewall\WafFileLogger::log_incident([
+            'id'               => 'WAF-HEURISTIC-DETECTOR',
+            'name'             => 'Heuristic Test Rule',
+            'category'         => 'Behavioral Defense',
+            'target_param'     => 'billing_city',
+            'match_value'      => 'MaliciousPayloadValue',
+        ], 'blocked');
+        $this->assertNotNull($incId);
+
+        // 4. Client forging method (GET instead of incident's method) must be rejected
+        $_SERVER['REQUEST_METHOD'] = 'PUT';
+        $_SERVER['REQUEST_URI'] = '/checkout';
+        $reqForgedMethod = new \WP_REST_Request('POST', '/webcare-pro-scanner/v1/firewall/logs/trust-action');
+        $reqForgedMethod->set_header('content-type', 'application/json');
+        $reqForgedMethod->set_body((string) wp_json_encode([
+            'incident_id' => $incId,
+            'uri'         => '/checkout',
+            'rule_id'     => 'WAF-HEURISTIC-DETECTOR',
+            'method'      => 'GET', // Forged method
+            'param_key'   => 'billing_city',
+        ]));
+        $resForgedMethod = \WebCareProScanner\Api\Controllers\FirewallController::trust_log_action($reqForgedMethod);
+        $this->assertSame(400, $resForgedMethod->get_status());
+        $this->assertSame('method_mismatch', $resForgedMethod->get_data()['code']);
+
+        // 5. Client forging parameter key (billing_first_name instead of billing_city) must be rejected
+        $reqForgedParam = new \WP_REST_Request('POST', '/webcare-pro-scanner/v1/firewall/logs/trust-action');
+        $reqForgedParam->set_header('content-type', 'application/json');
+        $reqForgedParam->set_body((string) wp_json_encode([
+            'incident_id' => $incId,
+            'uri'         => '/checkout',
+            'rule_id'     => 'WAF-HEURISTIC-DETECTOR',
+            'method'      => 'PUT',
+            'param_key'   => 'billing_first_name', // Forged parameter
+        ]));
+        $resForgedParam = \WebCareProScanner\Api\Controllers\FirewallController::trust_log_action($reqForgedParam);
+        $this->assertSame(400, $resForgedParam->get_status());
+        $this->assertSame('param_key_mismatch', $resForgedParam->get_data()['code']);
+
+        // 6. Valid trust submission matching authoritative incident succeeds
+        $reqValid = new \WP_REST_Request('POST', '/webcare-pro-scanner/v1/firewall/logs/trust-action');
+        $reqValid->set_header('content-type', 'application/json');
+        $reqValid->set_body((string) wp_json_encode([
+            'incident_id' => $incId,
+            'uri'         => '/checkout',
+            'rule_id'     => 'WAF-HEURISTIC-DETECTOR',
+            'method'      => 'PUT',
+            'param_key'   => 'billing_city',
+        ]));
+        $resValid = \WebCareProScanner\Api\Controllers\FirewallController::trust_log_action($reqValid);
+        $this->assertSame(200, $resValid->get_status());
+        $this->assertTrue($resValid->get_data()['success']);
+    }
 }

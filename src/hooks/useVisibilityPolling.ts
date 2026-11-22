@@ -21,39 +21,37 @@ export function useVisibilityPolling(
 ): void {
   const savedCallback = useRef(callback);
   savedCallback.current = callback;
-  const inFlightRef = useRef<boolean>(false);
-  const activeTokenRef = useRef<symbol | null>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
+  const inFlightPromiseRef = useRef<Promise<void> | null>(null);
+  const activeControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (!enabled || !intervalMs || intervalMs <= 0) {
       return;
     }
 
-    let isMounted = true;
+    let isEffectActive = true;
 
     const executeTick = () => {
       if (typeof document !== 'undefined' && document.hidden) {
         return;
       }
-      if (inFlightRef.current) {
+      // If a request is already executing, wait for it rather than starting a concurrent execution
+      if (inFlightPromiseRef.current !== null) {
         return;
       }
 
-      inFlightRef.current = true;
-      const requestToken = Symbol('polling_request');
-      activeTokenRef.current = requestToken;
-      
-      // Abort any prior in-flight controller and instantiate new AbortController
-      if (abortControllerRef.current) {
+      // Abort previous controller if any was dangling
+      if (activeControllerRef.current) {
         try {
-          abortControllerRef.current.abort();
+          activeControllerRef.current.abort();
         } catch (_) {}
       }
-      abortControllerRef.current = typeof AbortController !== 'undefined' ? new AbortController() : null;
-      const signal = abortControllerRef.current ? abortControllerRef.current.signal : undefined;
 
-      Promise.resolve()
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      activeControllerRef.current = controller;
+      const signal = controller ? controller.signal : undefined;
+
+      const currentExecution = Promise.resolve()
         .then(() => savedCallback.current(signal))
         .catch((err) => {
           if (err && (err.name === 'AbortError' || err.code === 20)) {
@@ -64,24 +62,22 @@ export function useVisibilityPolling(
           }
         })
         .finally(() => {
-          // If this request is still the active token, clear inFlight and controller
-          if (activeTokenRef.current === requestToken) {
-            inFlightRef.current = false;
-            activeTokenRef.current = null;
-            abortControllerRef.current = null;
-          } else if (activeTokenRef.current === null) {
-            // If the effect was cleaned up (which nulled activeTokenRef), always release inFlight ownership
-            // so subsequent effects or remounts are never permanently locked
-            inFlightRef.current = false;
+          // Release execution ownership strictly for THIS execution promise
+          if (inFlightPromiseRef.current === currentExecution) {
+            inFlightPromiseRef.current = null;
+          }
+          if (activeControllerRef.current === controller) {
+            activeControllerRef.current = null;
           }
         });
+
+      inFlightPromiseRef.current = currentExecution;
     };
 
     const intervalId = setInterval(executeTick, intervalMs);
 
     const handleVisibilityChange = () => {
-      if (typeof document !== 'undefined' && !document.hidden && isMounted) {
-        // Trigger immediate catch-up tick on tab return if not already in-flight
+      if (typeof document !== 'undefined' && !document.hidden && isEffectActive) {
         executeTick();
       }
     };
@@ -91,20 +87,16 @@ export function useVisibilityPolling(
     }
 
     return () => {
-      isMounted = false;
-      // Invalidate active token and cancel active network request
-      activeTokenRef.current = null;
-      if (abortControllerRef.current) {
+      isEffectActive = false;
+      // Abort in-flight network request on cleanup
+      if (activeControllerRef.current) {
         try {
-          abortControllerRef.current.abort();
+          activeControllerRef.current.abort();
         } catch (_) {}
-        abortControllerRef.current = null;
       }
-      // Release inFlightRef immediately on cleanup if no request is active,
-      // or the async finally block will release it when the pending aborted promise resolves.
-      if (!abortControllerRef.current) {
-        inFlightRef.current = false;
-      }
+      // Note: inFlightPromiseRef remains non-null until currentExecution's finally resolves,
+      // guaranteeing that an asynchronous callback still executing across effect cleanup/re-render
+      // cannot overlap with a new effect tick.
       clearInterval(intervalId);
       if (typeof document !== 'undefined') {
         document.removeEventListener('visibilitychange', handleVisibilityChange);

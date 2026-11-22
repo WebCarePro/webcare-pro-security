@@ -1037,13 +1037,19 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
   // 1-Click "Trust This Customer Action" scoped to (route_path + param_key + user_role)
   const handleTrustCustomerAction = async (log: WafIncident) => {
     const rawUri = (log.request_uri || '').split('?')[0] || '/';
-    // Use canonical parameter key, never raw matched payload values
-    const paramKey = log.matched_param_key || log.matched_param || '';
+    // Use canonical parameter key strictly; never fall back to legacy matched_param or raw payload values
+    const paramKey = log.matched_param_key || '';
     const userRole = log.user_role || (log.username ? 'customer' : '');
     const ruleId = log.rule_id || '';
     const method = (log.request_method || '').toUpperCase();
     const incidentId = String(log.incident_id || log.id || '');
     const key = `${rawUri}:${paramKey || ruleId}`;
+
+    if (!incidentId) {
+      setActionMessage({ type: 'error', text: 'Cannot trust action: incident ID is missing from audit log.' });
+      setTimeout(() => setActionMessage(null), 4000);
+      return;
+    }
 
     if (!method) {
       setActionMessage({ type: 'error', text: 'Cannot trust action: incident request method is missing.' });
@@ -3413,7 +3419,7 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
                                             type="button"
                                             className="webcare-btn-micro"
                                             onClick={() => handleTrustCustomerAction(log)}
-                                            disabled={allowingTarget === `${(log.request_uri || '').split('?')[0] || '/'}:${log.matched_param_key || log.matched_param || log.rule_id || ''}`}
+                                            disabled={allowingTarget === `${(log.request_uri || '').split('?')[0] || '/'}:${log.matched_param_key || log.rule_id || ''}`}
                                             style={{
                                               display: 'inline-flex',
                                               alignItems: 'center',
@@ -3426,7 +3432,7 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
                                             }}
                                             title="Trust this specific customer action permanently across its URI and parameter without lowering SQLi/RCE defenses"
                                           >
-                                            {allowingTarget === `${(log.request_uri || '').split('?')[0] || '/'}:${log.matched_param_key || log.matched_param || log.rule_id || ''}` ? (
+                                            {allowingTarget === `${(log.request_uri || '').split('?')[0] || '/'}:${log.matched_param_key || log.rule_id || ''}` ? (
                                               <Loader2 size={12} className="webcare-spin" />
                                             ) : (
                                               <ShieldCheck size={12} />
@@ -3790,7 +3796,7 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
                                          type="button"
                                          className="webcare-btn-micro"
                                          onClick={() => handleTrustCustomerAction(log)}
-                                         disabled={allowingTarget === `${(log.request_uri || '').split('?')[0] || '/'}:${log.matched_param_key || log.matched_param || log.rule_id || ''}`}
+                                         disabled={allowingTarget === `${(log.request_uri || '').split('?')[0] || '/'}:${log.matched_param_key || log.rule_id || ''}`}
                                          style={{
                                            display: 'inline-flex',
                                            alignItems: 'center',
@@ -3806,7 +3812,7 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
                                          }}
                                          title="Create narrow (route + param + role) exemption so legitimate user action is trusted while full exploit protection remains active"
                                        >
-                                         {allowingTarget === `${(log.request_uri || '').split('?')[0] || '/'}:${log.matched_param_key || log.matched_param || log.rule_id || ''}` ? (
+                                         {allowingTarget === `${(log.request_uri || '').split('?')[0] || '/'}:${log.matched_param_key || log.rule_id || ''}` ? (
                                            <Loader2 size={10} className="webcare-spin" />
                                          ) : (
                                            <span>🛡️</span>
