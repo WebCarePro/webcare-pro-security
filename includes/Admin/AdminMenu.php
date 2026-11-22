@@ -8,6 +8,7 @@ if (!defined('ABSPATH')) {
 class AdminMenu {
     public static function register() {
         add_action('admin_menu', [__CLASS__, 'add_menu_page']);
+        add_action('wp_dashboard_setup', ['\WebCareProScanner\Admin\DashboardWidget', 'register']);
         add_action('admin_enqueue_scripts', [__CLASS__, 'enqueue_assets']);
         add_filter('plugin_action_links_' . plugin_basename(WEBCAREPROSCAN_FILE), [__CLASS__, 'add_plugin_action_links']);
         add_action('admin_enqueue_scripts', [__CLASS__, 'enqueue_brand_styles']);

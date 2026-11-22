@@ -18,12 +18,14 @@ import {
   Loader2,
   Wrench,
   AlertTriangle,
-  PlayCircle
+  PlayCircle,
+  Search
 } from 'lucide-react';
 import WebCareBrandLogo from './WebCareBrandLogo';
 import MegaMenuModal from './MegaMenuModal';
 import WelcomeModal from './WelcomeModal';
 import { RescueAssistantModal } from './RescueAssistantModal';
+import { QuickJumpModal } from './QuickJumpModal';
 import { applyWebCareTheme, getWebCareTheme } from '../utils/theme';
 import { apiRequest } from '../utils/api';
 import { toast } from '../utils/dialog';
@@ -40,6 +42,7 @@ export const WebCareShell = ({ activeTab, children }: WebCareShellProps) => {
   const workspaceMode = isDeveloperMode ? 'advanced' : 'essential';
 
   const [megaMenuOpen, setMegaMenuOpen] = useState(false);
+  const [quickJumpOpen, setQuickJumpOpen] = useState(false);
   const [isWelcomeModalOpen, setIsWelcomeModalOpen] = useState(false);
   const [rescueModalOpen, setRescueModalOpen] = useState<boolean>(() => {
     try {
@@ -196,12 +199,12 @@ export const WebCareShell = ({ activeTab, children }: WebCareShellProps) => {
     return () => window.removeEventListener('storage', handleStorage);
   }, [themeMode]);
 
-  // Keyboard shortcut: Ctrl+K or Cmd+K toggles the All Modules Mega Menu
+  // Keyboard shortcut: Ctrl+K or Cmd+K toggles the Quick-Jump Command Bar
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
-        setMegaMenuOpen((prev) => !prev);
+        setQuickJumpOpen((prev) => !prev);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -286,6 +289,33 @@ export const WebCareShell = ({ activeTab, children }: WebCareShellProps) => {
           </div>
 
           <div className="webcare-header-actions" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+            {/* Quick-Jump Search Pill */}
+            <button
+              type="button"
+              className="webcare-btn webcare-search-pill-btn"
+              onClick={() => setQuickJumpOpen(true)}
+              title="Search settings, logs & tools (Ctrl + K)"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '6px 12px',
+                borderRadius: '8px',
+                fontSize: '12px',
+                fontWeight: 500,
+                background: 'var(--webcare-bg-surface, #f8fafc)',
+                color: 'var(--webcare-text-secondary, #475569)',
+                border: '1px solid var(--webcare-border, #cbd5e1)',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <Search size={13} color="#6366f1" />
+              <span>Search tools &amp; tasks...</span>
+              <kbd style={{ fontSize: '10px', background: 'var(--webcare-bg-deep, #e2e8f0)', border: '1px solid var(--webcare-border, #cbd5e1)', padding: '1px 5px', borderRadius: '4px', fontWeight: 600 }}>
+                ⌘K
+              </kbd>
+            </button>
             {/* Background Database Backup Live Indicator */}
             {activeBackupSession && activeBackupSession.isRunning && (
               <button
@@ -631,6 +661,28 @@ export const WebCareShell = ({ activeTab, children }: WebCareShellProps) => {
         onPauseChange={(ps) => {
           setRescuePaused(Boolean(ps?.paused));
           setSafeModeSecondsLeft(ps?.seconds_remaining || 0);
+        }}
+      />
+
+      {/* Quick-Jump Command Bar Modal (Ctrl+K / ⌘K) */}
+      <QuickJumpModal
+        isOpen={quickJumpOpen}
+        onClose={() => setQuickJumpOpen(false)}
+        onNavigate={(slug, tab, subtab) => {
+          let target = PAGE_MAP[slug] || (slug.startsWith('webcare-pro-') ? slug : `webcare-pro-${slug}`);
+          if (tab && !target.includes('&tab=')) {
+            target += `&tab=${tab}`;
+          }
+          if (subtab && !target.includes('&subtab=')) {
+            target += `&subtab=${subtab}`;
+          }
+          window.location.href = `admin.php?page=${target}`;
+        }}
+        onSwitchToAdvancedMode={() => {
+          if (workspaceMode === 'essential') {
+            setMode('advanced');
+            toast.info('Switched to Developer Mode for advanced rule configuration.');
+          }
         }}
       />
     </div>

@@ -5417,7 +5417,7 @@ Source Code,${escapeCsv(code)}
                         <>
                           Action Required: <br />
                           <span className="glow-text" style={{ background: 'linear-gradient(135deg, #ef4444 0%, #f97316 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-                            Potential Threats Detected
+                            Items Flagged for Your Review
                           </span>
                         </>
                       ) : isWarn ? (
@@ -8586,7 +8586,7 @@ Source Code,${escapeCsv(code)}
                             <div className="webcare-code-text">
                               {isThreatLine && (
                                 <span className="webcare-code-threat-tag">
-                                  MALWARE DETECTED: {fileViewer.issue?.type || 'THREAT'}
+                                  {(fileViewer.issue?.confidence_score ?? 0) >= 90 ? 'High-Confidence Alert:' : 'File Review Recommended:'} {fileViewer.issue?.type || 'REVIEW'}
                                 </span>
                               )}
                               {line}
@@ -8990,7 +8990,11 @@ Source Code,${escapeCsv(code)}
                         <div style={{ fontSize: '12px', color: '#991b1b', fontWeight: 700, textTransform: 'uppercase' }}>
                           Flagged Malicious Column: <code>{dbInspectorModal.issue.column_name}</code>
                         </div>
-                        <span className="webcare-badge webcare-badge-critical">THREAT DETECTED</span>
+                        {(dbInspectorModal.issue?.confidence_score ?? 0) >= 90 ? (
+                          <span className="webcare-badge webcare-badge-critical">Priority Review</span>
+                        ) : (
+                          <span className="webcare-badge webcare-badge-warning">Needs Review</span>
+                        )}
                       </div>
                       <pre style={{ background: '#450a0a', color: '#fca5a5', padding: '12px', borderRadius: '6px', overflowX: 'auto', fontSize: '12px', margin: 0, fontFamily: 'monospace', whiteSpace: 'pre-wrap', maxHeight: '180px' }}>
                         {String(rowObj[dbInspectorModal.issue.column_name] ?? dbInspectorModal.issue.code_snippet ?? '')}

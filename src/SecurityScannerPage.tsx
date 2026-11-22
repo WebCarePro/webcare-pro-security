@@ -544,7 +544,11 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
               color: isClean ? '#10b981' : '#dc2626'
             }}
           >
-            {isClean ? 'Clean & Protected' : `${totalThreats} Threats Found`}
+            {isClean
+              ? 'Clean & Protected'
+              : (currentScan?.malware_count ?? 0) > 0
+                ? `${(currentScan?.malware_count ?? 0)} Priority Items to Review`
+                : `${totalThreats} Items to Review`}
           </div>
           <div className="webcare-gauge-sub" style={{ fontSize: '12px', marginBottom: '6px' }}>
             {currentScan?.scanned_files ? `${currentScan.scanned_files.toLocaleString()} files inspected` : 'Ready to inspect'}
@@ -1776,7 +1780,7 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                   <ShieldCheck size={36} color="#10b981" />
                 </div>
                 <h4 className="webcare-empty-state-title">
-                  {uniqueIssues.length === 0 ? 'No Threats Detected · Your Website is 100% Clean' : 'No Findings Match Active Filters'}
+                  {uniqueIssues.length === 0 ? 'All Clear · Your Website Looks Great & Protected' : 'No Findings Match Active Filters'}
                 </h4>
                 <p className="webcare-empty-state-desc">
                   {uniqueIssues.length === 0
@@ -1798,7 +1802,33 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                   </button>
                 )}
               </div>
-            ) : findingsViewMode === 'simple' ? (
+            ) : (
+              <div>
+                {/* Calm False-Positive Reassurance Banner */}
+                <div
+                  style={{
+                    margin: '16px 20px 0',
+                    padding: '12px 16px',
+                    borderRadius: '8px',
+                    background: '#eef2ff',
+                    border: '1px solid #c7d2fe',
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: '12px'
+                  }}
+                >
+                  <ShieldCheck size={20} color="#4f46e5" style={{ flexShrink: 0, marginTop: '2px' }} />
+                  <div style={{ fontSize: '13px', lineHeight: 1.5 }}>
+                    <strong style={{ color: '#312e81', display: 'block', marginBottom: '2px' }}>
+                      No need to panic — your firewall is actively protecting your site.
+                    </strong>
+                    <span style={{ color: '#4338ca' }}>
+                      Security scanners sometimes flag legitimate code from themes, page builders, or custom plugins. Start with <strong>Priority Review</strong> items first. If a file belongs to a plugin you trust, click <strong>Mark as Safe</strong> — nothing is broken.
+                    </span>
+                  </div>
+                </div>
+
+                {findingsViewMode === 'simple' ? (
               /* =======================================================
                  SIMPLE VIEW: NON-TECHNICAL AESTHETIC THREAT CARDS
                  ======================================================= */
@@ -3507,6 +3537,8 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                     Next <ChevronRight size={14} />
                   </button>
                 </div>
+              </div>
+            )}
               </div>
             )}
           </div>

@@ -190,7 +190,7 @@ class Migration {
         }
 
         if ($all_created) {
-            update_option('webcareproscan_db_version', defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '3.23.8', false);
+            update_option('webcareproscan_db_version', defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '3.24.0', false);
         }
     }
 }

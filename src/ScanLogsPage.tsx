@@ -342,7 +342,7 @@ export const ScanLogsPage: React.FC<ScanLogsPageProps> = ({
           'Status',
           'Files Scanned',
           'Total Files',
-          'Threats Detected',
+          'Items Flagged',
           'Risk Score',
           'Duration Seconds',
         ];
@@ -1867,7 +1867,7 @@ export const ScanLogsPage: React.FC<ScanLogsPageProps> = ({
                                           className="webcare-btn"
                                           style={{ background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', fontSize: '11px', padding: '4px 9px', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px' }}
                                           onClick={() => handleRemediateDbRow(issue, 'delete_row')}
-                                          title="Safely backup to Quarantine Vault and delete this infected row from database"
+                                          title="Safely back up to Quarantine Vault before removing this flagged entry"
                                         >
                                           <Trash2 size={12} /> Delete Row
                                         </button>
