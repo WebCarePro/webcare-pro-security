@@ -1131,8 +1131,8 @@ class WafFileLogger {
      *
      * @return int Number of pruned files.
      */
-    public static function prune_expired_logs(): int {
-        $retention_days = self::get_retention_days();
+    public static function prune_expired_logs(?int $custom_retention_days = null): int {
+        $retention_days = $custom_retention_days ?? self::get_retention_days();
         if ($retention_days <= 0) {
             return 0; // Keep forever
         }

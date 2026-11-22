@@ -519,13 +519,17 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
         $rotatedFilePath1 = $storageDir . '/' . $rotatedFilename1;
         $rotatedFilename2 = $baseFilename . '.2';
         $rotatedFilePath2 = $storageDir . '/' . $rotatedFilename2;
+        $rotatedFilename3 = $baseFilename . '.3';
+        $rotatedFilePath3 = $storageDir . '/' . $rotatedFilename3;
 
-        // Preserve any existing .1 file content if present in development environment
+        // Preserve any existing rotated files content if present in development environment
         $backupContent1 = file_exists($rotatedFilePath1) ? file_get_contents($rotatedFilePath1) : null;
         $backupContent2 = file_exists($rotatedFilePath2) ? file_get_contents($rotatedFilePath2) : null;
+        $backupContent3 = file_exists($rotatedFilePath3) ? file_get_contents($rotatedFilePath3) : null;
 
         $uniqueRotIncidentId1 = 'WEBCARE-' . strtoupper(substr(md5('rot_test1_' . microtime(true)), 0, 8));
         $uniqueRotIncidentId2 = 'WEBCARE-' . strtoupper(substr(md5('rot_test2_' . microtime(true)), 0, 8));
+        $uniqueRotIncidentId3 = 'WEBCARE-' . strtoupper(substr(md5('rot_test3_' . microtime(true)), 0, 8));
 
         $rotatedRecord1 = [
             'id'                => 'webcare_' . substr(md5(uniqid('', true)), 0, 12),
@@ -567,17 +571,40 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
             'matched_value'     => 'suspicious payload 2',
         ];
 
+        $rotatedRecord3 = [
+            'id'                => 'webcare_' . substr(md5(uniqid('', true)), 0, 12),
+            'incident_id'       => $uniqueRotIncidentId3,
+            'ref_code'          => 'WEBCARE-ROT3',
+            'timestamp'         => time() - 10800,
+            'created_at'        => gmdate('Y-m-d H:i:s', time() - 10800),
+            'created_at_gmt'    => gmdate('Y-m-d H:i:s', time() - 10800),
+            'ip_address'        => '203.0.113.201',
+            'request_uri'       => '/cart/apply-coupon',
+            'request_method'    => 'POST',
+            'http_status_code'  => 403,
+            'rule_id'           => 'WAF-ROTATED-DETECTOR',
+            'rule_name'         => 'Rotated Test Rule 3',
+            'rule_category'     => 'Behavioral Defense',
+            'rule_description'  => 'Rotated segment incident test 3',
+            'action_taken'      => 'blocked',
+            'matched_param_key' => 'coupon_code',
+            'matched_value'     => 'suspicious payload 3',
+        ];
+
         try {
-            // Write directly to the rotated segment files (.1 and .2)
+            // Write directly to the rotated segment files (.1, .2, and .3)
             file_put_contents($rotatedFilePath1, wp_json_encode($rotatedRecord1) . "\n", LOCK_EX);
             file_put_contents($rotatedFilePath2, wp_json_encode($rotatedRecord2) . "\n", LOCK_EX);
+            file_put_contents($rotatedFilePath3, wp_json_encode($rotatedRecord3) . "\n", LOCK_EX);
             $this->assertFileExists($rotatedFilePath1);
             $this->assertFileExists($rotatedFilePath2);
+            $this->assertFileExists($rotatedFilePath3);
 
-            // 1. Verify get_available_files includes both rotated segments (.1 and .2)
+            // 1. Verify get_available_files includes all rotated segments (.1, .2, and .3)
             $available = \WebCareProScanner\Firewall\WafFileLogger::get_available_files();
             $foundRotated1 = false;
             $foundRotated2 = false;
+            $foundRotated3 = false;
             foreach ($available as $finfo) {
                 if ($finfo['filename'] === $rotatedFilename1) {
                     $foundRotated1 = true;
@@ -585,9 +612,13 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
                 if ($finfo['filename'] === $rotatedFilename2) {
                     $foundRotated2 = true;
                 }
+                if ($finfo['filename'] === $rotatedFilename3) {
+                    $foundRotated3 = true;
+                }
             }
             $this->assertTrue($foundRotated1, 'Rotated segment (.1) must be discovered by get_available_files()');
             $this->assertTrue($foundRotated2, 'Rotated segment (.2) must be discovered by get_available_files()');
+            $this->assertTrue($foundRotated3, 'Rotated segment (.3) must be discovered by get_available_files()');
 
             // 2. Verify query_logs with range => 'all' finds incidents across rotated segments
             $queryResult1 = \WebCareProScanner\Firewall\WafFileLogger::query_logs([
@@ -598,13 +629,13 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
             $this->assertNotEmpty($queryResult1['logs'], 'Incident in rotated segment 1 must be discoverable via query_logs()');
             $this->assertSame($uniqueRotIncidentId1, $queryResult1['logs'][0]['incident_id']);
 
-            $queryResult2 = \WebCareProScanner\Firewall\WafFileLogger::query_logs([
-                'search' => $uniqueRotIncidentId2,
+            $queryResult3 = \WebCareProScanner\Firewall\WafFileLogger::query_logs([
+                'search' => $uniqueRotIncidentId3,
                 'action' => 'all',
                 'range'  => 'all',
             ], 1);
-            $this->assertNotEmpty($queryResult2['logs'], 'Incident in rotated segment 2 must be discoverable via query_logs()');
-            $this->assertSame($uniqueRotIncidentId2, $queryResult2['logs'][0]['incident_id']);
+            $this->assertNotEmpty($queryResult3['logs'], 'Incident in rotated segment 3 must be discoverable via query_logs()');
+            $this->assertSame($uniqueRotIncidentId3, $queryResult3['logs'][0]['incident_id']);
 
             // 3. Verify FirewallController::trust_log_action authoritatively resolves the incident from a rotated segment
             $trustReq = new \WP_REST_Request('POST', '/webcare-pro-scanner/v1/firewall/logs/trust-action');
@@ -633,6 +664,14 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
             $this->assertEmpty($queryAfterDelete['logs'], 'Deleted incident in rotated segment must no longer be discoverable');
 
         } finally {
+            // Clean up created trust entry to maintain test isolation
+            $trustKey = md5('uri:/my-account/orders:post:order_note');
+            $existingTrust = get_option('webcareproscan_rescue_allowlists', []);
+            if (is_array($existingTrust) && isset($existingTrust[$trustKey])) {
+                unset($existingTrust[$trustKey]);
+                update_option('webcareproscan_rescue_allowlists', $existingTrust, false);
+            }
+
             // Restore or cleanup test files safely
             if ($backupContent1 !== null) {
                 file_put_contents($rotatedFilePath1, $backupContent1, LOCK_EX);
@@ -645,11 +684,30 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
             } elseif (file_exists($rotatedFilePath2)) {
                 @unlink($rotatedFilePath2);
             }
+
+            if ($backupContent3 !== null) {
+                file_put_contents($rotatedFilePath3, $backupContent3, LOCK_EX);
+            } elseif (file_exists($rotatedFilePath3)) {
+                @unlink($rotatedFilePath3);
+            }
         }
     }
 
     public function test_administrator_activity_logging_boundary(): void {
-        // 1. Verify non-admin / subscriber cannot write to Activity Log
+        // 1. Verify unauthenticated caller is strictly rejected from writing to Activity Log
+        \wp_set_current_user(0, '');
+        unset($GLOBALS['wp_mock_current_user_can']);
+        $this->assertFalse(current_user_can('manage_options'));
+
+        $unauthLogged = \WebCareProScanner\System\WebCareActivityLogger::log(
+            'unauth_action',
+            'system',
+            \WebCareProScanner\System\ActivityLogs\ActivityEventSchema::SEVERITY_INFO,
+            ['data' => 'unauthenticated attempt']
+        );
+        $this->assertFalse($unauthLogged, 'Unauthenticated caller must be rejected from writing to WebCareActivityLogger');
+
+        // 2. Verify non-admin / subscriber cannot write to Activity Log
         $subscriber = \wp_set_current_user(999, 'testsubscriber');
         $subscriber->roles = ['subscriber'];
         $subscriber->allcaps = ['read' => true];
@@ -665,8 +723,54 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
         );
         $this->assertFalse($logged, 'Non-admin user (subscriber) must be rejected from writing to WebCareActivityLogger');
 
-        // 2. Verify admin (manage_options) can write to Activity Log
-        $admin = \wp_set_current_user(1, 'testadmin');
+        // 3. Verify subscriber supplying forged actor_override['type'] = 'admin' is rejected
+        $forgedAdminLogged = \WebCareProScanner\System\WebCareActivityLogger::log(
+            'forged_admin_action',
+            'settings',
+            \WebCareProScanner\System\ActivityLogs\ActivityEventSchema::SEVERITY_INFO,
+            ['data' => 'forged admin override attempt'],
+            ['type' => 'admin', 'id' => 1, 'user_login' => 'admin', 'display_name' => 'Administrator']
+        );
+        $this->assertFalse($forgedAdminLogged, 'Subscriber with forged admin actor_override must be strictly rejected');
+
+        // 4. Verify subscriber supplying forged actor_override['type'] = 'system' is rejected
+        $forgedSystemLogged = \WebCareProScanner\System\WebCareActivityLogger::log(
+            'forged_system_action',
+            'system',
+            \WebCareProScanner\System\ActivityLogs\ActivityEventSchema::SEVERITY_INFO,
+            ['data' => 'forged system override attempt'],
+            ['type' => 'system', 'id' => 0, 'user_login' => 'System']
+        );
+        $this->assertFalse($forgedSystemLogged, 'Subscriber with forged system actor_override must be strictly rejected');
+
+        // 5. Verify unauthenticated caller with forged actor_override is rejected
+        \wp_set_current_user(0, '');
+        $unauthOverrideLogged = \WebCareProScanner\System\WebCareActivityLogger::log(
+            'unauth_override_action',
+            'system',
+            \WebCareProScanner\System\ActivityLogs\ActivityEventSchema::SEVERITY_INFO,
+            ['data' => 'unauth override attempt'],
+            ['type' => 'admin', 'id' => 1, 'user_login' => 'admin']
+        );
+        $this->assertFalse($unauthOverrideLogged, 'Unauthenticated caller with actor_override must be strictly rejected');
+
+        // 6. Verify user with administrator role slug but lacking 'manage_options' is rejected
+        $restrictedAdmin = \wp_set_current_user(888, 'fakeadmin');
+        $restrictedAdmin->roles = ['administrator'];
+        $restrictedAdmin->allcaps = ['manage_options' => false, 'read' => true];
+        unset($GLOBALS['wp_mock_current_user_can']);
+
+        $this->assertFalse(current_user_can('manage_options'));
+        $restrictedLogged = \WebCareProScanner\System\WebCareActivityLogger::log(
+            'restricted_admin_action',
+            'settings',
+            \WebCareProScanner\System\ActivityLogs\ActivityEventSchema::SEVERITY_INFO,
+            ['data' => 'restricted admin attempt']
+        );
+        $this->assertFalse($restrictedLogged, 'User with administrator role but without manage_options must be rejected');
+
+        // 7. Verify verified admin with 'manage_options' is authorized and actor is authoritatively derived
+        $admin = \wp_set_current_user(1, 'realadmin');
         $admin->roles = ['administrator'];
         $admin->allcaps = ['manage_options' => true, 'read' => true];
         unset($GLOBALS['wp_mock_current_user_can']);
@@ -677,11 +781,64 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
             'admin_verified_action',
             'settings',
             \WebCareProScanner\System\ActivityLogs\ActivityEventSchema::SEVERITY_INFO,
-            ['data' => 'admin update']
+            ['data' => 'admin update'],
+            ['type' => 'admin', 'id' => 99999, 'user_login' => 'spoofed_login'] // Caller attempts to spoof actor ID
         );
         $this->assertTrue($adminLogged, 'Administrator with manage_options must successfully write to WebCareActivityLogger');
 
+        // Verify that actor identity was derived strictly from authenticated user (ID: 1, login: realadmin), not spoofed values
+        $recentEvents = \WebCareProScanner\System\WebCareActivityLogger::query_records([
+            'action' => 'admin_verified_action',
+        ]);
+        if (!empty($recentEvents['records'])) {
+            $actor = $recentEvents['records'][0]['actor'] ?? [];
+            $this->assertSame(1, $actor['id'] ?? 0, 'Actor ID must be derived from authenticated user, not caller override');
+            $this->assertSame('realadmin', $actor['user_login'] ?? '', 'Actor user_login must be derived from authenticated user');
+        }
+
         // Reset to admin for following tests
-        \wp_set_current_user(1, 'testadmin');
+        \wp_set_current_user(1, 'realadmin');
+    }
+
+    public function test_rotated_log_clear_all_and_retention_pruning(): void {
+        $storageDir = \WebCareProScanner\Firewall\WafFileLogger::get_storage_dir();
+        if (!is_dir($storageDir)) {
+            wp_mkdir_p($storageDir);
+        }
+
+        // Create a fixture of expired rotated segments (30 days old)
+        $expiredDateStr = strtolower(gmdate('F-j-Y', time() - (30 * 86400)));
+        $expiredBase = $expiredDateStr . '-waf-logs.json';
+        $expiredRot1 = $storageDir . '/' . $expiredBase . '.1';
+        $expiredRot2 = $storageDir . '/' . $expiredBase . '.2';
+
+        file_put_contents($expiredRot1, "{\"test\":\"expired_rot1\"}\n", LOCK_EX);
+        file_put_contents($expiredRot2, "{\"test\":\"expired_rot2\"}\n", LOCK_EX);
+
+        $this->assertFileExists($expiredRot1);
+        $this->assertFileExists($expiredRot2);
+
+        // 1. Verify prune_expired_logs() removes expired rotated segments
+        $deletedCount = \WebCareProScanner\Firewall\WafFileLogger::prune_expired_logs(7);
+        $this->assertGreaterThanOrEqual(2, $deletedCount, 'Expired rotated segments must be pruned by prune_expired_logs()');
+        $this->assertFileDoesNotExist($expiredRot1, 'Expired rotated segment .1 must be deleted after pruning');
+        $this->assertFileDoesNotExist($expiredRot2, 'Expired rotated segment .2 must be deleted after pruning');
+
+        // 2. Verify clear_all_logs() deletes rotated segments alongside active logs
+        $todayDateStr = strtolower(gmdate('F-j-Y', time()));
+        $activeBase = $todayDateStr . '-waf-logs.json';
+        $tempRot1 = $storageDir . '/' . $activeBase . '.99';
+        $tempRot2 = $storageDir . '/' . $activeBase . '.100';
+
+        file_put_contents($tempRot1, "{\"test\":\"temp_rot1\"}\n", LOCK_EX);
+        file_put_contents($tempRot2, "{\"test\":\"temp_rot2\"}\n", LOCK_EX);
+
+        $this->assertFileExists($tempRot1);
+        $this->assertFileExists($tempRot2);
+
+        $cleared = \WebCareProScanner\Firewall\WafFileLogger::clear_all_logs();
+        $this->assertTrue($cleared, 'clear_all_logs() must return true');
+        $this->assertFileDoesNotExist($tempRot1, 'clear_all_logs() must remove rotated segment .99');
+        $this->assertFileDoesNotExist($tempRot2, 'clear_all_logs() must remove rotated segment .100');
     }
 }

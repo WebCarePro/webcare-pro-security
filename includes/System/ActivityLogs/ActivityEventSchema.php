@@ -75,8 +75,8 @@ class ActivityEventSchema {
             $correlation_id = 'req_' . substr(md5(uniqid('webcare_corr_', true)), 0, 16);
         }
 
-        // Resolve Actor
-        $actor = $actor_override ?? self::resolve_actor();
+        // Resolve Actor strictly based on authenticated administrator session
+        $actor = self::resolve_actor();
 
         // Resolve Executor
         $executor = self::resolve_executor();
