@@ -958,9 +958,15 @@ class DistributedVelocityShield {
                 wp_cache_add($bucket_uniq_key, 0, $group, $ttl);
                 $slot = wp_cache_incr($bucket_uniq_key, 1, $group);
 
+                $slot_written = false;
                 if ($slot !== false) {
                     $slot_key = "{$cache_key}_slot_{$bucket_id}_{$slot}";
-                    wp_cache_set($slot_key, $ip_hash, $group, $ttl);
+                    $slot_written = (bool) wp_cache_set($slot_key, $ip_hash, $group, $ttl);
+                }
+
+                // If slot allocation or storage failed, delete presence key so next attempt can retry cleanly
+                if ($slot === false || !$slot_written) {
+                    wp_cache_delete($ip_presence_key, $group);
                 }
             }
 
@@ -989,9 +995,15 @@ class DistributedVelocityShield {
                 }
                 $slot = apcu_inc($apc_uniq_key, 1);
 
+                $slot_written = false;
                 if ($slot !== false) {
                     $slot_key = "dvs_{$cache_key}_slot_{$bucket_id}_{$slot}";
-                    @apcu_store($slot_key, $ip_hash, $ttl);
+                    $slot_written = (bool) @apcu_store($slot_key, $ip_hash, $ttl);
+                }
+
+                // If slot allocation or storage failed, delete presence key so next attempt can retry cleanly
+                if ($slot === false || !$slot_written) {
+                    @apcu_delete($apc_ip_presence_key);
                 }
             }
 
@@ -1038,9 +1050,7 @@ class DistributedVelocityShield {
             if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
                 \WebCareProScanner\System\AuditLogger::log(
                     'dvs_file_lock_exhausted',
-                    'system',
-                    'DVS file write-lock acquisition timed out after 20 retries (200ms). Velocity event dropped.',
-                    'warning'
+                    'DVS file write-lock acquisition timed out after 20 retries (200ms). Velocity event dropped.'
                 );
             } else {
                 error_log('[WebCare Pro] DVS file write-lock acquisition timed out after 20 retries (200ms). Velocity event dropped.');
@@ -1190,9 +1200,7 @@ class DistributedVelocityShield {
                         if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
                             \WebCareProScanner\System\AuditLogger::log(
                                 'dvs_file_read_lock_exhausted',
-                                'system',
-                                sprintf('DVS read lock timed out for %s; applying fail-safe degraded response.', substr($cache_key, 0, 32)),
-                                'warning'
+                                sprintf('DVS read lock timed out for %s; applying fail-safe degraded response.', substr($cache_key, 0, 32))
                             );
                         } else {
                             error_log(sprintf('[WebCare Pro] DVS file read-lock timed out for %s.', substr($cache_key, 0, 32)));
