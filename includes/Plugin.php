@@ -68,7 +68,8 @@ class Plugin {
             array_keys($_COOKIE),
             static fn(string $k): bool => str_starts_with($k, 'wordpress_logged_in_')
         );
-        $is_xmlrpc = str_contains(strtolower((string) ($_SERVER['REQUEST_URI'] ?? '')), 'xmlrpc.php');
+        $req_uri_val = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash((string) $_SERVER['REQUEST_URI'])) : '';
+        $is_xmlrpc = str_contains(strtolower($req_uri_val), 'xmlrpc.php');
 
         // Auth guards: boot on wp-login, WooCommerce/Membership login surfaces, XML-RPC, REST, Admin, CLI
         if (
@@ -214,6 +215,7 @@ class Plugin {
                 $rc = \WebCareProScanner\Core\RouteClassifier::classify($sim_server);
                 $settings = \WebCareProScanner\System\SettingsManager::get_settings();
                 $orig_server = $_SERVER;
+                // phpcs:ignore WordPress.Security.NonceVerification.Recommended
                 $orig_get = $_GET;
 
                 try {

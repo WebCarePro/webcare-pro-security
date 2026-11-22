@@ -324,6 +324,7 @@ final class AllowlistManager {
             $rule_param = trim((string) ($rule['param_key'] ?? ''));
             if ($rule_param !== '') {
                 // If rule specifies a param_key, check if that param exists in GET or POST
+                // phpcs:ignore WordPress.Security.NonceVerification.Recommended, WordPress.Security.NonceVerification.Missing
                 $param_present = isset($_GET[$rule_param]) || isset($_POST[$rule_param]) || isset($_REQUEST[$rule_param]);
                 if (!$param_present) {
                     continue; // Specified parameter not present in incoming request

@@ -250,7 +250,9 @@ class RequestContext {
         }
 
         // 1. Parse Query Parameters strictly from $_GET (or parsed URI)
+        // phpcs:ignore WordPress.Security.NonceVerification.Recommended
         if (!empty($_GET) && is_array($_GET)) {
+            // phpcs:ignore WordPress.Security.NonceVerification.Recommended
             foreach ($_GET as $gk => $gv) {
                 $k_clean = sanitize_key((string) $gk);
                 if ($k_clean !== '') {
@@ -271,7 +273,9 @@ class RequestContext {
         }
 
         // 2. Parse Form Parameters strictly from $_POST
+        // phpcs:ignore WordPress.Security.NonceVerification.Missing
         if (!empty($_POST) && is_array($_POST)) {
+            // phpcs:ignore WordPress.Security.NonceVerification.Missing
             foreach ($_POST as $fk => $fv) {
                 $k_clean = sanitize_key((string) $fk);
                 if ($k_clean !== '') {

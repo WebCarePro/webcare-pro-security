@@ -78,6 +78,7 @@ final readonly class AuthAndAjaxSurfaceEvaluator implements WafEvaluatorInterfac
      */
     private static function translatable_string(string $string): string {
         if (function_exists('did_action') && did_action('init')) {
+            // phpcs:ignore WordPress.WP.I18n.NonSingularStringLiteralText
             return __($string, 'webcare-pro-security');
         }
         return $string;
@@ -482,6 +483,7 @@ final readonly class AuthAndAjaxSurfaceEvaluator implements WafEvaluatorInterfac
         $confusion_key = '';
 
         foreach ($sensitive_auth_keys as $s_key) {
+            // phpcs:ignore WordPress.Security.NonceVerification.Recommended, WordPress.Security.NonceVerification.Missing
             if ((isset($ctx->queryParams[$s_key]) && is_array($ctx->queryParams[$s_key]))
                 || (isset($ctx->formParams[$s_key]) && is_array($ctx->formParams[$s_key]))
                 || (isset($_GET[$s_key]) && is_array($_GET[$s_key]))

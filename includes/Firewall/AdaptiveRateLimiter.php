@@ -384,7 +384,10 @@ class AdaptiveRateLimiter {
                 $identity_key = 'wc:' . $wc_cookie_val;
             }
         } elseif ($bucket === self::BUCKET_SEARCH_PROBE) {
-            $sess_token = $_COOKIE['PHPSESSID'] ?? ($_COOKIE['woocommerce_cart_hash'] ?? ($_SERVER['HTTP_USER_AGENT'] ?? ''));
+            $phpsessid = isset($_COOKIE['PHPSESSID']) ? sanitize_text_field(wp_unslash((string) $_COOKIE['PHPSESSID'])) : '';
+            $wc_cart   = isset($_COOKIE['woocommerce_cart_hash']) ? sanitize_text_field(wp_unslash((string) $_COOKIE['woocommerce_cart_hash'])) : '';
+            $user_agent = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash((string) $_SERVER['HTTP_USER_AGENT'])) : '';
+            $sess_token = $phpsessid !== '' ? $phpsessid : ($wc_cart !== '' ? $wc_cart : $user_agent);
             if ($sess_token !== '') {
                 $identity_key = 's:' . substr((string) $sess_token, 0, 64);
             }

@@ -176,7 +176,7 @@ class RescueAssistantManager {
         if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
             \WebCareProScanner\System\AuditLogger::log('safe_mode_enabled', [
                 'user_id'      => get_current_user_id(),
-                'ip'           => class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine') ? \WebCareProScanner\Firewall\FirewallEngine::get_client_ip() : ($_SERVER['REMOTE_ADDR'] ?? ''),
+                'ip'           => class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine') ? \WebCareProScanner\Firewall\FirewallEngine::get_client_ip() : (isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash((string) $_SERVER['REMOTE_ADDR'])) : ''),
                 'paused_until' => gmdate('c', $until),
                 'ttl_seconds'  => 15 * MINUTE_IN_SECONDS,
             ]);
@@ -232,7 +232,7 @@ class RescueAssistantManager {
         if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
             \WebCareProScanner\System\AuditLogger::log('safe_mode_disabled', [
                 'user_id' => get_current_user_id(),
-                'ip'      => class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine') ? \WebCareProScanner\Firewall\FirewallEngine::get_client_ip() : ($_SERVER['REMOTE_ADDR'] ?? ''),
+                'ip'      => class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine') ? \WebCareProScanner\Firewall\FirewallEngine::get_client_ip() : (isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash((string) $_SERVER['REMOTE_ADDR'])) : ''),
             ]);
         }
 
@@ -336,7 +336,8 @@ class RescueAssistantManager {
         $uri_lc    = strtolower(rtrim($clean_uri, '/'));
         $act_lc    = strtolower($ajax_action);
         $rest_lc   = strtolower(rtrim($rest_query, '/'));
-        $method_uc = strtoupper($method ?: ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
+        $server_method = isset($_SERVER['REQUEST_METHOD']) ? sanitize_text_field(wp_unslash((string) $_SERVER['REQUEST_METHOD'])) : 'GET';
+        $method_uc = strtoupper($method ?: $server_method);
         $pkey_lc   = strtolower($param_key);
 
         $current_user_roles = [];
@@ -447,13 +448,14 @@ class RescueAssistantManager {
             $method   = $ctx->method;
         } else {
             // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+            // phpcs:ignore WordPress.Security.NonceVerification.Recommended
             $ajax_act = isset($_GET['action'])
                 ? sanitize_key(wp_unslash($_GET['action']))
                 // phpcs:ignore WordPress.Security.NonceVerification.Missing
                 : (isset($_POST['action']) ? sanitize_key(wp_unslash($_POST['action'])) : '');
             // phpcs:ignore WordPress.Security.NonceVerification.Recommended
             $rest_q   = isset($_GET['rest_route']) ? strtolower(sanitize_text_field(wp_unslash($_GET['rest_route']))) : '';
-            $method   = isset($_SERVER['REQUEST_METHOD']) ? (string) $_SERVER['REQUEST_METHOD'] : 'GET';
+            $method   = isset($_SERVER['REQUEST_METHOD']) ? sanitize_text_field(wp_unslash((string) $_SERVER['REQUEST_METHOD'])) : 'GET';
         }
 
         return self::is_rule_or_request_trusted($rule_id, $clean_uri, $ajax_act, $rest_q, $method, '', $param_key);

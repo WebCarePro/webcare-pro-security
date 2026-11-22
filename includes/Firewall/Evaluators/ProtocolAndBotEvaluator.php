@@ -66,6 +66,7 @@ final readonly class ProtocolAndBotEvaluator implements WafEvaluatorInterface {
      */
     private static function translatable_string(string $string): string {
         if (function_exists('did_action') && did_action('init')) {
+            // phpcs:ignore WordPress.WP.I18n.NonSingularStringLiteralText
             return __($string, 'webcare-pro-security');
         }
         return $string;

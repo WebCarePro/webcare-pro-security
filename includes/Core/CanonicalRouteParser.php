@@ -30,7 +30,8 @@ final class CanonicalRouteParser {
      * @return string Normalized leading-and-trailing slash path (e.g. '/wp-json/wp/v2/posts/').
      */
     public static function get_normalized_path(array $server = []): string {
-        $uri = (string) ($server['REQUEST_URI'] ?? ($_SERVER['REQUEST_URI'] ?? '/'));
+        $uri_raw = (string) ($server['REQUEST_URI'] ?? ($_SERVER['REQUEST_URI'] ?? '/'));
+        $uri = sanitize_text_field(wp_unslash($uri_raw));
 
         // Strip query string and fragment
         $path = (string) strtok($uri, '?#');
@@ -62,7 +63,8 @@ final class CanonicalRouteParser {
      * @return string Normalized route with leading slash (e.g. '/webcare-pro-security/v1/scan/status') or empty string.
      */
     public static function resolve_rest_route(array $server = []): string {
-        $uri = (string) ($server['REQUEST_URI'] ?? ($_SERVER['REQUEST_URI'] ?? '/'));
+        $uri_raw = (string) ($server['REQUEST_URI'] ?? ($_SERVER['REQUEST_URI'] ?? '/'));
+        $uri = sanitize_text_field(wp_unslash($uri_raw));
         $query_str = (string) (wp_parse_url($uri, PHP_URL_QUERY) ?? '');
         $query_params = [];
         if ($query_str !== '') {
@@ -71,7 +73,8 @@ final class CanonicalRouteParser {
 
         // 1. Check ?rest_route= query parameter (from server URI first, falling back to $_GET only when $server lacks REQUEST_URI)
         $has_explicit_uri = array_key_exists('REQUEST_URI', $server);
-        $rest_route_param = $query_params['rest_route'] ?? (!$has_explicit_uri ? ($_GET['rest_route'] ?? null) : null);
+        // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+        $rest_route_param = $query_params['rest_route'] ?? (!$has_explicit_uri ? (isset($_GET['rest_route']) ? sanitize_text_field(wp_unslash($_GET['rest_route'])) : null) : null);
         if (is_string($rest_route_param) && $rest_route_param !== '') {
             $query_route = (string) wp_unslash($rest_route_param);
             for ($i = 0; $i < 3; $i++) {

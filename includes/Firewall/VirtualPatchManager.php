@@ -668,7 +668,7 @@ class VirtualPatchManager {
                         default:
                             if ($key !== '') {
                                 $hdr_k_def = 'HTTP_' . strtoupper(str_replace('-', '_', $key));
-                                // phpcs:ignore WordPress.Security.NonceVerification.Recommended, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+                                // phpcs:ignore WordPress.Security.NonceVerification.Recommended, WordPress.Security.NonceVerification.Missing, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
                                 $target_value = (string) (isset($_GET[$key]) ? wp_unslash($_GET[$key]) : (isset($_POST[$key]) ? wp_unslash($_POST[$key]) : (isset($_SERVER[$hdr_k_def]) ? wp_unslash($_SERVER[$hdr_k_def]) : '')));
                             }
                             break;

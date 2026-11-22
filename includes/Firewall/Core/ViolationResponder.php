@@ -217,6 +217,7 @@ final class ViolationResponder {
         // Safe translation wrapper that guards against premature _load_textdomain_just_in_time notices
         // when blocks execute during early plugins_loaded priority 0 before WordPress core fires 'init'.
         $can_translate = function_exists('did_action') && did_action('init');
+        // phpcs:ignore WordPress.WP.I18n.NonSingularStringLiteralText
         $t = static fn(string $text) => $can_translate ? esc_html__($text, 'webcare-pro-security') : $text;
 
         // 1. E-Commerce & Checkout AJAX handler (WooCommerce, SureCart, EDD)

@@ -76,7 +76,7 @@ final class RequestPipeline {
 
         // Internal DOING_CRON pre-check: skip unless this is an external HTTP trigger to wp-cron.php
         if (defined('DOING_CRON') && DOING_CRON) {
-            $raw_cron_uri = isset($_SERVER['REQUEST_URI']) ? (string) $_SERVER['REQUEST_URI'] : '';
+            $raw_cron_uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash((string) $_SERVER['REQUEST_URI'])) : '';
             $clean_cron_check = strtolower(wp_parse_url($raw_cron_uri, PHP_URL_PATH) ?: $raw_cron_uri);
             if (!str_contains($clean_cron_check, 'wp-cron.php')) {
                 return;

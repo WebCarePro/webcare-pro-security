@@ -59,14 +59,17 @@ final class RouteClassifier {
         $commerce_matched = false;
         $path_trailing = rtrim($path, '/') . '/';
 
-        $uri = (string) ($server['REQUEST_URI'] ?? ($_SERVER['REQUEST_URI'] ?? '/'));
+        $uri_raw = (string) ($server['REQUEST_URI'] ?? ($_SERVER['REQUEST_URI'] ?? '/'));
+        $uri = sanitize_text_field(wp_unslash($uri_raw));
         $query_str = (string) (wp_parse_url($uri, PHP_URL_QUERY) ?? '');
         $query_params = [];
         if ($query_str !== '') {
             parse_str($query_str, $query_params);
         }
         $has_explicit_uri = array_key_exists('REQUEST_URI', $server);
+        // phpcs:ignore WordPress.Security.NonceVerification.Recommended
         $has_wc_ajax = isset($query_params['wc-ajax']) || (!$has_explicit_uri && isset($_GET['wc-ajax']));
+        // phpcs:ignore WordPress.Security.NonceVerification.Recommended
         $has_wc_api  = isset($query_params['wc-api']) || (!$has_explicit_uri && isset($_GET['wc-api']));
 
         if (
