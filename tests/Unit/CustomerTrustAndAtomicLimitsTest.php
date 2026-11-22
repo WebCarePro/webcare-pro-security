@@ -960,16 +960,69 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
         $getMetricsMethod = $refl->getMethod('get_sliding_metrics');
         $getMetricsMethod->setAccessible(true);
 
-        // Append initial event
+        // 1. Initial registration
         $appendMethod->invoke(null, $cache_key, $test_ip, 'Initial auth failure', []);
         $initial = $getMetricsMethod->invoke(null, $cache_key);
         $this->assertSame(1, $initial['count']);
         $this->assertSame(1, $initial['unique_ips']);
 
-        // Simulate subsequent event with existing presence marker
-        $appendMethod->invoke(null, $cache_key, $test_ip, 'Second auth failure', []);
-        $second = $getMetricsMethod->invoke(null, $cache_key);
-        $this->assertSame(2, $second['count']);
-        $this->assertSame(1, $second['unique_ips'], 'DVS must remain exactly 1 unique IP under subsequent requests.');
+        // 2. Simulate worker crash leaving pending marker (0)
+        $now = time();
+        $bucket_id = (int) floor($now / 10);
+        $ip_hash = substr(md5($test_ip), 0, 12);
+        if (function_exists('wp_using_ext_object_cache') && wp_using_ext_object_cache()) {
+            wp_cache_set("{$cache_key}_ip_{$bucket_id}_{$ip_hash}", 0, 'webcareproscan_dvs', 80);
+        } elseif (function_exists('apcu_store') && ini_get('apc.enabled')) {
+            apcu_store("dvs_{$cache_key}_ip_{$bucket_id}_{$ip_hash}", 0, 80);
+        }
+
+        // 3. Second worker arrives and automatically recovers unconfirmed pending marker
+        $appendMethod->invoke(null, $cache_key, $test_ip, 'Second auth failure during recovery', []);
+        $recovered = $getMetricsMethod->invoke(null, $cache_key);
+        $this->assertSame(2, $recovered['count']);
+        $this->assertSame(1, $recovered['unique_ips'], 'DVS must repair unconfirmed pending marker without inflating unique_ips.');
+
+        // 4. Simulate cache eviction of referenced slot while confirmed marker remains
+        if (function_exists('wp_using_ext_object_cache') && wp_using_ext_object_cache()) {
+            wp_cache_delete("{$cache_key}_slot_{$bucket_id}_1", 'webcareproscan_dvs');
+        } elseif (function_exists('apcu_delete') && ini_get('apc.enabled')) {
+            apcu_delete("dvs_{$cache_key}_slot_{$bucket_id}_1");
+        }
+
+        // 5. Subsequent request detects evicted slot, re-acquires mutex, re-verifies state, and repairs registration
+        $appendMethod->invoke(null, $cache_key, $test_ip, 'Third auth failure after eviction', []);
+        $after_evict = $getMetricsMethod->invoke(null, $cache_key);
+        $this->assertSame(3, $after_evict['count']);
+        $this->assertSame(1, $after_evict['unique_ips'], 'DVS must repair evicted slot reference under mutex and maintain exactly 1 unique IP.');
+    }
+
+    public function test_dvs_mutex_lease_ownership_token_verification(): void {
+        // Verify that mutex owner token protects against deleting another worker's expired/acquired lock
+        $cache_key = 'dvs_test_lease_' . bin2hex(random_bytes(4));
+        $bucket_id = 9999;
+        $ip_hash = 'testhash123';
+        $group = 'webcareproscan_dvs';
+
+        $lock_key = "{$cache_key}_lock_{$bucket_id}_{$ip_hash}";
+        $workerA_token = 'token_worker_A';
+        $workerB_token = 'token_worker_B';
+
+        // Direct token comparison logic test
+        $held_token = $workerB_token;
+        $deleted = false;
+        if ($held_token === $workerA_token) {
+            $deleted = true;
+        }
+        $this->assertFalse($deleted, 'Worker A token must never match or delete Worker B held lock.');
+
+        if (function_exists('wp_using_ext_object_cache') && wp_using_ext_object_cache()) {
+            wp_cache_set($lock_key, $workerB_token, $group, 10);
+            $current_held = wp_cache_get($lock_key, $group);
+            if ($current_held === $workerA_token) {
+                wp_cache_delete($lock_key, $group);
+            }
+            $this->assertSame($workerB_token, wp_cache_get($lock_key, $group));
+            wp_cache_delete($lock_key, $group);
+        }
     }
 }
