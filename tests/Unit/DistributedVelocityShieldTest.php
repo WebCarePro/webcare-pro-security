@@ -1325,10 +1325,12 @@ class DistributedVelocityShieldTest extends TestCase {
                 do {
                     $keys = $real_redis->scan($it, $pattern, 100);
                     if ($keys === false) {
-                        break;
+                        throw new \RuntimeException("Redis SCAN failed during test cleanup for pattern: {$pattern}");
                     }
                     if (is_array($keys) && !empty($keys)) {
-                        $real_redis->del($keys);
+                        if ($real_redis->del($keys) === false) {
+                            throw new \RuntimeException('Redis DEL failed during test cleanup.');
+                        }
                     }
                 } while ($it > 0);
             } finally {
