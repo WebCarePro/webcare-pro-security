@@ -174,8 +174,16 @@ class AdaptiveRateLimiter {
             $inc_success = false;
             $curr_count = apcu_inc($curr_key, 1, $inc_success);
             if (!$inc_success || $curr_count === false) {
-                apcu_store($curr_key, 1, $ttl);
-                $curr_count = 1;
+                // Concurrency defense: Check if key exists before writing 1.
+                // Never reset an existing counter to 1 under concurrent increment race/failure.
+                $existing_val = apcu_fetch($curr_key);
+                if ($existing_val !== false && is_numeric($existing_val)) {
+                    $curr_count = (int) $existing_val + 1;
+                    apcu_store($curr_key, $curr_count, $ttl);
+                } else {
+                    apcu_store($curr_key, 1, $ttl);
+                    $curr_count = 1;
+                }
             }
 
             $prev_raw = apcu_fetch($prev_key);
@@ -185,8 +193,16 @@ class AdaptiveRateLimiter {
             wp_cache_add($curr_key, 0, 'webcareproscan_rl', $ttl);
             $curr_count = wp_cache_incr($curr_key, 1, 'webcareproscan_rl');
             if ($curr_count === false) {
-                wp_cache_set($curr_key, 1, 'webcareproscan_rl', $ttl);
-                $curr_count = 1;
+                // Concurrency defense: Check if key exists before writing 1.
+                // Never reset an existing counter to 1 under concurrent increment race/failure.
+                $existing_val = wp_cache_get($curr_key, 'webcareproscan_rl');
+                if ($existing_val !== false && is_numeric($existing_val)) {
+                    $curr_count = (int) $existing_val + 1;
+                    wp_cache_set($curr_key, $curr_count, 'webcareproscan_rl', $ttl);
+                } else {
+                    wp_cache_set($curr_key, 1, 'webcareproscan_rl', $ttl);
+                    $curr_count = 1;
+                }
             }
 
             $prev_raw = wp_cache_get($prev_key, 'webcareproscan_rl');
@@ -629,11 +645,26 @@ class AdaptiveRateLimiter {
         }
 
         $store = [];
-        if (str_starts_with($raw, "<?php exit; ?>\n")) {
-            $json = substr($raw, 15);
-            $parsed = json_decode($json, true);
-            if (is_array($parsed)) {
-                $store = $parsed;
+        if ($raw !== '') {
+            if (str_starts_with($raw, "<?php exit; ?>\n")) {
+                $json = substr($raw, 15);
+                $parsed = json_decode($json, true);
+                if (is_array($parsed)) {
+                    $store = $parsed;
+                } else {
+                    // Strict data integrity defense: Corrupt JSON payload detected.
+                    // Fail explicitly instead of silently wiping all counters on this shard.
+                    @flock($fp, LOCK_UN);
+                    // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+                    @fclose($fp);
+                    return null;
+                }
+            } else {
+                // Unexpected format in non-empty file
+                @flock($fp, LOCK_UN);
+                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+                @fclose($fp);
+                return null;
             }
         }
 
@@ -675,7 +706,12 @@ class AdaptiveRateLimiter {
 
         $payload = "<?php exit; ?>\n" . $encoded_json;
         rewind($fp);
-        ftruncate($fp, 0);
+        if (!ftruncate($fp, 0)) {
+            @flock($fp, LOCK_UN);
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+            @fclose($fp);
+            return null;
+        }
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
         $written = fwrite($fp, $payload);
         if ($written === false || $written < strlen($payload)) {
@@ -685,7 +721,12 @@ class AdaptiveRateLimiter {
             return null;
         }
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fflush
-        fflush($fp);
+        if (!fflush($fp)) {
+            @flock($fp, LOCK_UN);
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+            @fclose($fp);
+            return null;
+        }
         @flock($fp, LOCK_UN);
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
         @fclose($fp);
@@ -710,16 +751,38 @@ class AdaptiveRateLimiter {
             return (bool) wp_cache_add($cooldown_key, 1, 'webcareproscan_rl', $ttl_seconds);
         }
 
-        // For single-server MySQL or file-backed environments: use atomic add_option with expiration timestamp
+        // For single-server MySQL or file-backed environments: use atomic compare-and-replace
+        global $wpdb;
         $opt_key = 'wcps_cd_' . substr(md5($cooldown_key), 0, 20);
         $now = time();
+        $target_exp = $now + $ttl_seconds;
+
+        // 1. Attempt atomic initial insert
+        if (add_option($opt_key, $target_exp, '', 'no')) {
+            return true;
+        }
+
+        // 2. If already exists, check if still active
         $existing = get_option($opt_key, false);
         if ($existing !== false && is_numeric($existing) && (int) $existing > $now) {
             return false;
         }
 
-        // Clean expired and atomically add
+        // 3. If expired, perform an atomic conditional UPDATE (only one concurrent process can succeed)
+        if ($wpdb && isset($wpdb->options)) {
+            $updated = $wpdb->query(
+                $wpdb->prepare(
+                    "UPDATE {$wpdb->options} SET option_value = %s WHERE option_name = %s AND CAST(option_value AS UNSIGNED) <= %d",
+                    (string) $target_exp,
+                    $opt_key,
+                    $now
+                )
+            );
+            return $updated > 0;
+        }
+
+        // Safe fallback if $wpdb is unavailable
         delete_option($opt_key);
-        return (bool) add_option($opt_key, $now + $ttl_seconds, '', 'no');
+        return (bool) add_option($opt_key, $target_exp, '', 'no');
     }
 }

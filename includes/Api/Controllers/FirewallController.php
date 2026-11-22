@@ -486,6 +486,10 @@ final class FirewallController extends AbstractApiController {
         $label      = sanitize_text_field(trim((string) ($params['label'] ?? '')));
         $param_key  = sanitize_text_field(trim((string) ($params['param_key'] ?? '')));
         $user_role  = sanitize_key(trim((string) ($params['user_role'] ?? '')));
+        $method     = strtoupper(sanitize_key(trim((string) ($params['method'] ?? ''))));
+        if ($method === '' && isset($_SERVER['REQUEST_METHOD'])) {
+            $method = strtoupper((string) $_SERVER['REQUEST_METHOD']);
+        }
 
         if ($uri === '' && $rule_id === '') {
             return new \WP_REST_Response(['success' => false, 'message' => __('Log URI or rule ID is required.', 'webcare-pro-security')], 400);
@@ -506,6 +510,7 @@ final class FirewallController extends AbstractApiController {
                 'type'       => $clean_path !== '' ? 'uri' : 'rule',
                 'value'      => $clean_path !== '' ? $clean_path : $rule_id,
                 'rule_id'    => $rule_id,
+                'method'     => $method,
                 'label'      => $label ?: sprintf(__('1-Click Trust from WAF Log (%s)', 'webcare-pro-security'), $rule_id),
                 'ip'         => $ip,
                 'param_key'  => $param_key,

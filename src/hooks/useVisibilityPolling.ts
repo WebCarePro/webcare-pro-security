@@ -70,6 +70,8 @@ export function useVisibilityPolling(
 
     return () => {
       isMounted = false;
+      // Invalidate the generation so any in-flight promise from this cycle cannot reset or overlap with a remounted cycle
+      generationRef.current++;
       inFlightRef.current = false;
       clearInterval(intervalId);
       if (typeof document !== 'undefined') {

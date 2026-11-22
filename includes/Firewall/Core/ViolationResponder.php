@@ -640,17 +640,47 @@ final class ViolationResponder {
         // caller-supplied definitions or preliminary metadata from bypassing exploit classification.
         $tier = self::get_rule_enforcement_tier($rule);
 
-        // Per-Detector Scoped Customer Trust Suppression (v3.23.1)
-        // Check if an exact scoped customer exemption exists (route + method + role + param_key).
-        // Zero-tolerance exploit rules (SQLi, RCE, LFI, XXE, SSRF, gadget uploads) are NEVER suppressed.
-        if (class_exists('\\WebCareProScanner\\Firewall\\RescueAssistantManager')) {
+        // Critical Exploit Categories & Explicit Custom Rules
+        $critical_exploit_categories = [
+            'SQL Injection',
+            'PHP Code Injection',
+            'Path Traversal',
+            'Cross-Site Scripting (XSS)',
+            'Execution Armor',
+            'AI & Agent Defense',
+            'Virtual Patch',
+            'Next-Gen SQL RASP Defense',
+            'Next-Gen Response DLP',
+            'Modern API & GraphQL Shield',
+            'AI Agent Kill-Chain Defense',
+        ];
+        $rule_id_check = (string) ($rule['id'] ?? '');
+        $rule_cat      = (string) ($rule['category'] ?? '');
+        $is_critical_exploit = ($tier === FirewallEngine::TIER_CONFIRMED_EXPLOIT)
+            || in_array($rule_cat, $critical_exploit_categories, true)
+            || strpos($rule_id_check, 'MOD-CUSTOM-') === 0
+            || strpos($rule_id_check, 'WAF-SQL-RASP-') === 0
+            || strpos($rule_id_check, 'WAF-DLP-') === 0
+            || strpos($rule_id_check, 'WAF-GRAPHQL-') === 0
+            || $rule_id_check === 'WAF-AI-AGENT-KILLCHAIN';
+
+        // Per-Detector Scoped Customer Trust Suppression (v3.23.2)
+        // Check if an exact scoped customer exemption exists (route + method + role + canonical param_key).
+        // Authoritative Security Invariant: Confirmed exploits (TIER_CONFIRMED_EXPLOIT or $is_critical_exploit)
+        // can NEVER be suppressed by customer trust, under any circumstance.
+        if (
+            !$is_critical_exploit
+            && $tier !== FirewallEngine::TIER_CONFIRMED_EXPLOIT
+            && class_exists('\\WebCareProScanner\\Firewall\\RescueAssistantManager')
+        ) {
             $req_uri_raw = isset($_SERVER['REQUEST_URI']) ? (string) $_SERVER['REQUEST_URI'] : '';
             $clean_uri   = str_replace(["\0", "\r", "\n"], '', $req_uri_raw);
             $clean_path  = (string) wp_parse_url($clean_uri, PHP_URL_PATH);
             $ajax_act    = isset($_REQUEST['action']) ? sanitize_key(wp_unslash($_REQUEST['action'])) : '';
             $rest_route  = isset($_GET['rest_route']) ? sanitize_text_field(wp_unslash($_GET['rest_route'])) : '';
             $req_method  = isset($_SERVER['REQUEST_METHOD']) ? (string) $_SERVER['REQUEST_METHOD'] : 'GET';
-            $matched_p   = (string) ($rule['match_value'] ?? ($rule['matched_param'] ?? ''));
+            // Canonical parameter key resolution: strictly target the parameter key name, never raw payload values
+            $param_key   = (string) ($rule['param_key'] ?? ($rule['target_param'] ?? ''));
             $user_role   = '';
             if (function_exists('wp_get_current_user')) {
                 $u = wp_get_current_user();
@@ -666,7 +696,7 @@ final class ViolationResponder {
                 $rest_route,
                 $req_method,
                 $user_role,
-                $matched_p
+                $param_key
             )) {
                 $bypass_rule = $rule;
                 $bypass_rule['description'] = ($rule['description'] ?? 'Firewall trigger') . ' [Suppressed via Scoped Customer Trust Exemption]';
@@ -728,30 +758,6 @@ final class ViolationResponder {
             $is_admin = $whitelist_ctx['is_admin'];
             $full_bypass = $whitelist_ctx['full_bypass'];
             $rule_bypass = !empty($whitelist_ctx['rule_bypass']);
-
-            // Critical Exploit Categories & Explicit Custom Rules that Pre-Auth (unauthenticated) traffic can NEVER bypass on global mode
-            $critical_exploit_categories = [
-                'SQL Injection',
-                'PHP Code Injection',
-                'Path Traversal',
-                'Cross-Site Scripting (XSS)',
-                'Execution Armor',
-                'AI & Agent Defense',
-                'Virtual Patch',
-                'Next-Gen SQL RASP Defense',
-                'Next-Gen Response DLP',
-                'Modern API & GraphQL Shield',
-                'AI Agent Kill-Chain Defense',
-            ];
-            $rule_id_check = (string) ($rule['id'] ?? '');
-            $rule_cat      = (string) ($rule['category'] ?? '');
-            $is_critical_exploit = ($tier === FirewallEngine::TIER_CONFIRMED_EXPLOIT)
-                || in_array($rule_cat, $critical_exploit_categories, true)
-                || strpos($rule_id_check, 'MOD-CUSTOM-') === 0
-                || strpos($rule_id_check, 'WAF-SQL-RASP-') === 0
-                || strpos($rule_id_check, 'WAF-DLP-') === 0
-                || strpos($rule_id_check, 'WAF-GRAPHQL-') === 0
-                || $rule_id_check === 'WAF-AI-AGENT-KILLCHAIN';
 
             // Pre-authenticated / unauthenticated traffic must NEVER bypass confirmed exploits or critical categories.
             // Authenticated administrator sessions are the ONLY traffic that may bypass critical exploits via IP allowlist.

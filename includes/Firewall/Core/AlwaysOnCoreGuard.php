@@ -170,17 +170,15 @@ final class AlwaysOnCoreGuard implements WafEvaluatorInterface {
 
                         $is_manual_admin_ban = ($ban_source === 'manual_admin') || (!empty($block_meta['admin_user']));
                         $ban_rule_id = strtoupper((string) ($block_meta['rule_id'] ?? ''));
+                        // Strictly operational/rate-limiting/crawler bans (Never includes exploits like XSS, AI killchains, or prompt injections)
                         $is_non_exploit_operational_ban = !$is_manual_admin_ban && (
                             str_contains($ban_rule_id, '404')
                             || str_contains($ban_rule_id, 'RATE-LIMIT')
                             || str_contains($ban_rule_id, 'SCRAPING')
                             || str_contains($ban_rule_id, 'BURST')
                             || str_contains($ban_rule_id, 'THREAT-SCORE')
-                            || str_contains($ban_rule_id, 'KILLCHAIN')
                             || str_contains($ban_rule_id, 'BOT-')
                             || str_contains($ban_rule_id, 'HONEYTOKEN')
-                            || str_contains($ban_rule_id, 'AI-PROMPT')
-                            || str_contains($ban_rule_id, 'XSS')
                             || str_contains($ban_rule_id, 'FORBIDDEN-USERNAME')
                         );
 
@@ -189,8 +187,8 @@ final class AlwaysOnCoreGuard implements WafEvaluatorInterface {
 
                         if ($is_auth_admin) {
                             $matching_entry = null;
-                        } elseif ($is_temp_unblocked) {
-                            // Temporary 15-minute unblock pass: exempt from operational/custom IP blocklist
+                        } elseif ($is_temp_unblocked && $is_non_exploit_operational_ban) {
+                            // Temporary 15-minute unblock pass: exempt strictly from operational bans (never manual admin or exploit bans)
                             $matching_entry = null;
                         } elseif ($is_non_exploit_operational_ban && $is_verified_human_session) {
                             // Verified shopper/member operational-ban exemption
@@ -579,7 +577,7 @@ final class AlwaysOnCoreGuard implements WafEvaluatorInterface {
         // 6. 404 Lockout, Threat Intel Blacklist & Verified Virtual Patches
         $lockout_transient = 'webcareproscan_404_lock_' . md5($client_ip);
         $lockout_data = get_transient($lockout_transient);
-        if (!$skip_operational_heuristics && $lockout_data !== false) {
+        if (!$skip_operational_heuristics && !$is_temp_unblocked && $lockout_data !== false) {
             return new WafVerdict(
                 'block',
                 'RATE-LIMIT-404-LOCKOUT',

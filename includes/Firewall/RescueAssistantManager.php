@@ -367,21 +367,39 @@ class RescueAssistantManager {
                 }
             }
 
-            // 4. Rule-only exemption
+            // 4. Per-Detector Co-Verification Invariant (v3.23.2):
+            // Every customer trust exemption must match the intended detector ($item_rule === $rule_lc).
+            // A route/action trust entry for detector A must NEVER suppress an unrelated detector B.
+            // If the trust item specifies a rule_id, it must match the current rule_id strictly.
+            if ($item_rule !== '' && $rule_lc !== '' && $item_rule !== $rule_lc) {
+                continue;
+            }
+
+            // 5. Rule-only exemption (Disallowed as unrestricted global exemption; requires rule_id match)
             if ($item_rule !== '' && $item_rule === $rule_lc && $val === '') {
-                return true;
+                // An entry without a route/action value only matches if the item explicitly has type 'rule'
+                if ($item_type === 'rule') {
+                    return true;
+                }
+                continue;
             }
 
             if ($val === '') {
                 continue;
             }
 
-            // 5. AJAX action check: exact match
+            // When an incoming rule_id is provided, the trust entry MUST also match that rule_id
+            // (or have stored that rule_id) so route trust never suppresses unrelated detectors.
+            if ($rule_lc !== '' && $item_rule === '') {
+                continue;
+            }
+
+            // 6. AJAX action check: exact match
             if ($item_type === 'ajax' && $act_lc !== '' && $act_lc === $val) {
                 return true;
             }
 
-            // 6. REST route check: canonical match or explicit wildcard /*
+            // 7. REST route check: canonical match or explicit wildcard /*
             if ($item_type === 'rest') {
                 $rest_target = $rest_lc !== '' ? $rest_lc : $uri_lc;
                 $val_clean = rtrim($val, '/');
@@ -396,7 +414,7 @@ class RescueAssistantManager {
                 }
             }
 
-            // 7. URI check: canonical exact match or explicit wildcard /*
+            // 8. URI check: canonical exact match or explicit wildcard /*
             if ($item_type === 'uri') {
                 $val_clean = rtrim($val, '/');
                 if (str_ends_with($val, '/*')) {
@@ -410,7 +428,7 @@ class RescueAssistantManager {
                 }
             }
 
-            // 8. Rule identifier exact match
+            // 9. Rule identifier exact match
             if ($item_type === 'rule' && $rule_lc !== '' && $rule_lc === $val) {
                 return true;
             }

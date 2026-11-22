@@ -120,55 +120,24 @@ final class TransientRateLimiter {
             ];
         }
 
-        // Bounded fallback if AdaptiveRateLimiter class is unavailable
-        $transient_name = 'webcareproscan_rl_' . substr(md5($key), 0, 24);
-        $data = get_transient($transient_name);
-
-        if ($data === false || !is_array($data) || empty($data['reset'])) {
-            $data = [
-                'count' => 1,
-                'reset' => $now + $window_seconds,
-            ];
-            set_transient($transient_name, $data, $window_seconds);
-            return [
-                'allowed'     => true,
-                'retry_after' => 0,
-                'current'     => 1,
-                'limit'       => $limit,
-            ];
-        }
-
-        if ($now > $data['reset']) {
-            $data = [
-                'count' => 1,
-                'reset' => $now + $window_seconds,
-            ];
-            set_transient($transient_name, $data, $window_seconds);
-            return [
-                'allowed'     => true,
-                'retry_after' => 0,
-                'current'     => 1,
-                'limit'       => $limit,
-            ];
-        }
-
-        $data['count'] = (int) $data['count'] + 1;
-        $remaining_ttl = max(1, $data['reset'] - $now);
-        set_transient($transient_name, $data, $remaining_ttl);
-
-        if ($data['count'] > $limit) {
+        // Fail-safe handling when AdaptiveRateLimiter class is unavailable (v3.23.2):
+        // Concurrency defense: Never use non-atomic read-modify-write transients.
+        // For sensitive authentication and admin probes, fail-closed to prevent abuse under degradation.
+        $is_sensitive_key = str_contains($key, 'login') || str_contains($key, 'auth') || str_contains($key, 'xmlrpc');
+        if ($is_sensitive_key) {
             return [
                 'allowed'     => false,
-                'retry_after' => $remaining_ttl,
-                'current'     => $data['count'],
+                'retry_after' => 30,
+                'current'     => $limit + 1,
                 'limit'       => $limit,
             ];
         }
 
+        // For non-sensitive traffic under class load failure, permit benign single hit
         return [
             'allowed'     => true,
             'retry_after' => 0,
-            'current'     => $data['count'],
+            'current'     => 1,
             'limit'       => $limit,
         ];
     }
