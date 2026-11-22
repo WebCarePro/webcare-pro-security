@@ -216,6 +216,122 @@ class DistributedVelocityShieldTest extends TestCase {
     }
 
     /**
+     * Test single atomic Redis Lua EVAL execution with INCR and SADD.
+     */
+    public function test_redis_lua_eval_single_atomic_slice_tracking(): void {
+        global $wp_object_cache;
+        $prev_cache = $wp_object_cache;
+
+        // Mock Redis client with in-memory Sets and Counters simulating EVAL script
+        $mock_redis = new class {
+            public int $eval_calls = 0;
+            public array $counters = [];
+            public array $sets = [];
+
+            public function eval($script, $args = [], $num_keys = 0) {
+                $this->eval_calls++;
+                $count_key = $args[0];
+                $set_key = $args[1];
+                $ip_hash = $args[2];
+                $ttl = (int) $args[3];
+
+                if (!isset($this->counters[$count_key])) {
+                    $this->counters[$count_key] = 0;
+                }
+                $this->counters[$count_key]++;
+
+                if (!isset($this->sets[$set_key])) {
+                    $this->sets[$set_key] = [];
+                }
+                $this->sets[$set_key][$ip_hash] = true;
+
+                return [
+                    $this->counters[$count_key],
+                    count($this->sets[$set_key]),
+                ];
+            }
+
+            public function sMembers($key) {
+                return array_keys($this->sets[$key] ?? []);
+            }
+
+            public function get($key) {
+                return $this->counters[$key] ?? null;
+            }
+        };
+
+        $mock_object_cache = new class($mock_redis) {
+            public $redis;
+            public array $data = [];
+            public function __construct($r) { $this->redis = $r; }
+            public function build_key($key, $group) { return "{$group}:{$key}"; }
+            public function get($key, $group = 'default', $force = false, &$found = null) {
+                $k = $this->build_key($key, $group);
+                $found = isset($this->redis->counters[$k]);
+                return $this->redis->counters[$k] ?? false;
+            }
+            public function set($key, $val, $group = 'default', $exp = 0) {
+                $this->data[$this->build_key($key, $group)] = $val;
+                return true;
+            }
+            public function add($key, $val, $group = 'default', $exp = 0) { return true; }
+            public function incr($key, $offset = 1, $group = 'default') { return 1; }
+            public function delete($key, $group = 'default') { return true; }
+        };
+
+        $wp_object_cache = $mock_object_cache;
+
+        $refl = new \ReflectionClass(DistributedVelocityShield::class);
+        $hasRedis = $refl->getMethod('has_atomic_redis_lua_backend');
+        $hasRedis->setAccessible(true);
+        $appendMethod = $refl->getMethod('append_sliding_event');
+        $appendMethod->setAccessible(true);
+        $getMetricsMethod = $refl->getMethod('get_sliding_metrics');
+        $getMetricsMethod->setAccessible(true);
+
+        $cache_key = 'dvs_test_redis_lua_' . bin2hex(random_bytes(4));
+        $ip1 = '203.0.113.51';
+        $ip2 = '203.0.113.52';
+
+        $prev_ext = function_exists('wp_using_ext_object_cache') ? wp_using_ext_object_cache() : false;
+        if (function_exists('wp_using_ext_object_cache')) {
+            wp_using_ext_object_cache(true);
+        }
+
+        try {
+            // Redis Lua backend must be recognized as active
+            $this->assertTrue($hasRedis->invoke(null), 'has_atomic_redis_lua_backend must return true when Redis client with eval() is present.');
+
+            // Worker records first event
+            $m1 = $appendMethod->invoke(null, $cache_key, $ip1, 'Auth fail 1', []);
+            $this->assertSame(1, $mock_redis->eval_calls);
+            $this->assertSame(1, $m1['count']);
+            $this->assertSame(1, $m1['unique_ips']);
+
+            // Worker records second event from same IP
+            $m2 = $appendMethod->invoke(null, $cache_key, $ip1, 'Auth fail 2', []);
+            $this->assertSame(2, $mock_redis->eval_calls);
+            $this->assertSame(2, $m2['count']);
+            $this->assertSame(1, $m2['unique_ips']);
+
+            // Worker records third event from different IP
+            $m3 = $appendMethod->invoke(null, $cache_key, $ip2, 'Auth fail 3', []);
+            $this->assertSame(3, $mock_redis->eval_calls);
+            $this->assertSame(3, $m3['count']);
+            $this->assertSame(2, $m3['unique_ips']);
+
+            $final = $getMetricsMethod->invoke(null, $cache_key);
+            $this->assertSame(3, $final['count']);
+            $this->assertSame(2, $final['unique_ips']);
+        } finally {
+            $wp_object_cache = $prev_cache;
+            if (function_exists('wp_using_ext_object_cache')) {
+                wp_using_ext_object_cache($prev_ext);
+            }
+        }
+    }
+
+    /**
      * Test file-lock exhaustion behavior: holding LOCK_EX in a fixture beyond retry budget
      * drops velocity event without corrupting file and logs dvs_file_lock_exhausted.
      * Uses an isolated temporary directory for AuditLogger to protect production logs.

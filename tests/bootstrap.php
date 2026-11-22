@@ -842,8 +842,14 @@ if (!function_exists('wp_schedule_single_event')) {
 }
 
 if (!function_exists('wp_using_ext_object_cache')) {
-    function wp_using_ext_object_cache(): bool {
-        return !empty($GLOBALS['wp_mock_ext_object_cache']);
+    function wp_using_ext_object_cache($using = null): bool {
+        global $_wp_using_ext_object_cache;
+        $current = !empty($_wp_using_ext_object_cache) || !empty($GLOBALS['wp_mock_ext_object_cache']);
+        if (null !== $using) {
+            $_wp_using_ext_object_cache = (bool) $using;
+            $GLOBALS['wp_mock_ext_object_cache'] = (bool) $using;
+        }
+        return $current;
     }
 }
 

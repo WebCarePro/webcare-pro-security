@@ -943,78 +943,32 @@ class DistributedVelocityShield {
         // 1. External Object Cache with verified Atomic Redis Lua backend
         if (self::has_atomic_redis_lua_backend()) {
             $bucket_key = "{$cache_key}_{$bucket_id}";
+            $set_key = "{$cache_key}_ips_{$bucket_id}";
             $ttl = self::SLIDING_WINDOW_SECONDS + self::BUCKET_DURATION * 2; // 80s
 
-            wp_cache_add($bucket_key, 0, $group, $ttl);
-            wp_cache_incr($bucket_key, 1, $group);
+            $redis_client = self::get_redis_client();
+            if ($redis_client !== null) {
+                global $wp_object_cache;
+                $prefix_count = method_exists($wp_object_cache, 'build_key') ? $wp_object_cache->build_key($bucket_key, $group) : "{$group}:{$bucket_key}";
+                $prefix_set = method_exists($wp_object_cache, 'build_key') ? $wp_object_cache->build_key($set_key, $group) : "{$group}:{$set_key}";
 
-            $ip_presence_key = "{$cache_key}_ip_{$bucket_id}_{$ip_hash}";
-            $existing_marker = wp_cache_get($ip_presence_key, $group);
+                $lua = "local c = redis.call('INCR', KEYS[1])\n"
+                     . "if c == 1 then redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2])) end\n"
+                     . "redis.call('SADD', KEYS[2], ARGV[1])\n"
+                     . "redis.call('EXPIRE', KEYS[2], tonumber(ARGV[2]))\n"
+                     . "return {c, redis.call('SCARD', KEYS[2])}";
 
-            // Fast path: confirmed marker already has verified active slot
-            $needs_reg = false;
-            if ($existing_marker === false || $existing_marker === null) {
-                $needs_reg = true;
-            } elseif ($existing_marker === 0 || $existing_marker === '0') {
-                $needs_reg = true;
-            } elseif (is_numeric($existing_marker) && (int) $existing_marker > 0) {
-                $slot_key = "{$cache_key}_slot_{$bucket_id}_" . (int) $existing_marker;
-                $slot_ip = wp_cache_get($slot_key, $group);
-                if ($slot_ip === false || $slot_ip === null) {
-                    $needs_reg = true; // Referenced slot was evicted
-                }
-            }
-
-            if ($needs_reg) {
-                // Serialized Unified Registration State Machine with unpredictable owner token
-                $lock_key = "{$cache_key}_lock_{$bucket_id}_{$ip_hash}";
-                $owner_token = bin2hex(random_bytes(16));
-                $acquired = wp_cache_add($lock_key, $owner_token, $group, 10);
-
-                if ($acquired) {
-                    try {
-                        // Double-check state under lock
-                        $current_marker = wp_cache_get($ip_presence_key, $group);
-                        $still_needs_reg = false;
-                        if ($current_marker === false || $current_marker === null || $current_marker === 0 || $current_marker === '0') {
-                            $still_needs_reg = true;
-                        } elseif (is_numeric($current_marker) && (int) $current_marker > 0) {
-                            $check_slot_key = "{$cache_key}_slot_{$bucket_id}_" . (int) $current_marker;
-                            if (wp_cache_get($check_slot_key, $group) === false) {
-                                $still_needs_reg = true;
-                            }
+                try {
+                    $res = @$redis_client->eval($lua, [$prefix_count, $prefix_set, $ip_hash, (string) $ttl], 2);
+                    if (is_array($res) && !empty($res)) {
+                        $redis_metrics = self::get_sliding_metrics($cache_key);
+                        if ($redis_metrics['count'] > 0) {
+                            return $redis_metrics;
                         }
-
-                        if ($still_needs_reg) {
-                            $bucket_uniq_key = "{$cache_key}_uniq_{$bucket_id}";
-                            wp_cache_add($bucket_uniq_key, 0, $group, $ttl);
-                            $slot = wp_cache_incr($bucket_uniq_key, 1, $group);
-
-                            if ($slot !== false) {
-                                $slot_key = "{$cache_key}_slot_{$bucket_id}_{$slot}";
-                                // Atomic fenced write: write slot ONLY if lock key still matches owner token
-                                $slot_written = self::atomic_fenced_ext_cache_set($lock_key, $owner_token, $slot_key, $ip_hash, $group, $ttl);
-
-                                if ($slot_written) {
-                                    // Atomic fenced promotion: promote marker ONLY if lock key still matches owner token
-                                    $promoted = self::atomic_fenced_ext_cache_set($lock_key, $owner_token, $ip_presence_key, (int) $slot, $group, $ttl);
-                                    if (!$promoted) {
-                                        wp_cache_delete($ip_presence_key, $group);
-                                    }
-                                }
-                            }
-                        }
-                    } finally {
-                        // Atomic compare-and-delete lock release via Redis Lua
-                        self::release_ext_cache_lock($lock_key, $owner_token, $group);
                     }
+                } catch (\Throwable) {
+                    // Fall through to atomic file transaction
                 }
-            }
-
-            $redis_metrics = self::get_sliding_metrics($cache_key);
-            // If Redis metrics succeeded, return immediately; otherwise fall through to atomic file transaction
-            if ($redis_metrics['count'] > 0) {
-                return $redis_metrics;
             }
         }
 
@@ -1131,23 +1085,59 @@ class DistributedVelocityShield {
 
         // 1. External object cache with verified atomic Redis Lua backend
         if (self::has_atomic_redis_lua_backend()) {
+            $redis_client = self::get_redis_client();
             $group = 'webcareproscan_dvs';
+            global $wp_object_cache;
+
             for ($i = 0; $i < self::BUCKET_SLICES; $i++) {
                 $b_id = $current_bucket - $i;
-                $val = wp_cache_get("{$cache_key}_{$b_id}", $group);
-                if (is_numeric($val)) {
-                    $total_count += (int) $val;
-                }
-                // Enumerate discrete atomic IP slots recorded for this slice
-                $uniq_cnt = wp_cache_get("{$cache_key}_uniq_{$b_id}", $group);
-                $slot_max = is_numeric($uniq_cnt) ? (int) $uniq_cnt : 0;
-                for ($s = 1; $s <= $slot_max; $s++) {
-                    $ip_h = wp_cache_get("{$cache_key}_slot_{$b_id}_{$s}", $group);
-                    if (is_string($ip_h) && $ip_h !== '') {
-                        $all_unique_ips[$ip_h] = true;
+                $bucket_key = "{$cache_key}_{$b_id}";
+                $prefix_count = method_exists($wp_object_cache, 'build_key') ? $wp_object_cache->build_key($bucket_key, $group) : "{$group}:{$bucket_key}";
+
+                $slice_count = 0;
+                try {
+                    $c_val = null;
+                    if ($redis_client !== null && method_exists($redis_client, 'get')) {
+                        $c_val = @$redis_client->get($prefix_count);
+                    }
+                    if (is_numeric($c_val)) {
+                        $slice_count = (int) $c_val;
+                    } else {
+                        $val = wp_cache_get($bucket_key, $group);
+                        if (is_numeric($val)) {
+                            $slice_count = (int) $val;
+                        }
+                    }
+                } catch (\Throwable) {
+                    $val = wp_cache_get($bucket_key, $group);
+                    if (is_numeric($val)) {
+                        $slice_count = (int) $val;
                     }
                 }
+                $total_count += $slice_count;
+
+                // Retrieve discrete unique IPs from slice Set
+                $set_key = "{$cache_key}_ips_{$b_id}";
+                $prefix_set = method_exists($wp_object_cache, 'build_key') ? $wp_object_cache->build_key($set_key, $group) : "{$group}:{$set_key}";
+                try {
+                    $members = null;
+                    if ($redis_client !== null && method_exists($redis_client, 'sMembers')) {
+                        $members = @$redis_client->sMembers($prefix_set);
+                    } elseif ($redis_client !== null && method_exists($redis_client, 'smembers')) {
+                        $members = @$redis_client->smembers($prefix_set);
+                    }
+                    if (is_array($members)) {
+                        foreach ($members as $ip_h) {
+                            if (is_string($ip_h) && $ip_h !== '') {
+                                $all_unique_ips[$ip_h] = true;
+                            }
+                        }
+                    }
+                } catch (\Throwable) {
+                    // Ignore single slice error
+                }
             }
+
             if ($total_count > 0 || count($all_unique_ips) > 0) {
                 return [
                     'count'      => $total_count,
@@ -1205,13 +1195,22 @@ class DistributedVelocityShield {
      * @return bool
      */
     private static function has_atomic_redis_lua_backend(): bool {
+        return self::get_redis_client() !== null;
+    }
+
+    /**
+     * Resolve the underlying Redis client from WordPress object cache if available.
+     *
+     * @return object|null
+     */
+    private static function get_redis_client(): ?object {
         if (!function_exists('wp_using_ext_object_cache') || !wp_using_ext_object_cache()) {
-            return false;
+            return null;
         }
 
         global $wp_object_cache;
         if (!is_object($wp_object_cache)) {
-            return false;
+            return null;
         }
 
         $redis = null;
@@ -1221,7 +1220,11 @@ class DistributedVelocityShield {
             $redis = $wp_object_cache->redis();
         }
 
-        return $redis !== null && method_exists($redis, 'eval');
+        if ($redis !== null && method_exists($redis, 'eval')) {
+            return $redis;
+        }
+
+        return null;
     }
 
     /**
