@@ -15,7 +15,6 @@ Thumbs.db
 # Local Docker & Test Environment
 compose.yaml
 uploads.ini
-tests/*
 AGENTS.md
 
 # Test scripts and temporary developer tools
