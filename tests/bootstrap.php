@@ -554,9 +554,26 @@ if (!function_exists('current_time')) {
     }
 }
 
+if (!function_exists('size_format')) {
+    function size_format(int|float $bytes, int $decimals = 0): string {
+        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        $bytes = max($bytes, 0);
+        $pow = $bytes > 0 ? floor(log($bytes, 1024)) : 0;
+        $pow = min($pow, count($units) - 1);
+        $bytes /= pow(1024, $pow);
+        return round($bytes, $decimals) . ' ' . $units[$pow];
+    }
+}
+
 if (!function_exists('current_user_can')) {
     function current_user_can(string $capability, ...$args): bool {
-        return $GLOBALS['wp_mock_current_user_can'] ?? false;
+        if (isset($GLOBALS['wp_mock_current_user_can'])) {
+            return (bool) $GLOBALS['wp_mock_current_user_can'];
+        }
+        if (!empty($GLOBALS['wp_mock_current_user']) && method_exists($GLOBALS['wp_mock_current_user'], 'has_cap')) {
+            return $GLOBALS['wp_mock_current_user']->has_cap($capability);
+        }
+        return false;
     }
 }
 
@@ -571,6 +588,8 @@ if (!class_exists('WP_REST_Request')) {
     class WP_REST_Request {
         private array $headers = [];
         private array $params = [];
+        private string $body = '';
+        private ?array $json_params = null;
         public string $method = 'GET';
         public string $route = '';
 
@@ -593,6 +612,23 @@ if (!class_exists('WP_REST_Request')) {
             $this->headers[strtolower($key)] = $value;
         }
 
+        public function set_body(string $body): void {
+            $this->body = $body;
+            $decoded = json_decode($body, true);
+            if (is_array($decoded)) {
+                $this->json_params = $decoded;
+                $this->params = array_merge($this->params, $decoded);
+            }
+        }
+
+        public function get_body(): string {
+            return $this->body;
+        }
+
+        public function get_json_params(): array {
+            return $this->json_params ?? [];
+        }
+
         public function set_param(string $key, mixed $value): void {
             $this->params[$key] = $value;
         }
@@ -603,6 +639,40 @@ if (!class_exists('WP_REST_Request')) {
 
         public function get_params(): array {
             return $this->params;
+        }
+    }
+}
+
+if (!class_exists('WP_REST_Response')) {
+    class WP_REST_Response {
+        private mixed $data = null;
+        private int $status = 200;
+        private array $headers = [];
+
+        public function __construct(mixed $data = null, int $status = 200, array $headers = []) {
+            $this->data = $data;
+            $this->status = $status;
+            $this->headers = $headers;
+        }
+
+        public function get_data(): mixed {
+            return $this->data;
+        }
+
+        public function set_data(mixed $data): void {
+            $this->data = $data;
+        }
+
+        public function get_status(): int {
+            return $this->status;
+        }
+
+        public function set_status(int $status): void {
+            $this->status = $status;
+        }
+
+        public function get_headers(): array {
+            return $this->headers;
         }
     }
 }

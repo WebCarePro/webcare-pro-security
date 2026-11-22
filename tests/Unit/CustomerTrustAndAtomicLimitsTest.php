@@ -513,15 +513,23 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
             wp_mkdir_p($storageDir);
         }
 
-        // Simulate a rotated segment file: november-22-2026-waf-logs.json.1
+        // Simulate rotated segment files: .1, .2, .3
         $baseFilename = strtolower(gmdate('F-j-Y', time())) . '-waf-logs.json';
-        $rotatedFilename = $baseFilename . '.1';
-        $rotatedFilePath = $storageDir . '/' . $rotatedFilename;
+        $rotatedFilename1 = $baseFilename . '.1';
+        $rotatedFilePath1 = $storageDir . '/' . $rotatedFilename1;
+        $rotatedFilename2 = $baseFilename . '.2';
+        $rotatedFilePath2 = $storageDir . '/' . $rotatedFilename2;
 
-        $uniqueRotIncidentId = 'WEBCARE-' . strtoupper(substr(md5('rot_test_' . microtime(true)), 0, 8));
-        $rotatedRecord = [
+        // Preserve any existing .1 file content if present in development environment
+        $backupContent1 = file_exists($rotatedFilePath1) ? file_get_contents($rotatedFilePath1) : null;
+        $backupContent2 = file_exists($rotatedFilePath2) ? file_get_contents($rotatedFilePath2) : null;
+
+        $uniqueRotIncidentId1 = 'WEBCARE-' . strtoupper(substr(md5('rot_test1_' . microtime(true)), 0, 8));
+        $uniqueRotIncidentId2 = 'WEBCARE-' . strtoupper(substr(md5('rot_test2_' . microtime(true)), 0, 8));
+
+        $rotatedRecord1 = [
             'id'                => 'webcare_' . substr(md5(uniqid('', true)), 0, 12),
-            'incident_id'       => $uniqueRotIncidentId,
+            'incident_id'       => $uniqueRotIncidentId1,
             'ref_code'          => 'WEBCARE-ROT1',
             'timestamp'         => time() - 3600,
             'created_at'        => gmdate('Y-m-d H:i:s', time() - 3600),
@@ -539,47 +547,141 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
             'matched_value'     => 'suspicious payload',
         ];
 
-        // Write directly to the rotated segment file (.1)
-        file_put_contents($rotatedFilePath, wp_json_encode($rotatedRecord) . "\n", LOCK_EX);
-        $this->assertFileExists($rotatedFilePath);
+        $rotatedRecord2 = [
+            'id'                => 'webcare_' . substr(md5(uniqid('', true)), 0, 12),
+            'incident_id'       => $uniqueRotIncidentId2,
+            'ref_code'          => 'WEBCARE-ROT2',
+            'timestamp'         => time() - 7200,
+            'created_at'        => gmdate('Y-m-d H:i:s', time() - 7200),
+            'created_at_gmt'    => gmdate('Y-m-d H:i:s', time() - 7200),
+            'ip_address'        => '203.0.113.200',
+            'request_uri'       => '/checkout/pay',
+            'request_method'    => 'POST',
+            'http_status_code'  => 403,
+            'rule_id'           => 'WAF-ROTATED-DETECTOR',
+            'rule_name'         => 'Rotated Test Rule 2',
+            'rule_category'     => 'Behavioral Defense',
+            'rule_description'  => 'Rotated segment incident test 2',
+            'action_taken'      => 'blocked',
+            'matched_param_key' => 'payment_nonce',
+            'matched_value'     => 'suspicious payload 2',
+        ];
 
-        // 1. Verify get_available_files includes the rotated segment
-        $available = \WebCareProScanner\Firewall\WafFileLogger::get_available_files();
-        $foundRotated = false;
-        foreach ($available as $finfo) {
-            if ($finfo['filename'] === $rotatedFilename) {
-                $foundRotated = true;
-                break;
+        try {
+            // Write directly to the rotated segment files (.1 and .2)
+            file_put_contents($rotatedFilePath1, wp_json_encode($rotatedRecord1) . "\n", LOCK_EX);
+            file_put_contents($rotatedFilePath2, wp_json_encode($rotatedRecord2) . "\n", LOCK_EX);
+            $this->assertFileExists($rotatedFilePath1);
+            $this->assertFileExists($rotatedFilePath2);
+
+            // 1. Verify get_available_files includes both rotated segments (.1 and .2)
+            $available = \WebCareProScanner\Firewall\WafFileLogger::get_available_files();
+            $foundRotated1 = false;
+            $foundRotated2 = false;
+            foreach ($available as $finfo) {
+                if ($finfo['filename'] === $rotatedFilename1) {
+                    $foundRotated1 = true;
+                }
+                if ($finfo['filename'] === $rotatedFilename2) {
+                    $foundRotated2 = true;
+                }
+            }
+            $this->assertTrue($foundRotated1, 'Rotated segment (.1) must be discovered by get_available_files()');
+            $this->assertTrue($foundRotated2, 'Rotated segment (.2) must be discovered by get_available_files()');
+
+            // 2. Verify query_logs with range => 'all' finds incidents across rotated segments
+            $queryResult1 = \WebCareProScanner\Firewall\WafFileLogger::query_logs([
+                'search' => $uniqueRotIncidentId1,
+                'action' => 'all',
+                'range'  => 'all',
+            ], 1);
+            $this->assertNotEmpty($queryResult1['logs'], 'Incident in rotated segment 1 must be discoverable via query_logs()');
+            $this->assertSame($uniqueRotIncidentId1, $queryResult1['logs'][0]['incident_id']);
+
+            $queryResult2 = \WebCareProScanner\Firewall\WafFileLogger::query_logs([
+                'search' => $uniqueRotIncidentId2,
+                'action' => 'all',
+                'range'  => 'all',
+            ], 1);
+            $this->assertNotEmpty($queryResult2['logs'], 'Incident in rotated segment 2 must be discoverable via query_logs()');
+            $this->assertSame($uniqueRotIncidentId2, $queryResult2['logs'][0]['incident_id']);
+
+            // 3. Verify FirewallController::trust_log_action authoritatively resolves the incident from a rotated segment
+            $trustReq = new \WP_REST_Request('POST', '/webcare-pro-scanner/v1/firewall/logs/trust-action');
+            $trustReq->set_header('content-type', 'application/json');
+            $trustReq->set_body((string) wp_json_encode([
+                'incident_id' => $uniqueRotIncidentId1,
+                'uri'         => '/my-account/orders',
+                'rule_id'     => 'WAF-ROTATED-DETECTOR',
+                'method'      => 'POST',
+                'param_key'   => 'order_note',
+            ]));
+            $trustRes = \WebCareProScanner\Api\Controllers\FirewallController::trust_log_action($trustReq);
+            $this->assertSame(200, $trustRes->get_status());
+            $this->assertTrue($trustRes->get_data()['success']);
+
+            // 4. Verify delete_log removes an incident directly from a rotated segment (.2)
+            $deleted = \WebCareProScanner\Firewall\WafFileLogger::delete_log($uniqueRotIncidentId2);
+            $this->assertTrue($deleted, 'delete_log() must successfully delete an incident from a rotated segment');
+
+            // Confirm it is no longer found
+            $queryAfterDelete = \WebCareProScanner\Firewall\WafFileLogger::query_logs([
+                'search' => $uniqueRotIncidentId2,
+                'action' => 'all',
+                'range'  => 'all',
+            ], 1);
+            $this->assertEmpty($queryAfterDelete['logs'], 'Deleted incident in rotated segment must no longer be discoverable');
+
+        } finally {
+            // Restore or cleanup test files safely
+            if ($backupContent1 !== null) {
+                file_put_contents($rotatedFilePath1, $backupContent1, LOCK_EX);
+            } elseif (file_exists($rotatedFilePath1)) {
+                @unlink($rotatedFilePath1);
+            }
+
+            if ($backupContent2 !== null) {
+                file_put_contents($rotatedFilePath2, $backupContent2, LOCK_EX);
+            } elseif (file_exists($rotatedFilePath2)) {
+                @unlink($rotatedFilePath2);
             }
         }
-        $this->assertTrue($foundRotated, 'Rotated segment (.1) must be discovered by get_available_files()');
+    }
 
-        // 2. Verify query_logs with range => 'all' finds the incident inside the rotated segment
-        $queryResult = \WebCareProScanner\Firewall\WafFileLogger::query_logs([
-            'search' => $uniqueRotIncidentId,
-            'action' => 'all',
-            'range'  => 'all',
-        ], 1);
-        $this->assertNotEmpty($queryResult['logs'], 'Incident in rotated segment must be discoverable via query_logs()');
-        $this->assertSame($uniqueRotIncidentId, $queryResult['logs'][0]['incident_id']);
+    public function test_administrator_activity_logging_boundary(): void {
+        // 1. Verify non-admin / subscriber cannot write to Activity Log
+        $subscriber = \wp_set_current_user(999, 'testsubscriber');
+        $subscriber->roles = ['subscriber'];
+        $subscriber->allcaps = ['read' => true];
+        unset($GLOBALS['wp_mock_current_user_can']);
 
-        // 3. Verify FirewallController::trust_log_action authoritatively resolves the incident from the rotated segment
-        $trustReq = new \WP_REST_Request('POST', '/webcare-pro-scanner/v1/firewall/logs/trust-action');
-        $trustReq->set_header('content-type', 'application/json');
-        $trustReq->set_body((string) wp_json_encode([
-            'incident_id' => $uniqueRotIncidentId,
-            'uri'         => '/my-account/orders',
-            'rule_id'     => 'WAF-ROTATED-DETECTOR',
-            'method'      => 'POST',
-            'param_key'   => 'order_note',
-        ]));
-        $trustRes = \WebCareProScanner\Api\Controllers\FirewallController::trust_log_action($trustReq);
-        $this->assertSame(200, $trustRes->get_status());
-        $this->assertTrue($trustRes->get_data()['success']);
+        $this->assertFalse(current_user_can('manage_options'));
 
-        // Clean up test file
-        if (file_exists($rotatedFilePath)) {
-            @unlink($rotatedFilePath);
-        }
+        $logged = \WebCareProScanner\System\WebCareActivityLogger::log(
+            'unauthorized_test_action',
+            'system',
+            \WebCareProScanner\System\ActivityLogs\ActivityEventSchema::SEVERITY_INFO,
+            ['data' => 'subscriber attempt']
+        );
+        $this->assertFalse($logged, 'Non-admin user (subscriber) must be rejected from writing to WebCareActivityLogger');
+
+        // 2. Verify admin (manage_options) can write to Activity Log
+        $admin = \wp_set_current_user(1, 'testadmin');
+        $admin->roles = ['administrator'];
+        $admin->allcaps = ['manage_options' => true, 'read' => true];
+        unset($GLOBALS['wp_mock_current_user_can']);
+
+        $this->assertTrue(current_user_can('manage_options'));
+
+        $adminLogged = \WebCareProScanner\System\WebCareActivityLogger::log(
+            'admin_verified_action',
+            'settings',
+            \WebCareProScanner\System\ActivityLogs\ActivityEventSchema::SEVERITY_INFO,
+            ['data' => 'admin update']
+        );
+        $this->assertTrue($adminLogged, 'Administrator with manage_options must successfully write to WebCareActivityLogger');
+
+        // Reset to admin for following tests
+        \wp_set_current_user(1, 'testadmin');
     }
 }

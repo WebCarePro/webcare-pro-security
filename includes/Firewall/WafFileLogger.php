@@ -1190,7 +1190,7 @@ class WafFileLogger {
         $deleted = false;
 
         foreach ($files as $file) {
-            if (!preg_match('/-waf-logs\.json$/', $file)) {
+            if (!preg_match('/-waf-logs\.json(?:\.\d+)?$/', $file)) {
                 continue;
             }
 
@@ -1239,7 +1239,7 @@ class WafFileLogger {
 
         $files = scandir($dir);
         foreach ($files as $file) {
-            if (preg_match('/-waf-logs\.json$/', $file)) {
+            if (preg_match('/-waf-logs\.json(?:\.\d+)?$/', $file)) {
                 $filepath = $dir . '/' . $file;
                 wp_delete_file($filepath);
             }

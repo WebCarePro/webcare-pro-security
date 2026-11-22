@@ -135,7 +135,7 @@ class ActivityEventSchema {
         if ($current_user && $current_user->exists()) {
             $roles = (array) $current_user->roles;
             $primary_role = !empty($roles) ? reset($roles) : 'none';
-            $is_admin = in_array('administrator', $roles, true) || (function_exists('current_user_can') && current_user_can('manage_options'));
+            $is_admin = function_exists('current_user_can') && current_user_can('manage_options');
             return [
                 'display_name' => (string) ($current_user->display_name ?? $current_user->user_login ?? 'User'),
                 'id'           => (int) $current_user->ID,

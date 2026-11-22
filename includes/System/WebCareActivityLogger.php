@@ -75,6 +75,25 @@ class WebCareActivityLogger {
         ?array $actor_override = null,
         ?string $correlation_id = null
     ): bool {
+        // Enforce Administrator Accountability Boundary:
+        // The Activity Log is reserved strictly for privileged administrator actions,
+        // system/automated tasks (WP-CLI, WP-Cron), or explicit admin actor overrides.
+        // Non-admin user activity or unauthenticated public requests must never pollute the audit log.
+        if ($actor_override !== null) {
+            $actor_type = $actor_override['type'] ?? '';
+            if ($actor_type !== 'admin' && $actor_type !== 'system') {
+                return false;
+            }
+        } elseif (defined('WP_CLI') && WP_CLI) {
+            // Permitted system context
+        } elseif (defined('DOING_CRON') && DOING_CRON) {
+            // Permitted system context
+        } else {
+            if (!function_exists('current_user_can') || !current_user_can('manage_options')) {
+                return false;
+            }
+        }
+
         // Prevent re-entrancy
         if (self::$is_logging) {
             return false;
