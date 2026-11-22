@@ -260,7 +260,9 @@ class WafFileLogger {
             'hostname'         => isset($_SERVER['HTTP_HOST']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_HOST'])) : '',
             'session_hash'     => substr(hash('sha256', $ip . '|' . $user_agent . '|' . (string) (wp_salt('auth'))), 0, 16),
             'route_class'      => class_exists('\\WebCareProScanner\\Core\\RouteClassifier') ? \WebCareProScanner\Core\RouteClassifier::classify(['REQUEST_URI' => $uri, 'REQUEST_METHOD' => $method])->value : 'public_get',
-            'matched_param'    => !empty($rule['match_value']) ? sanitize_text_field($rule['match_value']) : (!empty($rule['matched_param']) ? sanitize_text_field($rule['matched_param']) : null),
+            'matched_param'    => !empty($rule['target_param']) ? sanitize_text_field($rule['target_param']) : (!empty($rule['param_key']) ? sanitize_text_field($rule['param_key']) : null),
+            'matched_param_key'=> !empty($rule['target_param']) ? sanitize_text_field($rule['target_param']) : (!empty($rule['param_key']) ? sanitize_text_field($rule['param_key']) : null),
+            'matched_value'    => !empty($rule['match_value']) ? sanitize_text_field($rule['match_value']) : null,
             'strike_count'     => ($action === 'warned' || !empty($rule['is_warning']))
                 ? (isset($rule['strike_info']['strike']) ? ($rule['strike_info']['strike'] . '/4') : (\WebCareProScanner\Firewall\Core\TransientRateLimiter::get_warning_strike($ip, 4)['strike'] . '/4'))
                 : null,

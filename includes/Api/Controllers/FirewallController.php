@@ -479,40 +479,66 @@ final class FirewallController extends AbstractApiController {
      * Create narrow (route_path + param_key + user_role) scoped allowlist rule from a log incident.
      */
     public static function trust_log_action(\WP_REST_Request $request): \WP_REST_Response {
-        $params     = $request->get_json_params() ?: [];
-        $rule_id    = sanitize_text_field(trim((string) ($params['rule_id'] ?? '')));
-        $uri        = sanitize_text_field(trim((string) ($params['uri'] ?? '')));
-        $ip         = sanitize_text_field(trim((string) ($params['ip'] ?? '')));
-        $label      = sanitize_text_field(trim((string) ($params['label'] ?? '')));
-        $param_key  = sanitize_text_field(trim((string) ($params['param_key'] ?? '')));
-        $user_role  = sanitize_key(trim((string) ($params['user_role'] ?? '')));
-        $method     = strtoupper(sanitize_key(trim((string) ($params['method'] ?? ''))));
+        $params      = $request->get_json_params() ?: [];
+        $rule_id     = sanitize_text_field(trim((string) ($params['rule_id'] ?? '')));
+        $uri         = sanitize_text_field(trim((string) ($params['uri'] ?? '')));
+        $ip          = sanitize_text_field(trim((string) ($params['ip'] ?? '')));
+        $label       = sanitize_text_field(trim((string) ($params['label'] ?? '')));
+        $param_key   = sanitize_text_field(trim((string) ($params['param_key'] ?? '')));
+        $user_role   = sanitize_key(trim((string) ($params['user_role'] ?? '')));
+        $method      = strtoupper(sanitize_key(trim((string) ($params['method'] ?? ''))));
+        $incident_id = sanitize_text_field(trim((string) ($params['incident_id'] ?? '')));
 
-        // When method is omitted from the client payload, attempt to look up the original incident log method
-        // Never fall back to $_SERVER['REQUEST_METHOD'] which is the method of this REST request (POST)
-        if ($method === '' && $uri !== '') {
-            if (class_exists('\\WebCareProScanner\\Firewall\\WafFileLogger')) {
-                $recent_logs = \WebCareProScanner\Firewall\WafFileLogger::query_logs([
-                    'search' => $rule_id ?: $uri,
-                    'action' => 'all',
-                    'range'  => '7days',
-                ], 20);
-                foreach ($recent_logs['logs'] ?? [] as $log) {
-                    $log_uri = (string) ($log['request_uri'] ?? '');
-                    $log_rule = (string) ($log['rule_id'] ?? '');
-                    if (($rule_id !== '' && $log_rule === $rule_id) || str_contains($log_uri, $uri)) {
-                        $method = strtoupper((string) ($log['request_method'] ?? ''));
-                        if ($param_key === '' && !empty($log['matched_param'])) {
-                            $param_key = sanitize_text_field((string) $log['matched_param']);
-                        }
-                        break;
+        // When method or parameter is omitted, authoritatively look up the exact logged incident
+        if (($method === '' || $param_key === '') && class_exists('\\WebCareProScanner\\Firewall\\WafFileLogger')) {
+            $query_args = [
+                'action' => 'all',
+                'range'  => '7days',
+            ];
+            if ($incident_id !== '') {
+                $query_args['search'] = $incident_id;
+            } elseif ($rule_id !== '') {
+                $query_args['search'] = $rule_id;
+            } else {
+                $query_args['search'] = $uri;
+            }
+
+            $recent_logs = \WebCareProScanner\Firewall\WafFileLogger::query_logs($query_args, 20);
+            foreach ($recent_logs['logs'] ?? [] as $log) {
+                $log_inc_id  = (string) ($log['incident_id'] ?? ($log['id'] ?? ''));
+                $log_uri     = (string) ($log['request_uri'] ?? '');
+                $log_rule    = (string) ($log['rule_id'] ?? '');
+
+                $matched = false;
+                if ($incident_id !== '' && ($log_inc_id === $incident_id || (string) ($log['id'] ?? '') === $incident_id)) {
+                    $matched = true;
+                } elseif ($incident_id === '' && $rule_id !== '' && $log_rule === $rule_id && ($uri === '' || $log_uri === $uri || str_starts_with($log_uri, $uri))) {
+                    $matched = true;
+                }
+
+                if ($matched) {
+                    if ($method === '' && !empty($log['request_method'])) {
+                        $method = strtoupper((string) $log['request_method']);
                     }
+                    if ($param_key === '') {
+                        $resolved_pk = (string) ($log['matched_param_key'] ?? ($log['matched_param'] ?? ''));
+                        if ($resolved_pk !== '') {
+                            $param_key = sanitize_text_field($resolved_pk);
+                        }
+                    }
+                    break;
                 }
             }
         }
 
-        if ($method === '') {
-            $method = 'POST'; // Benign default for state-changing forms/endpoints
+        // Mandatory method validation: Never silently substitute POST for an unknown or missing method
+        $valid_methods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
+        if ($method === '' || !in_array($method, $valid_methods, true)) {
+            return new \WP_REST_Response([
+                'success' => false,
+                'code'    => 'invalid_method',
+                'message' => __('Authoritative incident HTTP method is required. Cannot trust action without a verified method.', 'webcare-pro-security'),
+            ], 400);
         }
 
         if ($uri === '' || $rule_id === '') {
@@ -530,9 +556,10 @@ final class FirewallController extends AbstractApiController {
 
         if (class_exists('\\WebCareProScanner\\Firewall\\RescueAssistantManager')) {
             $clean_path = (string) wp_parse_url($uri, PHP_URL_PATH);
+            $target_val = $clean_path !== '' ? $clean_path : '/';
             $trust_res = \WebCareProScanner\Firewall\RescueAssistantManager::trust_and_allow_action([
-                'type'       => $clean_path !== '' ? 'uri' : 'rule',
-                'value'      => $clean_path !== '' ? $clean_path : $rule_id,
+                'type'       => 'uri',
+                'value'      => $target_val,
                 'rule_id'    => $rule_id,
                 'method'     => $method,
                 'label'      => $label ?: sprintf(__('1-Click Trust from WAF Log (%s)', 'webcare-pro-security'), $rule_id),

@@ -364,4 +364,49 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
             'other_param'
         ));
     }
+
+    public function test_customer_trust_rejects_type_rule_and_prevents_global_detector_bypass(): void {
+        // 1. Direct trust_and_allow_action must reject type === 'rule'
+        $resRuleType = RescueAssistantManager::trust_and_allow_action([
+            'rule_id' => 'WAF-CUSTOM-DETECTOR',
+            'value'   => 'WAF-CUSTOM-DETECTOR',
+            'type'    => 'rule',
+            'method'  => 'POST',
+        ]);
+        $this->assertFalse($resRuleType['success']);
+        $this->assertSame('invalid_target_type', $resRuleType['code']);
+
+        // 2. Even if an entry with type === 'rule' exists in stored options, matcher must refuse to match
+        update_option(RescueAssistantManager::OPTION_TRUSTED_ACTIONS, [
+            [
+                'id'        => 'trust_legacy_rule',
+                'type'      => 'rule',
+                'value'     => 'WAF-HEURISTIC-DETECTOR',
+                'rule_id'   => 'WAF-HEURISTIC-DETECTOR',
+                'method'    => 'POST',
+                'param_key' => '',
+                'user_role' => '',
+            ]
+        ], false);
+
+        // Matching must NOT succeed across arbitrary routes (/cart or /checkout)
+        $this->assertFalse(RescueAssistantManager::is_rule_or_request_trusted(
+            'WAF-HEURISTIC-DETECTOR',
+            '/cart',
+            '',
+            '',
+            'POST',
+            '',
+            ''
+        ));
+        $this->assertFalse(RescueAssistantManager::is_rule_or_request_trusted(
+            'WAF-HEURISTIC-DETECTOR',
+            '/checkout',
+            '',
+            '',
+            'POST',
+            '',
+            ''
+        ));
+    }
 }

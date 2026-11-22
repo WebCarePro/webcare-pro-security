@@ -418,10 +418,8 @@ class RescueAssistantManager {
                 }
             }
 
-            // 9. Rule identifier exact match
-            if ($item_type === 'rule' && $rule_lc !== '' && $rule_lc === $val) {
-                return true;
-            }
+            // Note: Global rule-only exemptions (type === 'rule') are strictly disallowed in customer trust.
+            // Customer trust must always be bound to an authentic URI, AJAX action, or REST route target.
         }
 
         return false;
@@ -464,6 +462,16 @@ class RescueAssistantManager {
         $param_key = sanitize_text_field(trim((string) ($params['param_key'] ?? '')));
         $user_role = sanitize_key(trim((string) ($params['user_role'] ?? '')));
         $method    = strtoupper(sanitize_key(trim((string) ($params['method'] ?? ''))));
+
+        // Customer trust must specify an explicit, valid route target type (uri, rest, ajax)
+        $allowed_types = ['uri', 'rest', 'ajax'];
+        if (!in_array($type, $allowed_types, true)) {
+            return [
+                'success' => false,
+                'code'    => 'invalid_target_type',
+                'message' => __('Security Invariant: Customer trust requires a concrete route/action target type (uri, rest, ajax). Global rule-only exemptions are prohibited.', 'webcare-pro-security'),
+            ];
+        }
 
         if ($value === '' || $rule_id === '') {
             return ['success' => false, 'message' => __('Both action route target and rule identifier are strictly required for scoped customer trust.', 'webcare-pro-security')];
