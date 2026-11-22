@@ -26,7 +26,10 @@ final class CentralThreatControlPlane {
     public const OPTION_KEV_CATALOG      = 'webcareproscan_cisa_kev_catalog';
     public const OPTION_CVE_FINDINGS     = 'webcareproscan_cve_evaluated_findings';
     public const OPTION_FEED_META        = 'webcareproscan_central_feed_meta';
-    public const DEFAULT_FEED_URL        = 'https://intel.webcarespro.com/api/v1/feed/cve-delta';
+    public const OPTION_KEV_ETAG         = 'webcareproscan_cisa_kev_etag';
+    public const OPTION_KEV_MOD          = 'webcareproscan_cisa_kev_last_mod';
+    public const CISA_KEV_FEED_URL       = 'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json';
+    public const NVD_CVE_FEED_URL        = 'https://services.nvd.nist.gov/rest/json/cves/2.0';
     public const MAX_FEED_BYTES          = 2097152; // 2 MB strict ceiling on feed response size
 
     /**
@@ -65,71 +68,328 @@ final class CentralThreatControlPlane {
     }
 
     /**
-     * Ingest and evaluate signed incremental delta feed.
+     * Ingest and evaluate signed incremental delta feed or free public pull feeds.
      *
-     * @param array<string, mixed>|null $mock_payload Optional payload for testing.
+     * @param array<string, mixed>|null $mock_payload Optional payload for testing / signed envelopes.
      * @return array{success: bool, new_cves: int, kev_updates: int, sequence: int, message: string}
      */
     public static function sync_incremental_feed(?array $mock_payload = null): array {
         $checkpoint = self::get_checkpoint();
-        $payload = $mock_payload;
 
-        if ($payload === null) {
-            $settings = SettingsManager::get_settings();
-            if (empty($settings['threat_intel_enabled'])) {
-                return [
-                    'success'     => false,
-                    'new_cves'    => 0,
-                    'kev_updates' => 0,
-                    'sequence'    => $checkpoint['sequence'],
-                    'message'     => __('Threat intelligence feed is disabled in Settings.', 'webcare-pro-security'),
-                ];
-            }
-
-            $feed_url = add_query_arg([
-                'since_seq' => $checkpoint['sequence'],
-                'since_mod' => rawurlencode($checkpoint['last_mod_start']),
-            ], self::DEFAULT_FEED_URL);
-
-            $response = wp_safe_remote_get($feed_url, [
-                'timeout'    => 15,
-                'user-agent' => 'WebCare-Pro-Security/' . (defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '3.3.0'),
-                'headers'    => [
-                    'Accept' => 'application/json',
-                ],
-            ]);
-
-            if (is_wp_error($response)) {
-                return [
-                    'success'     => false,
-                    'new_cves'    => 0,
-                    'kev_updates' => 0,
-                    'sequence'    => $checkpoint['sequence'],
-                    'message'     => $response->get_error_message(),
-                ];
-            }
-
-            $body = wp_remote_retrieve_body($response);
-
-            // Bounded response size check before json_decode
-            if (strlen($body) > self::MAX_FEED_BYTES) {
-                AuditLogger::log_event(
-                    'FEED_PAYLOAD_TOO_LARGE',
-                    sprintf('Threat intelligence feed response exceeds strict ceiling (%d bytes > %d max).', strlen($body), self::MAX_FEED_BYTES)
-                );
-                return [
-                    'success'     => false,
-                    'new_cves'    => 0,
-                    'kev_updates' => 0,
-                    'sequence'    => $checkpoint['sequence'],
-                    'message'     => __('Threat intelligence feed response exceeded maximum allowable size (2 MB).', 'webcare-pro-security'),
-                ];
-            }
-
-            $payload = json_decode($body, true);
+        // If mock_payload / signed envelope is supplied, run full cryptographic envelope processing
+        if ($mock_payload !== null) {
+            return self::process_signed_envelope($mock_payload, $checkpoint);
         }
 
-        if (!is_array($payload) || empty($payload['feed_version'])) {
+        $settings = SettingsManager::get_settings();
+        if (empty($settings['threat_intel_enabled'])) {
+            return [
+                'success'     => false,
+                'new_cves'    => 0,
+                'kev_updates' => 0,
+                'sequence'    => $checkpoint['sequence'],
+                'message'     => __('Threat intelligence feed is disabled in Settings.', 'webcare-pro-security'),
+            ];
+        }
+
+        $kev_updates = 0;
+        $cve_count   = 0;
+        $status_msgs = [];
+
+        // 1. CISA KEV (Known Exploited Vulnerabilities) - 100% Free Public Pull Feed
+        if (!empty($settings['threat_intel_cisa_kev_enabled'])) {
+            $kev_res = self::sync_cisa_kev_feed();
+            if ($kev_res['success']) {
+                $kev_updates = $kev_res['count'];
+                $status_msgs[] = sprintf('CISA KEV: %d records', $kev_updates);
+            } elseif (!empty($kev_res['message'])) {
+                $status_msgs[] = 'CISA KEV: ' . $kev_res['message'];
+            }
+        }
+
+        // 2. NVD CVE 2.0 (Incremental WordPress Delta) - 100% Free Public Pull Feed
+        if (!empty($settings['threat_intel_nvd_cve_enabled'])) {
+            $nvd_res = self::sync_nvd_wordpress_cves($checkpoint);
+            if ($nvd_res['success']) {
+                $cve_count = $nvd_res['count'];
+                $status_msgs[] = sprintf('NVD: %d WordPress CVEs', $cve_count);
+            } elseif (!empty($nvd_res['message'])) {
+                $status_msgs[] = 'NVD: ' . $nvd_res['message'];
+            }
+        }
+
+        $current_kev = (array) get_option(self::OPTION_KEV_CATALOG, []);
+        $stored_findings = (array) get_option(self::OPTION_CVE_FINDINGS, []);
+
+        // Advance sequence monotonically on public pull
+        $next_seq = $checkpoint['sequence'] + 1;
+        self::update_checkpoint($next_seq, gmdate('Y-m-d\TH:i:s\Z'), '');
+
+        update_option(self::OPTION_FEED_META, [
+            'last_sync'       => current_time('mysql'),
+            'last_sync_ts'    => time(),
+            'sequence'        => $next_seq,
+            'cves_processed'  => $cve_count,
+            'findings_count'  => count($stored_findings),
+            'kev_total_count' => count($current_kev),
+        ], false);
+
+        $msg = !empty($status_msgs) ? implode(' | ', $status_msgs) : 'Public threat feeds synchronized.';
+        return [
+            'success'     => true,
+            'new_cves'    => $cve_count,
+            'kev_updates' => $kev_updates,
+            'sequence'    => $next_seq,
+            'message'     => $msg,
+        ];
+    }
+
+    /**
+     * Pull and cache CISA KEV catalog using If-Modified-Since / ETag caching.
+     * Zero visitor or site data is ever sent outbound.
+     *
+     * @return array{success: bool, count: int, message: string}
+     */
+    public static function sync_cisa_kev_feed(): array {
+        $headers = [
+            'Accept'     => 'application/json',
+            'User-Agent' => 'WebCare-Pro-Security',
+        ];
+
+        $cached_etag = (string) get_option(self::OPTION_KEV_ETAG, '');
+        $cached_mod  = (string) get_option(self::OPTION_KEV_MOD, '');
+        if ($cached_etag !== '') {
+            $headers['If-None-Match'] = $cached_etag;
+        }
+        if ($cached_mod !== '') {
+            $headers['If-Modified-Since'] = $cached_mod;
+        }
+
+        $response = wp_safe_remote_get(self::CISA_KEV_FEED_URL, [
+            'timeout'    => 15,
+            'user-agent' => 'WebCare-Pro-Security',
+            'headers'    => $headers,
+        ]);
+
+        if (is_wp_error($response)) {
+            return [
+                'success' => false,
+                'count'   => 0,
+                'message' => $response->get_error_message(),
+            ];
+        }
+
+        $code = (int) wp_remote_retrieve_response_code($response);
+        if ($code === 304) {
+            $current_kev = (array) get_option(self::OPTION_KEV_CATALOG, []);
+            return [
+                'success' => true,
+                'count'   => count($current_kev),
+                'message' => 'Up to date (304 Not Modified)',
+            ];
+        }
+
+        if ($code !== 200) {
+            return [
+                'success' => false,
+                'count'   => 0,
+                'message' => sprintf('HTTP %d', $code),
+            ];
+        }
+
+        $body = wp_remote_retrieve_body($response);
+        if (strlen($body) > self::MAX_FEED_BYTES) {
+            AuditLogger::log_event(
+                'FEED_PAYLOAD_TOO_LARGE',
+                sprintf('CISA KEV feed response exceeds strict ceiling (%d bytes > %d max).', strlen($body), self::MAX_FEED_BYTES)
+            );
+            return [
+                'success' => false,
+                'count'   => 0,
+                'message' => 'Response exceeded 2 MB ceiling',
+            ];
+        }
+
+        $data = json_decode($body, true);
+        if (!is_array($data) || empty($data['vulnerabilities']) || !is_array($data['vulnerabilities'])) {
+            return [
+                'success' => false,
+                'count'   => 0,
+                'message' => 'Malformed CISA KEV JSON',
+            ];
+        }
+
+        $current_kev = (array) get_option(self::OPTION_KEV_CATALOG, []);
+        $count = 0;
+        foreach ($data['vulnerabilities'] as $item) {
+            $cve_id = (string) ($item['cveID'] ?? '');
+            if ($cve_id !== '') {
+                $current_kev[$cve_id] = [
+                    'cve_id'             => $cve_id,
+                    'vendor_project'     => (string) ($item['vendorProject'] ?? ''),
+                    'product'            => (string) ($item['product'] ?? ''),
+                    'date_added'         => (string) ($item['dateAdded'] ?? ''),
+                    'due_date'           => (string) ($item['dueDate'] ?? ''),
+                    'known_ransomware'   => strtolower((string) ($item['knownRansomwareCampaignUse'] ?? '')) === 'known',
+                    'active_exploit_sig' => true,
+                ];
+                $count++;
+            }
+        }
+
+        update_option(self::OPTION_KEV_CATALOG, $current_kev, false);
+
+        // Store caching headers for next request
+        $resp_headers = wp_remote_retrieve_headers($response);
+        if (!empty($resp_headers['etag'])) {
+            update_option(self::OPTION_KEV_ETAG, (string) $resp_headers['etag'], false);
+        }
+        if (!empty($resp_headers['last-modified'])) {
+            update_option(self::OPTION_KEV_MOD, (string) $resp_headers['last-modified'], false);
+        }
+
+        return [
+            'success' => true,
+            'count'   => $count,
+            'message' => 'Updated catalog',
+        ];
+    }
+
+    /**
+     * Pull incremental WordPress CVE delta from official NVD CVE 2.0 API.
+     * Strictly generic keywordSearch=wordpress with zero site data outbound.
+     *
+     * @param array{sequence: int, last_mod_start: string, last_sync_ts: int, payload_sha256: string} $checkpoint
+     * @return array{success: bool, count: int, message: string}
+     */
+    public static function sync_nvd_wordpress_cves(array $checkpoint): array {
+        $now_utc = gmdate('Y-m-d\TH:i:s\Z');
+        $start_date = !empty($checkpoint['last_mod_start']) ? $checkpoint['last_mod_start'] : gmdate('Y-m-d\TH:i:s\Z', time() - (30 * 86400));
+
+        // Format dates for NVD REST API 2.0 (ISO-8601 with milliseconds, e.g. 2026-11-01T00:00:00.000)
+        $start_clean = gmdate('Y-m-d\TH:i:s.000', strtotime($start_date));
+        $end_clean   = gmdate('Y-m-d\TH:i:s.000', strtotime($now_utc));
+
+        $url = add_query_arg([
+            'keywordSearch'    => 'wordpress',
+            'lastModStartDate' => $start_clean,
+            'lastModEndDate'   => $end_clean,
+            'resultsPerPage'   => 50,
+        ], self::NVD_CVE_FEED_URL);
+
+        $response = wp_safe_remote_get($url, [
+            'timeout'    => 15,
+            'user-agent' => 'WebCare-Pro-Security',
+            'headers'    => [
+                'Accept' => 'application/json',
+            ],
+        ]);
+
+        if (is_wp_error($response)) {
+            return [
+                'success' => false,
+                'count'   => 0,
+                'message' => $response->get_error_message(),
+            ];
+        }
+
+        $code = (int) wp_remote_retrieve_response_code($response);
+        if ($code !== 200) {
+            return [
+                'success' => false,
+                'count'   => 0,
+                'message' => sprintf('NVD HTTP %d', $code),
+            ];
+        }
+
+        $body = wp_remote_retrieve_body($response);
+        if (strlen($body) > self::MAX_FEED_BYTES) {
+            AuditLogger::log_event(
+                'FEED_PAYLOAD_TOO_LARGE',
+                sprintf('NVD CVE delta response exceeds strict ceiling (%d bytes > %d max).', strlen($body), self::MAX_FEED_BYTES)
+            );
+            return [
+                'success' => false,
+                'count'   => 0,
+                'message' => 'NVD response exceeded 2 MB ceiling',
+            ];
+        }
+
+        $data = json_decode($body, true);
+        if (!is_array($data) || !isset($data['vulnerabilities']) || !is_array($data['vulnerabilities'])) {
+            return [
+                'success' => false,
+                'count'   => 0,
+                'message' => 'Empty or invalid NVD response',
+            ];
+        }
+
+        $cve_entries = [];
+        foreach ($data['vulnerabilities'] as $v) {
+            $cve_item = $v['cve'] ?? [];
+            $cve_id   = (string) ($cve_item['id'] ?? '');
+            if ($cve_id === '') {
+                continue;
+            }
+
+            $description = '';
+            if (!empty($cve_item['descriptions']) && is_array($cve_item['descriptions'])) {
+                foreach ($cve_item['descriptions'] as $desc) {
+                    if (($desc['lang'] ?? '') === 'en') {
+                        $description = (string) ($desc['value'] ?? '');
+                        break;
+                    }
+                }
+            }
+
+            $cvss = 7.5;
+            $severity = 'high';
+            if (!empty($cve_item['metrics']['cvssMetricV31'][0]['cvssData'])) {
+                $cvssData = $cve_item['metrics']['cvssMetricV31'][0]['cvssData'];
+                $cvss     = (float) ($cvssData['baseScore'] ?? 7.5);
+                $sev_raw  = strtolower((string) ($cvssData['baseSeverity'] ?? 'high'));
+                if (in_array($sev_raw, ['critical', 'high', 'medium', 'low'], true)) {
+                    $severity = $sev_raw;
+                }
+            }
+
+            $cve_entries[] = [
+                'cve_id'         => $cve_id,
+                'title'          => $cve_id,
+                'description'    => $description,
+                'severity'       => $severity,
+                'cvss'           => $cvss,
+                'configurations' => (array) ($cve_item['configurations'] ?? []),
+            ];
+        }
+
+        $current_kev = (array) get_option(self::OPTION_KEV_CATALOG, []);
+        $evaluated   = self::evaluate_cves_against_inventory($cve_entries, $current_kev);
+
+        if (!empty($evaluated)) {
+            $stored_findings = (array) get_option(self::OPTION_CVE_FINDINGS, []);
+            foreach ($evaluated as $cve_id => $finding) {
+                $stored_findings[$cve_id] = $finding;
+            }
+            update_option(self::OPTION_CVE_FINDINGS, $stored_findings, false);
+        }
+
+        return [
+            'success' => true,
+            'count'   => count($cve_entries),
+            'message' => sprintf('Evaluated %d CVEs', count($cve_entries)),
+        ];
+    }
+
+    /**
+     * Process Ed25519-signed envelope payload (for unit tests and optional signed feeds).
+     *
+     * @param array<string, mixed> $payload
+     * @param array{sequence: int, last_mod_start: string, last_sync_ts: int, payload_sha256: string} $checkpoint
+     * @return array{success: bool, new_cves: int, kev_updates: int, sequence: int, message: string}
+     */
+    public static function process_signed_envelope(array $payload, array $checkpoint): array {
+        if (empty($payload['feed_version'])) {
             return [
                 'success'     => false,
                 'new_cves'    => 0,

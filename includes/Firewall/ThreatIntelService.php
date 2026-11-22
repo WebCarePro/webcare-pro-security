@@ -196,50 +196,71 @@ class ThreatIntelService {
             ];
         }
 
-        // 1. Fetch Community IP Feeds (Blocklist / Emerging Threats / FireHOL mirrors)
-        $raw_host = 'raw.' . 'githubusercontent' . '.com';
-        $feed_urls = [
-            "https://{$raw_host}/stamparm/ipsum/master/levels/1.txt",
-            'https://lists.blocklist.de/lists/ssh.txt',
-        ];
-
+        // 1. Fetch High-Confidence Public CIDR Feeds (Spamhaus DROP / FireHOL Level 1)
         $downloaded_ips_count = 0;
-        foreach ($feed_urls as $url) {
-            $response = wp_remote_get($url, [
-                'timeout'   => 8,
-                'sslverify' => true,
-            ]);
+        $public_cidr_enabled = !isset($settings['threat_intel_public_cidr_enabled']) || !empty($settings['threat_intel_public_cidr_enabled']);
 
-            if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200) {
-                $body = wp_remote_retrieve_body($response);
-                if (!empty($body)) {
-                    $lines = explode("\n", $body);
-                    $added_from_feed = 0;
-                    foreach ($lines as $line) {
-                        $line = trim($line);
-                        // Skip comments and empty lines
-                        if ($line === '' || strpos($line, '#') === 0 || strpos($line, ';') === 0) {
-                            continue;
-                        }
-                        // Extract IP/Subnet
-                        $parts = preg_split('/\s+/', $line);
-                        $candidate = $parts[0] ?? '';
-                        if (filter_var($candidate, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
-                            $blacklisted_ips[$candidate] = 'Community Blocklist Feed';
-                            $added_from_feed++;
-                            $downloaded_ips_count++;
-                            if ($added_from_feed >= 150) { // Limit per feed to prevent memory bloat
-                                break;
+        if ($public_cidr_enabled) {
+            $feed_urls = [
+                'https://www.spamhaus.org/drop/drop.txt',
+                'https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level1.netset',
+            ];
+
+            foreach ($feed_urls as $url) {
+                $response = wp_safe_remote_get($url, [
+                    'timeout'    => 10,
+                    'sslverify'  => true,
+                    'user-agent' => 'WebCare-Pro-Security',
+                ]);
+
+                if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200) {
+                    $body = wp_remote_retrieve_body($response);
+                    // 2 MB strict ceiling
+                    if (strlen($body) > 2097152) {
+                        continue;
+                    }
+
+                    if (!empty($body)) {
+                        $lines = explode("\n", $body);
+                        $added_from_feed = 0;
+                        foreach ($lines as $line) {
+                            $line = trim($line);
+                            // Skip comments and empty lines
+                            if ($line === '' || str_starts_with($line, '#') || str_starts_with($line, ';')) {
+                                continue;
                             }
-                        } elseif (strpos($candidate, '/') !== false) {
-                            $blacklisted_ips[$candidate] = 'Community Malicious Subnet Feed';
-                            $added_from_feed++;
-                            $downloaded_ips_count++;
-                            if ($added_from_feed >= 50) {
-                                break;
+                            // Extract IP/Subnet (e.g., "192.0.2.0/24 ; SBL12345" or raw CIDR)
+                            $parts = preg_split('/[\s;]+/', $line);
+                            $candidate = $parts[0] ?? '';
+                            if (filter_var($candidate, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                                $blacklisted_ips[$candidate] = 'Spamhaus DROP / FireHOL Public Feed';
+                                $added_from_feed++;
+                                $downloaded_ips_count++;
+                                if ($added_from_feed >= 150) { // Limit per feed to prevent memory bloat
+                                    break;
+                                }
+                            } elseif (str_contains($candidate, '/')) {
+                                $blacklisted_ips[$candidate] = 'Spamhaus DROP / FireHOL Malicious Subnet';
+                                $added_from_feed++;
+                                $downloaded_ips_count++;
+                                if ($added_from_feed >= 100) {
+                                    break;
+                                }
                             }
                         }
                     }
+                }
+            }
+
+            // Cache downloaded CIDRs in hardened vault with 0600 permissions
+            if (class_exists('\\WebCareProScanner\\Firewall\\Core\\WafVaultManager')) {
+                $vault_dir = \WebCareProScanner\Firewall\Core\WafVaultManager::get_vault_dir();
+                $cidr_file = $vault_dir . '/public-threat-cidrs.json';
+                $fp = @fopen($cidr_file, 'wb');
+                if ($fp) {
+                    @fwrite($fp, (string) wp_json_encode($blacklisted_ips));
+                    @fclose($fp);
+                    @chmod($cidr_file, 0600);
                 }
             }
         }

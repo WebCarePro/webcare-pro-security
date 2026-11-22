@@ -62,8 +62,8 @@ class AuditLogger {
             : (isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '');
         $ip_address = filter_var($raw_ip, FILTER_VALIDATE_IP) ? $raw_ip : 'UNKNOWN';
         
-        $current_user = wp_get_current_user();
-        $username = ($current_user && $current_user->exists()) ? sanitize_user($current_user->user_login) : 'System/Guest';
+        $current_user = function_exists('wp_get_current_user') ? wp_get_current_user() : null;
+        $username = ($current_user && $current_user->exists() && function_exists('sanitize_user')) ? sanitize_user($current_user->user_login) : 'System/Guest';
 
         $clean_event = sanitize_key($event_type);
         $clean_message = is_array($message) ? wp_json_encode($message) : str_replace(["\r", "\n"], ' ', sanitize_text_field((string) $message));

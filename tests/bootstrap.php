@@ -518,6 +518,16 @@ if (!function_exists('sanitize_key')) {
     }
 }
 
+if (!function_exists('sanitize_user')) {
+    function sanitize_user(string $username, bool $strict = false): string {
+        $username = trim(strip_tags($username));
+        if ($strict) {
+            $username = preg_replace('|[^a-z0-9 _.\-@]|i', '', $username);
+        }
+        return preg_replace('|\s+|', ' ', (string) $username);
+    }
+}
+
 if (!function_exists('esc_attr')) {
     function esc_attr(string $text): string {
         return htmlspecialchars($text, ENT_QUOTES, 'UTF-8');

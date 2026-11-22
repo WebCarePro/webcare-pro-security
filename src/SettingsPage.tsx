@@ -73,6 +73,10 @@ interface ScannerSettings {
   email_digest_enabled: boolean;
   email_on_scan_completed: boolean;
   notify_on_cve_detected: boolean;
+  threat_intel_enabled?: boolean;
+  threat_intel_cisa_kev_enabled?: boolean;
+  threat_intel_nvd_cve_enabled?: boolean;
+  threat_intel_public_cidr_enabled?: boolean;
   email_report_items_limit?: number;
 
   slack_enabled?: boolean;
@@ -4660,6 +4664,75 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
                     </div>
                   </div>
                 )}
+              </div>
+            </div>
+          </div>
+
+          {/* Public Threat Intelligence Feeds Configuration */}
+          <div className="webcare-card" style={{ background: 'var(--webcare-bg-card, #ffffff)', borderRadius: '12px', border: '1px solid var(--webcare-border, #e2e8f0)', padding: '24px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+              <div style={{ background: '#eef2ff', color: '#4f46e5', padding: '10px', borderRadius: '8px' }}>
+                <Shield size={20} />
+              </div>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '17px', color: 'var(--webcare-text-primary, #0f172a)' }}>Public Threat Intelligence Feeds</h3>
+                <p style={{ margin: 0, fontSize: '13px', color: '#64748b' }}>Pull-only public feeds — zero site data, plugin lists, or visitor IPs ever leave your server.</p>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <ToggleSwitch
+                checked={!!settings.threat_intel_enabled}
+                onChange={(val) => setSettings({ ...settings, threat_intel_enabled: val })}
+                label="Master Threat Intelligence Synchronization"
+                description="Enables automated background synchronization of free, public vulnerability catalogs and malicious network feeds."
+                badge={settings.threat_intel_enabled ? (
+                  <span style={{ fontSize: '11px', background: '#ecfdf5', color: '#059669', padding: '2px 8px', borderRadius: '10px', fontWeight: 600 }}>Active</span>
+                ) : (
+                  <span style={{ fontSize: '11px', background: '#f1f5f9', color: '#64748b', padding: '2px 8px', borderRadius: '10px', fontWeight: 500 }}>Disabled</span>
+                )}
+                activeColor="#4f46e5"
+              />
+
+              <div style={{ paddingLeft: '16px', borderLeft: '2px solid var(--webcare-border, #e2e8f0)', display: 'flex', flexDirection: 'column', gap: '14px', marginTop: '4px' }}>
+                <ToggleSwitch
+                  checked={settings.threat_intel_cisa_kev_enabled !== false}
+                  onChange={(val) => setSettings({ ...settings, threat_intel_cisa_kev_enabled: val })}
+                  label="CISA Known Exploited Vulnerabilities (KEV)"
+                  description="Fetches CISA's official catalog of actively exploited in-the-wild zero-days with ETag and Last-Modified caching headers."
+                  badge={settings.threat_intel_cisa_kev_enabled !== false ? (
+                    <span style={{ fontSize: '11px', background: '#ecfdf5', color: '#059669', padding: '2px 8px', borderRadius: '10px', fontWeight: 600 }}>CISA Active</span>
+                  ) : (
+                    <span style={{ fontSize: '11px', background: '#f1f5f9', color: '#64748b', padding: '2px 8px', borderRadius: '10px', fontWeight: 500 }}>Off</span>
+                  )}
+                  activeColor="#059669"
+                />
+
+                <ToggleSwitch
+                  checked={settings.threat_intel_nvd_cve_enabled !== false}
+                  onChange={(val) => setSettings({ ...settings, threat_intel_nvd_cve_enabled: val })}
+                  label="NVD CVE 2.0 (Incremental WordPress Delta)"
+                  description="Pulls official WordPress CVE advisories directly from NIST NVD 2.0 using generic query parameters without sending local plugin information."
+                  badge={settings.threat_intel_nvd_cve_enabled !== false ? (
+                    <span style={{ fontSize: '11px', background: '#ecfdf5', color: '#059669', padding: '2px 8px', borderRadius: '10px', fontWeight: 600 }}>NVD Active</span>
+                  ) : (
+                    <span style={{ fontSize: '11px', background: '#f1f5f9', color: '#64748b', padding: '2px 8px', borderRadius: '10px', fontWeight: 500 }}>Off</span>
+                  )}
+                  activeColor="#059669"
+                />
+
+                <ToggleSwitch
+                  checked={settings.threat_intel_public_cidr_enabled !== false}
+                  onChange={(val) => setSettings({ ...settings, threat_intel_public_cidr_enabled: val })}
+                  label="Public Malicious Botnet &amp; Scanner CIDRs (Spamhaus DROP / FireHOL)"
+                  description="Pulls verified high-confidence drop lists and network blocksets to preemptively stop brute-force attacks and automated scanners."
+                  badge={settings.threat_intel_public_cidr_enabled !== false ? (
+                    <span style={{ fontSize: '11px', background: '#ecfdf5', color: '#059669', padding: '2px 8px', borderRadius: '10px', fontWeight: 600 }}>CIDRs Active</span>
+                  ) : (
+                    <span style={{ fontSize: '11px', background: '#f1f5f9', color: '#64748b', padding: '2px 8px', borderRadius: '10px', fontWeight: 500 }}>Off</span>
+                  )}
+                  activeColor="#059669"
+                />
               </div>
             </div>
           </div>
