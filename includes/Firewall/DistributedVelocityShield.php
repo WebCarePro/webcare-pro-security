@@ -949,35 +949,18 @@ class DistributedVelocityShield {
             wp_cache_incr($bucket_key, 1, $group);
 
             // Record unique IP atomically via discrete per-IP presence key (zero read-modify-write array race)
-            // If the discrete presence key does not yet exist in this bucket, this is the first time this IP is seen in this bucket.
             $ip_presence_key = "{$cache_key}_ip_{$bucket_id}_{$ip_hash}";
             $is_new_ip_in_bucket = wp_cache_add($ip_presence_key, 1, $group, $ttl);
 
             if ($is_new_ip_in_bucket) {
-                // Atomically increment the discrete unique-IP counter for this bucket
+                // Atomically assign index slot for enumeration across discrete keys
                 $bucket_uniq_key = "{$cache_key}_uniq_{$bucket_id}";
                 wp_cache_add($bucket_uniq_key, 0, $group, $ttl);
-                wp_cache_incr($bucket_uniq_key, 1, $group);
+                $slot = wp_cache_incr($bucket_uniq_key, 1, $group);
 
-                // Also maintain an atomic registry list of active IP hashes for cross-slice sliding deduplication
-                // To avoid read-modify-write array races, store individual active IP entries under bucket hash index
-                $bucket_ip_index_key = "{$cache_key}_idx_{$bucket_id}_{$ip_hash}";
-                wp_cache_set($bucket_ip_index_key, 1, $group, $ttl);
-
-                // Append to bucket IP list using an atomic CAS or single-direction append array with collision retry
-                $ip_reg_key = "{$cache_key}_ips_{$bucket_id}";
-                for ($retry = 0; $retry < 3; $retry++) {
-                    $existing_ips = wp_cache_get($ip_reg_key, $group);
-                    if (!is_array($existing_ips)) {
-                        $existing_ips = [];
-                    }
-                    if (in_array($ip_hash, $existing_ips, true)) {
-                        break;
-                    }
-                    $existing_ips[] = $ip_hash;
-                    if (wp_cache_set($ip_reg_key, $existing_ips, $group, $ttl)) {
-                        break;
-                    }
+                if ($slot !== false) {
+                    $slot_key = "{$cache_key}_slot_{$bucket_id}_{$slot}";
+                    wp_cache_set($slot_key, $ip_hash, $group, $ttl);
                 }
             }
 
@@ -1004,22 +987,11 @@ class DistributedVelocityShield {
                 if (!apcu_exists($apc_uniq_key)) {
                     @apcu_add($apc_uniq_key, 0, $ttl);
                 }
-                apcu_inc($apc_uniq_key, 1);
+                $slot = apcu_inc($apc_uniq_key, 1);
 
-                $apc_ip_key = "dvs_{$cache_key}_ips_{$bucket_id}";
-                for ($retry = 0; $retry < 3; $retry++) {
-                    $success = false;
-                    $ips = apcu_fetch($apc_ip_key, $success);
-                    if (!$success || !is_array($ips)) {
-                        $ips = [];
-                    }
-                    if (in_array($ip_hash, $ips, true)) {
-                        break;
-                    }
-                    $ips[] = $ip_hash;
-                    if (apcu_store($apc_ip_key, $ips, $ttl)) {
-                        break;
-                    }
+                if ($slot !== false) {
+                    $slot_key = "dvs_{$cache_key}_slot_{$bucket_id}_{$slot}";
+                    @apcu_store($slot_key, $ip_hash, $ttl);
                 }
             }
 
@@ -1062,13 +1034,16 @@ class DistributedVelocityShield {
 
         if (!$locked) {
             @fclose($fp);
-            // Track lock exhaustion in telemetry or static count
-            if (class_exists(WebCareActivityLogger::class)) {
-                WebCareActivityLogger::warning(
+            // Operational system logging for lock contention (never human admin activity log)
+            if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                \WebCareProScanner\System\AuditLogger::log(
                     'dvs_file_lock_exhausted',
-                    'firewall',
-                    ['description' => 'DVS file lock acquisition timed out after 20 retries (200ms). Velocity event dropped.']
+                    'system',
+                    'DVS file write-lock acquisition timed out after 20 retries (200ms). Velocity event dropped.',
+                    'warning'
                 );
+            } else {
+                error_log('[WebCare Pro] DVS file write-lock acquisition timed out after 20 retries (200ms). Velocity event dropped.');
             }
             return;
         }
@@ -1137,59 +1112,49 @@ class DistributedVelocityShield {
         // Check external object cache
         if (function_exists('wp_using_ext_object_cache') && wp_using_ext_object_cache()) {
             $group = 'webcareproscan_dvs';
-            $slice_unique_sum = 0;
             for ($i = 0; $i < self::BUCKET_SLICES; $i++) {
                 $b_id = $current_bucket - $i;
                 $val = wp_cache_get("{$cache_key}_{$b_id}", $group);
                 if (is_numeric($val)) {
                     $total_count += (int) $val;
                 }
-                // Atomic unique IP sub-bucket counter
-                $uniq_val = wp_cache_get("{$cache_key}_uniq_{$b_id}", $group);
-                if (is_numeric($uniq_val)) {
-                    $slice_unique_sum += (int) $uniq_val;
-                }
-                $ips = wp_cache_get("{$cache_key}_ips_{$b_id}", $group);
-                if (is_array($ips)) {
-                    foreach ($ips as $ip_hash) {
-                        $all_unique_ips[$ip_hash] = true;
+                // Enumerate discrete atomic IP slots recorded for this slice
+                $uniq_cnt = wp_cache_get("{$cache_key}_uniq_{$b_id}", $group);
+                $slot_max = is_numeric($uniq_cnt) ? (int) $uniq_cnt : 0;
+                for ($s = 1; $s <= $slot_max; $s++) {
+                    $ip_h = wp_cache_get("{$cache_key}_slot_{$b_id}_{$s}", $group);
+                    if (is_string($ip_h) && $ip_h !== '') {
+                        $all_unique_ips[$ip_h] = true;
                     }
                 }
             }
-            // Use maximum of deduplicated array count or summed atomic slice counters (robust against array drop)
-            $final_unique_ips = max(count($all_unique_ips), min($total_count, $slice_unique_sum));
             return [
                 'count'      => $total_count,
-                'unique_ips' => $final_unique_ips,
+                'unique_ips' => count($all_unique_ips),
             ];
         }
 
         // Check APCu
         $is_apcu = function_exists('apcu_fetch') && ini_get('apc.enabled') && (php_sapi_name() !== 'cli' || ini_get('apc.enable_cli'));
         if ($is_apcu) {
-            $slice_unique_sum = 0;
             for ($i = 0; $i < self::BUCKET_SLICES; $i++) {
                 $b_id = $current_bucket - $i;
                 $val = apcu_fetch("dvs_{$cache_key}_{$b_id}");
                 if (is_numeric($val)) {
                     $total_count += (int) $val;
                 }
-                $uniq_val = apcu_fetch("dvs_{$cache_key}_uniq_{$b_id}");
-                if (is_numeric($uniq_val)) {
-                    $slice_unique_sum += (int) $uniq_val;
-                }
-                $success = false;
-                $ips = apcu_fetch("dvs_{$cache_key}_ips_{$b_id}", $success);
-                if ($success && is_array($ips)) {
-                    foreach ($ips as $ip_hash) {
-                        $all_unique_ips[$ip_hash] = true;
+                $uniq_cnt = apcu_fetch("dvs_{$cache_key}_uniq_{$b_id}");
+                $slot_max = is_numeric($uniq_cnt) ? (int) $uniq_cnt : 0;
+                for ($s = 1; $s <= $slot_max; $s++) {
+                    $ip_h = apcu_fetch("dvs_{$cache_key}_slot_{$b_id}_{$s}");
+                    if (is_string($ip_h) && $ip_h !== '') {
+                        $all_unique_ips[$ip_h] = true;
                     }
                 }
             }
-            $final_unique_ips = max(count($all_unique_ips), min($total_count, $slice_unique_sum));
             return [
                 'count'      => $total_count,
-                'unique_ips' => $final_unique_ips,
+                'unique_ips' => count($all_unique_ips),
             ];
         }
 
@@ -1221,7 +1186,17 @@ class DistributedVelocityShield {
                         }
                         @flock($fp, LOCK_UN);
                     } else {
-                        // Never read without a lock! Fallback safely to degraded empty read rather than torn payload
+                        // Explicit, observable degradation policy under read-lock contention
+                        if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                            \WebCareProScanner\System\AuditLogger::log(
+                                'dvs_file_read_lock_exhausted',
+                                'system',
+                                sprintf('DVS read lock timed out for %s; applying fail-safe degraded response.', substr($cache_key, 0, 32)),
+                                'warning'
+                            );
+                        } else {
+                            error_log(sprintf('[WebCare Pro] DVS file read-lock timed out for %s.', substr($cache_key, 0, 32)));
+                        }
                         $raw = '';
                     }
                     @fclose($fp);

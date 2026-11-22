@@ -390,12 +390,7 @@ final readonly class ProtocolAndBotEvaluator implements WafEvaluatorInterface {
         // Fully verified webhooks (valid HMAC signature against configured secret) are granted exemption.
         // Candidates from verified payment provider IPs (e.g. Stripe/PayPal) are exempted ONLY if addressing a strictly recognized webhook/IPN endpoint.
         // General commerce and membership checkout/cart routes must NEVER inherit candidate exemption.
-        $is_strict_webhook_route = str_contains($request_uri, '/stripe/')
-            || str_contains($request_uri, '/paypal/')
-            || str_contains($request_uri, 'webhook')
-            || str_contains($request_uri, 'ipn')
-            || str_contains($request_uri, 'wc-api=')
-            || str_contains($request_uri, '/wc-api/');
+        $is_strict_webhook_route = self::is_strict_payment_webhook_route($request_uri);
 
         $is_webhook_exempt = $is_verified_webhook || ($is_webhook_candidate && $is_strict_webhook_route);
 
@@ -682,6 +677,60 @@ final readonly class ProtocolAndBotEvaluator implements WafEvaluatorInterface {
         }
 
         return 'unverified';
+    }
+
+    /**
+     * Strictly verify whether a request URI targets an explicit recognized payment webhook/IPN endpoint.
+     * Parses and normalizes the request path separately from the query string to prevent arbitrary substring injection.
+     *
+     * @param string $request_uri
+     * @return bool
+     */
+    public static function is_strict_payment_webhook_route(string $request_uri): bool {
+        $parsed = parse_url($request_uri);
+        $path = strtolower(rtrim((string) ($parsed['path'] ?? ''), '/'));
+        $query = (string) ($parsed['query'] ?? '');
+
+        // 1. Explicit REST webhook paths
+        $explicit_paths = [
+            '/wp-json/stripe/webhook',
+            '/wp-json/stripe/v1/webhook',
+            '/wp-json/wc/v3/webhooks',
+            '/wp-json/wc/v2/webhooks',
+            '/wp-json/wc-stripe/v1/webhook',
+            '/wp-json/paypal/webhook',
+            '/wp-json/paypal/ipn',
+            '/wp-json/mollie/webhook',
+            '/wp-json/square/webhook',
+        ];
+
+        foreach ($explicit_paths as $ep) {
+            if ($path === $ep || str_ends_with($path, $ep)) {
+                return true;
+            }
+        }
+
+        // 2. Strict segment-bounded regex for gateway webhook endpoints (e.g. /wc-api/WC_Gateway_Stripe or /?wc-api=...)
+        if (preg_match('#^/(?:index\.php/)?wc-api(?:/([a-zA-Z0-9_-]+))?$#i', $path)) {
+            return true;
+        }
+
+        if ($query !== '') {
+            parse_str($query, $query_params);
+            if (isset($query_params['wc-api']) && is_string($query_params['wc-api']) && $query_params['wc-api'] !== '') {
+                return true;
+            }
+            if (isset($query_params['rest_route'])) {
+                $rest_route = strtolower(rtrim((string) $query_params['rest_route'], '/'));
+                foreach ($explicit_paths as $ep) {
+                    if ($rest_route === $ep) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
     }
 
     /**
