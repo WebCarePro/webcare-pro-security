@@ -95,29 +95,7 @@ class CronScanner {
 
         $raw_entries = [];
 
-        // 1. Check user crontab via CLI (crontab -l) ONLY during WP-CLI runs to avoid WordPress.org PCP DiscouragedPHPFunctions
-        if (defined('WP_CLI') && WP_CLI && function_exists('shell_exec')) {
-            $disabled = explode(',', (string) ini_get('disable_functions'));
-            $disabled = array_map('trim', $disabled);
-
-            if (!in_array('shell_exec', $disabled, true)) {
-                // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_shell_exec -- strictly gated behind WP_CLI
-                $output = @shell_exec('crontab -l 2>/dev/null');
-                if (!empty($output) && is_string($output)) {
-                    foreach (explode("\n", $output) as $line) {
-                        $line = trim($line);
-                        if (!empty($line) && strpos($line, '#') !== 0) {
-                            $raw_entries[] = [
-                                'source' => 'crontab -l',
-                                'line'   => $line
-                            ];
-                        }
-                    }
-                }
-            }
-        }
-
-        // 2. Check direct crontab files if readable
+        // Check direct crontab files if readable (zero shell_exec usage)
         $paths_to_check = [
             '/etc/crontab',
             '/var/spool/cron/crontabs/' . get_current_user(),

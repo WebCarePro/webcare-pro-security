@@ -1239,27 +1239,6 @@ class SettingsManager {
             $clean = array_merge($clean, \WebCareProScanner\Core\ModuleRegistry::sanitize_module_settings($merged, $current, $input));
         }
 
-        // Reconcile email_digest_enabled with notification_events['weekly_peace_of_mind_digest'] by diffing against $current
-        $old_digest_flag = !empty($current['email_digest_enabled']);
-        $new_digest_flag = !empty($clean['email_digest_enabled']);
-        $old_digest_ev   = is_array($current['notification_events']['weekly_peace_of_mind_digest'] ?? null)
-            ? $current['notification_events']['weekly_peace_of_mind_digest']
-            : ['email' => false, 'webhook' => false];
-        $new_digest_ev   = is_array($clean['notification_events']['weekly_peace_of_mind_digest'] ?? null)
-            ? $clean['notification_events']['weekly_peace_of_mind_digest']
-            : ['email' => false, 'webhook' => false];
-        $old_ev_on = !empty($old_digest_ev['email']) || !empty($old_digest_ev['webhook']);
-        $new_ev_on = !empty($new_digest_ev['email']) || !empty($new_digest_ev['webhook']);
-
-        if ($new_ev_on !== $old_ev_on && $new_digest_flag === $old_digest_flag) {
-            $clean['email_digest_enabled'] = $new_ev_on;
-        } elseif ($new_digest_flag !== $old_digest_flag && $new_ev_on === $old_ev_on) {
-            $clean['notification_events']['weekly_peace_of_mind_digest']['email'] = $new_digest_flag;
-            if (!$new_digest_flag) {
-                $clean['notification_events']['weekly_peace_of_mind_digest']['webhook'] = false;
-            }
-        }
-
         // Compute settings diff before persisting
         $diff = self::compute_settings_diff($current, $clean);
 

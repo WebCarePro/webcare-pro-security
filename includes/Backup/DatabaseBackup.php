@@ -119,26 +119,7 @@ class DatabaseBackup {
             }
         }
 
-        // 2. Windows PowerShell / CIM fallback
-        if (stripos(PHP_OS, 'WIN') === 0 && function_exists('shell_exec')) {
-            $ps = @shell_exec('powershell -NoProfile -Command "Get-CimInstance Win32_OperatingSystem | ForEach-Object { $_.TotalVisibleMemorySize, $_.FreePhysicalMemory }" 2>nul');
-            if ($ps) {
-                $lines = array_values(array_filter(array_map('trim', explode("\n", $ps))));
-                if (count($lines) >= 2 && is_numeric($lines[0]) && is_numeric($lines[1])) {
-                    $total_kb = (float) $lines[0];
-                    $free_kb  = (float) $lines[1];
-                    $used_kb  = max(0, $total_kb - $free_kb);
-                    $res['total_ram_mb']     = round($total_kb / 1024, 1);
-                    $res['free_ram_mb']      = round($free_kb / 1024, 1);
-                    $res['used_ram_mb']      = round($used_kb / 1024, 1);
-                    $res['ram_used_percent'] = round(($used_kb / $total_kb) * 100, 1);
-                    $res['source']           = 'win32_cim';
-                    return $res;
-                }
-            }
-        }
-
-        // 3. Fallback based on PHP memory limit
+        // 2. Fallback based on PHP memory limit & /proc/meminfo (zero shell_exec usage)
         $limit_raw = ini_get('memory_limit') ?: '256M';
         $bytes = 256 * 1024 * 1024;
         if (preg_match('/^(\d+)(.)/i', $limit_raw, $m)) {

@@ -71,13 +71,13 @@ class ActivityRetention {
 
     /**
      * Get configured retention policy in days.
-     * (Defaults to 30 days; minimum enforced is 7 days).
+     * (Defaults to 7 days; minimum enforced is 7 days).
      *
      * @return int Days (0 = Forever / no auto-prune).
      */
     public static function get_retention_days(): int {
         $settings = function_exists('get_option') ? get_option('webcareproscan_activity_log_settings', []) : [];
-        $days = isset($settings['retention_days']) ? (int) $settings['retention_days'] : 30;
+        $days = isset($settings['retention_days']) ? (int) $settings['retention_days'] : 7;
         if ($days === 0) {
             return 0; // Forever
         }
