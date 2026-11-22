@@ -15,7 +15,8 @@ import {
   Search,
   ShoppingBag,
   Key,
-  Globe
+  Globe,
+  Undo2
 } from 'lucide-react';
 
 interface BehavioralStatusResponse {
@@ -89,6 +90,7 @@ export const CafBehavioralCockpit: React.FC<CafBehavioralCockpitProps> = ({ apiR
   const [data, setData] = useState<BehavioralStatusResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [synthesizingId, setSynthesizingId] = useState<string | null>(null);
+  const [revokingId, setRevokingId] = useState<string | null>(null);
   const [powIpInput, setPowIpInput] = useState('');
   const [togglingPow, setTogglingPow] = useState(false);
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -128,6 +130,28 @@ export const CafBehavioralCockpit: React.FC<CafBehavioralCockpitProps> = ({ apiR
       setNotice({ type: 'error', message: err?.message || 'Error communicating with exemption API.' });
     } finally {
       setSynthesizingId(null);
+    }
+  };
+
+  const handleRevokeExemption = async (targetId: string) => {
+    setRevokingId(targetId);
+    setNotice(null);
+    try {
+      const res = await apiRequest({
+        path: '/caf/delete-exemption',
+        method: 'POST',
+        data: { target: targetId }
+      });
+      if (res.success) {
+        setNotice({ type: 'success', message: res.message });
+        fetchStatus();
+      } else {
+        setNotice({ type: 'error', message: res.message || 'Failed to revoke exemption.' });
+      }
+    } catch (err: any) {
+      setNotice({ type: 'error', message: err?.message || 'Error communicating with exemption API.' });
+    } finally {
+      setRevokingId(null);
     }
   };
 
@@ -448,9 +472,30 @@ export const CafBehavioralCockpit: React.FC<CafBehavioralCockpitProps> = ({ apiR
                     </td>
                     <td style={{ textAlign: 'center', padding: '8px 12px' }}>
                       {obs.status === 'synthesized' ? (
-                        <span className="webcare-badge-pill webcare-badge-clean" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                          <CheckCircle2 size={12} /> Synthesized
-                        </span>
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                          <span className="webcare-badge-pill webcare-badge-clean" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                            <CheckCircle2 size={12} /> Synthesized
+                          </span>
+                          <button
+                            type="button"
+                            className="webcare-btn webcare-btn-danger-soft"
+                            disabled={revokingId === obs.id}
+                            onClick={() => handleRevokeExemption(obs.id)}
+                            title="Undo / revoke this exemption and restore strict firewall rule"
+                            style={{
+                              padding: '3px 8px',
+                              fontSize: '11px',
+                              fontWeight: 600,
+                              borderRadius: '4px',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                          >
+                            {revokingId === obs.id ? <Loader2 size={11} className="webcare-spin" /> : <Undo2 size={11} />}
+                            Undo
+                          </button>
+                        </div>
                       ) : (
                         <button
                           type="button"

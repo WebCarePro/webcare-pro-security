@@ -195,6 +195,84 @@ class LearningModeEngine {
     }
 
     /**
+     * Revoke / undo an active synthesized exemption and restore normal enforcement.
+     *
+     * @param string $target Identifier: either exemption rule ID (EXEMPT-XXXX) or source finding/incident ID
+     * @return array Result containing status and message
+     */
+    public static function revoke_exemption(string $target): array {
+        $synthesized = get_option(self::OPTION_SYNTHESIZED, []);
+        if (!is_array($synthesized)) {
+            $synthesized = [];
+        }
+
+        $removed_id = null;
+        $source_id  = null;
+
+        if (isset($synthesized[$target])) {
+            $removed_id = $target;
+            $source_id  = $synthesized[$target]['source_id'] ?? null;
+            unset($synthesized[$target]);
+        } else {
+            // Check if matched by source_id
+            foreach ($synthesized as $exId => $rule) {
+                if (($rule['source_id'] ?? '') === $target || ($rule['id'] ?? '') === $target) {
+                    $removed_id = $exId;
+                    $source_id  = $rule['source_id'] ?? null;
+                    unset($synthesized[$exId]);
+                    break;
+                }
+            }
+        }
+
+        if ($removed_id === null) {
+            return [
+                'success' => false,
+                /* translators: %s: target exemption or observation ID */
+                'message' => sprintf(__('No active synthesized exemption found for "%s".', 'webcare-pro-security'), esc_html($target)),
+            ];
+        }
+
+        update_option(self::OPTION_SYNTHESIZED, $synthesized, false);
+
+        // Revert observation status from 'synthesized' back to 'pending'
+        $lookup_id = $source_id ?: $target;
+        self::revert_observation_status($lookup_id);
+
+        return [
+            'success'      => true,
+            /* translators: %s: exemption ID */
+            'message'      => sprintf(__('Surgical exemption "%s" revoked. Normal firewall enforcement restored.', 'webcare-pro-security'), esc_html($removed_id)),
+            'revoked_id'   => $removed_id,
+            'source_id'    => $source_id,
+        ];
+    }
+
+    /**
+     * Revert observation status from synthesized back to pending.
+     */
+    private static function revert_observation_status(string $id): void {
+        $observations = get_option(self::OPTION_OBSERVATIONS, []);
+        if (!is_array($observations)) {
+            return;
+        }
+
+        $modified = false;
+        foreach ($observations as &$obs) {
+            if (($obs['id'] ?? '') === $id || ($obs['source_id'] ?? '') === $id) {
+                $obs['status'] = 'pending';
+                $modified = true;
+                break;
+            }
+        }
+        unset($obs);
+
+        if ($modified) {
+            update_option(self::OPTION_OBSERVATIONS, $observations, false);
+        }
+    }
+
+    /**
      * Get all active synthesized exemptions.
      *
      * @return array

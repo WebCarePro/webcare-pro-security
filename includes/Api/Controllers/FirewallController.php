@@ -285,6 +285,12 @@ final class FirewallController extends AbstractApiController {
             'permission_callback' => $permission,
         ]);
 
+        register_rest_route($namespace, '/caf/delete-exemption', [
+            'methods'             => 'POST',
+            'callback'            => [self::class, 'delete_caf_exemption'],
+            'permission_callback' => $permission,
+        ]);
+
         register_rest_route($namespace, '/caf/toggle-pow-challenge', [
             'methods'             => 'POST',
             'callback'            => [self::class, 'toggle_caf_pow_challenge'],
@@ -2091,6 +2097,31 @@ final class FirewallController extends AbstractApiController {
         }
 
         $result = \WebCareProScanner\Firewall\CAF\LearningModeEngine::synthesize_exemption($finding_id);
+        return rest_ensure_response($result);
+    }
+
+    /**
+     * Revoke / undo a synthesized exemption.
+     */
+    public static function delete_caf_exemption(\WP_REST_Request $request) {
+        $params = $request->get_json_params() ?: [];
+        $target = !empty($params['target']) ? sanitize_text_field($params['target']) : (!empty($params['finding_id']) ? sanitize_text_field($params['finding_id']) : (!empty($params['exemption_id']) ? sanitize_text_field($params['exemption_id']) : ''));
+
+        if (empty($target)) {
+            return new \WP_REST_Response([
+                'success' => false,
+                'message' => 'Target exemption ID or finding ID is required.',
+            ], 400);
+        }
+
+        if (!class_exists('\\WebCareProScanner\\Firewall\\CAF\\LearningModeEngine')) {
+            return new \WP_REST_Response([
+                'success' => false,
+                'message' => 'Learning Mode Engine is not loaded.',
+            ], 500);
+        }
+
+        $result = \WebCareProScanner\Firewall\CAF\LearningModeEngine::revoke_exemption($target);
         return rest_ensure_response($result);
     }
 
