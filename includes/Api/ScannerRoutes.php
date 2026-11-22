@@ -1,6 +1,10 @@
 <?php
 namespace WebCareProScanner\Api;
 
+if (!defined('ABSPATH')) {
+    exit;
+}
+
 use WebCareProScanner\Scanner\Engine;
 use WebCareProScanner\Filesystem\FileScanner;
 use WebCareProScanner\Integrity\CoreIntegrity;

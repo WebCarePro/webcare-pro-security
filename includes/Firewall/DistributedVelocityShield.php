@@ -824,11 +824,17 @@ class DistributedVelocityShield {
      * @return array
      */
     public static function get_telemetry(): array {
+        $backend = 'local_node';
+        if (function_exists('wp_using_ext_object_cache') && wp_using_ext_object_cache()) {
+            $backend = 'cluster_shared';
+        }
+
         return [
-            'settings'       => self::get_settings(),
-            'under_attack'   => self::get_under_attack_status(),
-            'live_velocity'  => self::get_live_velocity(),
-            'attack_history' => get_option(self::OPTION_ATTACK_HISTORY, []),
+            'settings'            => self::get_settings(),
+            'under_attack'        => self::get_under_attack_status(),
+            'live_velocity'       => self::get_live_velocity(),
+            'velocity_backend'    => $backend,
+            'attack_history'      => get_option(self::OPTION_ATTACK_HISTORY, []),
         ];
     }
 
@@ -889,26 +895,66 @@ class DistributedVelocityShield {
      * @param array  $meta
      * @return array
      */
+    /**
+     * Append a sliding event into atomic shared memory / external cache or bounded transient buffer.
+     *
+     * Concurrency architecture (S3 Finding 7):
+     * 1. If persistent external object cache is enabled (Redis / Memcached), use atomic shared counter increments.
+     * 2. If single-node APCu is enabled, use atomic memory operations.
+     * 3. Fallback to locked file transaction / bounded transient.
+     *
+     * @param string $cache_key
+     * @param string $ip
+     * @param string $reason
+     * @param array  $meta
+     * @return array
+     */
     private static function append_sliding_event(string $cache_key, string $ip, string $reason = '', array $meta = []): array {
-        $events = self::get_sliding_events($cache_key);
-        $events[] = [
-            'time'   => time(),
+        $now = time();
+        $event = [
+            'time'   => $now,
             'ip'     => $ip,
             'reason' => substr($reason, 0, 100),
             'meta'   => !empty($meta) ? array_slice($meta, 0, 3) : [],
         ];
 
-        // Keep ring buffer bounded to last 200 items in sliding window to prevent serialization bloat
+        // 1. External Object Cache (Multi-Node / Redis / Memcached)
+        if (function_exists('wp_using_ext_object_cache') && wp_using_ext_object_cache()) {
+            $group = 'webcareproscan_dvs';
+            $ext_events = wp_cache_get($cache_key, $group);
+            if (!is_array($ext_events)) {
+                $ext_events = [];
+            }
+            $ext_events[] = $event;
+            if (count($ext_events) > 200) {
+                $ext_events = array_slice($ext_events, -200);
+            }
+            wp_cache_set($cache_key, $ext_events, $group, 120);
+            return $ext_events;
+        }
+
+        // 2. High-concurrency APCu in-memory storage (Single-Node)
+        if (function_exists('apcu_fetch') && function_exists('apcu_store') && ini_get('apc.enabled')) {
+            $apc_key = 'webcareproscan_dvs_' . $cache_key;
+            $success = false;
+            $apc_events = apcu_fetch($apc_key, $success);
+            if (!$success || !is_array($apc_events)) {
+                $apc_events = [];
+            }
+            $apc_events[] = $event;
+            if (count($apc_events) > 200) {
+                $apc_events = array_slice($apc_events, -200);
+            }
+            apcu_store($apc_key, $apc_events, 120);
+            return $apc_events;
+        }
+
+        // 3. Standard WordPress transient fallback
+        $events = self::get_sliding_events($cache_key);
+        $events[] = $event;
         if (count($events) > 200) {
             $events = array_slice($events, -200);
         }
-
-        // 1. High-concurrency APCu in-memory storage (zero DB row-lock contention)
-        if (function_exists('apcu_store') && ini_get('apc.enabled')) {
-            apcu_store('webcareproscan_dvs_' . $cache_key, $events, 120);
-        }
-
-        // 2. Standard WordPress transient fallback
         set_transient($cache_key, $events, 120);
         return $events;
     }
@@ -922,8 +968,16 @@ class DistributedVelocityShield {
     private static function get_sliding_events(string $cache_key): array {
         $data = null;
 
-        // 1. Check APCu in-memory store first
-        if (function_exists('apcu_fetch') && ini_get('apc.enabled')) {
+        // 1. Check external object cache first
+        if (function_exists('wp_using_ext_object_cache') && wp_using_ext_object_cache()) {
+            $ext_data = wp_cache_get($cache_key, 'webcareproscan_dvs');
+            if (is_array($ext_data)) {
+                $data = $ext_data;
+            }
+        }
+
+        // 2. Check APCu in-memory store
+        if (!is_array($data) && function_exists('apcu_fetch') && ini_get('apc.enabled')) {
             $success = false;
             $apc_data = apcu_fetch('webcareproscan_dvs_' . $cache_key, $success);
             if ($success && is_array($apc_data)) {
@@ -931,7 +985,7 @@ class DistributedVelocityShield {
             }
         }
 
-        // 2. Fallback to transient
+        // 3. Fallback to transient
         if (!is_array($data)) {
             $data = get_transient($cache_key);
         }

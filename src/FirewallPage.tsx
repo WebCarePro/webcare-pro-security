@@ -2398,18 +2398,24 @@ export const FirewallPage = ({
           if (res && res.success) {
             setLogs([]);
             if (res.status) {
-              setStatus(res.status);
-            } else if (status) {
               setStatus({
-                ...status,
+                ...res.status,
                 total_blocks: 0,
                 blocks_24h: 0,
                 blocks_today: 0,
                 unique_attack_ips: 0,
                 top_rules: []
               });
+            } else {
+              setStatus(prev => prev ? {
+                ...prev,
+                total_blocks: 0,
+                blocks_24h: 0,
+                blocks_today: 0,
+                unique_attack_ips: 0,
+                top_rules: []
+              } : prev);
             }
-            await loadFirewallData(true);
             showFirewallNotice('success', 'Firewall incident logs cleared successfully.');
           }
         } catch (err: any) {

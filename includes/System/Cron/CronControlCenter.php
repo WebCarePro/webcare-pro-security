@@ -1,6 +1,10 @@
 <?php
 namespace WebCareProScanner\System\Cron;
 
+if (!defined('ABSPATH')) {
+    exit;
+}
+
 use WebCareProScanner\Backup\DatabaseBackup;
 use WebCareProScanner\Firewall\CAF\AdaptiveFirewallAdvisor;
 use WebCareProScanner\Firewall\CAF\CloudflareIpListSynchronizer;

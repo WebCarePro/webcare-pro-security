@@ -141,16 +141,16 @@ final class AllowlistManager {
                 continue;
             }
 
-            // Security Hardening (Roadmap Finding 3): A rule specifying ONLY User-Agents
-            // without an IP, specific Endpoint, or verified Hostname constraint is easily forged by attackers.
-            // Reject allowlist rules that lack at least one network, endpoint, or cryptographic constraint.
-            $has_ip_constraint       = !empty($rule['ip_addresses']) && is_array($rule['ip_addresses']);
-            $has_endpoint_constraint = !empty($rule['endpoints']) && is_array($rule['endpoints']);
-            $has_hostname_constraint = !empty($rule['hostnames']) && is_array($rule['hostnames']);
-            $has_ua_constraint       = !empty($rule['user_agents']) && is_array($rule['user_agents']);
+            // Security Hardening (S2 Finding 3): Reject allowlist rules that have NO effective constraints.
+            // An allowlist rule must contain at least one non-empty IP/CIDR, canonical endpoint, verified rDNS hostname, or verified ASN.
+            // A rule specifying ONLY User-Agents or having empty arrays for all criteria is rejected.
+            $has_ip_constraint       = !empty($rule['ip_addresses']) && is_array($rule['ip_addresses']) && !empty(array_filter($rule['ip_addresses'], fn($v) => trim((string)$v) !== ''));
+            $has_endpoint_constraint = !empty($rule['endpoints']) && is_array($rule['endpoints']) && !empty(array_filter($rule['endpoints'], fn($v) => trim((string)$v) !== ''));
+            $has_hostname_constraint = !empty($rule['hostnames']) && is_array($rule['hostnames']) && !empty(array_filter($rule['hostnames'], fn($v) => trim((string)$v) !== ''));
+            $has_asn_constraint      = !empty($rule['asns']) && is_array($rule['asns']) && !empty(array_filter($rule['asns'], fn($v) => trim((string)$v) !== ''));
 
-            if ($has_ua_constraint && !$has_ip_constraint && !$has_endpoint_constraint && !$has_hostname_constraint) {
-                continue;
+            if (!$has_ip_constraint && !$has_endpoint_constraint && !$has_hostname_constraint && !$has_asn_constraint) {
+                continue; // Reject empty or unanchored match-all allowlist rule
             }
 
             // 1. Method Check
@@ -283,7 +283,9 @@ final class AllowlistManager {
                 }
             }
 
-            // 7. Required HTTP Headers (e.g. X-Shopify-Hmac-Sha256, Stripe-Signature, X-Square-Hmacsha256-Signature)
+            // 7. Required HTTP Headers Presence (required_header_presence)
+            // Note: This checks the presence of headers (e.g. X-Shopify-Hmac-Sha256, Stripe-Signature, X-Square-Hmacsha256-Signature).
+            // This is header-presence verification, not cryptographic signature authentication.
             $rule_headers = !empty($rule['required_headers']) && is_array($rule['required_headers']) ? $rule['required_headers'] : [];
             if (!empty($rule_headers)) {
                 $headers_matched = true;
@@ -376,12 +378,15 @@ final class AllowlistManager {
 
     /**
      * Resolve Client Autonomous System Number (ASN).
-     * Checks Cloudflare CF-Connecting-ASN header, proxy headers, or Team Cymru DNS lookup.
+     * Checks Cloudflare CF-Connecting-ASN header (only if connecting peer is verified Cloudflare IP), or Team Cymru DNS lookup.
      */
     public static function get_client_asn(string $ip): string {
-        // 1. Direct Cloudflare Edge ASN Header
+        // 1. Direct Cloudflare Edge ASN Header - ONLY trust if connecting peer is a verified Cloudflare proxy IP
         if (!empty($_SERVER['HTTP_CF_CONNECTING_ASN'])) {
-            return strtoupper(sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_CONNECTING_ASN'])));
+            $connecting_peer = ClientIpResolver::get_connecting_peer_ip();
+            if (ClientIpResolver::is_cloudflare_ip($connecting_peer)) {
+                return strtoupper(sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_CONNECTING_ASN'])));
+            }
         }
 
         // 2. Check transient cache

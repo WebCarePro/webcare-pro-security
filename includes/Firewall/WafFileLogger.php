@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
  */
 class WafFileLogger {
 
-    const SUBDIR = 'webcare-pro-security/.waf-logs';
+    const SUBDIR = 'logs';
     const RETENTION_OPTION = 'webcareproscan_waf_log_retention_days';
     const DEFAULT_RETENTION_DAYS = 60;
     const CRON_HOOK = 'webcareproscan_waf_log_retention_prune';
@@ -55,9 +55,19 @@ class WafFileLogger {
         if (self::$custom_storage_dir !== null && self::$custom_storage_dir !== '') {
             return rtrim(self::$custom_storage_dir, '/\\');
         }
-        $upload_dir = wp_upload_dir();
-        $base_dir   = $upload_dir['basedir'];
-        return rtrim($base_dir, '/\\') . '/' . self::SUBDIR;
+
+        // 1. Prefer external WEBCARE_WAF_STORAGE_DIR (above webroot) when defined
+        if (defined('WEBCARE_WAF_STORAGE_DIR') && is_string(WEBCARE_WAF_STORAGE_DIR) && WEBCARE_WAF_STORAGE_DIR !== '') {
+            return rtrim(wp_normalize_path(WEBCARE_WAF_STORAGE_DIR), '/\\') . '/' . self::SUBDIR;
+        }
+
+        // 2. Default to hardened WAF Vault directory (WP_CONTENT_DIR/webcare-waf/logs)
+        if (class_exists('\\WebCareProScanner\\Firewall\\Core\\WafVaultManager')) {
+            return wp_normalize_path(rtrim(\WebCareProScanner\Firewall\Core\WafVaultManager::get_vault_dir(), '/\\') . '/' . self::SUBDIR);
+        }
+
+        $base = defined('WP_CONTENT_DIR') ? WP_CONTENT_DIR : ABSPATH . 'wp-content';
+        return wp_normalize_path(rtrim($base, '/\\') . '/webcare-waf/' . self::SUBDIR);
     }
 
     /**
@@ -71,31 +81,60 @@ class WafFileLogger {
         if (!is_dir($dir)) {
             // phpcs:ignore WordPress.WP.AlternativeFileSystem.mkdir_mkdir
             wp_mkdir_p($dir);
+            @chmod($dir, 0750);
+        } else {
+            @chmod($dir, 0750);
         }
 
         if (!is_dir($dir) || !wp_is_writable($dir)) {
             return false;
         }
 
-        // Hardening 1: Apache/LiteSpeed .htaccess deny rules
+        // Hardening 1: Apache/LiteSpeed .htaccess deny rules with tamper-repair
         $htaccess_file = $dir . '/.htaccess';
-        if (!file_exists($htaccess_file)) {
-            $htaccess_content = "# WebCare Pro Security - Protect WAF Forensic Logs\n"
-                . "<IfModule mod_authz_core.c>\n"
-                . "    Require all denied\n"
-                . "</IfModule>\n"
-                . "<IfModule !mod_authz_core.c>\n"
-                . "    Deny from all\n"
-                . "</IfModule>\n";
+        $htaccess_content = "# WebCare Pro Security - Protect WAF Forensic Logs\n"
+            . "Options -Indexes\n"
+            . "<IfModule mod_authz_core.c>\n"
+            . "    AuthMerging And\n"
+            . "    Require all denied\n"
+            . "</IfModule>\n"
+            . "<IfModule !mod_authz_core.c>\n"
+            . "    Order Allow,Deny\n"
+            . "    Deny from all\n"
+            . "</IfModule>\n";
+
+        $current_htaccess = file_exists($htaccess_file) ? (string) @file_get_contents($htaccess_file) : '';
+        if ($current_htaccess !== $htaccess_content) {
             // phpcs:ignore WordPress.WP.AlternativeFileSystem.file_put_contents_file_put_contents
-            @file_put_contents($htaccess_file, $htaccess_content);
+            if (@file_put_contents($htaccess_file, $htaccess_content, LOCK_EX) === false) {
+                return false;
+            }
+            @chmod($htaccess_file, 0600);
         }
 
-        // Hardening 2: Nginx / IIS silence index file
+        // Hardening 2: Nginx / IIS silence index file with tamper-repair
         $index_file = $dir . '/index.php';
-        if (!file_exists($index_file)) {
+        $expected_index = "<?php\nhttp_response_code(403);\nexit('Direct access forbidden.');\n";
+        $current_index = file_exists($index_file) ? (string) @file_get_contents($index_file) : '';
+        if ($current_index !== $expected_index) {
             // phpcs:ignore WordPress.WP.AlternativeFileSystem.file_put_contents_file_put_contents
-            @file_put_contents($index_file, "<?php\nhttp_response_code(403);\nexit('Direct access forbidden.');\n");
+            if (@file_put_contents($index_file, $expected_index, LOCK_EX) === false) {
+                return false;
+            }
+            @chmod($index_file, 0600);
+        }
+
+        // Hardening 3: IIS web.config deny-all authorization with tamper-repair
+        $web_config_file = $dir . '/web.config';
+        $canonical_web_config = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<configuration>\n  <system.webServer>\n    <directoryBrowse enabled=\"false\" />\n    <security>\n      <requestFiltering>\n        <hiddenSegments>\n          <add segment=\"logs\" />\n        </hiddenSegments>\n      </requestFiltering>\n      <authorization>\n        <clear />\n        <add accessType=\"Deny\" users=\"*\" />\n      </authorization>\n    </security>\n  </system.webServer>\n</configuration>\n";
+
+        $current_web_config = file_exists($web_config_file) ? (string) @file_get_contents($web_config_file) : '';
+        if ($current_web_config !== $canonical_web_config) {
+            // phpcs:ignore WordPress.WP.AlternativeFileSystem.file_put_contents_file_put_contents
+            if (@file_put_contents($web_config_file, $canonical_web_config, LOCK_EX) === false) {
+                return false;
+            }
+            @chmod($web_config_file, 0600);
         }
 
         return true;
@@ -299,7 +338,10 @@ class WafFileLogger {
      * @return bool
      */
     private static function append_record_to_file(array $record): bool {
-        self::ensure_directory_secured();
+        if (!self::ensure_directory_secured()) {
+            // Fail-safe: Refuse to write sensitive payload logs into an unverified or unprotected directory
+            return false;
+        }
         $dir = self::get_storage_dir();
 
         $filename = self::get_daily_filename();

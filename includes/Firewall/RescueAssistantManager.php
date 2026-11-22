@@ -292,6 +292,15 @@ class RescueAssistantManager {
         if ($upper === '') {
             return false;
         }
+
+        // Consult canonical confirmed-exploit registry from FirewallEngine
+        if (class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine')) {
+            $def = \WebCareProScanner\Firewall\FirewallEngine::get_confirmed_exploit_definition($upper);
+            if ($def !== null) {
+                return true;
+            }
+        }
+
         foreach (self::ZERO_TOLERANCE_RULES as $zt) {
             if ($upper === $zt || str_starts_with($upper, $zt . '-') || str_starts_with($upper, $zt . '_')) {
                 return true;

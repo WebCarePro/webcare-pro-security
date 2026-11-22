@@ -2987,6 +2987,11 @@ class FirewallEngine {
                     'detector' => 'FirewallEngine',
                     'sig_id'   => 'sig:contain:log_poison_and_exfil',
                 ],
+                'WAF-XXE-INJECTION'                     => [
+                    'category' => 'XML Injection',
+                    'detector' => 'ExploitSignatureEngine',
+                    'sig_id'   => 'sig:xxe:entity_external_system_injection',
+                ],
             ];
         }
         return self::$confirmed_exploit_registry;

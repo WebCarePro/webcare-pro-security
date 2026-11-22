@@ -142,34 +142,49 @@ class ServerSecurityEngine {
      */
     public static function generate_nginx_config(array $opts): string {
         $now = gmdate('Y-m-d H:i:s \U\T\C');
-        $site_url = get_site_url();
+        $site_url = function_exists('get_site_url') ? get_site_url() : 'https://example.com';
 
         $c = "# =========================================================================\n";
         $c .= "# WebCare Pro - High Performance Nginx Security & Web Server Armor\n";
         $c .= "# Site: {$site_url}\n";
         $c .= "# Generated: {$now}\n";
         $c .= "# Architecture: Tailored Modular Server-Level Protection\n";
+        $c .= "# IMPORTANT: Test with 'nginx -t' before reloading Nginx!\n";
         $c .= "# =========================================================================\n\n";
 
-        // Global Rate Limiting Zones (Must be placed in http {} or top of server block)
+        // Global Rate Limiting Zones
+        if (!empty($opts['rate_limit_login']) || !empty($opts['rate_limit_global'])) {
+            $c .= "# =========================================================================\n";
+            $c .= "# SECTION 1: Place inside your nginx.conf 'http {}' context\n";
+            $c .= "# =========================================================================\n";
+            if (!empty($opts['rate_limit_login'])) {
+                $login_rate = max(1, (int) $opts['login_rate_limit']);
+                $c .= "limit_req_zone \$binary_remote_addr zone=webcare_wp_login:10m rate={$login_rate}r/m;\n";
+            }
+            if (!empty($opts['rate_limit_global'])) {
+                $global_rate = max(5, (int) $opts['global_rate_limit']);
+                $c .= "limit_req_zone \$binary_remote_addr zone=webcare_global:10m rate={$global_rate}r/s;\n";
+            }
+            $c .= "\n# =========================================================================\n";
+            $c .= "# SECTION 2: Place inside your site 'server {}' context\n";
+            $c .= "# =========================================================================\n\n";
+        }
+
         if (!empty($opts['rate_limit_login'])) {
-            $login_rate = max(1, (int) $opts['login_rate_limit']);
             $burst = max(1, (int) $opts['login_burst_limit']);
-            $c .= "# --- 1. Login Brute Force Throttling Zone ---\n";
-            $c .= "# Tip: Ensure 'limit_req_zone' is defined in your nginx.conf http {} block if needed:\n";
-            $c .= "# limit_req_zone \$binary_remote_addr zone=webcare_wp_login:10m rate={$login_rate}r/m;\n\n";
+            $c .= "# --- 1. Login Brute Force Throttling ---\n";
+            $c .= "# Note: Place 'limit_req zone=webcare_wp_login burst={$burst} nodelay;' inside your\n";
+            $c .= "# existing PHP-FPM fastcgi location block for wp-login.php, or use this standalone block:\n";
             $c .= "location = /wp-login.php {\n";
             $c .= "    limit_req zone=webcare_wp_login burst={$burst} nodelay;\n";
+            $c .= "    # Ensure fastcgi_pass points to your upstream PHP handler (e.g. unix:/run/php/php8.3-fpm.sock or 127.0.0.1:9000)\n";
             $c .= "    include fastcgi_params;\n";
-            $c .= "    fastcgi_pass php-fpm;\n";
             $c .= "}\n\n";
         }
 
         // Global Request Rate Limit
         if (!empty($opts['rate_limit_global'])) {
-            $global_rate = max(5, (int) $opts['global_rate_limit']);
             $c .= "# --- 2. Global IP Request Throttling ---\n";
-            $c .= "# limit_req_zone \$binary_remote_addr zone=webcare_global:10m rate={$global_rate}r/s;\n";
             $c .= "limit_req zone=webcare_global burst=50 nodelay;\n\n";
         }
 
@@ -297,7 +312,7 @@ class ServerSecurityEngine {
      */
     public static function generate_apache_config(array $opts): string {
         $now = gmdate('Y-m-d H:i:s \U\T\C');
-        $site_url = get_site_url();
+        $site_url = function_exists('get_site_url') ? get_site_url() : 'https://example.com';
 
         $c = "# =========================================================================\n";
         $c .= "# WebCare Pro - Apache & LiteSpeed Security Directives\n";
@@ -590,7 +605,7 @@ class ServerSecurityEngine {
      */
     public static function generate_caddy_config(array $opts): string {
         $now = gmdate('Y-m-d H:i:s \U\T\C');
-        $site_url = get_site_url();
+        $site_url = function_exists('get_site_url') ? get_site_url() : 'https://example.com';
 
         $c = "# =========================================================================\n";
         $c .= "# WebCare Pro - High Performance Caddy v2 Security Snippet\n";

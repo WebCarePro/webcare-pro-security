@@ -73,6 +73,20 @@ class MCPAntiLockoutValidator {
             }
         }
 
+        // Track and alert on first-seen or changed client IP for active MCP Bearer session
+        $last_seen_ip = (string) get_option('webcareproscan_mcp_last_seen_ip', '');
+        if ($last_seen_ip === '') {
+            update_option('webcareproscan_mcp_last_seen_ip', $client_ip, false);
+            if (class_exists(\WebCareProScanner\System\AuditLogger::class)) {
+                \WebCareProScanner\System\AuditLogger::log('MCP_BEARER_FIRST_SEEN', sprintf('MCP Bearer connection initialized from new client IP: %s', $client_ip));
+            }
+        } elseif ($last_seen_ip !== $client_ip) {
+            update_option('webcareproscan_mcp_last_seen_ip', $client_ip, false);
+            if (class_exists(\WebCareProScanner\System\AuditLogger::class)) {
+                \WebCareProScanner\System\AuditLogger::log('MCP_BEARER_IP_CHANGED', sprintf('MCP Bearer client IP transitioned from %s to %s', $last_seen_ip, $client_ip));
+            }
+        }
+
         return ['allowed' => true, 'reason' => ''];
     }
 

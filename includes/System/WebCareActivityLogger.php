@@ -127,19 +127,17 @@ class WebCareActivityLogger {
             // Execute transaction under 3-tier lock
             $success = self::execute_wal_transaction($event_payload);
 
-            // If a rate limit rollup summary is due, emit it now
+            // If a rate limit rollup summary is due, log to AuditLogger rather than polluting human admin accountability log
             if ($success && !empty($limit_check['is_rollup_due']) && $limit_check['suppressed_count'] > 0) {
+                if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                    \WebCareProScanner\System\AuditLogger::log(
+                        'event_flood_rollup',
+                        'system',
+                        sprintf('Suppressed %d repeated events during throttle window for action: %s', (int) $limit_check['suppressed_count'], $action),
+                        'info'
+                    );
+                }
                 self::$is_logging = false;
-                self::log(
-                    'event_flood_rollup',
-                    'system',
-                    ActivityEventSchema::SEVERITY_NOTICE,
-                    [
-                        'action_throttled' => $action,
-                        'description'      => sprintf('Suppressed %d repeated events during throttle window.', $limit_check['suppressed_count']),
-                        'suppressed_count' => (int) $limit_check['suppressed_count'],
-                    ]
-                );
                 return true;
             }
 

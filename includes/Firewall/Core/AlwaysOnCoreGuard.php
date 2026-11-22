@@ -3,6 +3,10 @@ declare(strict_types=1);
 
 namespace WebCareProScanner\Firewall\Core;
 
+if (!defined('ABSPATH')) {
+    exit;
+}
+
 use WebCareProScanner\Contracts\EvaluatorFailurePolicy;
 use WebCareProScanner\Contracts\RequestContext;
 use WebCareProScanner\Contracts\RouteClass;

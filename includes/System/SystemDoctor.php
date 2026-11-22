@@ -146,11 +146,50 @@ final class SystemDoctor {
             'severity'    => 'critical',
             'message'     => $vault_status === 'pass'
                 /* translators: %s: Vault directory basename */
-                ? sprintf(__('Vault directory %s is writable (0750) with 0600 isolated file permissions.', 'webcare-pro-security'), basename($vault_dir))
+                ? sprintf(__('Vault directory %s is writable (0750) with 0600 isolated file permissions and tampered protection guards auto-repaired.', 'webcare-pro-security'), basename($vault_dir))
                 /* translators: 1: Permission octal string, 2: Directory path */
                 : sprintf(__('Vault permissions issue detected (%1$s). Ensure web server user owns %2$s with 0750 permissions.', 'webcare-pro-security'), $vault_perms, $vault_dir),
             'current'     => sprintf('Dir: 0%s, Files checked: %d (%s)', $vault_perms, $checked_files, $file_perms_ok ? 'Isolated' : 'World-readable risk'),
             'required'    => '0750 directory / 0600 files',
+        ];
+
+        // 4b. WAF Log Storage HTTP Protection Check
+        $log_storage_dir = class_exists('\\WebCareProScanner\\Firewall\\WafFileLogger')
+            ? \WebCareProScanner\Firewall\WafFileLogger::get_storage_dir()
+            : $vault_dir . '/logs';
+        $log_secured = class_exists('\\WebCareProScanner\\Firewall\\WafFileLogger')
+            ? \WebCareProScanner\Firewall\WafFileLogger::ensure_directory_secured()
+            : (file_exists($log_storage_dir . '/.htaccess') && file_exists($log_storage_dir . '/web.config'));
+
+        $checks['waf_log_storage_protection'] = [
+            'id'          => 'waf_log_storage_protection',
+            'title'       => __('WAF Log Storage HTTP Access Protection', 'webcare-pro-security'),
+            'category'    => 'security',
+            'status'      => $log_secured ? 'pass' : 'fail',
+            'severity'    => 'critical',
+            'message'     => $log_secured
+                ? __('WAF log storage is isolated with auto-repaired .htaccess, web.config, and index.php access barriers.', 'webcare-pro-security')
+                : __('WAF log directory could not be secured against direct HTTP access.', 'webcare-pro-security'),
+            'current'     => $log_secured ? 'Secured (.htaccess + web.config + index.php verified)' : 'Unprotected / Inaccessible guards',
+            'required'    => '0750 directory / deny all web guards',
+        ];
+
+        // 4c. SecretVault Key Source Check (S4 Finding 9)
+        $using_ext_key = class_exists('\\WebCareProScanner\\Security\\SecretVault')
+            ? \WebCareProScanner\Security\SecretVault::is_using_external_key()
+            : true;
+
+        $checks['secret_vault_key_source'] = [
+            'id'          => 'secret_vault_key_source',
+            'title'       => __('SecretVault Encryption Key Provenance', 'webcare-pro-security'),
+            'category'    => 'security',
+            'status'      => $using_ext_key ? 'pass' : 'warn',
+            'severity'    => 'high',
+            'message'     => $using_ext_key
+                ? __('SecretVault key is derived from an isolated external key or WordPress security salts.', 'webcare-pro-security')
+                : __('SecretVault is currently using database-stored salt (webcareproscan_vault_salt). Define WEBCARE_VAULT_KEY in wp-config.php or environment variables for maximum isolation.', 'webcare-pro-security'),
+            'current'     => $using_ext_key ? 'External Key / System Salt Active' : 'Database Fallback Salt (webcareproscan_vault_salt)',
+            'required'    => 'WEBCARE_VAULT_KEY in wp-config.php or environment variable',
         ];
 
         // 5. CompiledStackManifest HMAC Integrity

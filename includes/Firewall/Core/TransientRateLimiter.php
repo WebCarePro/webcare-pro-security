@@ -36,56 +36,71 @@ final class TransientRateLimiter {
         $window_start = $window_idx * $window_seconds;
         $elapsed = max(0, $now - $window_start);
         $remaining_window_ttl = max(1, $window_seconds - $elapsed);
-        $cache_key = 'webcareproscan_trl_' . substr(md5($key), 0, 20) . '_w' . $window_idx;
+        $elapsed_ratio = min(1.0, max(0.0, $elapsed / $window_seconds));
+
+        $base_hash = substr(md5($key), 0, 20);
+        $curr_cache_key = 'webcareproscan_trl_' . $base_hash . '_w' . $window_idx;
+        $prev_cache_key = 'webcareproscan_trl_' . $base_hash . '_w' . ($window_idx - 1);
 
         $is_apcu = function_exists('apcu_inc') && function_exists('apcu_add') && ini_get('apc.enabled') && (php_sapi_name() !== 'cli' || ini_get('apc.enable_cli'));
 
         if ($is_apcu) {
-            apcu_add($cache_key, 0, $window_seconds);
+            apcu_add($curr_cache_key, 0, $window_seconds * 2);
             $success = false;
-            $count = apcu_inc($cache_key, 1, $success);
-            if (!$success || $count === false) {
-                if (apcu_add($cache_key, 1, $window_seconds)) {
-                    $count = 1;
+            $curr_count = apcu_inc($curr_cache_key, 1, $success);
+            if (!$success || $curr_count === false) {
+                if (apcu_add($curr_cache_key, 1, $window_seconds * 2)) {
+                    $curr_count = 1;
                 } else {
-                    $count = apcu_inc($cache_key, 1, $success);
-                    if (!$success || $count === false) {
-                        $count = null; // Degrade to file transaction rather than non-atomic reset
+                    $curr_count = apcu_inc($curr_cache_key, 1, $success);
+                    if (!$success || $curr_count === false) {
+                        $curr_count = null; // Degrade to file transaction rather than non-atomic reset
                     }
                 }
             }
 
-            if ($count !== null) {
-                $allowed = ($count <= $limit);
+            if ($curr_count !== null) {
+                $prev_fetch_ok = false;
+                $prev_count = (int) apcu_fetch($prev_cache_key, $prev_fetch_ok);
+                if (!$prev_fetch_ok) {
+                    $prev_count = 0;
+                }
+                // 2-bucket weighted sliding-window calculation
+                $estimated_count = (int) round($prev_count * (1.0 - $elapsed_ratio) + $curr_count);
+                $allowed = ($estimated_count <= $limit);
                 return [
                     'allowed'     => $allowed,
                     'retry_after' => $allowed ? 0 : $remaining_window_ttl,
-                    'current'     => (int) $count,
+                    'current'     => $estimated_count,
                     'limit'       => $limit,
                 ];
             }
         }
 
         if (function_exists('wp_using_ext_object_cache') && wp_using_ext_object_cache()) {
-            wp_cache_add($cache_key, 0, 'webcareproscan_rl', $window_seconds);
-            $count = wp_cache_incr($cache_key, 1, 'webcareproscan_rl');
-            if ($count === false) {
-                if (wp_cache_add($cache_key, 1, 'webcareproscan_rl', $window_seconds)) {
-                    $count = 1;
+            wp_cache_add($curr_cache_key, 0, 'webcareproscan_rl', $window_seconds * 2);
+            $curr_count = wp_cache_incr($curr_cache_key, 1, 'webcareproscan_rl');
+            if ($curr_count === false) {
+                if (wp_cache_add($curr_cache_key, 1, 'webcareproscan_rl', $window_seconds * 2)) {
+                    $curr_count = 1;
                 } else {
-                    $count = wp_cache_incr($cache_key, 1, 'webcareproscan_rl');
-                    if ($count === false) {
-                        $count = null; // Degrade to file transaction rather than non-atomic reset
+                    $curr_count = wp_cache_incr($curr_cache_key, 1, 'webcareproscan_rl');
+                    if ($curr_count === false) {
+                        $curr_count = null; // Degrade to file transaction rather than non-atomic reset
                     }
                 }
             }
 
-            if ($count !== null) {
-                $allowed = ($count <= $limit);
+            if ($curr_count !== null) {
+                $prev_val = wp_cache_get($prev_cache_key, 'webcareproscan_rl');
+                $prev_count = (is_numeric($prev_val)) ? (int) $prev_val : 0;
+                // 2-bucket weighted sliding-window calculation
+                $estimated_count = (int) round($prev_count * (1.0 - $elapsed_ratio) + $curr_count);
+                $allowed = ($estimated_count <= $limit);
                 return [
                     'allowed'     => $allowed,
                     'retry_after' => $allowed ? 0 : $remaining_window_ttl,
-                    'current'     => (int) $count,
+                    'current'     => $estimated_count,
                     'limit'       => $limit,
                 ];
             }
@@ -100,22 +115,29 @@ final class TransientRateLimiter {
             );
 
             if ($counts !== null) {
-                $count = (int) $counts['curr'];
-                $allowed = ($count <= $limit);
+                $curr_count = (int) ($counts['curr'] ?? 1);
+                $prev_count = (int) ($counts['prev'] ?? 0);
+                $estimated_count = (int) round($prev_count * (1.0 - $elapsed_ratio) + $curr_count);
+                $allowed = ($estimated_count <= $limit);
                 return [
                     'allowed'     => $allowed,
                     'retry_after' => $allowed ? 0 : $remaining_window_ttl,
-                    'current'     => $count,
+                    'current'     => $estimated_count,
                     'limit'       => $limit,
                 ];
             }
 
             // Controlled fail-safe under file-lock contention: do not allow silent non-atomic downgrades
-            if (class_exists('\\WebCareProScanner\\System\\WebCareActivityLogger')) {
-                \WebCareProScanner\System\WebCareActivityLogger::warning('transient_rl_lock_contention', 'firewall', [
-                    'key'         => $key,
-                    'description' => sprintf('TransientRateLimiter file lock contention for key %s; applied fail-safe policy.', $key),
-                ]);
+            // S4 Finding 10: Log internal lock contention to AuditLogger / error_log, never human admin WebCareActivityLogger
+            if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                \WebCareProScanner\System\AuditLogger::log(
+                    'transient_rl_lock_contention',
+                    'system',
+                    sprintf('TransientRateLimiter file lock contention for key %s; applied fail-safe policy.', substr($key, 0, 60)),
+                    'warning'
+                );
+            } else {
+                error_log(sprintf('[WebCare Pro] TransientRateLimiter lock contention on key: %s', substr($key, 0, 60)));
             }
 
             // Sensitive auth/warning strikes fail closed

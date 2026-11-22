@@ -204,6 +204,7 @@ class SettingsManager {
             'waf_admin_ajax_limit_per_min'      => 60,   // Max unauthenticated admin-ajax requests per minute per IP
             'waf_block_oversized_requests'      => true, // Rule #34: Oversized request URI, query string, & parameter count guard
             'waf_block_ai_prompt_injection'     => true, // Rule #35: AI Prompt Injection & Agent Poisoning Shield
+            'waf_max_inspected_body_bytes'      => 4194304, // Deep request body inspection ceiling in bytes (default 4 MB, min 1 MB, max 64 MB)
             'waf_guest_ajax_policy'             => 'monitor', // Rule #36: Guest admin-ajax.php & admin-post.php Action Matrix ('monitor' | 'block' | 'off')
             'waf_guest_ajax_custom_allowlist'   => '',        // Newline-separated custom allowed action names
             'waf_guest_rest_policy'             => 'block',   // Rule #37: Guest REST API Mutation Guard ('block' | 'monitor' | 'off')
@@ -451,6 +452,78 @@ class SettingsManager {
     /**
      * Sanitize granular notification events dictionary
      */
+    /**
+     * Sanitize and validate targeted allowlist rules.
+     * Ensures rules with no network/endpoint/hostname/asn constraints are rejected.
+     *
+     * @param mixed $rules
+     * @return array
+     */
+    public static function sanitize_targeted_allowlist_rules(mixed $rules): array {
+        if (is_string($rules)) {
+            $parsed = json_decode($rules, true);
+        } elseif (is_array($rules)) {
+            $parsed = $rules;
+        } else {
+            $parsed = [];
+        }
+
+        if (!is_array($parsed)) {
+            return [];
+        }
+
+        $clean_targeted = [];
+        foreach ($parsed as $rule) {
+            if (!is_array($rule)) {
+                continue;
+            }
+            $rule_id = !empty($rule['id']) ? sanitize_key($rule['id']) : 'rule_' . substr(md5(uniqid((string) wp_rand(), true)), 0, 8);
+            $clean_rule = [
+                'id'           => $rule_id,
+                'name'         => sanitize_text_field($rule['name'] ?? 'Custom Allowlist Rule'),
+                'enabled'      => isset($rule['enabled']) ? (bool) $rule['enabled'] : true,
+                'user_agents'  => is_array($rule['user_agents'] ?? null) 
+                    ? array_values(array_filter(array_map('sanitize_text_field', $rule['user_agents'])))
+                    : array_values(array_filter(array_map('sanitize_text_field', explode("\n", str_replace("\r", "", (string) ($rule['user_agents'] ?? '')))))),
+                'endpoints'    => is_array($rule['endpoints'] ?? null)
+                    ? array_values(array_filter(array_map('sanitize_text_field', $rule['endpoints'])))
+                    : array_values(array_filter(array_map('sanitize_text_field', explode("\n", str_replace("\r", "", (string) ($rule['endpoints'] ?? '')))))),
+                'ip_addresses'     => is_array($rule['ip_addresses'] ?? null)
+                    ? array_values(array_filter(array_map('sanitize_text_field', $rule['ip_addresses'])))
+                    : array_values(array_filter(array_map('sanitize_text_field', explode("\n", str_replace("\r", "", (string) ($rule['ip_addresses'] ?? '')))))),
+                'hostnames'        => is_array($rule['hostnames'] ?? null)
+                    ? array_values(array_filter(array_map('sanitize_text_field', $rule['hostnames'])))
+                    : array_values(array_filter(array_map('sanitize_text_field', explode("\n", str_replace("\r", "", (string) ($rule['hostnames'] ?? '')))))),
+                'asns'             => is_array($rule['asns'] ?? null)
+                    ? array_values(array_filter(array_map('sanitize_text_field', $rule['asns'])))
+                    : array_values(array_filter(array_map('sanitize_text_field', explode("\n", str_replace("\r", "", (string) ($rule['asns'] ?? '')))))),
+                'required_headers' => is_array($rule['required_headers'] ?? null)
+                    ? array_values(array_filter(array_map('sanitize_text_field', $rule['required_headers'])))
+                    : array_values(array_filter(array_map('sanitize_text_field', explode("\n", str_replace("\r", "", (string) ($rule['required_headers'] ?? '')))))),
+                'methods'          => is_array($rule['methods'] ?? null)
+                    ? array_values(array_filter(array_map('sanitize_text_field', $rule['methods'])))
+                    : ['ALL'],
+                'log_payload'      => isset($rule['log_payload']) ? (bool) $rule['log_payload'] : true,
+                'description'      => sanitize_text_field($rule['description'] ?? ''),
+            ];
+
+            // S2 Finding 3: Reject empty targeted allowlist rules that lack any effective constraints.
+            // An allowlist rule must contain at least one non-empty IP/CIDR, endpoint, verified hostname, or ASN.
+            $has_ips       = !empty($clean_rule['ip_addresses']);
+            $has_endpoints = !empty($clean_rule['endpoints']);
+            $has_hosts     = !empty($clean_rule['hostnames']);
+            $has_asns      = !empty($clean_rule['asns']);
+
+            if (!$has_ips && !$has_endpoints && !$has_hosts && !$has_asns) {
+                continue; // Skip invalid, match-all empty allowlist rule
+            }
+
+            $clean_targeted[] = $clean_rule;
+        }
+
+        return $clean_targeted;
+    }
+
     public static function sanitize_notification_events(array $events): array {
         $defaults = self::get_default_notification_events();
         $clean = [];
@@ -862,48 +935,7 @@ class SettingsManager {
 
         // Targeted User-Agent, Endpoint & IP Allowlist Rules
         $raw_targeted = $merged['waf_targeted_allowlist_rules'] ?? '[]';
-        if (is_array($raw_targeted)) {
-            $parsed_targeted = $raw_targeted;
-        } else {
-            $parsed_targeted = json_decode((string) $raw_targeted, true);
-        }
-        $clean_targeted = [];
-        if (is_array($parsed_targeted)) {
-            foreach ($parsed_targeted as $rule) {
-                if (!is_array($rule)) {
-                    continue;
-                }
-                $rule_id = !empty($rule['id']) ? sanitize_key($rule['id']) : 'rule_' . substr(md5(uniqid((string) wp_rand(), true)), 0, 8);
-                $clean_targeted[] = [
-                    'id'           => $rule_id,
-                    'name'         => sanitize_text_field($rule['name'] ?? 'Custom Allowlist Rule'),
-                    'enabled'      => isset($rule['enabled']) ? (bool) $rule['enabled'] : true,
-                    'user_agents'  => is_array($rule['user_agents'] ?? null) 
-                        ? array_values(array_filter(array_map('sanitize_text_field', $rule['user_agents'])))
-                        : array_values(array_filter(array_map('sanitize_text_field', explode("\n", str_replace("\r", "", (string) ($rule['user_agents'] ?? '')))))),
-                    'endpoints'    => is_array($rule['endpoints'] ?? null)
-                        ? array_values(array_filter(array_map('sanitize_text_field', $rule['endpoints'])))
-                        : array_values(array_filter(array_map('sanitize_text_field', explode("\n", str_replace("\r", "", (string) ($rule['endpoints'] ?? '')))))),
-                    'ip_addresses'     => is_array($rule['ip_addresses'] ?? null)
-                        ? array_values(array_filter(array_map('sanitize_text_field', $rule['ip_addresses'])))
-                        : array_values(array_filter(array_map('sanitize_text_field', explode("\n", str_replace("\r", "", (string) ($rule['ip_addresses'] ?? '')))))),
-                    'hostnames'        => is_array($rule['hostnames'] ?? null)
-                        ? array_values(array_filter(array_map('sanitize_text_field', $rule['hostnames'])))
-                        : array_values(array_filter(array_map('sanitize_text_field', explode("\n", str_replace("\r", "", (string) ($rule['hostnames'] ?? '')))))),
-                    'asns'             => is_array($rule['asns'] ?? null)
-                        ? array_values(array_filter(array_map('sanitize_text_field', $rule['asns'])))
-                        : array_values(array_filter(array_map('sanitize_text_field', explode("\n", str_replace("\r", "", (string) ($rule['asns'] ?? '')))))),
-                    'required_headers' => is_array($rule['required_headers'] ?? null)
-                        ? array_values(array_filter(array_map('sanitize_text_field', $rule['required_headers'])))
-                        : array_values(array_filter(array_map('sanitize_text_field', explode("\n", str_replace("\r", "", (string) ($rule['required_headers'] ?? '')))))),
-                    'methods'          => is_array($rule['methods'] ?? null)
-                        ? array_values(array_filter(array_map('sanitize_text_field', $rule['methods'])))
-                        : ['ALL'],
-                    'log_payload'      => isset($rule['log_payload']) ? (bool) $rule['log_payload'] : true,
-                    'description'      => sanitize_text_field($rule['description'] ?? ''),
-                ];
-            }
-        }
+        $clean_targeted = self::sanitize_targeted_allowlist_rules($raw_targeted);
         $clean['waf_targeted_allowlist_rules']    = wp_json_encode($clean_targeted);
 
         $clean['waf_block_forbidden_usernames']   = !empty($merged['waf_block_forbidden_usernames']);
@@ -939,6 +971,7 @@ class SettingsManager {
         $clean['waf_admin_ajax_limit_per_min'] = max(10, min(300, (int) ($merged['waf_admin_ajax_limit_per_min'] ?? 60)));
         $clean['waf_block_oversized_requests'] = !empty($merged['waf_block_oversized_requests']);
         $clean['waf_block_ai_prompt_injection'] = !empty($merged['waf_block_ai_prompt_injection']);
+        $clean['waf_max_inspected_body_bytes']  = max(1048576, min(67108864, (int) ($merged['waf_max_inspected_body_bytes'] ?? 4194304)));
 
         // Rule #36 & #37: Guest admin-ajax.php / admin-post.php and REST Security Matrix
         $in_ajax_policy = sanitize_key($merged['waf_guest_ajax_policy'] ?? 'monitor');

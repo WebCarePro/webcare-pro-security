@@ -96,6 +96,51 @@ class SecretVault {
     }
 
     /**
+     * Check if SecretVault is using an external key/salt source (env var, wp-config constant, or core salts)
+     * versus falling back to DB-stored webcareproscan_vault_salt.
+     *
+     * @return bool True if derived from external key/salt; false if using database fallback salt.
+     */
+    public static function is_using_external_key(): bool {
+        // 1. Env variable
+        $env_key = getenv('WEBCARE_VAULT_KEY');
+        if (!empty($env_key)) {
+            return true;
+        }
+
+        // 2. wp-config.php constant
+        if (defined('WEBCARE_VAULT_KEY') && !empty(WEBCARE_VAULT_KEY)) {
+            return true;
+        }
+
+        // 3. WordPress core salts
+        if (
+            (defined('AUTH_KEY') && AUTH_KEY !== 'put your unique phrase here') ||
+            (defined('SECURE_AUTH_KEY') && SECURE_AUTH_KEY !== 'put your unique phrase here') ||
+            (defined('LOGGED_IN_KEY') && LOGGED_IN_KEY !== 'put your unique phrase here') ||
+            (defined('AUTH_SALT') && AUTH_SALT !== 'put your unique phrase here') ||
+            (defined('SECURE_AUTH_SALT') && SECURE_AUTH_SALT !== 'put your unique phrase here') ||
+            (defined('LOGGED_IN_SALT') && LOGGED_IN_SALT !== 'put your unique phrase here')
+        ) {
+            return true;
+        }
+
+        if (function_exists('wp_salt')) {
+            try {
+                $test = wp_salt('auth');
+                if (!empty($test) && $test !== 'put your unique phrase here') {
+                    return true;
+                }
+            } catch (\Throwable $e) {
+                // Ignore
+            }
+        }
+
+        // Otherwise, it fell back to DB option webcareproscan_vault_salt
+        return false;
+    }
+
+    /**
      * Encrypt a sensitive plain text secret (e.g. API token, Webhook URL).
      * Uses AES-256-GCM Authenticated Encryption with Associated Data (AEAD).
      *

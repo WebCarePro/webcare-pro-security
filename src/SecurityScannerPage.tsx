@@ -1780,11 +1780,17 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                   <ShieldCheck size={36} color="#10b981" />
                 </div>
                 <h4 className="webcare-empty-state-title">
-                  {uniqueIssues.length === 0 ? 'All Clear · Your Website Looks Great & Protected' : 'No Findings Match Active Filters'}
+                  {uniqueIssues.length === 0
+                    ? (currentScan?.completed_at && !scanning
+                        ? 'All Clear · Your Website Looks Great & Protected'
+                        : 'No Findings Recorded')
+                    : 'No Findings Match Active Filters'}
                 </h4>
                 <p className="webcare-empty-state-desc">
                   {uniqueIssues.length === 0
-                    ? 'Zero active webshells, backdoor code, unauthorized scripts, or database injections detected. All core files and active components satisfy official security benchmarks.'
+                    ? (currentScan?.completed_at && !scanning
+                        ? 'Zero active webshells, backdoor code, unauthorized scripts, or database injections detected. All core files and active components satisfy official security benchmarks.'
+                        : 'Run a security check to inspect your core files, themes, and plugins for potential vulnerabilities.')
                     : 'Try resetting your search query or category filters to inspect all security records.'}
                 </p>
                 {uniqueIssues.length > 0 && (
@@ -1823,7 +1829,7 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                       No need to panic — your firewall is actively protecting your site.
                     </strong>
                     <span style={{ color: '#4338ca' }}>
-                      Security scanners sometimes flag legitimate code from themes, page builders, or custom plugins. Start with <strong>Priority Review</strong> items first. If a file belongs to a plugin you trust, click <strong>Mark as Safe</strong> — nothing is broken.
+                      Some flagged items may be legitimate customizations or false positives. Review the file path, detection reason, and integrity checksum before marking an item as safe — a trusted plugin name alone does not guarantee file integrity.
                     </span>
                   </div>
                 </div>

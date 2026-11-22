@@ -3,6 +3,10 @@ declare(strict_types=1);
 
 namespace WebCareProScanner\Api\Controllers;
 
+if (!defined('ABSPATH')) {
+    exit;
+}
+
 use WebCareProScanner\Filesystem\PathValidator;
 use WebCareProScanner\Scan\ScanLock;
 use WebCareProScanner\WordPress\UpdateScanner;

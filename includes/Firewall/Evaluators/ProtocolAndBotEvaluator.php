@@ -209,7 +209,8 @@ final readonly class ProtocolAndBotEvaluator implements WafEvaluatorInterface {
                 // Multi-dimensional NAT identity key calculation (CGNAT / Office NAT Safety)
                 $identity_key = '';
                 if ($bucket === AdaptiveRateLimiter::BUCKET_AUTH) {
-                    $submitted_user = (string) ($ctx->formParams['log'] ?? ($ctx->formParams['username'] ?? ''));
+                    $raw_log = $ctx->formParams['log'] ?? ($ctx->formParams['username'] ?? '');
+                    $submitted_user = is_string($raw_log) ? $raw_log : (is_scalar($raw_log) ? (string) $raw_log : '');
                     if ($submitted_user !== '') {
                         $identity_key = 'u:' . strtolower(trim($submitted_user));
                     }
@@ -379,7 +380,8 @@ final readonly class ProtocolAndBotEvaluator implements WafEvaluatorInterface {
         $is_options = ($method === 'OPTIONS');
 
         // Check for verified payment gateway webhooks (Stripe / PayPal / Mollie / Square)
-        $is_webhook = self::is_verified_payment_gateway_webhook_from_ctx($ctx);
+        // Hardening (S2 Finding 5): Require BOTH verified provider IP and provider signature header
+        $is_webhook = self::is_verified_payment_gateway_ip_webhook_from_ctx($ctx);
 
         if (!empty($settings['waf_block_empty_post_ua_referer']) && $is_post && !$is_options && !$is_webhook) {
             $is_commerce_safe = !empty($settings['waf_ecommerce_safe_mode']) && CommerceSessionGuard::is_commerce_or_membership_request($request_uri);
@@ -552,23 +554,52 @@ final readonly class ProtocolAndBotEvaluator implements WafEvaluatorInterface {
 
     /**
      * Detect verified payment gateway webhooks (Stripe / PayPal / Mollie / Square).
+     *
+     * Security Invariant (S2 Finding 5): Require BOTH verified provider source IP/CIDR
+     * AND a syntactically valid provider signature header. A forged signature header
+     * from an arbitrary IP or a request from a gateway IP without a signature header
+     * must never grant exemption from empty User-Agent/Referer bot checks.
      */
-    private static function is_verified_payment_gateway_webhook_from_ctx(RequestContext $ctx): bool {
+    private static function is_verified_payment_gateway_ip_webhook_from_ctx(RequestContext $ctx): bool {
         $client_ip = $ctx->ip;
 
-        // 1. Stripe Webhook IPs
-        if (in_array($client_ip, CommerceSessionGuard::STRIPE_WEBHOOK_IPS, true) || in_array($client_ip, ['54.241.31.102', '54.241.34.107'], true)) {
-            return true;
+        // Verify Stripe IP
+        $is_stripe_ip = in_array($client_ip, CommerceSessionGuard::STRIPE_WEBHOOK_IPS, true)
+            || in_array($client_ip, ['54.241.31.102', '54.241.34.107'], true);
+
+        // Verify PayPal IP
+        $is_paypal_ip = false;
+        if (!$is_stripe_ip) {
+            foreach (array_merge(CommerceSessionGuard::PAYPAL_WEBHOOK_CIDRS, ['185.177.189.0/24', '3.253.0.0/16', '52.212.0.0/15']) as $paypal_cidr) {
+                if (\WebCareProScanner\Firewall\Core\ClientIpResolver::ip_in_range($client_ip, $paypal_cidr)) {
+                    $is_paypal_ip = true;
+                    break;
+                }
+            }
         }
 
-        // 2. PayPal Webhook subnets
-        foreach (array_merge(CommerceSessionGuard::PAYPAL_WEBHOOK_CIDRS, ['185.177.189.0/24', '3.253.0.0/16', '52.212.0.0/15']) as $paypal_cidr) {
-            if (\WebCareProScanner\Firewall\Core\ClientIpResolver::ip_in_range($client_ip, $paypal_cidr)) {
+        // 1. Stripe Webhooks: must come from Stripe IP AND supply Stripe-Signature header
+        if ($is_stripe_ip) {
+            $has_stripe_sig = !empty($ctx->headers['stripe-signature'])
+                || !empty($ctx->server['HTTP_STRIPE_SIGNATURE']);
+            if ($has_stripe_sig) {
                 return true;
             }
         }
 
-        // 3. Webhook signature headers on designated webhook endpoints
+        // 2. PayPal Webhooks: must come from PayPal IP AND supply PayPal auth/signature headers
+        if ($is_paypal_ip) {
+            $has_paypal_sig = !empty($ctx->headers['paypal-auth-algo'])
+                || !empty($ctx->server['HTTP_PAYPAL_AUTH_ALGO'])
+                || !empty($ctx->headers['paypal-transmission-sig'])
+                || !empty($ctx->server['HTTP_PAYPAL_TRANSMISSION_SIG']);
+            if ($has_paypal_sig) {
+                return true;
+            }
+        }
+
+        // 3. Designated local webhook endpoints (Square, Mollie, SureCart, WooCommerce API):
+        // Must target a designated webhook endpoint AND supply a valid signature header
         $parsed_path = strtolower(wp_parse_url($ctx->uri, PHP_URL_PATH) ?: $ctx->uri);
         $is_webhook_endpoint = (
             str_contains($parsed_path, '/wp-json/mollie')

@@ -80,23 +80,40 @@ final class WafVaultManager {
             return;
         }
 
+        // Hardening 1: Apache .htaccess with tamper repair
         $htaccess = $dir . '/.htaccess';
-        if (!file_exists($htaccess)) {
-            $content = "# WebCare Pro Security - Protect Vault Artifacts\n"
-                . "<IfModule mod_authz_core.c>\n"
-                . "    Require all denied\n"
-                . "</IfModule>\n"
-                . "<IfModule !mod_authz_core.c>\n"
-                . "    Deny from all\n"
-                . "</IfModule>\n";
-            @file_put_contents($htaccess, $content);
+        $content = "# WebCare Pro Security - Protect Vault Artifacts\n"
+            . "Options -Indexes\n"
+            . "<IfModule mod_authz_core.c>\n"
+            . "    AuthMerging And\n"
+            . "    Require all denied\n"
+            . "</IfModule>\n"
+            . "<IfModule !mod_authz_core.c>\n"
+            . "    Order Allow,Deny\n"
+            . "    Deny from all\n"
+            . "</IfModule>\n";
+        $current_htaccess = file_exists($htaccess) ? (string) @file_get_contents($htaccess) : '';
+        if ($current_htaccess !== $content) {
+            @file_put_contents($htaccess, $content, LOCK_EX);
             @chmod($htaccess, 0600);
         }
 
+        // Hardening 2: PHP index with tamper repair
         $index = $dir . '/index.php';
-        if (!file_exists($index)) {
-            @file_put_contents($index, "<?php\n// Silence is golden.\n");
+        $index_content = "<?php\n// Silence is golden.\n";
+        $current_index = file_exists($index) ? (string) @file_get_contents($index) : '';
+        if ($current_index !== $index_content) {
+            @file_put_contents($index, $index_content, LOCK_EX);
             @chmod($index, 0600);
+        }
+
+        // Hardening 3: IIS web.config with tamper repair
+        $web_config = $dir . '/web.config';
+        $canonical_web_config = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<configuration>\n  <system.webServer>\n    <directoryBrowse enabled=\"false\" />\n    <security>\n      <authorization>\n        <clear />\n        <add accessType=\"Deny\" users=\"*\" />\n      </authorization>\n    </security>\n  </system.webServer>\n</configuration>\n";
+        $current_web_config = file_exists($web_config) ? (string) @file_get_contents($web_config) : '';
+        if ($current_web_config !== $canonical_web_config) {
+            @file_put_contents($web_config, $canonical_web_config, LOCK_EX);
+            @chmod($web_config, 0600);
         }
     }
 
