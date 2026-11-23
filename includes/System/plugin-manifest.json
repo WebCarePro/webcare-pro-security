@@ -1,6 +1,6 @@
 {
   "version": "3.25.2",
-  "generated_at": "2026-11-23T01:07:45.211Z",
+  "generated_at": "2026-11-23T01:17:19.173Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -320,8 +320,8 @@
       "size": 664
     },
     "includes/Contracts/RequestContext.php": {
-      "sha256": "090e9f48a75b270587211046b96edf4bb0a2e51c0d680b53d1edfd6c2a393ebc",
-      "size": 16101
+      "sha256": "3c57852615a42c62c7a8813827ca41dd5b352e2dca08c3cf6a9890d2cf1d8b1f",
+      "size": 16439
     },
     "includes/Contracts/RouteClass.php": {
       "sha256": "94f40358eeb842cdbf02a1ae6b57580114c5ca7c09921566d08ac442a4767a7b",
@@ -348,8 +348,8 @@
       "size": 5591
     },
     "includes/Core/CanonicalRouteParser.php": {
-      "sha256": "b421b6023f1472d5540d6a556b267906bc914242fd6f6b5e9dd9fc493885fd58",
-      "size": 4992
+      "sha256": "84e471baa5895f2da7e133565d66fdb26ae5ad490f1d8991a64c2733e7732c91",
+      "size": 5438
     },
     "includes/Core/CompiledStackManifest.php": {
       "sha256": "d9f1a28227c3f13ba164b724b1dad4f1160ce788762044233253dd7bfa7803da",
@@ -372,8 +372,8 @@
       "size": 2904
     },
     "includes/Core/RouteClassifier.php": {
-      "sha256": "6adcc6055df69bb86116a7c2ef2f3d6d6c115456cd30f52f8e6eae72d75e60c5",
-      "size": 5191
+      "sha256": "52dc82115aa50da476e02e68d6aa94821d9f5adafada50e2bf9d33260ea0daef",
+      "size": 5283
     },
     "includes/Database/CronPersistenceScanner.php": {
       "sha256": "e7567996de9e74e3596a213fe01521cb69d14f0177edaf8737fa81ace82f5f2c",
@@ -468,8 +468,8 @@
       "size": 25393
     },
     "includes/Firewall/AdaptiveRateLimiter.php": {
-      "sha256": "cc2067557e5d0387e29b6d2127ac4c2a6bd9c79b7d99be28a65b7e2d408e02c3",
-      "size": 37441
+      "sha256": "3508a6440637f23fb769b3fe0aa6c74cdb2ad1619b41ae80391fa8440fe838ce",
+      "size": 37855
     },
     "includes/Firewall/BotReconDefense.php": {
       "sha256": "60533cf6747671774b46d59a65fb53cabeb9fe49b97947617806a5700ffbc963",
@@ -568,8 +568,8 @@
       "size": 10013
     },
     "includes/Firewall/Core/ViolationResponder.php": {
-      "sha256": "aa1114c7006c5a621b9c9971abc37859f83a08ce069f56e04cbf18c10770a638",
-      "size": 54088
+      "sha256": "1721ba38944e2e2bb5ff904d99b69de9deafdbd79686cf0a1f2474aa9f134fe6",
+      "size": 54154
     },
     "includes/Firewall/Core/WafVaultManager.php": {
       "sha256": "bebf8904abe77897c6269c0551d0d96c90dc4e9d224d01a530e98b90123ec801",

@@ -194,9 +194,18 @@ class RequestContext {
         $raw_uri = isset($_SERVER['REQUEST_URI']) ? (string) wp_unslash($_SERVER['REQUEST_URI']) : '';
         $ctx->uri = str_replace(["\0", "\r", "\n"], '', $raw_uri);
         $q_pos    = strpos($raw_uri, '?');
-        $raw_clean = strtolower(sanitize_text_field($q_pos === false ? $raw_uri : substr($raw_uri, 0, $q_pos)));
-        if (strpos($raw_clean, '/.') !== false || strpos($raw_clean, '//') !== false) {
-            $raw_clean = preg_replace('#/+#', '/', $raw_clean);
+        $raw_path = $q_pos === false ? $raw_uri : substr($raw_uri, 0, $q_pos);
+        $raw_clean = str_replace(["\0", "\r", "\n"], '', $raw_path);
+        for ($i = 0; $i < 3; $i++) {
+            $prev = $raw_clean;
+            $raw_clean = rawurldecode($raw_clean);
+            if ($raw_clean === $prev) {
+                break;
+            }
+        }
+        $raw_clean = strtolower($raw_clean);
+        if (strpos($raw_clean, '/.') !== false || strpos($raw_clean, '//') !== false || strpos($raw_clean, '\\') !== false) {
+            $raw_clean = preg_replace('#[\\\\/]+#', '/', $raw_clean) ?? '/';
             $p_parts = explode('/', $raw_clean);
             $p_stack = [];
             foreach ($p_parts as $p_seg) {

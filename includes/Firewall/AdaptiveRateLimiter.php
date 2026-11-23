@@ -301,8 +301,16 @@ class AdaptiveRateLimiter {
             return true;
         }
 
-        $raw_uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '/';
-        $decoded_uri = rawurldecode($raw_uri);
+        // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- WAF route canonicalization must retain percent-encoded octets prior to rawurldecode() / parse_str()
+        $raw_uri = isset($_SERVER['REQUEST_URI']) ? str_replace(["\0", "\r", "\n"], '', (string) wp_unslash($_SERVER['REQUEST_URI'])) : '/';
+        $decoded_uri = $raw_uri;
+        for ($i = 0; $i < 3; $i++) {
+            $prev = $decoded_uri;
+            $decoded_uri = rawurldecode($decoded_uri);
+            if ($decoded_uri === $prev) {
+                break;
+            }
+        }
         $method = isset($_SERVER['REQUEST_METHOD']) ? strtoupper(sanitize_key(wp_unslash($_SERVER['REQUEST_METHOD']))) : 'GET';
 
         // phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.NonceVerification.Recommended -- Early passive packet rate-limiting

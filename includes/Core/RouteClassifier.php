@@ -59,9 +59,9 @@ final class RouteClassifier {
         $commerce_matched = false;
         $path_trailing = rtrim($path, '/') . '/';
 
-        // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.MissingUnslash, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
-        $uri_raw = (string) ($server['REQUEST_URI'] ?? ($_SERVER['REQUEST_URI'] ?? '/'));
-        $uri = sanitize_text_field(wp_unslash($uri_raw));
+        // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- WAF route canonicalization must retain percent-encoded octets prior to rawurldecode() / parse_str()
+        $uri_raw = (string) ($server['REQUEST_URI'] ?? (isset($_SERVER['REQUEST_URI']) ? wp_unslash($_SERVER['REQUEST_URI']) : '/'));
+        $uri = str_replace(["\0", "\r", "\n"], '', $uri_raw);
         $query_str = (string) (wp_parse_url($uri, PHP_URL_QUERY) ?? '');
         $query_params = [];
         if ($query_str !== '') {
