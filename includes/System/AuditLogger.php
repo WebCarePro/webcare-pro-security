@@ -14,6 +14,13 @@ class AuditLogger {
      */
     public static ?string $custom_log_dir = null;
 
+    /**
+     * Optional operational log test hook to simulate logging exceptions or inspect calls in unit tests.
+     *
+     * @var callable|null
+     */
+    public static $operational_log_hook = null;
+
     private $log_dir;
     private $log_file;
 
@@ -66,7 +73,7 @@ class AuditLogger {
         add_action('_core_updated_successfully', [$this, 'log_core_update']);
     }
 
-    private function write_log($event_type, $message) {
+    private function write_log($event_type, $message, bool $skip_activity_bridge = false) {
         $timestamp = gmdate('Y-m-d H:i:s');
         $raw_ip = class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine')
             ? \WebCareProScanner\Firewall\FirewallEngine::get_client_ip()
@@ -89,8 +96,10 @@ class AuditLogger {
 
         @file_put_contents($this->log_file, $log_entry, FILE_APPEND | LOCK_EX);
 
-        // Enterprise Activity Log Bridge: Forward into cryptographic hash-chained activity log ledger
-        self::bridge_to_webcare_activity_logger($event_type, $message);
+        // Enterprise Activity Log Bridge: Forward into cryptographic hash-chained activity log ledger (unless explicitly skipped)
+        if (!$skip_activity_bridge) {
+            self::bridge_to_webcare_activity_logger($event_type, $message);
+        }
     }
 
     /**
@@ -129,6 +138,7 @@ class AuditLogger {
             'learning_mode_route_learned',
             'dvs_file_lock_exhausted',
             'dvs_file_read_lock_exhausted',
+            'dlp_inspection_limit_exceeded',
         ];
 
         foreach ($traffic_actions as $ta) {
@@ -300,12 +310,29 @@ class AuditLogger {
      * Public static helper to log custom administrative and security events.
      *
      * @param string $event_type
-     * @param string $message
+     * @param string|array $message
      */
     public static function log_event($event_type, $message) {
         $instance = new self();
         $instance->ensure_log_directory();
         $instance->write_log($event_type, $message);
+    }
+
+    /**
+     * Log an operational-only diagnostic event that writes exclusively to audit.log.php
+     * and NEVER bridges to the administrative activity ledger (WebCareActivityLogger).
+     *
+     * @param string       $event_type
+     * @param array|string $details
+     */
+    public static function log_operational(string $event_type, array|string $details): void {
+        if (is_callable(self::$operational_log_hook)) {
+            call_user_func(self::$operational_log_hook, $event_type, $details);
+        }
+
+        $instance = new self();
+        $instance->ensure_log_directory();
+        $instance->write_log($event_type, $details, true);
     }
 
     /**

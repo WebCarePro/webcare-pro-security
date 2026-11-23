@@ -1,6 +1,6 @@
 {
   "version": "3.25.3",
-  "generated_at": "2026-11-23T11:50:43.530Z",
+  "generated_at": "2026-11-23T12:02:34.984Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -672,8 +672,8 @@
       "size": 15500
     },
     "includes/Firewall/NextGen/ResponseDlpSentinel.php": {
-      "sha256": "231f1819fb16ca984724733807a8feb1922d1f509e5dfc49cc7be8d66255d5b2",
-      "size": 18152
+      "sha256": "8bd043a8a73bf92a84c46628efa8a183a3a9a3986d17083621667f2b1f0aa5c2",
+      "size": 18399
     },
     "includes/Firewall/NextGen/RuntimeSqlRaspEngine.php": {
       "sha256": "c74b03d8c34ad665a14c191a776c6c63079971c3e877fdf14f07e6500819b344",
@@ -996,8 +996,8 @@
       "size": 56948
     },
     "includes/System/AuditLogger.php": {
-      "sha256": "dfc03468bcf624d6f3e3385a4c1eb76fdce94b772614b64124ce72ceca6594eb",
-      "size": 13991
+      "sha256": "8167ce5e3dc13afa25817ce3cd00b9b9263a377170b618279fbac99c8118aa22",
+      "size": 15018
     },
     "includes/System/CrashGuard.php": {
       "sha256": "4e75df4f4b1232086f82cc1957de1601f89df99c4b5acc0176a956c1f4a4560e",

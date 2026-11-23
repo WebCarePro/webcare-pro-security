@@ -401,12 +401,16 @@ class ResponseDlpSentinel implements SecurityModuleInterface {
                 $sanitized_route = sanitize_text_field(substr($route, 0, 160));
 
                 if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
-                    \WebCareProScanner\System\AuditLogger::log('dlp_inspection_limit_exceeded', [
-                        'failure_type'   => $failure_type,
-                        'route'          => $sanitized_route,
-                        'nodes_visited'  => $nodes,
-                        'max_depth_seen' => $max_depth_seen,
-                    ]);
+                    try {
+                        \WebCareProScanner\System\AuditLogger::log_operational('dlp_inspection_limit_exceeded', [
+                            'failure_type'   => $failure_type,
+                            'route'          => $sanitized_route,
+                            'nodes_visited'  => $nodes,
+                            'max_depth_seen' => $max_depth_seen,
+                        ]);
+                    } catch (\Throwable $logging_error) {
+                        // Never allow diagnostic logging failure to abort the fail-closed 503 response.
+                    }
                 }
 
                 return new \WP_REST_Response([

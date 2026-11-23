@@ -36,6 +36,7 @@ final class ResponseDlpSentinelTest extends TestCase {
     protected function tearDown(): void {
         ResponseDlpSentinel::$throw_mock_exception = false;
         AuditLogger::$custom_log_dir = null;
+        AuditLogger::$operational_log_hook = null;
         if (is_dir($this->tempLogDir)) {
             $files = glob($this->tempLogDir . '/*');
             if (is_array($files)) {
@@ -186,6 +187,7 @@ final class ResponseDlpSentinelTest extends TestCase {
 
         $this->assertInstanceOf(\WP_REST_Response::class, $filtered);
         $this->assertSame(200, $filtered->get_status());
+        $this->assertSame($index, $filtered->get_data(), 'Large REST index response must pass through 100% intact.');
         $this->assertEmpty(get_option(ResponseDlpSentinel::OPTION_EVENTS, []));
     }
 
@@ -315,5 +317,76 @@ final class ResponseDlpSentinelTest extends TestCase {
         $this->assertSame(200, $filtered->get_status());
         $this->assertSame($adminSecretData, $filtered->get_data(), 'Logged-in request must bypass DLP completely.');
         $this->assertEmpty(get_option(ResponseDlpSentinel::OPTION_EVENTS, []));
+    }
+
+    /**
+     * 9. Logger-throws resilience: Force a failure in the diagnostic logging path
+     * and assert filter_rest_response() STILL returns HTTP 503 with code webcare_dlp_inspection_unavailable
+     * and zero uncaught exceptions.
+     */
+    public function testLoggerThrowsResilienceStillReturns503WithoutCrashing(): void {
+        AuditLogger::$operational_log_hook = function ($event, $details) {
+            throw new \RuntimeException('Disk failure or permission denied writing diagnostic log');
+        };
+
+        $overflow = array_fill(0, 26000, 'item');
+        $response = new \WP_REST_Response($overflow, 200);
+        $request  = new \WP_REST_Request('GET', '/wp/v2/crashing-logger-test');
+        $server   = new \stdClass();
+
+        $filtered = ResponseDlpSentinel::filter_rest_response($response, $server, $request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $filtered);
+        $this->assertSame(503, $filtered->get_status());
+        $data = $filtered->get_data();
+        $this->assertSame('webcare_dlp_inspection_unavailable', $data['code']);
+        $this->assertSame('The response could not be safely inspected.', $data['message']);
+    }
+
+    /**
+     * 10. Admin Activity Log isolation: Assert that triggering dlp_inspection_limit_exceeded
+     * writes zero entries to WebCareActivityLogger / ActivityStorage.
+     */
+    public function testInspectionLimitFailureDoesNotPolluteAdminActivityLog(): void {
+        if (class_exists('\\WebCareProScanner\\System\\WebCareActivityLogger')) {
+            \WebCareProScanner\System\WebCareActivityLogger::$logged_actions_in_request = [];
+        }
+
+        $overflow = array_fill(0, 25500, 'sample');
+        $response = new \WP_REST_Response($overflow, 200);
+        $request  = new \WP_REST_Request('GET', '/wp/v2/activity-isolation-test');
+        $server   = new \stdClass();
+
+        $filtered = ResponseDlpSentinel::filter_rest_response($response, $server, $request);
+
+        $this->assertSame(503, $filtered->get_status());
+
+        if (class_exists('\\WebCareProScanner\\System\\WebCareActivityLogger')) {
+            $logged = \WebCareProScanner\System\WebCareActivityLogger::$logged_actions_in_request;
+            $this->assertArrayNotHasKey('dlp_inspection_limit_exceeded', $logged, 'Operational limit failure must never pollute admin activity log.');
+        }
+    }
+
+    /**
+     * 11. Mock exception (self::$throw_mock_exception = true): Assert filter_rest_response() returns
+     * generic HTTP 503 (no fatal, no OPTION_EVENTS breach entry), restoring flag in finally block.
+     */
+    public function testMockExceptionFailsClosedWith503AndNoBreach(): void {
+        ResponseDlpSentinel::$throw_mock_exception = true;
+        try {
+            $response = new \WP_REST_Response(['test' => 'benign_val'], 200);
+            $request  = new \WP_REST_Request('GET', '/wp/v2/mock-exception-test');
+            $server   = new \stdClass();
+
+            $filtered = ResponseDlpSentinel::filter_rest_response($response, $server, $request);
+
+            $this->assertInstanceOf(\WP_REST_Response::class, $filtered);
+            $this->assertSame(503, $filtered->get_status());
+            $data = $filtered->get_data();
+            $this->assertSame('webcare_dlp_inspection_unavailable', $data['code']);
+            $this->assertEmpty(get_option(ResponseDlpSentinel::OPTION_EVENTS, []));
+        } finally {
+            ResponseDlpSentinel::$throw_mock_exception = false;
+        }
     }
 }
