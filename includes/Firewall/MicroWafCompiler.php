@@ -1028,7 +1028,7 @@ class MicroWafCompiler {
         $out .= "            \$clean_script_uri = ltrim(\$mod_clean_uri, '/\\\\');\n";
         $out .= "            foreach (\$mod_rules['direct_scripts_blocked'] as \$b_script) {\n";
         $out .= "                if (str_ends_with(\$clean_script_uri, \$b_script)) {\n";
-        $out .= "                    webcare_micro_waf_block(\$ip, 'MOD-ABSPATH-LOCKED', 'Direct HTTP execution of standalone script prohibited by Modular WAF', \$fail2ban_log);\n";
+        $out .= "                    webcare_micro_waf_block(\$ip, 'MOD-ABSPATH-LOCKED', 'Direct HTTP execution of standalone script prohibited by Custom Rules', \$fail2ban_log);\n";
         $out .= "                }\n";
         $out .= "            }\n";
         $out .= "        }\n";
@@ -1112,7 +1112,7 @@ class MicroWafCompiler {
         $out .= "                    if (\$matches_route) {\n";
         $out .= "                        \$r_methods = is_array(\$r_spec['methods'] ?? null) ? array_map('strtoupper', \$r_spec['methods']) : ['POST', 'PUT', 'DELETE'];\n";
         $out .= "                        if (empty(\$r_methods) || in_array(\$mod_req_method, \$r_methods, true)) {\n";
-        $out .= "                            webcare_micro_waf_block(\$ip, \$r_rid, 'Unauthenticated ' . \$mod_req_method . ' request to permissive REST route (' . htmlspecialchars(\$r_route_lc, ENT_QUOTES, 'UTF-8') . ') blocked by Modular WAF', \$fail2ban_log);\n";
+        $out .= "                            webcare_micro_waf_block(\$ip, \$r_rid, 'Unauthenticated ' . \$mod_req_method . ' request to permissive REST route (' . htmlspecialchars(\$r_route_lc, ENT_QUOTES, 'UTF-8') . ') blocked by Custom Rules', \$fail2ban_log);\n";
         $out .= "                        }\n";
         $out .= "                    }\n";
         $out .= "                }\n";

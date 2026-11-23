@@ -255,7 +255,7 @@ class SiteBehavioralAnalyzer {
             } elseif ($pct < 95) {
                 $state['current_phase'] = 5; // Direct-Access Script Discovery
             } else {
-                $state['current_phase'] = 6; // Modular Firewall Synthesis
+                $state['current_phase'] = 6; // Custom Rules Synthesis
             }
 
             // Check if queue completed
@@ -296,7 +296,7 @@ class SiteBehavioralAnalyzer {
                         'behavioral_intel_scan_completed',
                         sprintf(
                             /* translators: %1$d: components, %2$d: rules count */
-                            __('Deep Behavioral Intelligence scan completed across %1$d components. Synthesized %2$d tailored Modular Firewall rules.', 'webcare-pro-security'),
+                            __('Deep Behavioral Intelligence scan completed across %1$d components. Synthesized %2$d tailored Custom Rules.', 'webcare-pro-security'),
                             count($state['inventory']),
                             count($synthesized)
                         ),
@@ -457,7 +457,7 @@ class SiteBehavioralAnalyzer {
                 'status'                      => $has_scan ? 'idle_with_results' : 'not_started',
                 'progress_pct'                => $has_scan ? 100 : 0,
                 'current_phase'               => $has_scan ? 6 : 1,
-                'phase_label'                 => $has_scan ? __('Modular Firewall Rule Synthesis & Simulation', 'webcare-pro-security') : __('Extension & Version Census', 'webcare-pro-security'),
+                'phase_label'                 => $has_scan ? __('Custom Rules Synthesis & Simulation', 'webcare-pro-security') : __('Extension & Version Census', 'webcare-pro-security'),
                 'phase_labels'                => self::get_phase_labels(),
                 'total_files'                 => $meta_files,
                 'processed_files'             => $has_scan ? $meta_files : 0,
@@ -493,7 +493,7 @@ class SiteBehavioralAnalyzer {
             3 => __('REST API & Public Route Attack-Surface', 'webcare-pro-security'),
             4 => __('Source-to-Sink Taint & Vulnerability Hunter', 'webcare-pro-security'),
             5 => __('Direct-Access Script & Missing ABSPATH Discovery', 'webcare-pro-security'),
-            6 => __('Modular Firewall Rule Synthesis & Simulation', 'webcare-pro-security'),
+            6 => __('Custom Rules Synthesis & Simulation', 'webcare-pro-security'),
         ];
     }
 

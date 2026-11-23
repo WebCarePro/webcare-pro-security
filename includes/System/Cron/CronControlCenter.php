@@ -680,7 +680,7 @@ class CronControlCenter {
                         if (!is_array($state) || ($state['status'] ?? '') !== 'running') {
                             return [
                                 'status'  => 'skipped',
-                                'summary' => __('No active Modular WAF AST scan session waiting in queue.', 'webcare-pro-security'),
+                                'summary' => __('No active Custom Rules AST scan session waiting in queue.', 'webcare-pro-security'),
                             ];
                         }
                         $before = (int) ($state['processed_files'] ?? 0);
@@ -742,7 +742,7 @@ class CronControlCenter {
                             'status'  => 'success',
                             'summary' => $promoted > 0
                                 /* translators: %d: promoted rules count */
-                                ? sprintf(__('Promoted %d Modular WAF rule(s) to Enforce after 48h observation.', 'webcare-pro-security'), $promoted)
+                                ? sprintf(__('Promoted %d Custom Rule(s) to Enforce after 48h observation.', 'webcare-pro-security'), $promoted)
                                 : __('48h Auto-Pilot queue evaluated cleanly; no rules eligible for promotion yet.', 'webcare-pro-security'),
                             'metrics' => ['promoted_rules' => $promoted],
                         ];

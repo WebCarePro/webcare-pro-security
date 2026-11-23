@@ -123,7 +123,7 @@ class CheckoutSkimmerSentinel implements SecurityModuleInterface {
                 'can_disable'         => true,
                 'setting_key'         => 'waf_nextgen_checkout_skimmer_enabled',
                 'setting_type'        => 'settings_manager',
-                'setting_location'    => __('Modular WAF -> Next-Gen Engines', 'webcare-pro-security'),
+                'setting_location'    => __('Custom Rules -> Next-Gen Engines', 'webcare-pro-security'),
                 'deep_link'           => 'admin.php?page=webcare-pro-modular-waf&tab=nextgen',
                 'default_delay'       => 300,
             ],

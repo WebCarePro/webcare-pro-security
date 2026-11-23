@@ -956,7 +956,7 @@ class ModularFirewallSynthesizer {
                 'success' => true,
                 'message' => sprintf(
                     /* translators: %1$s: rule id, %2$s: mode */
-                    __('Modular rule "%1$s" updated to "%2$s".', 'webcare-pro-security'),
+                    __('Custom rule "%1$s" updated to "%2$s".', 'webcare-pro-security'),
                     $rule_id,
                     $mode
                 ),
@@ -999,7 +999,7 @@ class ModularFirewallSynthesizer {
             'total_active'  => count(array_filter($rules, fn($r) => $r['current_mode'] === 'enforce')),
             'message'       => sprintf(
                 /* translators: %d: applied rules count */
-                __('Successfully activated %d recommended Modular Firewall rules.', 'webcare-pro-security'),
+                __('Successfully activated %d recommended Custom Rules.', 'webcare-pro-security'),
                 $count
             ),
         ];
@@ -1912,8 +1912,8 @@ class ModularFirewallSynthesizer {
                     return self::build_violation(
                         $r,
                         ($cat === 'tamper_guard')
-                            ? sprintf('Direct HTTP access to checksum-flagged script "%s" blocked by Modular WAF Rule [%s].', basename($target_suffix), $r['id'])
-                            : sprintf('Direct HTTP access to standalone script "%s" blocked by Modular WAF Rule [%s].', basename($target_suffix), $r['id']),
+                            ? sprintf('Direct HTTP access to checksum-flagged script "%s" blocked by Custom Rule [%s].', basename($target_suffix), $r['id'])
+                            : sprintf('Direct HTTP access to standalone script "%s" blocked by Custom Rule [%s].', basename($target_suffix), $r['id']),
                         $should_block
                     );
                 }
@@ -1927,7 +1927,7 @@ class ModularFirewallSynthesizer {
                     if (!empty($r['block_uploads']) && !empty($_FILES)) {
                         return self::build_violation(
                             $r,
-                            sprintf('File upload prohibited on guest AJAX action "%s" by Modular WAF Rule [%s].', $req_action, $r['id']),
+                            sprintf('File upload prohibited on guest AJAX action "%s" by Custom Rule [%s].', $req_action, $r['id']),
                             ($should_block || ($is_smart && !$is_rescue_paused)),
                             'critical'
                         );
@@ -1988,7 +1988,7 @@ class ModularFirewallSynthesizer {
                         } else {
                             return self::build_violation(
                                 $r,
-                                sprintf('Unauthenticated %s mutation on permissive REST route "%s" blocked by Modular WAF Rule [%s].', $method, $target_route, $r['id']),
+                                sprintf('Unauthenticated %s mutation on permissive REST route "%s" blocked by Custom Rule [%s].', $method, $target_route, $r['id']),
                                 $should_block
                             );
                         }
@@ -2027,7 +2027,7 @@ class ModularFirewallSynthesizer {
                     if ($fname_l !== '' && $is_danger) {
                         return self::build_violation(
                             $r,
-                            sprintf('Dangerous executable upload filename "%s" blocked by Modular Upload Guard [%s].', sanitize_file_name($fname), $r['id']),
+                            sprintf('Dangerous executable upload filename "%s" blocked by Custom Upload Guard [%s].', sanitize_file_name($fname), $r['id']),
                             $should_block,
                             'critical'
                         );
@@ -2038,7 +2038,7 @@ class ModularFirewallSynthesizer {
                         if (preg_match('/<\?(?:php|=)|__HALT_COMPILER\s*\(\s*\)/i', $head)) {
                             return self::build_violation(
                                 $r,
-                                sprintf('Embedded PHP/PHAR payload inside uploaded file "%s" blocked by Modular Upload Guard [%s].', sanitize_file_name($fname), $r['id']),
+                                sprintf('Embedded PHP/PHAR payload inside uploaded file "%s" blocked by Custom Upload Guard [%s].', sanitize_file_name($fname), $r['id']),
                                 $should_block,
                                 'critical'
                             );
@@ -2066,7 +2066,7 @@ class ModularFirewallSynthesizer {
                     if ($val !== '' && !$is_local_site_url && preg_match('#^(?:file|gopher|dict|ftp|ldap|tftp)://|(?:\b169\.254\.169\.254\b|\b127\.\d+\.\d+\.\d+\b|\blocalhost\b|\b0\.0\.0\.0\b|\[::1\]|\bmetadata\.google\.internal\b)#i', $val)) {
                         return self::build_violation(
                             $r,
-                            sprintf('SSRF target in parameter "%s" blocked by Modular Egress Lock [%s].', $pk, $r['id']),
+                            sprintf('SSRF target in parameter "%s" blocked by Custom Egress Lock [%s].', $pk, $r['id']),
                             $should_block,
                             'critical'
                         );
