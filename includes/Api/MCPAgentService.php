@@ -109,7 +109,7 @@ class MCPAgentService {
     /**
      * Acquire atomic bounded database mutex lock for the staged action ledger.
      * Uses a unique owner token per acquisition with bounded retry, exponential jitter,
-     * and safe ownership-validated stale lock breaking.
+     * and safe compare-and-delete stale lock breaking.
      *
      * @param int $timeout Max retry duration in seconds (default: 15)
      * @return string Owner token on success, or empty string on failure (fail closed)
@@ -129,27 +129,33 @@ class MCPAgentService {
             }
 
             // Inspect existing lock for stale status (> 15 seconds)
-            $existing = get_option(self::LEDGER_LOCK_OPTION);
-            if (is_array($existing)) {
-                $created = (int) ($existing['created'] ?? 0);
-                if ($created > 0 && (time() - $created) > 15) {
-                    // Try atomic break: update only if still matches stale created time
-                    // To avoid clobbering a newer owner, delete only if still expired
-                    global $wpdb;
-                    if ($wpdb && isset($wpdb->options)) {
-                        $deleted = $wpdb->query(
-                            $wpdb->prepare(
-                                "DELETE FROM {$wpdb->options} WHERE option_name = %s",
-                                self::LEDGER_LOCK_OPTION
-                            )
-                        );
-                        if ($deleted && add_option(self::LEDGER_LOCK_OPTION, $lock_payload, '', false)) {
-                            return $owner_token;
-                        }
-                    } else {
-                        delete_option(self::LEDGER_LOCK_OPTION);
-                        if (add_option(self::LEDGER_LOCK_OPTION, $lock_payload, '', false)) {
-                            return $owner_token;
+            global $wpdb;
+            if ($wpdb && isset($wpdb->options)) {
+                // Fetch raw option_value to perform exact compare-and-delete
+                $row = $wpdb->get_row(
+                    $wpdb->prepare(
+                        "SELECT option_value FROM {$wpdb->options} WHERE option_name = %s",
+                        self::LEDGER_LOCK_OPTION
+                    )
+                );
+
+                if ($row && !empty($row->option_value)) {
+                    $existing = maybe_unserialize($row->option_value);
+                    if (is_array($existing)) {
+                        $created = (int) ($existing['created'] ?? 0);
+                        if ($created > 0 && (time() - $created) > 15) {
+                            // Atomic Compare-And-Delete: delete ONLY if option_value is still byte-for-byte identical to $row->option_value
+                            $deleted = $wpdb->query(
+                                $wpdb->prepare(
+                                    "DELETE FROM {$wpdb->options} WHERE option_name = %s AND option_value = %s",
+                                    self::LEDGER_LOCK_OPTION,
+                                    $row->option_value
+                                )
+                            );
+
+                            if ($deleted && add_option(self::LEDGER_LOCK_OPTION, $lock_payload, '', false)) {
+                                return $owner_token;
+                            }
                         }
                     }
                 }
@@ -162,7 +168,7 @@ class MCPAgentService {
     }
 
     /**
-     * Release atomic staged action ledger lock with strict owner-token verification.
+     * Release atomic staged action ledger lock with atomic owner-conditional database deletion.
      *
      * @param string $owner_token Token returned by acquire_ledger_lock()
      * @return bool True if released by owner, false otherwise
@@ -172,6 +178,34 @@ class MCPAgentService {
             return false;
         }
 
+        global $wpdb;
+        if ($wpdb && isset($wpdb->options)) {
+            // Fetch raw option_value to verify owner before atomic conditional deletion
+            $row = $wpdb->get_row(
+                $wpdb->prepare(
+                    "SELECT option_value FROM {$wpdb->options} WHERE option_name = %s",
+                    self::LEDGER_LOCK_OPTION
+                )
+            );
+
+            if ($row && !empty($row->option_value)) {
+                $existing = maybe_unserialize($row->option_value);
+                if (is_array($existing) && ($existing['owner'] ?? '') === $owner_token) {
+                    // Atomic conditional deletion: delete ONLY if option_name and exact option_value match
+                    $deleted = $wpdb->query(
+                        $wpdb->prepare(
+                            "DELETE FROM {$wpdb->options} WHERE option_name = %s AND option_value = %s",
+                            self::LEDGER_LOCK_OPTION,
+                            $row->option_value
+                        )
+                    );
+                    return $deleted > 0;
+                }
+            }
+            return false;
+        }
+
+        // Fallback if $wpdb unavailable (e.g. unit tests without full table mock)
         $current = get_option(self::LEDGER_LOCK_OPTION);
         if (is_array($current) && ($current['owner'] ?? '') === $owner_token) {
             return delete_option(self::LEDGER_LOCK_OPTION);
@@ -1573,22 +1607,28 @@ class MCPAgentService {
 
         if (!empty($target_action['expires_at']) && time() > (int) $target_action['expires_at']) {
             $lock_token = self::acquire_ledger_lock();
-            if ($lock_token !== '') {
-                try {
-                    $fresh = get_option(self::STAGED_OPTION_KEY, []);
-                    if (is_array($fresh)) {
-                        foreach ($fresh as $f_idx => $f_action) {
-                            if (($f_action['id'] ?? '') === $staged_id) {
-                                $fresh[$f_idx]['status'] = 'expired';
-                                $fresh[$f_idx]['confirmation_token'] = null;
-                                break;
-                            }
+            if ($lock_token === '') {
+                return [
+                    'success' => false,
+                    'status'  => 503,
+                    'message' => __('Ledger Busy: Could not acquire lock to expire action. Please retry.', 'webcare-pro-security'),
+                ];
+            }
+
+            try {
+                $fresh = get_option(self::STAGED_OPTION_KEY, []);
+                if (is_array($fresh)) {
+                    foreach ($fresh as $f_idx => $f_action) {
+                        if (($f_action['id'] ?? '') === $staged_id) {
+                            $fresh[$f_idx]['status'] = 'expired';
+                            $fresh[$f_idx]['confirmation_token'] = null;
+                            break;
                         }
-                        update_option(self::STAGED_OPTION_KEY, $fresh, false);
                     }
-                } finally {
-                    self::release_ledger_lock($lock_token);
+                    update_option(self::STAGED_OPTION_KEY, $fresh, false);
                 }
+            } finally {
+                self::release_ledger_lock($lock_token);
             }
             return ['success' => false, 'message' => __('Staged action has expired (> 24 hours old) and cannot be executed.', 'webcare-pro-security')];
         }
@@ -1738,24 +1778,35 @@ class MCPAgentService {
         $final_status = $is_failed ? 'failed' : 'approved';
 
         $final_lock_token = self::acquire_ledger_lock();
-        if ($final_lock_token !== '') {
-            try {
-                $fresh_list = get_option(self::STAGED_OPTION_KEY, []);
-                if (is_array($fresh_list)) {
-                    foreach ($fresh_list as $f_idx => $f_action) {
-                        if (($f_action['id'] ?? '') === $staged_id) {
-                            $fresh_list[$f_idx]['status']      = $final_status;
-                            $fresh_list[$f_idx]['approved_at'] = time();
-                            $fresh_list[$f_idx]['approved_by'] = $approver_name;
-                            $fresh_list[$f_idx]['exec_result'] = $exec_result;
-                            break;
-                        }
+        if ($final_lock_token === '') {
+            // Do not report ledger finalization as successful when it was not persisted.
+            // Return explicit finalization-pending result with execution details so human administrator can reconcile
+            return [
+                'success'              => false,
+                'status'               => 500,
+                'staged_id'            => $staged_id,
+                'finalization_pending' => true,
+                'exec_result'          => $exec_result,
+                'message'              => __('Tool executed, but ledger state finalization timed out. Ledger status remains executing; please reconcile.', 'webcare-pro-security'),
+            ];
+        }
+
+        try {
+            $fresh_list = get_option(self::STAGED_OPTION_KEY, []);
+            if (is_array($fresh_list)) {
+                foreach ($fresh_list as $f_idx => $f_action) {
+                    if (($f_action['id'] ?? '') === $staged_id) {
+                        $fresh_list[$f_idx]['status']      = $final_status;
+                        $fresh_list[$f_idx]['approved_at'] = time();
+                        $fresh_list[$f_idx]['approved_by'] = $approver_name;
+                        $fresh_list[$f_idx]['exec_result'] = $exec_result;
+                        break;
                     }
-                    update_option(self::STAGED_OPTION_KEY, $fresh_list, false);
                 }
-            } finally {
-                self::release_ledger_lock($final_lock_token);
+                update_option(self::STAGED_OPTION_KEY, $fresh_list, false);
             }
+        } finally {
+            self::release_ledger_lock($final_lock_token);
         }
 
         if ($is_failed) {
@@ -1806,10 +1857,18 @@ class MCPAgentService {
 
             foreach ($list as $idx => $action) {
                 if (($action['id'] ?? '') === $staged_id) {
+                    $found = true;
+                    // Prevent rejection of executing, approved, or failed actions
+                    if (($action['status'] ?? '') !== 'pending_approval') {
+                        return [
+                            'success' => false,
+                            /* translators: %s: current status */
+                            'message' => sprintf(__('Cannot reject action because its status is already %s.', 'webcare-pro-security'), $action['status'] ?? 'unknown'),
+                        ];
+                    }
                     $list[$idx]['status']      = 'rejected';
                     $list[$idx]['rejected_at'] = time();
                     $list[$idx]['rejected_by'] = $rejector_name;
-                    $found = true;
                     break;
                 }
             }

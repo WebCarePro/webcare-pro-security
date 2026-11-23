@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-23T21:33:44.443Z",
+  "generated_at": "2026-11-23T21:40:38.578Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -228,8 +228,8 @@
       "size": 9420
     },
     "includes/Api/MCPAgentService.php": {
-      "sha256": "fe02e982016c6a3112494ae1b54d2f68639bbdee89bd9018dfc66544008ebadb",
-      "size": 121354
+      "sha256": "d607a2fd0df8f33f093119c08440b3b8bc04218776f634cbe807ec6c00324030",
+      "size": 124191
     },
     "includes/Api/MCPAntiLockoutValidator.php": {
       "sha256": "c5d8c7be03c97195f71936b7fae14279ba1a63083736bfc919ba2d561c878d5b",
