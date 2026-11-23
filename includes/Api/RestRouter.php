@@ -45,7 +45,7 @@ final class RestRouter {
         'redirect-shield'      => Controllers\FirewallController::class,
 
         // 3. ModularWafController
-        'modular-waf'          => Controllers\ModularWafController::class,
+        'custom-rules'         => Controllers\ModularWafController::class,
         'virtual-patch'        => Controllers\ModularWafController::class,
         'behavioral'           => Controllers\ModularWafController::class,
         'defense'              => Controllers\ModularWafController::class,

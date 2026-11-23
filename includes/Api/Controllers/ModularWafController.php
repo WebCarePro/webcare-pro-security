@@ -278,121 +278,121 @@ final class ModularWafController extends AbstractApiController {
             'permission_callback' => $permission,
         ]);
 
-        register_rest_route($namespace, '/modular-waf/scan/start', [
+        register_rest_route($namespace, '/custom-rules/scan/start', [
             'methods'             => 'POST',
             'callback'            => [self::class, 'start_modular_scan'],
             'permission_callback' => $permission,
         ]);
 
-        register_rest_route($namespace, '/modular-waf/scan/batch', [
+        register_rest_route($namespace, '/custom-rules/scan/batch', [
             'methods'             => 'POST',
             'callback'            => [self::class, 'process_modular_scan_batch'],
             'permission_callback' => $permission,
         ]);
 
-        register_rest_route($namespace, '/modular-waf/scan/pause', [
+        register_rest_route($namespace, '/custom-rules/scan/pause', [
             'methods'             => 'POST',
             'callback'            => [self::class, 'pause_modular_scan'],
             'permission_callback' => $permission,
         ]);
 
-        register_rest_route($namespace, '/modular-waf/scan/resume', [
+        register_rest_route($namespace, '/custom-rules/scan/resume', [
             'methods'             => 'POST',
             'callback'            => [self::class, 'resume_modular_scan'],
             'permission_callback' => $permission,
         ]);
 
-        register_rest_route($namespace, '/modular-waf/scan/cancel', [
+        register_rest_route($namespace, '/custom-rules/scan/cancel', [
             'methods'             => 'POST',
             'callback'            => [self::class, 'cancel_modular_scan'],
             'permission_callback' => $permission,
         ]);
 
-        register_rest_route($namespace, '/modular-waf/status', [
+        register_rest_route($namespace, '/custom-rules/status', [
             'methods'             => 'GET',
             'callback'            => [self::class, 'get_modular_waf_status'],
             'permission_callback' => $permission,
         ]);
 
-        register_rest_route($namespace, '/modular-waf/rule/toggle', [
+        register_rest_route($namespace, '/custom-rules/rule/toggle', [
             'methods'             => 'POST',
             'callback'            => [self::class, 'toggle_modular_rule'],
             'permission_callback' => $permission,
         ]);
 
-        register_rest_route($namespace, '/modular-waf/rule/bulk-apply', [
+        register_rest_route($namespace, '/custom-rules/rule/bulk-apply', [
             'methods'             => 'POST',
             'callback'            => [self::class, 'bulk_apply_modular_rules'],
             'permission_callback' => $permission,
         ]);
 
-        register_rest_route($namespace, '/modular-waf/rule/custom', [
+        register_rest_route($namespace, '/custom-rules/rule/custom', [
             'methods'             => 'POST',
             'callback'            => [self::class, 'save_custom_modular_rule'],
             'permission_callback' => $permission,
         ]);
 
-        register_rest_route($namespace, '/modular-waf/code-preview', [
+        register_rest_route($namespace, '/custom-rules/code-preview', [
             'methods'             => 'GET',
             'callback'            => [self::class, 'get_modular_code_preview'],
             'permission_callback' => $permission,
         ]);
 
-        register_rest_route($namespace, '/modular-waf/export', [
+        register_rest_route($namespace, '/custom-rules/export', [
             'methods'             => 'GET',
             'callback'            => [self::class, 'export_modular_waf_bundle'],
             'permission_callback' => $permission,
         ]);
 
-        register_rest_route($namespace, '/modular-waf/autopilot', [
+        register_rest_route($namespace, '/custom-rules/autopilot', [
             'methods'             => 'POST',
             'callback'            => [self::class, 'toggle_modular_autopilot'],
             'permission_callback' => $permission,
         ]);
 
-        register_rest_route($namespace, '/modular-waf/fields', [
+        register_rest_route($namespace, '/custom-rules/fields', [
             'methods'             => 'GET',
             'callback'            => [self::class, 'get_modular_visual_fields'],
             'permission_callback' => $permission,
         ]);
 
-        register_rest_route($namespace, '/modular-waf/rule/simulate', [
+        register_rest_route($namespace, '/custom-rules/rule/simulate', [
             'methods'             => 'POST',
             'callback'            => [self::class, 'simulate_custom_modular_rule'],
             'permission_callback' => $permission,
         ]);
 
-        register_rest_route($namespace, '/modular-waf/rule/custom/delete', [
+        register_rest_route($namespace, '/custom-rules/rule/custom/delete', [
             'methods'             => 'POST',
             'callback'            => [self::class, 'delete_custom_modular_rule'],
             'permission_callback' => $permission,
         ]);
 
-        register_rest_route($namespace, '/modular-waf/rule/custom/reorder', [
+        register_rest_route($namespace, '/custom-rules/rule/custom/reorder', [
             'methods'             => 'POST',
             'callback'            => [self::class, 'reorder_custom_modular_rules'],
             'permission_callback' => $permission,
         ]);
 
-        register_rest_route($namespace, '/modular-waf/rule/cloudflare-push', [
+        register_rest_route($namespace, '/custom-rules/rule/cloudflare-push', [
             'methods'             => 'POST',
             'callback'            => [self::class, 'push_custom_rule_to_cloudflare'],
             'permission_callback' => $permission,
         ]);
 
-        register_rest_route($namespace, '/modular-waf/rule/parse-wirefilter', [
+        register_rest_route($namespace, '/custom-rules/rule/parse-wirefilter', [
             'methods'             => 'POST',
             'callback'            => [self::class, 'parse_wirefilter_expression'],
             'permission_callback' => $permission,
         ]);
 
-        register_rest_route($namespace, '/modular-waf/rule/parse-ai', [
+        register_rest_route($namespace, '/custom-rules/rule/parse-ai', [
             'methods'             => 'POST',
             'callback'            => [self::class, 'parse_ai_rule_payload'],
             'permission_callback' => $permission,
         ]);
 
-        register_rest_route($namespace, '/modular-waf/rule/ai-generate', [
+        register_rest_route($namespace, '/custom-rules/rule/ai-generate', [
             'methods'             => 'POST',
             'callback'            => [self::class, 'ai_generate_visual_rule'],
             'permission_callback' => $permission,
@@ -896,7 +896,7 @@ final class ModularWafController extends AbstractApiController {
 
         $is_download = !empty($request->get_param('download'));
         if ($is_download) {
-            $filename = 'webcare-modular-waf-' . sanitize_file_name($site_host) . '-' . gmdate('Y-m-d') . '.json';
+            $filename = 'webcare-custom-rules-' . sanitize_file_name($site_host) . '-' . gmdate('Y-m-d') . '.json';
             header('Content-Type: application/json; charset=utf-8');
             header('Content-Disposition: attachment; filename="' . $filename . '"');
             header('X-Content-Type-Options: nosniff');

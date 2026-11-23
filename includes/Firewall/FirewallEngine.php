@@ -4949,11 +4949,11 @@ class FirewallEngine {
 
         // 2. Modular WAF custom rule & parser routes: redact only rule expression fields at root or inside rule/rules
         $rule_routes = [
-            '/webcare-pro-security/v1/modular-waf/rule/custom',
-            '/webcare-pro-security/v1/modular-waf/rule/parse-wirefilter',
-            '/webcare-pro-security/v1/modular-waf/rule/parse-ai',
-            '/webcare-pro-security/v1/modular-waf/rule/ai-generate',
-            '/webcare-pro-security/v1/modular-waf/rule/simulate',
+            '/webcare-pro-security/v1/custom-rules/rule/custom',
+            '/webcare-pro-security/v1/custom-rules/rule/parse-wirefilter',
+            '/webcare-pro-security/v1/custom-rules/rule/parse-ai',
+            '/webcare-pro-security/v1/custom-rules/rule/ai-generate',
+            '/webcare-pro-security/v1/custom-rules/rule/simulate',
         ];
         if (in_array($norm_route, $rule_routes, true)) {
             $rule_expr_keys = [
