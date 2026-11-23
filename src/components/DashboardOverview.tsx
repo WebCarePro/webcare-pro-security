@@ -1,4 +1,4 @@
-import React, { Fragment, useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   ShieldCheck,
   ShieldAlert,
@@ -6,28 +6,26 @@ import {
   Activity,
   Play,
   Pause,
-  AlertTriangle,
   CheckCircle2,
   Database,
   ArrowRight,
-  HardDrive,
   Lock,
   Server,
   Zap,
   Globe,
   RefreshCw,
   Search,
-  ExternalLink,
   Ban,
   Clock,
   Layers,
   Sparkles,
-  AlertOctagon,
-  UserCheck,
   Check,
+  AlertTriangle,
+  FolderArchive,
 } from 'lucide-react';
 import { apiRequest } from '../utils/api';
 import { buildAdminUrl } from '../utils/routeRegistry';
+import './DashboardOverview.css';
 
 export interface DashboardOverviewProps {
   currentScan: any;
@@ -140,33 +138,39 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   };
 
   // Evaluate active threats and security score
-  const openIssues = (uniqueIssues || []).filter((i) => i.status === 'open');
+  const openIssues = useMemo(
+    () => (uniqueIssues || []).filter((i) => i.status === 'open'),
+    [uniqueIssues]
+  );
   const reviewItemsCount = openIssues.length;
 
-  let activeRaw = 0;
-  for (const issue of openIssues) {
-    const conf = issue.confidence && issue.confidence > 1 ? issue.confidence / 100 : issue.confidence || 1;
-    if (issue.severity === 'critical') activeRaw += 40 * conf;
-    else if (issue.severity === 'high') activeRaw += 15 * conf;
-    else if (issue.severity === 'medium') activeRaw += 5 * conf;
-    else if (issue.severity === 'low') activeRaw += 1 * conf;
-  }
-  const activeRiskScore = Math.min(100, Math.round(activeRaw));
-  const healthScore = Math.max(0, 100 - activeRiskScore);
+  const { healthScore, protectionStatusLabel, protectionStatusColor } = useMemo(() => {
+    let activeRaw = 0;
+    for (const issue of openIssues) {
+      const conf = issue.confidence && issue.confidence > 1 ? issue.confidence / 100 : issue.confidence || 1;
+      if (issue.severity === 'critical') activeRaw += 40 * conf;
+      else if (issue.severity === 'high') activeRaw += 15 * conf;
+      else if (issue.severity === 'medium') activeRaw += 5 * conf;
+      else if (issue.severity === 'low') activeRaw += 1 * conf;
+    }
+    const activeRiskScore = Math.min(100, Math.round(activeRaw));
+    const score = Math.max(0, 100 - activeRiskScore);
 
-  let protectionStatusLabel = 'Strong';
-  let protectionStatusColor = '#10b981';
-  if (healthScore < 60) {
-    protectionStatusLabel = 'Needs Attention';
-    protectionStatusColor = '#ef4444';
-  } else if (healthScore < 85) {
-    protectionStatusLabel = 'Good';
-    protectionStatusColor = '#f59e0b';
-  }
+    let label = 'Strong';
+    let color = '#10b981';
+    if (score < 60) {
+      label = 'Needs Attention';
+      color = '#ef4444';
+    } else if (score < 85) {
+      label = 'Good';
+      color = '#f59e0b';
+    }
 
-  // Threats blocked
+    return { healthScore: score, protectionStatusLabel: label, protectionStatusColor: color };
+  }, [openIssues]);
+
+  // Threats blocked count
   const threatsBlockedCount = firewallStatus?.total_blocks ?? 0;
-  const firewallActive = firewallStatus?.enabled !== false && !internalPaused;
 
   // Latest backup info
   const latestBackup = backups && backups.length > 0 ? backups[0] : null;
@@ -191,89 +195,156 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
+  // Circular score progress calculations (r = 18, circumference = 2 * PI * 18 ~ 113.1)
+  const ringRadius = 18;
+  const ringCircumference = 2 * Math.PI * ringRadius;
+  const strokeDashoffset = ringCircumference - (healthScore / 100) * ringCircumference;
+
+  // Vulnerability count for Plugin & Theme Risks tile
+  const vulnTotal = (vulnReport?.plugins_vulnerable || 0) + (vulnReport?.themes_vulnerable || 0);
+
+  // Helper for navigating via onNavigate
+  const handleTileNavigate = (tab: string, sub?: string, sec?: string) => {
+    onNavigate(tab, sub, sec);
+  };
+
   return (
-    <div className="webcare-calm-dashboard">
+    <div className="wcp-dash-container">
       {/* =========================================================================
-          1. CALM "PEACE OF MIND" HERO CARD
+          1. Hero Sanctuary Card (.wcp-dash-hero)
          ========================================================================= */}
-      <section className={`webcare-hero-calm state-${heroState}`}>
-        <div className="webcare-hero-calm-body">
-          {/* Animated Soothing Shield Emblem */}
-          <div className={`webcare-shield-aura state-${heroState}`}>
-            <div className="shield-ring outer-ring" />
-            <div className="shield-ring inner-ring" />
-            <div className="shield-core">
+      <section className={`wcp-dash-hero is-${heroState}`}>
+        <div className="wcp-dash-hero-glow" />
+
+        <div className="wcp-dash-hero-content">
+          {/* Animated Living Shield Emblem */}
+          <div className="wcp-dash-emblem-wrap">
+            <svg
+              className="wcp-dash-emblem-svg"
+              viewBox="0 0 84 84"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              {/* Outer Breathing Ring */}
+              <circle
+                className="wcp-dash-ring-outer"
+                cx="42"
+                cy="42"
+                r="38"
+                stroke={
+                  heroState === 'scanning'
+                    ? '#6366f1'
+                    : heroState === 'review' || heroState === 'paused'
+                    ? '#f59e0b'
+                    : '#10b981'
+                }
+                strokeWidth="1.5"
+              />
+
+              {/* Inner Breathing Ring */}
+              <circle
+                className="wcp-dash-ring-inner"
+                cx="42"
+                cy="42"
+                r="31"
+                stroke={
+                  heroState === 'scanning'
+                    ? '#6366f1'
+                    : heroState === 'review' || heroState === 'paused'
+                    ? '#f59e0b'
+                    : '#10b981'
+                }
+                strokeWidth="1.5"
+              />
+
+              {/* Rotating Dashed Orbital Ring */}
+              <circle
+                className="wcp-dash-ring-orbital"
+                cx="42"
+                cy="42"
+                r="25"
+                stroke={
+                  heroState === 'scanning'
+                    ? '#818cf8'
+                    : heroState === 'review' || heroState === 'paused'
+                    ? '#fbbf24'
+                    : '#34d399'
+                }
+                strokeWidth="1.5"
+              />
+            </svg>
+
+            {/* Emblem Core Center */}
+            <div className="wcp-dash-emblem-core">
               {heroState === 'scanning' ? (
-                <Activity size={36} className="webcare-pulse-icon" />
+                <RefreshCw size={24} className="wcp-dash-spin" />
               ) : heroState === 'paused' ? (
-                <Pause size={34} />
+                <Pause size={22} />
               ) : heroState === 'review' ? (
-                <ShieldAlert size={36} />
+                <ShieldAlert size={24} />
               ) : (
-                <ShieldCheck size={38} />
+                <ShieldCheck size={26} />
               )}
             </div>
           </div>
 
-          {/* Hero Headlines & Status */}
-          <div className="webcare-hero-calm-text">
-            <div className="webcare-hero-pill-bar">
-              <span className={`webcare-live-indicator-pill ${heroState}`}>
-                <span className="live-dot" />
+          {/* Calm Status Copy */}
+          <div className="wcp-dash-hero-body">
+            <div className="wcp-dash-status-pill-row">
+              <span className="wcp-dash-status-pill">
+                <span className="wcp-dash-pill-dot" />
                 {heroState === 'scanning'
-                  ? 'Security Scan in Progress...'
+                  ? 'Security Scan Running'
                   : heroState === 'paused'
-                  ? `Safe Mode Active (${formatPauseTimer(pauseSecondsLeft)} remaining)`
-                  : 'Firewall Active • Real-Time Shield'}
+                  ? `Safe Mode Active • ${formatPauseTimer(pauseSecondsLeft)}`
+                  : 'Real-Time Shield Active'}
               </span>
 
-              <span className="webcare-privacy-pill">
+              <span className="wcp-dash-privacy-pill">
                 <Lock size={12} />
-                100% On-Premise Protection
+                100% On-Premise Shield
               </span>
             </div>
 
-            <h1 className="webcare-hero-calm-title">
-              {heroState === 'scanning' ? (
-                'Scanning your site for security threats...'
-              ) : heroState === 'paused' ? (
-                'Safe Mode is active — firewall paused temporarily'
-              ) : heroState === 'review' ? (
-                `Protection is active — ${reviewItemsCount} ${
-                  reviewItemsCount === 1 ? 'item' : 'items'
-                } ready for your review`
-              ) : (
-                'Your site is protected and running smoothly'
-              )}
+            <h1 className="wcp-dash-hero-title">
+              {heroState === 'scanning'
+                ? 'Security scan is currently evaluating your files'
+                : heroState === 'paused'
+                ? 'Safe Mode is active — firewall paused temporarily'
+                : reviewItemsCount > 0
+                ? `Protection is active — ${reviewItemsCount} item${
+                    reviewItemsCount === 1 ? '' : 's'
+                  } ready for review`
+                : 'Your site is protected and running smoothly'}
             </h1>
 
-            <p className="webcare-hero-calm-desc">
+            <p className="wcp-dash-hero-desc">
               {heroState === 'scanning'
-                ? 'Deep scanning core files, database integrity, plugins, and server configurations in non-blocking batches.'
+                ? 'Inspecting core files, plugin structures, and server configuration in non-blocking batches.'
                 : heroState === 'paused'
-                ? 'Firewall rules are temporarily paused to allow safe plugin updates and troubleshooting. All protections resume automatically.'
-                : heroState === 'review'
-                ? 'Continuous proactive defenses are actively filtering malicious traffic. Recommended optimizations and advisories are ready for you.'
-                : 'All defensive layers are active. WebCare Pro is monitoring requests, verifying file integrity, and blocking unauthorized access.'}
+                ? 'Firewall rules are temporarily paused for troubleshooting. All core exploit shields resume automatically.'
+                : reviewItemsCount > 0
+                ? 'Autonomous defenses are filtering malicious traffic. Recommended security advisories are prepared for your review.'
+                : 'All sentinels are active. WebCare Pro is filtering traffic, monitoring filesystem integrity, and defending your perimeter.'}
             </p>
           </div>
 
-          {/* Primary Calm Actions */}
-          <div className="webcare-hero-calm-actions">
+          {/* Primary Actions (Right) */}
+          <div className="wcp-dash-hero-actions">
             <button
               type="button"
-              className="webcare-hero-action-primary"
+              className="wcp-dash-btn-primary"
               onClick={onStartScan}
               disabled={isScanning}
             >
               {isScanning ? (
                 <>
-                  <RefreshCw size={15} className="webcare-spin" />
+                  <RefreshCw size={14} className="wcp-dash-spin" />
                   <span>Scanning...</span>
                 </>
               ) : (
                 <>
-                  <Play size={15} fill="currentColor" />
+                  <Play size={14} fill="currentColor" />
                   <span>Run Quick Scan</span>
                 </>
               )}
@@ -281,23 +352,23 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
 
             <button
               type="button"
-              className={`webcare-hero-action-safe-mode ${internalPaused ? 'is-paused' : ''}`}
+              className={`wcp-dash-btn-secondary ${internalPaused ? 'is-resuming' : ''}`}
               onClick={handleToggleSafeMode}
               disabled={isPausing}
               title={
                 internalPaused
-                  ? 'Click to resume firewall protection immediately'
-                  : 'Pause firewall for 15 minutes to safely update plugins or troubleshoot'
+                  ? 'Resume firewall protection immediately'
+                  : 'Temporarily pause strict heuristic checks for 15 minutes'
               }
             >
               {internalPaused ? (
                 <>
-                  <Play size={14} />
-                  <span>Resume Firewall</span>
+                  <Play size={13} fill="currentColor" />
+                  <span>Resume Protection</span>
                 </>
               ) : (
                 <>
-                  <Pause size={14} />
+                  <Clock size={13} />
                   <span>15-Min Safe Mode</span>
                 </>
               )}
@@ -307,443 +378,542 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
       </section>
 
       {/* =========================================================================
-          2. FOUR CLEAN KPI SUMMARY CARDS (STAGGERED ENTRANCE)
+          2. 4-Card Bento KPI Row (.wcp-dash-kpi-grid)
          ========================================================================= */}
-      <section className="webcare-kpi-grid">
-        {/* KPI 1: Threats Blocked (7 Days) */}
+      <section className="wcp-dash-kpi-grid">
+        {/* KPI 1: Protection Score */}
         <div
-          className="webcare-kpi-card"
-          style={{ animationDelay: '50ms' }}
-          onClick={() => onNavigate('logs', 'blocked')}
+          className="wcp-dash-kpi-card"
+          onClick={() => handleTileNavigate('settings', 'doctor')}
           role="button"
           tabIndex={0}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') onNavigate('logs', 'blocked');
+            if (e.key === 'Enter' || e.key === ' ') handleTileNavigate('settings', 'doctor');
           }}
         >
-          <div className="webcare-kpi-header">
-            <span className="webcare-kpi-label">Threats Blocked (7 Days)</span>
-            <div className="webcare-kpi-icon-wrap is-blue">
-              <Shield size={18} />
+          <div className="wcp-dash-kpi-top">
+            <span className="wcp-dash-kpi-label">Protection Score</span>
+            <div className="wcp-dash-progress-ring-wrap">
+              <svg className="wcp-dash-progress-ring-svg" viewBox="0 0 44 44">
+                <circle
+                  className="wcp-dash-progress-ring-bg"
+                  cx="22"
+                  cy="22"
+                  r={ringRadius}
+                  strokeWidth="3.5"
+                  fill="none"
+                />
+                <circle
+                  className="wcp-dash-progress-ring-fg"
+                  cx="22"
+                  cy="22"
+                  r={ringRadius}
+                  strokeWidth="3.5"
+                  fill="none"
+                  stroke={protectionStatusColor}
+                  strokeDasharray={ringCircumference}
+                  strokeDashoffset={strokeDashoffset}
+                />
+              </svg>
+              <span className="wcp-dash-progress-ring-text wcp-dash-tabular">{healthScore}</span>
             </div>
           </div>
-          <div className="webcare-kpi-metric-row">
-            <span className="webcare-kpi-value">{threatsBlockedCount.toLocaleString()}</span>
-          </div>
-          <div className="webcare-kpi-footer">
-            <span className="webcare-kpi-subtext">
-              <span className="webcare-trend-dot" />
-              Proactive Layer 7 edge filter
-            </span>
-            <span className="webcare-kpi-arrow">View Logs &rarr;</span>
-          </div>
-        </div>
 
-        {/* KPI 2: Items to Review */}
-        <div
-          className="webcare-kpi-card"
-          style={{ animationDelay: '100ms' }}
-          onClick={() => onNavigate('scan')}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') onNavigate('scan');
-          }}
-        >
-          <div className="webcare-kpi-header">
-            <span className="webcare-kpi-label">Items to Review</span>
-            <div
-              className={`webcare-kpi-icon-wrap ${
-                reviewItemsCount === 0 ? 'is-green' : 'is-amber'
-              }`}
+          <div className="wcp-dash-kpi-center">
+            <span
+              className="wcp-dash-kpi-val wcp-dash-tabular"
+              style={{ color: protectionStatusColor }}
             >
-              {reviewItemsCount === 0 ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
-            </div>
-          </div>
-          <div className="webcare-kpi-metric-row">
-            {reviewItemsCount === 0 ? (
-              <span className="webcare-kpi-value is-clean">
-                <Check size={22} className="inline-check" /> All Clear
-              </span>
-            ) : (
-              <span className="webcare-kpi-value is-amber">{reviewItemsCount}</span>
-            )}
-          </div>
-          <div className="webcare-kpi-footer">
-            <span className="webcare-kpi-subtext">
-              {reviewItemsCount === 0 ? '0 unaddressed security warnings' : 'Ready for 1-click inspection'}
-            </span>
-            <span className="webcare-kpi-arrow">Open Scanner &rarr;</span>
-          </div>
-        </div>
-
-        {/* KPI 3: Protection Score */}
-        <div
-          className="webcare-kpi-card"
-          style={{ animationDelay: '150ms' }}
-          onClick={() => onNavigate('settings', 'doctor')}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') onNavigate('settings', 'doctor');
-          }}
-        >
-          <div className="webcare-kpi-header">
-            <span className="webcare-kpi-label">Protection Score</span>
-            <div className="webcare-kpi-icon-wrap is-indigo">
-              <Sparkles size={18} />
-            </div>
-          </div>
-          <div className="webcare-kpi-metric-row">
-            <span className="webcare-kpi-value" style={{ color: protectionStatusColor }}>
               {healthScore}
-              <span className="webcare-kpi-max">/100</span>
+              <span style={{ fontSize: '15px', color: 'var(--webcare-text-muted, #94a3b8)', fontWeight: 500 }}>
+                /100
+              </span>
             </span>
             <span
-              className="webcare-kpi-status-badge"
               style={{
+                fontSize: '11px',
+                fontWeight: 600,
+                padding: '2px 8px',
+                borderRadius: '6px',
                 color: protectionStatusColor,
-                backgroundColor: `${protectionStatusColor}18`,
-                borderColor: `${protectionStatusColor}40`,
+                backgroundColor: `${protectionStatusColor}16`,
+                border: `1px solid ${protectionStatusColor}30`,
               }}
             >
               {protectionStatusLabel}
             </span>
           </div>
-          <div className="webcare-kpi-footer">
-            <span className="webcare-kpi-subtext">Automated diagnostic score</span>
-            <span className="webcare-kpi-arrow">Site Doctor &rarr;</span>
+
+          <div className="wcp-dash-kpi-bottom">
+            <span>Automated diagnostic health</span>
+            <span className="wcp-dash-kpi-action-link">
+              Site Doctor <ArrowRight size={12} />
+            </span>
+          </div>
+        </div>
+
+        {/* KPI 2: Threats Blocked */}
+        <div
+          className="wcp-dash-kpi-card"
+          onClick={() => handleTileNavigate('logs', 'blocked')}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') handleTileNavigate('logs', 'blocked');
+          }}
+        >
+          <div className="wcp-dash-kpi-top">
+            <span className="wcp-dash-kpi-label">Threats Blocked</span>
+            <div className="wcp-dash-kpi-icon-badge is-indigo">
+              <Shield size={17} />
+            </div>
+          </div>
+
+          <div className="wcp-dash-kpi-center">
+            <span className="wcp-dash-kpi-val wcp-dash-tabular">
+              {threatsBlockedCount.toLocaleString()}
+            </span>
+            {/* Decorative wave sparkline */}
+            <svg
+              className="wcp-dash-sparkline-svg"
+              viewBox="0 0 72 28"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M2 24C12 24 16 8 26 14C36 20 42 4 52 10C60 15 64 6 70 2"
+                stroke="#6366f1"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+              <path
+                d="M2 24C12 24 16 8 26 14C36 20 42 4 52 10C60 15 64 6 70 2V28H2V24Z"
+                fill="url(#wcp-spark-grad)"
+                opacity="0.18"
+              />
+              <defs>
+                <linearGradient id="wcp-spark-grad" x1="36" y1="2" x2="36" y2="28" gradientUnits="userSpaceOnUse">
+                  <stop stopColor="#6366f1" />
+                  <stop offset="1" stopColor="#6366f1" stopOpacity="0" />
+                </linearGradient>
+              </defs>
+            </svg>
+          </div>
+
+          <div className="wcp-dash-kpi-bottom">
+            <span>Perimeter Layer 7 filter</span>
+            <span className="wcp-dash-kpi-action-link">
+              View Logs <ArrowRight size={12} />
+            </span>
+          </div>
+        </div>
+
+        {/* KPI 3: Items to Review */}
+        <div
+          className="wcp-dash-kpi-card"
+          onClick={() => handleTileNavigate('scan')}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') handleTileNavigate('scan');
+          }}
+        >
+          <div className="wcp-dash-kpi-top">
+            <span className="wcp-dash-kpi-label">Items to Review</span>
+            <div
+              className={`wcp-dash-kpi-icon-badge ${
+                reviewItemsCount === 0 ? 'is-emerald' : 'is-amber'
+              }`}
+            >
+              {reviewItemsCount === 0 ? <CheckCircle2 size={17} /> : <AlertTriangle size={17} />}
+            </div>
+          </div>
+
+          <div className="wcp-dash-kpi-center">
+            {reviewItemsCount === 0 ? (
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  color: '#10b981',
+                  fontWeight: 700,
+                  fontSize: '18px',
+                }}
+              >
+                <Check size={20} /> All Clear
+              </span>
+            ) : (
+              <span className="wcp-dash-kpi-val wcp-dash-tabular" style={{ color: '#d97706' }}>
+                {reviewItemsCount}
+              </span>
+            )}
+          </div>
+
+          <div className="wcp-dash-kpi-bottom">
+            <span>
+              {reviewItemsCount === 0 ? '0 unresolved security warnings' : 'Ready for 1-click inspection'}
+            </span>
+            <span className="wcp-dash-kpi-action-link">
+              Open Scanner <ArrowRight size={12} />
+            </span>
           </div>
         </div>
 
         {/* KPI 4: Latest Backup */}
         <div
-          className="webcare-kpi-card"
-          style={{ animationDelay: '200ms' }}
-          onClick={() => onNavigate('backup')}
+          className="wcp-dash-kpi-card"
+          onClick={() => handleTileNavigate('backup')}
           role="button"
           tabIndex={0}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') onNavigate('backup');
+            if (e.key === 'Enter' || e.key === ' ') handleTileNavigate('backup');
           }}
         >
-          <div className="webcare-kpi-header">
-            <span className="webcare-kpi-label">Latest Backup</span>
-            <div className="webcare-kpi-icon-wrap is-purple">
-              <Database size={18} />
+          <div className="wcp-dash-kpi-top">
+            <span className="wcp-dash-kpi-label">Latest Backup</span>
+            <div className="wcp-dash-kpi-icon-badge is-cyan">
+              <Database size={17} />
             </div>
           </div>
-          <div className="webcare-kpi-metric-row">
+
+          <div className="wcp-dash-kpi-center">
             {latestBackupTime ? (
-              <span className="webcare-kpi-value-text">{latestBackupTime}</span>
+              <span className="wcp-dash-kpi-val-text">{latestBackupTime}</span>
             ) : (
-              <span className="webcare-kpi-value-text is-muted">No Backups Yet</span>
+              <span className="wcp-dash-kpi-val-text is-muted">Create Backup</span>
             )}
           </div>
-          <div className="webcare-kpi-footer">
-            <span className="webcare-kpi-subtext">
-              {latestBackupTime ? 'Encrypted snapshot available' : 'Create your initial recovery point'}
+
+          <div className="wcp-dash-kpi-bottom">
+            <span>
+              {latestBackupTime ? 'Encrypted snapshot saved' : 'No recovery snapshots yet'}
             </span>
-            <span className="webcare-kpi-arrow">
-              {latestBackupTime ? 'Manage &rarr;' : 'Create First &rarr;'}
+            <span className="wcp-dash-kpi-action-link">
+              {latestBackupTime ? 'Manage' : 'Create First'} <ArrowRight size={12} />
             </span>
           </div>
         </div>
       </section>
 
       {/* =========================================================================
-          3. SINGLE-ROW QUICK ACTIONS STRIP
+          3. Quick Actions Dock (.wcp-dash-actions-dock)
          ========================================================================= */}
-      <section className="webcare-actions-strip">
+      <section className="wcp-dash-actions-dock">
+        {/* Action 1: Run Security Scan */}
         <button
           type="button"
-          className="webcare-strip-btn"
-          onClick={() => onNavigate('scan')}
+          className="wcp-dash-dock-btn"
+          onClick={onStartScan}
+          disabled={isScanning}
         >
-          <Search size={16} className="strip-btn-icon icon-emerald" />
-          <div className="strip-btn-text">
-            <strong>Run Malware Scan</strong>
-            <small>Inspect core &amp; plugins</small>
+          <div className="wcp-dash-dock-icon is-indigo">
+            <Search size={18} />
+          </div>
+          <div className="wcp-dash-dock-text">
+            <span className="wcp-dash-dock-title">Run Security Scan</span>
+            <span className="wcp-dash-dock-sub">Core files &amp; plugins</span>
           </div>
         </button>
 
+        {/* Action 2: Blocked Traffic & Bans */}
         <button
           type="button"
-          className="webcare-strip-btn"
-          onClick={() => onNavigate('logs')}
+          className="wcp-dash-dock-btn"
+          onClick={() => handleTileNavigate('logs', 'blocked')}
         >
-          <Ban size={16} className="strip-btn-icon icon-blue" />
-          <div className="strip-btn-text">
-            <strong>Unban IP &amp; Traffic Logs</strong>
-            <small>Manage bans &amp; blocks</small>
+          <div className="wcp-dash-dock-icon is-cyan">
+            <Ban size={18} />
+          </div>
+          <div className="wcp-dash-dock-text">
+            <span className="wcp-dash-dock-title">Blocked Traffic &amp; Bans</span>
+            <span className="wcp-dash-dock-sub">Inspect perimeter blocks</span>
           </div>
         </button>
 
+        {/* Action 3: Create Database Backup */}
         <button
           type="button"
-          className="webcare-strip-btn"
-          onClick={() => onNavigate('backup')}
+          className="wcp-dash-dock-btn"
+          onClick={() => handleTileNavigate('backup')}
         >
-          <Database size={16} className="strip-btn-icon icon-purple" />
-          <div className="strip-btn-text">
-            <strong>Create Database Backup</strong>
-            <small>Safe pre-update snapshot</small>
+          <div className="wcp-dash-dock-icon is-purple">
+            <Database size={18} />
+          </div>
+          <div className="wcp-dash-dock-text">
+            <span className="wcp-dash-dock-title">Create Database Backup</span>
+            <span className="wcp-dash-dock-sub">Safe rollback snapshot</span>
           </div>
         </button>
 
+        {/* Action 4: Site Health Check */}
         <button
           type="button"
-          className="webcare-strip-btn"
-          onClick={() => onNavigate('settings', 'doctor')}
+          className="wcp-dash-dock-btn"
+          onClick={() => handleTileNavigate('settings', 'doctor')}
         >
-          <Activity size={16} className="strip-btn-icon icon-amber" />
-          <div className="strip-btn-text">
-            <strong>Run Site Health Check</strong>
-            <small>Deep server diagnostics</small>
+          <div className="wcp-dash-dock-icon is-emerald">
+            <Activity size={18} />
+          </div>
+          <div className="wcp-dash-dock-text">
+            <span className="wcp-dash-dock-title">Site Health Check</span>
+            <span className="wcp-dash-dock-sub">Run deep diagnostics</span>
           </div>
         </button>
       </section>
 
       {/* =========================================================================
-          4. CALM 2-COLUMN LOWER GRID
+          4. Lower Bento 2-Column Grid (.wcp-dash-lower-grid)
          ========================================================================= */}
-      <div className="webcare-lower-grid">
-        {/* Left Column: Protection Layers (Peace-of-Mind Checklist) */}
-        <div className="webcare-card webcare-protection-checklist-card">
-          <div className="webcare-card-header">
-            <div className="webcare-card-title-group">
-              <Layers size={18} className="icon-emerald" />
-              <h3>Protection Layers</h3>
+      <div className="wcp-dash-lower-grid">
+        {/* Left Column: Protection Layers (2x3 Mini-Card Grid) */}
+        <div className="wcp-dash-card">
+          <div className="wcp-dash-card-header">
+            <div className="wcp-dash-card-title-group">
+              <Layers size={18} color="#10b981" />
+              <h3 className="wcp-dash-card-title">Protection Layers</h3>
             </div>
-            <span className="webcare-badge-clean">
-              <Check size={12} /> All Active
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                fontSize: '11px',
+                fontWeight: 600,
+                color: '#059669',
+                background: 'rgba(16, 185, 129, 0.12)',
+                padding: '3px 9px',
+                borderRadius: '6px',
+              }}
+            >
+              <Check size={12} /> Active &amp; Guarded
             </span>
           </div>
-          <p className="webcare-card-subtitle">
-            Continuous defensive sentinels safeguarding your site around the clock.
+          <p className="wcp-dash-card-subtitle">
+            Autonomous sentinels defending runtime requests, authentications, and core files.
           </p>
 
-          <div className="webcare-layers-list">
-            {/* Layer 1: Web Firewall */}
+          <div className="wcp-dash-layers-grid">
+            {/* Tile 1: Web Firewall */}
             <div
-              className="webcare-layer-item"
-              onClick={() => onNavigate('firewall')}
+              className="wcp-dash-layer-tile"
+              onClick={() => handleTileNavigate('firewall', 'rules')}
               role="button"
               tabIndex={0}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') onNavigate('firewall');
+                if (e.key === 'Enter' || e.key === ' ') handleTileNavigate('firewall', 'rules');
               }}
             >
-              <div className="layer-status-icon">
-                <CheckCircle2 size={16} color="#10b981" />
-              </div>
-              <div className="layer-info">
-                <div className="layer-name-row">
-                  <strong>Web Firewall (WAF)</strong>
-                  <span className="layer-tag">Real-Time</span>
+              <div className="wcp-dash-layer-left">
+                <div className="wcp-dash-layer-icon">
+                  <ShieldCheck size={16} />
                 </div>
-                <p>Blocks SQL injection, XSS probes, and exploit attempts at Layer 7.</p>
+                <span className="wcp-dash-layer-name">Web Firewall</span>
               </div>
-              <ArrowRight size={14} className="layer-arrow" />
+              <span className="wcp-dash-layer-badge is-active">Active</span>
             </div>
 
-            {/* Layer 2: Login & 2FA */}
+            {/* Tile 2: Login & 2FA */}
             <div
-              className="webcare-layer-item"
-              onClick={() => onNavigate('auth')}
+              className="wcp-dash-layer-tile"
+              onClick={() => handleTileNavigate('auth', '2fa')}
               role="button"
               tabIndex={0}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') onNavigate('auth');
+                if (e.key === 'Enter' || e.key === ' ') handleTileNavigate('auth', '2fa');
               }}
             >
-              <div className="layer-status-icon">
-                <CheckCircle2 size={16} color="#10b981" />
-              </div>
-              <div className="layer-info">
-                <div className="layer-name-row">
-                  <strong>Login &amp; 2FA Protection</strong>
-                  <span className="layer-tag">Active</span>
+              <div className="wcp-dash-layer-left">
+                <div className="wcp-dash-layer-icon">
+                  <Lock size={15} />
                 </div>
-                <p>Brute-force lockout defense, TOTP two-factor, and biometric passkeys.</p>
+                <span className="wcp-dash-layer-name">Login &amp; 2FA</span>
               </div>
-              <ArrowRight size={14} className="layer-arrow" />
+              <span className="wcp-dash-layer-badge is-active">Active</span>
             </div>
 
-            {/* Layer 3: Malware Scanner */}
+            {/* Tile 3: Malware Scanner */}
             <div
-              className="webcare-layer-item"
-              onClick={() => onNavigate('scan')}
+              className="wcp-dash-layer-tile"
+              onClick={() => handleTileNavigate('scan')}
               role="button"
               tabIndex={0}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') onNavigate('scan');
+                if (e.key === 'Enter' || e.key === ' ') handleTileNavigate('scan');
               }}
             >
-              <div className="layer-status-icon">
-                <CheckCircle2 size={16} color="#10b981" />
-              </div>
-              <div className="layer-info">
-                <div className="layer-name-row">
-                  <strong>Malware &amp; Core Integrity Scanner</strong>
-                  <span className="layer-tag">Scheduled</span>
+              <div className="wcp-dash-layer-left">
+                <div className="wcp-dash-layer-icon">
+                  <Search size={15} />
                 </div>
-                <p>Validates WordPress core checksums and analyzes suspicious PHP code.</p>
+                <span className="wcp-dash-layer-name">Malware Scanner</span>
               </div>
-              <ArrowRight size={14} className="layer-arrow" />
+              <span className="wcp-dash-layer-badge is-active">Ready</span>
             </div>
 
-            {/* Layer 4: Database Backups */}
+            {/* Tile 4: Plugin & Theme Risks */}
             <div
-              className="webcare-layer-item"
-              onClick={() => onNavigate('backup')}
+              className="wcp-dash-layer-tile"
+              onClick={() => handleTileNavigate('vulnerabilities')}
               role="button"
               tabIndex={0}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') onNavigate('backup');
+                if (e.key === 'Enter' || e.key === ' ') handleTileNavigate('vulnerabilities');
               }}
             >
-              <div className="layer-status-icon">
-                <CheckCircle2 size={16} color="#10b981" />
-              </div>
-              <div className="layer-info">
-                <div className="layer-name-row">
-                  <strong>Database Backups &amp; Rollback</strong>
-                  <span className="layer-tag">Enabled</span>
+              <div className="wcp-dash-layer-left">
+                <div className="wcp-dash-layer-icon">
+                  <Zap size={15} />
                 </div>
-                <p>On-demand snapshot backups with automated pre-remediation safety points.</p>
+                <span className="wcp-dash-layer-name">Plugin &amp; Theme Risks</span>
               </div>
-              <ArrowRight size={14} className="layer-arrow" />
+              {vulnTotal > 0 ? (
+                <span className="wcp-dash-layer-badge is-warning">
+                  {vulnTotal} to Review
+                </span>
+              ) : (
+                <span className="wcp-dash-layer-badge is-active">Safe</span>
+              )}
             </div>
 
-            {/* Layer 5: Public Threat Feeds */}
+            {/* Tile 5: Database Backups */}
             <div
-              className="webcare-layer-item"
-              onClick={() => onNavigate('firewall', 'intel')}
+              className="wcp-dash-layer-tile"
+              onClick={() => handleTileNavigate('backup')}
               role="button"
               tabIndex={0}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') onNavigate('firewall', 'intel');
+                if (e.key === 'Enter' || e.key === ' ') handleTileNavigate('backup');
               }}
             >
-              <div className="layer-status-icon">
-                <CheckCircle2 size={16} color="#10b981" />
-              </div>
-              <div className="layer-info">
-                <div className="layer-name-row">
-                  <strong>Public Threat Feeds</strong>
-                  <span className="layer-tag">Synced</span>
+              <div className="wcp-dash-layer-left">
+                <div className="wcp-dash-layer-icon">
+                  <Database size={15} />
                 </div>
-                <p>Curated botnet IP lists and known vulnerability signatures cached locally.</p>
+                <span className="wcp-dash-layer-name">Database Backups</span>
               </div>
-              <ArrowRight size={14} className="layer-arrow" />
+              <span className="wcp-dash-layer-badge is-active">
+                {backups && backups.length > 0 ? `${backups.length} Saved` : 'Ready'}
+              </span>
             </div>
 
-            {/* Layer 6: Server Guard */}
+            {/* Tile 6: Site Doctor */}
             <div
-              className="webcare-layer-item"
-              onClick={() => onNavigate('server')}
+              className="wcp-dash-layer-tile"
+              onClick={() => handleTileNavigate('settings', 'doctor')}
               role="button"
               tabIndex={0}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') onNavigate('server');
+                if (e.key === 'Enter' || e.key === ' ') handleTileNavigate('settings', 'doctor');
               }}
             >
-              <div className="layer-status-icon">
-                <CheckCircle2 size={16} color="#10b981" />
-              </div>
-              <div className="layer-info">
-                <div className="layer-name-row">
-                  <strong>Server Guard &amp; Headers</strong>
-                  <span className="layer-tag">Hardened</span>
+              <div className="wcp-dash-layer-left">
+                <div className="wcp-dash-layer-icon">
+                  <Activity size={15} />
                 </div>
-                <p>Security headers (CSP, HSTS, X-Frame-Options) and upload dir protection.</p>
+                <span className="wcp-dash-layer-name">Site Doctor</span>
               </div>
-              <ArrowRight size={14} className="layer-arrow" />
+              <span className="wcp-dash-layer-badge is-active">Ready</span>
             </div>
           </div>
         </div>
 
-        {/* Right Column: Recent Activity Pulse */}
-        <div className="webcare-card webcare-activity-pulse-card">
-          <div className="webcare-card-header">
-            <div className="webcare-card-title-group">
-              <Activity size={18} className="icon-blue" />
-              <h3>Recent Activity Pulse</h3>
+        {/* Right Column: Quiet Activity Pulse */}
+        <div className="wcp-dash-card">
+          <div className="wcp-dash-card-header">
+            <div className="wcp-dash-card-title-group">
+              <Activity size={18} color="#6366f1" />
+              <h3 className="wcp-dash-card-title">Quiet Activity Pulse</h3>
             </div>
             <button
               type="button"
-              className="webcare-view-all-link"
-              onClick={() => onNavigate('logs')}
+              className="wcp-dash-kpi-action-link"
+              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '12px' }}
+              onClick={() => handleTileNavigate('logs')}
             >
-              <span>View all logs &rarr;</span>
+              View all logs &rarr;
             </button>
           </div>
-          <p className="webcare-card-subtitle">
-            Real-time feed of recent security events and perimeter blocks.
+          <p className="wcp-dash-card-subtitle">
+            Chronological ledger of recent security decisions and intercepted traffic.
           </p>
 
-          <div className="webcare-pulse-list">
+          <div className="wcp-dash-pulse-timeline">
             {firewallLogs && firewallLogs.length > 0 ? (
               firewallLogs.slice(0, 5).map((log: any, idx: number) => {
                 const categoryClean = log.rule_category
                   ? log.rule_category.replace(/_/g, ' ')
-                  : 'Malicious Request';
+                  : 'Malicious Incursion';
                 return (
-                  <div key={log.id || `pulse-log-${idx}`} className="webcare-pulse-item">
-                    <div className="pulse-item-indicator is-block" />
-                    <div className="pulse-item-content">
-                      <div className="pulse-item-title-row">
-                        <span className="pulse-item-title">
+                  <div key={log.id || `pulse-log-${idx}`} className="wcp-dash-pulse-item">
+                    <div className="wcp-dash-pulse-dot is-block" />
+                    <div className="wcp-dash-pulse-body">
+                      <div className="wcp-dash-pulse-header">
+                        <span className="wcp-dash-pulse-rule">
                           Blocked {categoryClean}
                         </span>
-                        <span className="pulse-item-time">
+                        <span className="wcp-dash-pulse-time">
                           {formatRelativeTime(log.created_at || log.timestamp)}
                         </span>
                       </div>
-                      <p className="pulse-item-desc">
-                        {log.request_method || 'GET'} {log.request_uri || '/'} from IP{' '}
-                        <code>{log.ip_address || '127.0.0.1'}</code>
+                      <p className="wcp-dash-pulse-desc">
+                        {log.request_method || 'GET'} {log.request_uri || '/'}
+                        <span className="wcp-dash-pulse-ip">
+                          {log.ip_address || '127.0.0.1'}
+                        </span>
                       </p>
                     </div>
                   </div>
                 );
               })
             ) : (
-              <div className="webcare-pulse-item">
-                <div className="pulse-item-indicator is-clean" />
-                <div className="pulse-item-content">
-                  <div className="pulse-item-title-row">
-                    <span className="pulse-item-title">Perimeter Defenses Calm</span>
-                    <span className="pulse-item-time">Just now</span>
-                  </div>
-                  <p className="pulse-item-desc">
-                    No malicious intrusions detected in recent window. Firewall is actively watching incoming traffic.
-                  </p>
-                </div>
+              <div className="wcp-dash-pulse-empty">
+                All quiet — no threats intercepted recently.
               </div>
             )}
-
-            {/* Core Verification Milestone Event */}
-            <div className="webcare-pulse-item">
-              <div className="pulse-item-indicator is-clean" />
-              <div className="pulse-item-content">
-                <div className="pulse-item-title-row">
-                  <span className="pulse-item-title">
-                    WordPress Core Integrity Verified
-                  </span>
-                  <span className="pulse-item-time">
-                    {formatRelativeTime(currentScan?.finished_at || currentScan?.created_at || new Date())}
-                  </span>
-                </div>
-                <p className="pulse-item-desc">
-                  Official cryptographic checksums verified against WordPress API.
-                </p>
-              </div>
-            </div>
           </div>
         </div>
       </div>
+
+      {/* =========================================================================
+          5. Subtle System Readiness Footer Strip (.wcp-dash-footer-strip)
+         ========================================================================= */}
+      <footer className="wcp-dash-footer-strip">
+        <div className="wcp-dash-footer-item">
+          <span className="wcp-dash-footer-dot" />
+          <span>PHP:</span>
+          <span className="wcp-dash-footer-val wcp-dash-tabular">
+            {serverInfo?.php_version || '8.3+'}
+          </span>
+        </div>
+
+        <div className="wcp-dash-footer-item">
+          <span>WordPress:</span>
+          <span className="wcp-dash-footer-val wcp-dash-tabular">
+            {serverInfo?.wp_version || '7.0+'}
+          </span>
+        </div>
+
+        <div className="wcp-dash-footer-item">
+          <span>Server Engine:</span>
+          <span className="wcp-dash-footer-val">
+            {serverInfo?.server_software ? String(serverInfo.server_software).split(' ')[0] : 'Linux / Nginx'}
+          </span>
+        </div>
+
+        <div className="wcp-dash-footer-item">
+          <span>Quarantined Files:</span>
+          <span className="wcp-dash-footer-val wcp-dash-tabular">
+            {quarantinedFiles?.length || 0}
+          </span>
+        </div>
+
+        <div className="wcp-dash-footer-item">
+          <span>Protection Mode:</span>
+          <span className="wcp-dash-footer-val">Active / Fail-Closed</span>
+        </div>
+      </footer>
     </div>
   );
 };
