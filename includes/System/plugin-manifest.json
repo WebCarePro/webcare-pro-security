@@ -1,6 +1,6 @@
 {
   "version": "3.25.2",
-  "generated_at": "2026-11-23T01:17:19.173Z",
+  "generated_at": "2026-11-23T01:29:54.161Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -240,8 +240,8 @@
       "size": 11244
     },
     "includes/Api/RestRouter.php": {
-      "sha256": "2237a40e99341e8a882cf5cac721df6046a86a99abd22613550e1c4063574d52",
-      "size": 9498
+      "sha256": "4429264fb87cfe4331470d60d7bdb747613c7ed14afe25602f20d2a49fa9f73b",
+      "size": 9620
     },
     "includes/Api/ScannerRoutes.php": {
       "sha256": "54944d07983e6e962770f3f0d5466eccdb571f3c2493a88ad001a2ff39fad246",
@@ -320,8 +320,8 @@
       "size": 664
     },
     "includes/Contracts/RequestContext.php": {
-      "sha256": "3c57852615a42c62c7a8813827ca41dd5b352e2dca08c3cf6a9890d2cf1d8b1f",
-      "size": 16439
+      "sha256": "c7413785aff060e43e8f5fae174fb0c2781500ff335357263ef5370a5df4d3d9",
+      "size": 17093
     },
     "includes/Contracts/RouteClass.php": {
       "sha256": "94f40358eeb842cdbf02a1ae6b57580114c5ca7c09921566d08ac442a4767a7b",
@@ -348,8 +348,8 @@
       "size": 5591
     },
     "includes/Core/CanonicalRouteParser.php": {
-      "sha256": "84e471baa5895f2da7e133565d66fdb26ae5ad490f1d8991a64c2733e7732c91",
-      "size": 5438
+      "sha256": "eb6416e309e273329834c419e265624b956f340fbc7e9f3e4ba62dc9e8530d72",
+      "size": 6791
     },
     "includes/Core/CompiledStackManifest.php": {
       "sha256": "d9f1a28227c3f13ba164b724b1dad4f1160ce788762044233253dd7bfa7803da",
@@ -992,8 +992,8 @@
       "size": 8786
     },
     "includes/System/AIService.php": {
-      "sha256": "b1cc7681a09adc59c23baf847bad9d9faee73f8ae832f8c2cb843e9f7e745a1b",
-      "size": 56900
+      "sha256": "4ed6fd57ab4dac3934c6af9764b7db72a5615dc15d791c096f9144ec466cfbce",
+      "size": 56948
     },
     "includes/System/AuditLogger.php": {
       "sha256": "dfc03468bcf624d6f3e3385a4c1eb76fdce94b772614b64124ce72ceca6594eb",

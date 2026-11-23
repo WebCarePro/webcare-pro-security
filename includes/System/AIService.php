@@ -958,8 +958,9 @@ class AIService {
                 // phpcs:ignore PluginCheck.CodeAnalysis.AIProvider.DirectIntegration -- Multi-provider AI security assistant with proprietary prompts and direct user-supplied API keys
                 $url = "https://generativelanguage.googleapis.com/v1beta/models";
                 $resp = wp_safe_remote_get($url, [
-                    'timeout' => 15,
-                    'headers' => [
+                    'timeout'     => 15,
+                    'redirection' => 0,
+                    'headers'     => [
                         'x-goog-api-key' => $gemini_key,
                     ],
                 ]);

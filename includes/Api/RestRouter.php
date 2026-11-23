@@ -118,8 +118,8 @@ final class RestRouter {
      * 5. Non-WebCare route (/wp/v2/..., etc.): registers 0 controllers (zero memory overhead).
      */
     public static function register(): void {
-        $server = $_SERVER;
-        $resolved_route = \WebCareProScanner\Core\CanonicalRouteParser::resolve_rest_route($server);
+        // Resolve canonical route using unslashed URI snapshot; CanonicalRouteParser handles single-unslash boundary automatically when no args are passed.
+        $resolved_route = \WebCareProScanner\Core\CanonicalRouteParser::resolve_rest_route();
 
         // Case 1: REST Discovery / Index query
         // E.g. GET /wp-json/, GET /wp-json/webcare-pro-security/v1, or empty route

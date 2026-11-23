@@ -24,7 +24,64 @@ if (!defined('ABSPATH')) {
 final class CanonicalRouteParser {
 
     /**
+     * Normalize a raw URI or path into a canonical path:
+     * 1. Strips control characters (NUL, CR, LF).
+     * 2. Strips query string and fragment.
+     * 3. Runs up to 3 passes of rawurldecode() until stable.
+     * 4. Collapses repeated slashes and backslashes.
+     * 5. Resolves '.' and '..' dot-segments via a path-segment stack, preserving leading '/' and trailing '/'.
+     *
+     * @param string $raw_uri Raw URI or path string.
+     * @return string Canonical normalized path.
+     */
+    public static function normalize_path(string $raw_uri): string {
+        $clean = str_replace(["\0", "\r", "\n"], '', $raw_uri);
+        $path = (string) strtok($clean, '?#');
+
+        for ($i = 0; $i < 3; $i++) {
+            $prev = $path;
+            $path = rawurldecode($path);
+            if ($path === $prev) {
+                break;
+            }
+        }
+
+        $collapsed = preg_replace('#[\\\\/]+#', '/', $path);
+        if (!is_string($collapsed) || $collapsed === '') {
+            return '/';
+        }
+
+        $has_trailing_slash = str_ends_with($collapsed, '/') && strlen($collapsed) > 1;
+        $segments = explode('/', trim($collapsed, '/'));
+        $stack = [];
+        foreach ($segments as $seg) {
+            if ($seg === '' || $seg === '.') {
+                continue;
+            }
+            if ($seg === '..') {
+                array_pop($stack);
+            } else {
+                $stack[] = $seg;
+            }
+        }
+
+        if (empty($stack)) {
+            return '/';
+        }
+
+        $result = '/' . implode('/', $stack);
+        if ($has_trailing_slash) {
+            $result .= '/';
+        }
+
+        return $result;
+    }
+
+    /**
      * Parse and normalize the incoming request path from server environment.
+     *
+     * Note: If a caller passes $server['REQUEST_URI'], it must already be unslashed once.
+     * When falling back to $_SERVER['REQUEST_URI'], wp_unslash() is called automatically.
      *
      * @param array<string, mixed> $server Reference to $_SERVER or array.
      * @return string Normalized leading-and-trailing slash path (e.g. '/wp-json/wp/v2/posts/').
@@ -33,33 +90,14 @@ final class CanonicalRouteParser {
         $has_explicit_uri = array_key_exists('REQUEST_URI', $server);
         // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- WAF route canonicalization must retain percent-encoded octets prior to rawurldecode() / parse_str()
         $uri_raw = (string) ($server['REQUEST_URI'] ?? (isset($_SERVER['REQUEST_URI']) ? wp_unslash($_SERVER['REQUEST_URI']) : '/'));
-        $uri = str_replace(["\0", "\r", "\n"], '', $uri_raw);
-
-        // Strip query string and fragment
-        $path = (string) strtok($uri, '?#');
-
-        // URL-decode until fully decoded to neutralize multi-layer encoding attacks
-        $decoded = $path;
-        for ($i = 0; $i < 3; $i++) {
-            $prev = $decoded;
-            $decoded = rawurldecode($decoded);
-            if ($decoded === $prev) {
-                break;
-            }
-        }
-
-        // Collapse multiple slashes and backslashes
-        $clean = preg_replace('#[\\\\/]+#', '/', $decoded);
-        if (!is_string($clean) || $clean === '') {
-            $clean = '/';
-        }
-
-        // Return path with standard leading slash
-        return '/' . ltrim($clean, '/');
+        return self::normalize_path($uri_raw);
     }
 
     /**
      * Resolve the canonical REST API route string if the request is a REST call.
+     *
+     * Note: If a caller passes $server['REQUEST_URI'], it must already be unslashed once.
+     * When falling back to $_SERVER['REQUEST_URI'], wp_unslash() is called automatically.
      *
      * @param array<string, mixed> $server Reference to $_SERVER.
      * @return string Normalized route with leading slash (e.g. '/webcare-pro-security/v1/scan/status') or empty string.

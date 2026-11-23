@@ -133,10 +133,20 @@ class RequestContext {
         $this->method = strtoupper($method);
         $this->uri = $uri;
         $q_pos = strpos($uri, '?');
-        $raw_clean = strtolower($q_pos === false ? $uri : substr($uri, 0, $q_pos));
-        if (strpos($raw_clean, '/.') !== false || strpos($raw_clean, '//') !== false) {
-            $raw_clean = (string) preg_replace('#/+#', '/', $raw_clean);
-            $p_parts = explode('/', $raw_clean);
+        if (class_exists('\\WebCareProScanner\\Core\\CanonicalRouteParser')) {
+            $this->cleanUri = strtolower(\WebCareProScanner\Core\CanonicalRouteParser::normalize_path($uri));
+        } else {
+            $raw_clean = str_replace(["\0", "\r", "\n"], '', $q_pos === false ? $uri : substr($uri, 0, $q_pos));
+            for ($i = 0; $i < 3; $i++) {
+                $prev = $raw_clean;
+                $raw_clean = rawurldecode($raw_clean);
+                if ($raw_clean === $prev) {
+                    break;
+                }
+            }
+            $collapsed = preg_replace('#[\\\\/]+#', '/', $raw_clean);
+            $collapsed = is_string($collapsed) && $collapsed !== '' ? $collapsed : '/';
+            $p_parts = explode('/', trim($collapsed, '/'));
             $p_stack = [];
             foreach ($p_parts as $p_seg) {
                 if ($p_seg === '' || $p_seg === '.') {
@@ -148,9 +158,8 @@ class RequestContext {
                     $p_stack[] = $p_seg;
                 }
             }
-            $raw_clean = '/' . implode('/', $p_stack);
+            $this->cleanUri = strtolower(empty($p_stack) ? '/' : ('/' . implode('/', $p_stack)));
         }
-        $this->cleanUri = $raw_clean;
         $this->query = $q_pos === false ? '' : substr($uri, $q_pos + 1);
         $this->userAgent = $userAgent;
         $this->cookies = !empty($cookies) ? $cookies : (isset($_COOKIE) && is_array($_COOKIE) ? $_COOKIE : []);
@@ -194,19 +203,21 @@ class RequestContext {
         $raw_uri = isset($_SERVER['REQUEST_URI']) ? (string) wp_unslash($_SERVER['REQUEST_URI']) : '';
         $ctx->uri = str_replace(["\0", "\r", "\n"], '', $raw_uri);
         $q_pos    = strpos($raw_uri, '?');
-        $raw_path = $q_pos === false ? $raw_uri : substr($raw_uri, 0, $q_pos);
-        $raw_clean = str_replace(["\0", "\r", "\n"], '', $raw_path);
-        for ($i = 0; $i < 3; $i++) {
-            $prev = $raw_clean;
-            $raw_clean = rawurldecode($raw_clean);
-            if ($raw_clean === $prev) {
-                break;
+        if (class_exists('\\WebCareProScanner\\Core\\CanonicalRouteParser')) {
+            $ctx->cleanUri = strtolower(\WebCareProScanner\Core\CanonicalRouteParser::normalize_path($raw_uri));
+        } else {
+            $raw_path = $q_pos === false ? $raw_uri : substr($raw_uri, 0, $q_pos);
+            $raw_clean = str_replace(["\0", "\r", "\n"], '', $raw_path);
+            for ($i = 0; $i < 3; $i++) {
+                $prev = $raw_clean;
+                $raw_clean = rawurldecode($raw_clean);
+                if ($raw_clean === $prev) {
+                    break;
+                }
             }
-        }
-        $raw_clean = strtolower($raw_clean);
-        if (strpos($raw_clean, '/.') !== false || strpos($raw_clean, '//') !== false || strpos($raw_clean, '\\') !== false) {
-            $raw_clean = preg_replace('#[\\\\/]+#', '/', $raw_clean) ?? '/';
-            $p_parts = explode('/', $raw_clean);
+            $collapsed = preg_replace('#[\\\\/]+#', '/', $raw_clean);
+            $collapsed = is_string($collapsed) && $collapsed !== '' ? $collapsed : '/';
+            $p_parts = explode('/', trim($collapsed, '/'));
             $p_stack = [];
             foreach ($p_parts as $p_seg) {
                 if ($p_seg === '' || $p_seg === '.') {
@@ -218,9 +229,8 @@ class RequestContext {
                     $p_stack[] = $p_seg;
                 }
             }
-            $raw_clean = '/' . implode('/', $p_stack);
+            $ctx->cleanUri = strtolower(empty($p_stack) ? '/' : ('/' . implode('/', $p_stack)));
         }
-        $ctx->cleanUri = $raw_clean;
         $ctx->query    = $q_pos === false ? '' : str_replace(["\0", "\r", "\n"], '', substr($raw_uri, $q_pos + 1));
 
         $ctx->userAgent    = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';

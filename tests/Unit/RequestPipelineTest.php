@@ -370,4 +370,108 @@ class RequestPipelineTest extends TestCase {
         // Clean up
         \WebCareProScanner\Firewall\VirtualPatchManager::remove_patch('VPATCH-LOG-TEST-001');
     }
+
+    public function testRouteClassifierAndPipelinePreserveNormalizedUriEncoding(): void {
+        $manifest = \WebCareProScanner\Core\CompiledStackManifest::load();
+        $cases = [
+            '/?wc%2Dajax=checkout' => [
+                'class'      => \WebCareProScanner\Contracts\RouteClass::Commerce,
+                'evaluators' => ['WebCareProScanner\\Firewall\\Evaluators\\CommerceAndUploadEvaluator'],
+            ],
+            '/?rest%5Froute=%2Fwebcare-pro-security%2Fv1%2Fscan' => [
+                'class'      => \WebCareProScanner\Contracts\RouteClass::RestApi,
+                'evaluators' => ['WebCareProScanner\\Firewall\\NextGen\\ResponseDlpSentinel'],
+            ],
+            '/%77p-json/wp/v2/users' => [
+                'class'      => \WebCareProScanner\Contracts\RouteClass::RestApi,
+                'evaluators' => ['WebCareProScanner\\Firewall\\NextGen\\ResponseDlpSentinel'],
+            ],
+            '/wp-json/wp/v2/users' => [
+                'class'      => \WebCareProScanner\Contracts\RouteClass::RestApi,
+                'evaluators' => ['WebCareProScanner\\Firewall\\NextGen\\ResponseDlpSentinel'],
+            ],
+            '/?wc-ajax=checkout' => [
+                'class'      => \WebCareProScanner\Contracts\RouteClass::Commerce,
+                'evaluators' => ['WebCareProScanner\\Firewall\\Evaluators\\CommerceAndUploadEvaluator'],
+            ],
+        ];
+
+        foreach ($cases as $uri => $expected) {
+            $expectedClass = $expected['class'];
+            $classified = \WebCareProScanner\Core\RouteClassifier::classify(['REQUEST_URI' => $uri]);
+            $this->assertSame($expectedClass, $classified, "RouteClassifier failed for URI: {$uri}");
+
+            $_SERVER['REQUEST_URI'] = $uri;
+            $_SERVER['REQUEST_METHOD'] = 'GET';
+            $ctx = RequestContext::from_globals();
+            $pipelineRouteClass = \WebCareProScanner\Core\RouteClassifier::classify([
+                'REQUEST_URI'    => $ctx->uri,
+                'REQUEST_METHOD' => $ctx->method,
+            ]);
+            $this->assertSame($expectedClass, $pipelineRouteClass, "RequestPipeline context classification failed for URI: {$uri}");
+
+            $evaluators = $manifest['routes'][$expectedClass->value] ?? [];
+            foreach ($expected['evaluators'] as $evaluatorClass) {
+                $this->assertContains(
+                    $evaluatorClass,
+                    $evaluators,
+                    "Route class {$expectedClass->value} for URI {$uri} must contain evaluator {$evaluatorClass}"
+                );
+            }
+        }
+    }
+
+    public function testDotSegmentTraversalRouteNormalization(): void {
+        $cases = [
+            '/wp-json/../checkout/'       => \WebCareProScanner\Contracts\RouteClass::Commerce,
+            '/wp-json/%2e%2e/checkout/'   => \WebCareProScanner\Contracts\RouteClass::Commerce,
+        ];
+
+        foreach ($cases as $uri => $expectedClass) {
+            $normPath = \WebCareProScanner\Core\CanonicalRouteParser::normalize_path($uri);
+            $this->assertSame('/checkout/', $normPath, "normalize_path failed to resolve dot-segments for URI: {$uri}");
+
+            $classified = \WebCareProScanner\Core\RouteClassifier::classify(['REQUEST_URI' => $uri]);
+            $this->assertSame($expectedClass, $classified, "RouteClassifier dot-segment resolution failed for URI: {$uri}");
+
+            $_SERVER['REQUEST_URI'] = $uri;
+            $_SERVER['REQUEST_METHOD'] = 'GET';
+            $ctx = RequestContext::from_globals();
+            $this->assertSame('/checkout/', $ctx->cleanUri);
+        }
+    }
+
+    public function testRequestContextGlobalsAndConstructorParity(): void {
+        $_SERVER['REQUEST_URI'] = '/%77p-json/wp/v2/users';
+        $_SERVER['REQUEST_METHOD'] = 'GET';
+
+        $fromGlobals = RequestContext::from_globals();
+        $fromConstructor = new RequestContext(method: 'GET', uri: '/%77p-json/wp/v2/users');
+
+        $this->assertSame('/wp-json/wp/v2/users', $fromGlobals->cleanUri);
+        $this->assertSame('/wp-json/wp/v2/users', $fromConstructor->cleanUri);
+        $this->assertSame($fromGlobals->cleanUri, $fromConstructor->cleanUri);
+    }
+
+    public function testAdaptiveRateLimiterClassifiesEncodedAuthIntoBucketAuth(): void {
+        $uris = [
+            '/?wc%2Dajax=login',
+            '/%77p-login.php',
+        ];
+
+        update_option('webcareproscan_settings', [
+            'waf_rate_limit_enabled' => true,
+        ]);
+
+        foreach ($uris as $uri) {
+            $_SERVER['REQUEST_URI'] = $uri;
+            $_SERVER['REQUEST_METHOD'] = 'POST';
+
+            $allowed = \WebCareProScanner\Firewall\AdaptiveRateLimiter::check_request('198.51.100.99');
+            $this->assertTrue($allowed, "AdaptiveRateLimiter::check_request failed for URI: {$uri}");
+        }
+
+        $telemetry = \WebCareProScanner\Firewall\AdaptiveRateLimiter::get_telemetry();
+        $this->assertIsArray($telemetry);
+    }
 }
