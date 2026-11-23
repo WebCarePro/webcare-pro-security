@@ -533,4 +533,126 @@ class RequestPipelineTest extends TestCase {
         $telemetry = \WebCareProScanner\Firewall\AdaptiveRateLimiter::get_telemetry();
         $this->assertIsArray($telemetry);
     }
+
+    public function testAdaptiveRateLimiterRestWriteReachesBucketWithoutTypeError(): void {
+        update_option('webcareproscan_settings', [
+            'waf_rate_limit_enabled' => true,
+        ]);
+
+        $_SERVER['REQUEST_URI'] = '/wp-json/wp/v2/posts';
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+
+        $bucket = \WebCareProScanner\Firewall\AdaptiveRateLimiter::classify_bucket(
+            $_SERVER['REQUEST_URI'],
+            $_SERVER['REQUEST_METHOD']
+        );
+        $this->assertSame(\WebCareProScanner\Firewall\AdaptiveRateLimiter::BUCKET_REST_WRITE, $bucket);
+
+        // Verify check_request executes L436 and L525 with $decoded_uri defined and no PHP warnings
+        $allowed = \WebCareProScanner\Firewall\AdaptiveRateLimiter::check_request('203.0.113.50');
+        $this->assertTrue($allowed);
+    }
+
+    public function testAdaptiveRateLimiterResponseFormatClassification(): void {
+        // REST write request -> JSON response format
+        $this->assertTrue(
+            \WebCareProScanner\Firewall\AdaptiveRateLimiter::is_json_or_commerce_response(
+                '/wp-json/wp/v2/posts',
+                \WebCareProScanner\Firewall\AdaptiveRateLimiter::BUCKET_REST_WRITE
+            )
+        );
+
+        // WooCommerce checkout request -> JSON / WooCommerce response format
+        $this->assertTrue(
+            \WebCareProScanner\Firewall\AdaptiveRateLimiter::is_json_or_commerce_response(
+                '/?wc%2Dajax=checkout',
+                \WebCareProScanner\Firewall\AdaptiveRateLimiter::BUCKET_CHECKOUT
+            )
+        );
+
+        // Standard wp-login.php auth request -> Text/Standard response format
+        $this->assertFalse(
+            \WebCareProScanner\Firewall\AdaptiveRateLimiter::is_json_or_commerce_response(
+                '/wp-login.php',
+                \WebCareProScanner\Firewall\AdaptiveRateLimiter::BUCKET_AUTH
+            )
+        );
+    }
+
+    public function testRealEvaluatorExecutionViaSpyEvaluator(): void {
+        // Define a dynamic spy evaluator class if not already defined
+        if (!class_exists('WebCareProScanner\\Tests\\Unit\\SpyPipelineEvaluator')) {
+            eval('
+                namespace WebCareProScanner\\Tests\\Unit;
+                use WebCareProScanner\\Contracts\\WafEvaluatorInterface;
+                use WebCareProScanner\\Contracts\\RequestContext;
+                use WebCareProScanner\\Contracts\\WafVerdict;
+
+                final class SpyPipelineEvaluator implements WafEvaluatorInterface {
+                    public static array $invocations = [];
+                    public static function reset(): void { self::$invocations = []; }
+                    public function get_module_id(): string { return "spy-pipeline-evaluator"; }
+                    public function is_required(): bool { return false; }
+                    public function get_failure_policy(): string { return "degraded_log"; }
+                    public function get_required_capabilities(): array { return []; }
+                    public function get_target_route_classes(): array { return []; }
+                    public function evaluate_runtime_request(RequestContext $ctx): ?WafVerdict {
+                        self::$invocations[] = [
+                            "uri" => $ctx->uri,
+                            "cleanUri" => $ctx->cleanUri,
+                        ];
+                        return null;
+                    }
+                }
+            ');
+        }
+
+        \WebCareProScanner\Tests\Unit\SpyPipelineEvaluator::reset();
+        $spyClass = 'WebCareProScanner\\Tests\\Unit\\SpyPipelineEvaluator';
+
+        // Filter manifest routes to attach the spy evaluator to Commerce and RestApi
+        $filterHook = static function (array $routes) use ($spyClass): array {
+            $routes[\WebCareProScanner\Contracts\RouteClass::Commerce->value][] = $spyClass;
+            $routes[\WebCareProScanner\Contracts\RouteClass::RestApi->value][] = $spyClass;
+            return $routes;
+        };
+        add_filter('webcare/waf/manifest_routes', $filterHook, 10, 1);
+
+        $compileRes = \WebCareProScanner\Core\CompiledStackManifest::compile();
+        $this->assertTrue($compileRes['success']);
+
+        $testUris = [
+            '/?wc%2Dajax=checkout',
+            '/wp-json/../checkout/',
+            '/?rest%5Froute=%2Fwebcare-pro-security%2Fv1%2Fscan',
+            '/%77p-json/wp/v2/users',
+            '/%00wp-json/wp/v2/users',
+        ];
+
+        $settings = ['waf_enabled' => true];
+
+        foreach ($testUris as $testUri) {
+            \WebCareProScanner\Tests\Unit\SpyPipelineEvaluator::reset();
+            $_SERVER['REQUEST_URI'] = $testUri;
+            $_SERVER['REQUEST_METHOD'] = 'GET';
+
+            $ctx = RequestContext::from_globals();
+            $verdict = RequestPipeline::evaluate_pipeline($ctx, $settings);
+
+            $this->assertNull($verdict);
+            $this->assertCount(
+                1,
+                \WebCareProScanner\Tests\Unit\SpyPipelineEvaluator::$invocations,
+                "Spy evaluator was not invoked for URI: {$testUri}"
+            );
+            $this->assertSame(
+                $testUri,
+                \WebCareProScanner\Tests\Unit\SpyPipelineEvaluator::$invocations[0]['uri']
+            );
+        }
+
+        // Clean up filter and recompile manifest to pristine state
+        remove_filter('webcare/waf/manifest_routes', $filterHook, 10);
+        \WebCareProScanner\Core\CompiledStackManifest::compile();
+    }
 }

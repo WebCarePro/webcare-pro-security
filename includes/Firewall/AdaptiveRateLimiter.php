@@ -275,15 +275,13 @@ class AdaptiveRateLimiter {
     }
 
     /**
-     * Deterministically classify a request into an isolated rate-limit bucket.
+     * Normalize a raw URI for rate limiting by stripping control characters and
+     * running up to 3 passes of rawurldecode() until stable.
      *
-     * @param string $raw_uri Raw URI string.
-     * @param string $method HTTP request method.
-     * @param string $post_action POST action parameter.
-     * @param string $search_query Search query parameter.
-     * @return string One of self::BUCKET_* constants.
+     * @param string $raw_uri
+     * @return string
      */
-    public static function classify_bucket(string $raw_uri, string $method = 'GET', string $post_action = '', string $search_query = ''): string {
+    public static function normalize_rate_limit_uri(string $raw_uri): string {
         $decoded_uri = str_replace(["\0", "\r", "\n"], '', $raw_uri);
         for ($i = 0; $i < 3; $i++) {
             $prev = $decoded_uri;
@@ -293,6 +291,36 @@ class AdaptiveRateLimiter {
                 break;
             }
         }
+        return $decoded_uri;
+    }
+
+    /**
+     * Determine whether the rate limit response should be JSON/WooCommerce or plain text.
+     *
+     * @param string $raw_uri
+     * @param string $bucket
+     * @return bool
+     */
+    public static function is_json_or_commerce_response(string $raw_uri, string $bucket): bool {
+        $decoded_uri = self::normalize_rate_limit_uri($raw_uri);
+        return (function_exists('wp_is_json_request') && wp_is_json_request()) ||
+            str_contains($decoded_uri, '/wp-json/') ||
+            str_contains($decoded_uri, 'wc-ajax=') ||
+            $bucket === self::BUCKET_CHECKOUT ||
+            $bucket === self::BUCKET_CART_AJAX;
+    }
+
+    /**
+     * Deterministically classify a request into an isolated rate-limit bucket.
+     *
+     * @param string $raw_uri Raw URI string.
+     * @param string $method HTTP request method.
+     * @param string $post_action POST action parameter.
+     * @param string $search_query Search query parameter.
+     * @return string One of self::BUCKET_* constants.
+     */
+    public static function classify_bucket(string $raw_uri, string $method = 'GET', string $post_action = '', string $search_query = ''): string {
+        $decoded_uri = self::normalize_rate_limit_uri($raw_uri);
 
         $method_upper = strtoupper($method);
 
@@ -368,6 +396,7 @@ class AdaptiveRateLimiter {
 
         // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- WAF route canonicalization must retain percent-encoded octets prior to rawurldecode() / parse_str()
         $raw_uri = isset($_SERVER['REQUEST_URI']) ? (string) wp_unslash($_SERVER['REQUEST_URI']) : '/';
+        $decoded_uri = self::normalize_rate_limit_uri($raw_uri);
         $method = isset($_SERVER['REQUEST_METHOD']) ? strtoupper(sanitize_key(wp_unslash($_SERVER['REQUEST_METHOD']))) : 'GET';
 
         // phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.NonceVerification.Recommended -- Early passive packet rate-limiting
@@ -521,11 +550,7 @@ class AdaptiveRateLimiter {
         header('X-WebCare-Rate-Limit-Current: ' . (int) $count);
 
         // Special handling for E-Commerce / Checkout: Return structured JSON to prevent UI corruption
-        $is_wc_or_json = wp_is_json_request() ||
-            str_contains($decoded_uri, '/wp-json/') ||
-            str_contains($decoded_uri, 'wc-ajax=') ||
-            $bucket === self::BUCKET_CHECKOUT ||
-            $bucket === self::BUCKET_CART_AJAX;
+        $is_wc_or_json = self::is_json_or_commerce_response($raw_uri, $bucket);
 
         if ($is_wc_or_json) {
             header('Content-Type: application/json; charset=utf-8');
