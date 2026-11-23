@@ -31,6 +31,8 @@ import { applyWebCareTheme, getWebCareTheme } from '../utils/theme';
 import { apiRequest } from '../utils/api';
 import { toast } from '../utils/dialog';
 import { useWorkspaceMode } from '../hooks/useWorkspaceMode';
+import { ToastProvider } from './ui/ToastProvider';
+import { ConfirmModalHost } from './ui/ConfirmModal';
 
 interface WebCareShellProps {
   activeTab: 'dashboard' | 'scan' | 'firewall' | 'modular_waf' | 'waf_logs' | 'auth' | 'vault' | 'fim' | 'forensics' | 'settings' | 'notifications' | 'activity_logs' | 'cron_manager' | 'about' | 'wizard';
@@ -827,6 +829,10 @@ export const WebCareShell = ({ activeTab, children }: WebCareShellProps) => {
           }
         }}
       />
+
+      {/* Global In-Page Toast & Confirm Modal Providers */}
+      <ToastProvider />
+      <ConfirmModalHost />
     </div>
   );
 };
