@@ -107,6 +107,22 @@ class MCPAgentService {
     const LEDGER_LOCK_OPTION = 'webcareproscan_mcp_ledger_lock';
 
     /**
+     * Cached check for transactional database storage engine (InnoDB).
+     *
+     * @var bool|null
+     */
+    private static ?bool $is_transactional_engine = null;
+
+    /**
+     * Reset cached engine check (for testing).
+     *
+     * @return void
+     */
+    public static function reset_engine_cache(): void {
+        self::$is_transactional_engine = null;
+    }
+
+    /**
      * Invalidate WordPress object cache for the ledger lock option.
      * Must be called whenever direct SQL updates or deletes the lock row,
      * ensuring persistent object cache backends (Redis/Memcached) do not hold stale values.
@@ -120,6 +136,38 @@ class MCPAgentService {
     }
 
     /**
+     * Verify whether $wpdb->options uses a transactional engine (InnoDB).
+     *
+     * @return bool
+     */
+    public static function is_transactional_storage_engine(): bool {
+        if (self::$is_transactional_engine !== null) {
+            return self::$is_transactional_engine;
+        }
+
+        global $wpdb;
+        if (!$wpdb || !isset($wpdb->options)) {
+            self::$is_transactional_engine = true; // Non-db fallback
+            return true;
+        }
+
+        $table_name = $wpdb->options;
+        // Escape special SQL wildcard characters in table name for LIKE
+        $table_escaped = str_replace(['\\', '_', '%'], ['\\\\', '\\_', '\\%'], $table_name);
+        $status = $wpdb->get_row($wpdb->prepare("SHOW TABLE STATUS LIKE %s", $table_escaped));
+
+        if ($status && isset($status->Engine)) {
+            $engine = strtolower((string) $status->Engine);
+            self::$is_transactional_engine = ($engine === 'innodb');
+            return self::$is_transactional_engine;
+        }
+
+        // Default to false if cannot verify engine
+        self::$is_transactional_engine = false;
+        return false;
+    }
+
+    /**
      * Atomically mutate the staged-action ledger in the database under strict lease fencing.
      *
      * Performs a database transaction with row-level locking (SELECT ... FOR UPDATE on the lock row)
@@ -128,8 +176,8 @@ class MCPAgentService {
      * the transaction rolls back and returns false, preventing any stale/delayed writes.
      *
      * @param string   $owner_token Active lock token returned by acquire_ledger_lock()
-     * @param callable $mutator     Callback receiving array $current_list, returning array $updated_list
-     * @return array{success: bool, error: string, list: array}
+     * @param callable $mutator     Callback receiving array $current_list, returning array $updated_list or array with 'list' and optional metadata
+     * @return array{success: bool, error: string, list: array, meta?: array}
      */
     public static function mutate_ledger_fenced(string $owner_token, callable $mutator): array {
         if ($owner_token === '') {
@@ -138,95 +186,195 @@ class MCPAgentService {
 
         global $wpdb;
         if ($wpdb && isset($wpdb->options)) {
-            $wpdb->query('START TRANSACTION');
+            // P1: Fail closed if storage engine is not transactional (InnoDB)
+            if (!self::is_transactional_storage_engine()) {
+                return [
+                    'success' => false,
+                    'error'   => 'Transactional storage engine required for fenced MCP ledger mutation.',
+                    'list'    => [],
+                ];
+            }
 
-            // 1. Lock the mutex row with FOR UPDATE to prevent concurrent break or reassignment during write
-            $lock_row = $wpdb->get_row(
-                $wpdb->prepare(
-                    "SELECT option_value FROM {$wpdb->options} WHERE option_name = %s FOR UPDATE",
-                    self::LEDGER_LOCK_OPTION
-                )
-            );
+            // P1: Check START TRANSACTION explicitly
+            $tx_res = $wpdb->query('START TRANSACTION');
+            if ($tx_res === false) {
+                return [
+                    'success' => false,
+                    'error'   => 'Failed to start database transaction for ledger mutation.',
+                    'list'    => [],
+                ];
+            }
+            $tx_started = true;
 
-            $is_valid = false;
-            if ($lock_row && !empty($lock_row->option_value)) {
-                $existing = maybe_unserialize($lock_row->option_value);
-                if (is_array($existing) && ($existing['owner'] ?? '') === $owner_token) {
-                    $created = (int) ($existing['created'] ?? 0);
-                    // Strict lease boundary: must still be within 15 seconds
-                    if ($created > 0 && (time() - $created) <= 15) {
-                        $is_valid = true;
+            try {
+                // Clear any previous error before query
+                $wpdb->last_error = '';
+
+                // 1. Lock the mutex row with FOR UPDATE to prevent concurrent break or reassignment during write
+                $lock_row = $wpdb->get_row(
+                    $wpdb->prepare(
+                        "SELECT option_value FROM {$wpdb->options} WHERE option_name = %s FOR UPDATE",
+                        self::LEDGER_LOCK_OPTION
+                    )
+                );
+
+                if ($wpdb->last_error !== '') {
+                    $wpdb->query('ROLLBACK');
+                    return [
+                        'success' => false,
+                        'error'   => 'Database error querying ledger lock for update: ' . $wpdb->last_error,
+                        'list'    => [],
+                    ];
+                }
+
+                $is_valid = false;
+                if ($lock_row && !empty($lock_row->option_value)) {
+                    $existing = maybe_unserialize($lock_row->option_value);
+                    if (is_array($existing) && ($existing['owner'] ?? '') === $owner_token) {
+                        $created = (int) ($existing['created'] ?? 0);
+                        // Strict lease boundary: must still be within 15 seconds
+                        if ($created > 0 && (time() - $created) <= 15) {
+                            $is_valid = true;
+                        }
                     }
                 }
-            }
 
-            if (!$is_valid) {
-                $wpdb->query('ROLLBACK');
-                return [
-                    'success' => false,
-                    'error'   => 'Fencing lease expired or stolen before ledger mutation.',
-                    'list'    => [],
-                ];
-            }
-
-            // 2. Fetch current ledger under row lock FOR UPDATE
-            $ledger_row = $wpdb->get_row(
-                $wpdb->prepare(
-                    "SELECT option_value FROM {$wpdb->options} WHERE option_name = %s FOR UPDATE",
-                    self::STAGED_OPTION_KEY
-                )
-            );
-
-            $current_list = [];
-            if ($ledger_row && !empty($ledger_row->option_value)) {
-                $unserialized = maybe_unserialize($ledger_row->option_value);
-                if (is_array($unserialized)) {
-                    $current_list = $unserialized;
+                if (!$is_valid) {
+                    $wpdb->query('ROLLBACK');
+                    return [
+                        'success' => false,
+                        'error'   => 'Fencing lease expired or stolen before ledger mutation.',
+                        'list'    => [],
+                    ];
                 }
-            }
 
-            // 3. Execute mutator
-            $updated_list = $mutator($current_list);
-            if (!is_array($updated_list)) {
-                $wpdb->query('ROLLBACK');
+                // 2. Fetch current ledger under row lock FOR UPDATE
+                $wpdb->last_error = '';
+                $ledger_row = $wpdb->get_row(
+                    $wpdb->prepare(
+                        "SELECT option_value FROM {$wpdb->options} WHERE option_name = %s FOR UPDATE",
+                        self::STAGED_OPTION_KEY
+                    )
+                );
+
+                if ($wpdb->last_error !== '') {
+                    $wpdb->query('ROLLBACK');
+                    return [
+                        'success' => false,
+                        'error'   => 'Database error querying staged ledger for update: ' . $wpdb->last_error,
+                        'list'    => [],
+                    ];
+                }
+
+                $current_list = [];
+                $existing_raw_val = '';
+                if ($ledger_row && !empty($ledger_row->option_value)) {
+                    $existing_raw_val = $ledger_row->option_value;
+                    $unserialized = maybe_unserialize($ledger_row->option_value);
+                    if (is_array($unserialized)) {
+                        $current_list = $unserialized;
+                    }
+                }
+
+                // 3. Execute mutator
+                $mutator_res = $mutator($current_list);
+                $updated_list = [];
+                $meta = [];
+
+                if (is_array($mutator_res) && isset($mutator_res['list']) && is_array($mutator_res['list'])) {
+                    $updated_list = $mutator_res['list'];
+                    $meta = $mutator_res['meta'] ?? [];
+                } elseif (is_array($mutator_res)) {
+                    $updated_list = $mutator_res;
+                } else {
+                    $wpdb->query('ROLLBACK');
+                    return [
+                        'success' => false,
+                        'error'   => 'Mutator callback returned invalid data.',
+                        'list'    => [],
+                    ];
+                }
+
+                $serialized_val = maybe_serialize($updated_list);
+
+                // 4. Update ledger row atomically within the same transaction
+                $wpdb->last_error = '';
+                if ($ledger_row) {
+                    $upd_res = $wpdb->update(
+                        $wpdb->options,
+                        ['option_value' => $serialized_val],
+                        ['option_name' => self::STAGED_OPTION_KEY]
+                    );
+
+                    if ($upd_res === false || $wpdb->last_error !== '') {
+                        $wpdb->query('ROLLBACK');
+                        return [
+                            'success' => false,
+                            'error'   => 'Failed to update ledger option: ' . $wpdb->last_error,
+                            'list'    => [],
+                        ];
+                    }
+
+                    // If update returned 0 affected rows, only treat as success if serialized value is byte-for-byte identical
+                    if ($upd_res === 0 && $serialized_val !== $existing_raw_val) {
+                        $wpdb->query('ROLLBACK');
+                        return [
+                            'success' => false,
+                            'error'   => 'Ledger update affected 0 rows unexpectedly.',
+                            'list'    => [],
+                        ];
+                    }
+                } else {
+                    $ins_res = $wpdb->insert(
+                        $wpdb->options,
+                        [
+                            'option_name'  => self::STAGED_OPTION_KEY,
+                            'option_value' => $serialized_val,
+                            'autoload'     => 'no',
+                        ]
+                    );
+
+                    if ($ins_res === false || $wpdb->last_error !== '') {
+                        $wpdb->query('ROLLBACK');
+                        return [
+                            'success' => false,
+                            'error'   => 'Failed to insert ledger option: ' . $wpdb->last_error,
+                            'list'    => [],
+                        ];
+                    }
+                }
+
+                // 5. Commit transaction
+                $commit_res = $wpdb->query('COMMIT');
+                if ($commit_res === false) {
+                    $wpdb->query('ROLLBACK');
+                    return [
+                        'success' => false,
+                        'error'   => 'Failed to commit ledger transaction.',
+                        'list'    => [],
+                    ];
+                }
+
+                // Invalidate options cache for staged actions ONLY after confirmed COMMIT
+                wp_cache_delete(self::STAGED_OPTION_KEY, 'options');
+                wp_cache_delete('alloptions', 'options');
+
+                return [
+                    'success' => true,
+                    'error'   => '',
+                    'list'    => $updated_list,
+                    'meta'    => $meta,
+                ];
+            } catch (\Throwable $e) {
+                if ($tx_started) {
+                    $wpdb->query('ROLLBACK');
+                }
                 return [
                     'success' => false,
-                    'error'   => 'Mutator callback returned invalid data.',
+                    'error'   => 'Exception during ledger mutation: ' . $e->getMessage(),
                     'list'    => [],
                 ];
             }
-
-            $serialized_val = maybe_serialize($updated_list);
-
-            // 4. Update ledger row atomically within the same transaction
-            if ($ledger_row) {
-                $wpdb->update(
-                    $wpdb->options,
-                    ['option_value' => $serialized_val],
-                    ['option_name' => self::STAGED_OPTION_KEY]
-                );
-            } else {
-                $wpdb->insert(
-                    $wpdb->options,
-                    [
-                        'option_name'  => self::STAGED_OPTION_KEY,
-                        'option_value' => $serialized_val,
-                        'autoload'     => 'no',
-                    ]
-                );
-            }
-
-            $wpdb->query('COMMIT');
-
-            // Invalidate options cache for staged actions
-            wp_cache_delete(self::STAGED_OPTION_KEY, 'options');
-            wp_cache_delete('alloptions', 'options');
-
-            return [
-                'success' => true,
-                'error'   => '',
-                'list'    => $updated_list,
-            ];
         }
 
         // Fallback for non-wpdb environments (e.g. lightweight unit test mocks)
@@ -248,13 +396,17 @@ class MCPAgentService {
         }
 
         $list = get_option(self::STAGED_OPTION_KEY, []);
-        $updated_list = $mutator(is_array($list) ? $list : []);
+        $mutator_res = $mutator(is_array($list) ? $list : []);
+        $updated_list = is_array($mutator_res) && isset($mutator_res['list']) ? $mutator_res['list'] : (is_array($mutator_res) ? $mutator_res : []);
+        $meta = is_array($mutator_res) && isset($mutator_res['meta']) ? $mutator_res['meta'] : [];
+
         update_option(self::STAGED_OPTION_KEY, $updated_list, false);
 
         return [
             'success' => true,
             'error'   => '',
             'list'    => $updated_list,
+            'meta'    => $meta,
         ];
     }
 
@@ -1682,17 +1834,21 @@ class MCPAgentService {
         try {
             $mutation = self::mutate_ledger_fenced($lock_token, function (array $staged_list) use ($staged_entry) {
                 array_unshift($staged_list, $staged_entry);
+                $pruned_ids = [];
                 if (count($staged_list) > self::MAX_STAGED_ACTIONS) {
                     $pruned = array_slice($staged_list, self::MAX_STAGED_ACTIONS);
                     $staged_list = array_slice($staged_list, 0, self::MAX_STAGED_ACTIONS);
-                    // Clean up claim options for pruned terminal actions
+                    // Collect pruned terminal action IDs for post-commit deletion
                     foreach ($pruned as $old_action) {
                         if (!empty($old_action['id'])) {
-                            delete_option('webcareproscan_mcp_claim_' . sanitize_key($old_action['id']));
+                            $pruned_ids[] = sanitize_key((string) $old_action['id']);
                         }
                     }
                 }
-                return $staged_list;
+                return [
+                    'list' => $staged_list,
+                    'meta' => ['pruned_ids' => $pruned_ids],
+                ];
             });
 
             if (!$mutation['success']) {
@@ -1702,6 +1858,14 @@ class MCPAgentService {
                     'error'   => sanitize_text_field($mutation['error']),
                     'content' => [['type' => 'text', 'text' => __('Action staging lease expired or failed to commit.', 'webcare-pro-security')]],
                 ];
+            }
+
+            // P2: Delete claim options ONLY AFTER transaction committed successfully
+            $pruned_ids = $mutation['meta']['pruned_ids'] ?? [];
+            if (!empty($pruned_ids)) {
+                foreach ($pruned_ids as $pid) {
+                    delete_option('webcareproscan_mcp_claim_' . $pid);
+                }
             }
         } finally {
             self::release_ledger_lock($lock_token);
@@ -2028,9 +2192,12 @@ class MCPAgentService {
         }
 
         try {
-            $mutation = self::mutate_ledger_fenced($final_lock_token, function (array $fresh_list) use ($staged_id, $final_status, $approver_name, $exec_result) {
+            $abort_reason = '';
+            $mutation = self::mutate_ledger_fenced($final_lock_token, function (array $fresh_list) use ($staged_id, $final_status, $approver_name, $exec_result, &$abort_reason) {
+                $found = false;
                 foreach ($fresh_list as $f_idx => $f_action) {
                     if (($f_action['id'] ?? '') === $staged_id) {
+                        $found = true;
                         $fresh_list[$f_idx]['status']      = $final_status;
                         $fresh_list[$f_idx]['approved_at'] = time();
                         $fresh_list[$f_idx]['approved_by'] = $approver_name;
@@ -2038,8 +2205,25 @@ class MCPAgentService {
                         break;
                     }
                 }
+
+                if (!$found) {
+                    $abort_reason = __('Staged action record not found during finalization.', 'webcare-pro-security');
+                    return $fresh_list;
+                }
+
                 return $fresh_list;
             });
+
+            if (!empty($abort_reason)) {
+                return [
+                    'success'              => false,
+                    'status'               => 500,
+                    'staged_id'            => $staged_id,
+                    'finalization_pending' => true,
+                    'exec_result'          => $exec_result,
+                    'message'              => $abort_reason,
+                ];
+            }
 
             if (!$mutation['success']) {
                 return [

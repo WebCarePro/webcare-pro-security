@@ -18,7 +18,11 @@ uploads.ini
 AGENTS.md
 
 # Test scripts and temporary developer tools
-tests/
+tests/*
+!tests/Unit/
+tests/Unit/*
+!tests/Unit/MCPAgentServiceTest.php
+!tests/Unit/RouteRegistryTest.php
 !tests/test_review_followup_regressions.php
 test_*.php
 test_*.js
