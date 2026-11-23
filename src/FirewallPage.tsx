@@ -73,6 +73,7 @@ import { CafAdvisorPanel } from './components/CafAdvisorPanel';
 import { CafBehavioralCockpit } from './components/CafBehavioralCockpit';
 import { CloudflareSlotVisualizer } from './components/CloudflareSlotVisualizer';
 import { ConfirmDialog } from './components/ConfirmDialog';
+import { UnsavedChangesBar } from './components/ui/UnsavedChangesBar';
 import { InlineConfirmPopover } from './components/InlineConfirmPopover';
 import { formatRelativeTime, formatTelemetryDateFull } from './timeUtils';
 import { useWorkspaceMode } from './hooks/useWorkspaceMode';
@@ -437,6 +438,24 @@ export const FirewallPage = ({
   }, [isSimpleMode, activeTab]);
 
   const handleSwitchTab = (tab: 'stream' | 'rules' | 'caf' | 'drill' | 'supply_chain' | 'behavioral' | 'server_sec' | 'intel' | 'cloudflare' | 'vpatch' | 'ai_defense') => {
+    if (tab === activeTab) return;
+    if (isRulesDirty && activeTab === 'rules') {
+      requestFirewallConfirm({
+        title: 'Discard Unsaved Rule Changes?',
+        message: 'You have unsaved modifications in Firewall Rules & Presets. Switching tabs now will discard these edits.',
+        confirmLabel: 'Discard & Switch',
+        variant: 'warning',
+        onConfirm: () => {
+          handleDiscardRules();
+          doSwitchTab(tab);
+        },
+      });
+      return;
+    }
+    doSwitchTab(tab);
+  };
+
+  const doSwitchTab = (tab: 'stream' | 'rules' | 'caf' | 'drill' | 'supply_chain' | 'behavioral' | 'server_sec' | 'intel' | 'cloudflare' | 'vpatch' | 'ai_defense') => {
     setActiveTab(tab);
     try {
       const url = new URL(window.location.href);
@@ -1838,6 +1857,26 @@ export const FirewallPage = ({
     waf_runtime_rasp_privilege_guard: true,
     waf_upload_deep_mime_sanitizer: true,
   });
+  const [initialWafSettingsSnapshot, setInitialWafSettingsSnapshot] = useState<string | null>(null);
+
+  const isRulesDirty = useMemo(() => {
+    if (!initialWafSettingsSnapshot || activeTab !== 'rules') return false;
+    try {
+      return JSON.stringify(wafSettings) !== initialWafSettingsSnapshot;
+    } catch {
+      return false;
+    }
+  }, [wafSettings, initialWafSettingsSnapshot, activeTab]);
+
+  const handleDiscardRules = () => {
+    if (!initialWafSettingsSnapshot) return;
+    try {
+      setWafSettings(JSON.parse(initialWafSettingsSnapshot));
+      toast.info('Unsaved rule changes discarded.');
+    } catch {
+      // fallback
+    }
+  };
 
   const loadFirewallData = async (isSilent = false) => {
     try {
@@ -1861,7 +1900,7 @@ export const FirewallPage = ({
       }
       if (settingsRes && settingsRes.settings) {
         const s = settingsRes.settings;
-        setWafSettings({
+        const loadedWafSettings = {
           waf_enabled: s.waf_enabled !== false,
           waf_mode: s.waf_mode || 'enabled',
           waf_complementary_mode: s.waf_complementary_mode !== false,
@@ -1959,7 +1998,9 @@ export const FirewallPage = ({
           waf_guest_rest_custom_allowlist: s.waf_guest_rest_custom_allowlist || '',
           waf_runtime_rasp_privilege_guard: s.waf_runtime_rasp_privilege_guard !== false,
           waf_upload_deep_mime_sanitizer: s.waf_upload_deep_mime_sanitizer !== false,
-        });
+        };
+        setWafSettings(loadedWafSettings);
+        setInitialWafSettingsSnapshot(JSON.stringify(loadedWafSettings));
       }
     } catch (err) {
       console.error('Failed to load firewall data', err);
@@ -2459,6 +2500,7 @@ export const FirewallPage = ({
 
       if (saveRes && saveRes.settings) {
         setSaveSuccess('Firewall configuration & rules saved successfully!');
+        setInitialWafSettingsSnapshot(JSON.stringify(wafSettings));
         setTimeout(() => setSaveSuccess(null), 4000);
         loadFirewallData(true);
       } else {
@@ -11672,6 +11714,15 @@ export const FirewallPage = ({
         isLoading={firewallConfirmDialog.isLoading}
         onConfirm={firewallConfirmDialog.onConfirm || (() => {})}
         onClose={() => setFirewallConfirmDialog((prev) => ({ ...prev, isOpen: false }))}
+      />
+
+      {/* Sticky Unsaved Changes Bar */}
+      <UnsavedChangesBar
+        isDirty={isRulesDirty}
+        isSaving={savingRules}
+        onSave={handleSaveRules}
+        onDiscard={handleDiscardRules}
+        message="You have unsaved firewall rule changes"
       />
 
       {/* Developer Mode Switcher Footer Pill in Simple Mode */}

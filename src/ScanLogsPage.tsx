@@ -54,6 +54,7 @@ import { generateStandardLogFilename } from './exportUtils';
 import { getScanTargetInfo, ComponentForensicsCard, getFindingDisplayTitle, SafeErrorBoundary } from './App';
 import { formatRelativeTime, formatTelemetryDateFull, formatDateTimeComprehensive } from './timeUtils';
 import { FindingForensicsDrawer } from './components/FindingForensicsDrawer';
+import { EmptyStateCard } from './components/ui/EmptyStateCard';
 import { toast } from './utils/dialog';
 
 interface ScanLogsPageProps {
@@ -560,13 +561,13 @@ export const ScanLogsPage: React.FC<ScanLogsPageProps> = ({
         </div>
 
         {scanHistory.length === 0 ? (
-          <div className="webcare-empty-state-clean">
-            <div className="webcare-empty-state-icon-wrap">
-              <History size={36} />
-            </div>
-            <h4 className="webcare-empty-state-title">No Historical Logs Recorded</h4>
-            <p className="webcare-empty-state-desc">Run your first security scan to generate an audit log entry.</p>
-          </div>
+          <EmptyStateCard
+            icon={History}
+            title="No scans recorded yet — run your first quick scan to establish a baseline."
+            description="Run your first security scan to generate an audit log entry and record baseline system integrity."
+            badge="Audit Clean"
+            badgeType="clean"
+          />
         ) : (
           <div className="webcare-table-responsive-wrapper">
             <table className="webcare-logs-history-table">

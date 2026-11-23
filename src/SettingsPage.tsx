@@ -52,6 +52,7 @@ import { MCPAgentServiceCard } from './components/MCPAgentServiceCard';
 import { EmergencyContainmentCard } from './components/EmergencyContainmentCard';
 import { DoctorRescueCenter } from './components/DoctorRescueCenter';
 import { ConfirmDialog } from './components/ConfirmDialog';
+import { UnsavedChangesBar } from './components/ui/UnsavedChangesBar';
 import { useWorkspaceMode } from './hooks/useWorkspaceMode';
 import { toast } from './utils/dialog';
 
@@ -560,7 +561,44 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
     });
   };
 
+  const isDirty = useMemo(() => {
+    if (!settings || !initialSettingsSnapshot) return false;
+    try {
+      return JSON.stringify(settings) !== initialSettingsSnapshot;
+    } catch {
+      return false;
+    }
+  }, [settings, initialSettingsSnapshot]);
+
+  const handleDiscardChanges = () => {
+    if (!initialSettingsSnapshot) return;
+    try {
+      setSettings(JSON.parse(initialSettingsSnapshot));
+      toast.info('Unsaved changes discarded.');
+    } catch {}
+  };
+
   const handleTabChange = (newTab: SettingsSubTab) => {
+    if (isDirty) {
+      requestSettingsConfirm({
+        title: 'Discard unsaved changes?',
+        message: 'You have unsaved configuration changes in this tab. If you switch tabs now, your edits will be discarded.',
+        confirmLabel: 'Discard & Switch',
+        variant: 'warning',
+        onConfirm: () => {
+          handleDiscardChanges();
+          setActiveSubTab(newTab);
+          try {
+            const url = new URL(window.location.href);
+            url.searchParams.set('tab', newTab);
+            url.searchParams.delete('subtab');
+            window.history.pushState({ tab: newTab }, '', url.toString());
+          } catch (e) {}
+        },
+      });
+      return;
+    }
+
     setActiveSubTab(newTab);
     try {
       const url = new URL(window.location.href);
@@ -642,6 +680,7 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
   const [settings, setSettings] = useState<ScannerSettings | null>(null);
+  const [initialSettingsSnapshot, setInitialSettingsSnapshot] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [saving, setSaving] = useState<boolean>(false);
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
@@ -1181,10 +1220,12 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
         if (typeof res.is_temporary_support === 'boolean') {
           setIsTemporarySupport(res.is_temporary_support);
         }
-        setSettings({
+        const loadedSettings = {
           ...res.settings,
           ai_connect_status: res.ai_connect_status,
-        });
+        };
+        setSettings(loadedSettings);
+        setInitialSettingsSnapshot(JSON.stringify(loadedSettings));
         setNextScheduled(res.next_scheduled || null);
         if (res.schedule_time) {
           setScheduleTimeInfo(res.schedule_time);
@@ -1343,10 +1384,12 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
 
       if (res && res.success) {
         setShowKey({});
-        setSettings({
+        const savedSettings = {
           ...res.settings,
           ai_connect_status: res.ai_connect_status || settings.ai_connect_status,
-        });
+        };
+        setSettings(savedSettings);
+        setInitialSettingsSnapshot(JSON.stringify(savedSettings));
         setNextScheduled(res.next_scheduled || null);
         if (res.schedule_time) {
           setScheduleTimeInfo(res.schedule_time);
@@ -6416,6 +6459,14 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
           </div>
         </div>
       )}
+
+      {/* Sticky Unsaved Changes Action Bar */}
+      <UnsavedChangesBar
+        isDirty={isDirty}
+        isSaving={saving}
+        onSave={() => handleSave()}
+        onDiscard={handleDiscardChanges}
+      />
 
       {/* Confirmation Modal */}
       <ConfirmDialog

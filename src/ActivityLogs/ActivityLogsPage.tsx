@@ -1639,10 +1639,10 @@ export function ActivityLogsPage({ apiRequest }: ActivityLogsPageProps) {
                   <td colSpan={viewMode === 'simple' ? 6 : 8} className="webcare-text-center webcare-p-8 webcare-text-muted" style={{ padding: '48px 20px' }}>
                     <Activity size={36} style={{ margin: '0 auto 12px auto', opacity: 0.3 }} />
                     <div style={{ fontSize: '15px', fontWeight: 600, color: 'var(--webcare-text-primary, #0f172a)' }}>
-                      {loading ? 'Decrypting AES-256-GCM activity stream...' : 'No activity log records found matching your filters.'}
+                      {loading ? 'Decrypting AES-256-GCM activity stream...' : 'No admin changes recorded yet in the last 7 days.'}
                     </div>
                     <p style={{ margin: '4px 0 0 0', fontSize: '12px' }}>
-                      {loading ? 'Verifying cryptographic envelope authentication tags...' : 'Try adjusting the search query or switching category filter to "All Event Categories".'}
+                      {loading ? 'Verifying cryptographic envelope authentication tags...' : 'No administrator activity or configuration changes match your active filters.'}
                     </p>
                   </td>
                 </tr>

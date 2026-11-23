@@ -60,6 +60,7 @@ import {
 import { useWorkspaceMode } from './hooks/useWorkspaceMode';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { BansAndAllowlistsPanel } from './components/BansAndAllowlistsPanel';
+import { EmptyStateCard } from './components/ui/EmptyStateCard';
 import { formatRelativeTime, formatTelemetryDateFull } from './timeUtils';
 import { toast } from './utils/dialog';
 
@@ -2622,39 +2623,28 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
             <div style={{ fontSize: '12px', marginTop: '4px' }}>Aggregating payload signatures and client telemetry</div>
           </div>
         ) : logs.length === 0 ? (
-          <div className="webcare-empty-state-clean" style={{ margin: 0, padding: '48px 24px', textAlign: 'center' }}>
-            <div className="webcare-empty-state-icon-wrap" style={{ margin: '0 auto 16px auto', width: '56px', height: '56px', borderRadius: '50%', background: 'var(--webcare-bg-surface, #f1f5f9)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#4f46e5' }}>
-              <ShieldCheck size={36} />
-            </div>
-            <h4 className="webcare-empty-state-title" style={{ fontSize: '16px', fontWeight: 700, margin: '0 0 8px 0', color: 'var(--webcare-text-primary, #0f172a)' }}>
-              {selectedAction !== 'all' || searchQuery || selectedCategory !== 'all' || filterIp || selectedMethod !== 'all' || selectedStatusCode !== 'all'
-                ? 'No Incident Logs Matching Filter Criteria'
-                : 'No WAF Incidents Recorded'}
-            </h4>
-            <p className="webcare-empty-state-desc" style={{ fontSize: '13px', maxWidth: '520px', margin: '0 auto 16px auto', color: 'var(--webcare-text-secondary, #475569)' }}>
-              {selectedAction !== 'all' || searchQuery || selectedCategory !== 'all' || filterIp || selectedMethod !== 'all' || selectedStatusCode !== 'all'
-                ? 'No events match your active search keyword or filter pills. Try resetting your filters to view historic entries.'
-                : 'Zero malicious probes intercepted. Your server application perimeter is clean and actively monitoring web traffic.'}
-            </p>
-            {(selectedAction !== 'all' || searchQuery || selectedCategory !== 'all' || filterIp || selectedMethod !== 'all' || selectedStatusCode !== 'all') && (
-              <button
-                type="button"
-                className="webcare-btn webcare-btn-primary"
-                onClick={() => {
-                  setSelectedAction('all');
-                  setSearchQuery('');
-                  setSelectedCategory('all');
-                  setSelectedMethod('all');
-                  setSelectedStatusCode('all');
-                  setFilterIp('');
-                  setPage(1);
-                }}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '13px', padding: '6px 14px' }}
-              >
-                <RefreshCw size={13} /> Reset All Filters
-              </button>
-            )}
-          </div>
+          <EmptyStateCard
+            icon={ShieldCheck}
+            title={selectedAction !== 'all' || searchQuery || selectedCategory !== 'all' || filterIp || selectedMethod !== 'all' || selectedStatusCode !== 'all'
+              ? 'No Incident Logs Match Criteria'
+              : 'All quiet — no blocked requests match your filters.'}
+            description={selectedAction !== 'all' || searchQuery || selectedCategory !== 'all' || filterIp || selectedMethod !== 'all' || selectedStatusCode !== 'all'
+              ? 'No events match your active search keyword or filter pills. Try resetting your filters to view historic entries.'
+              : 'Zero malicious probes intercepted. Your server application perimeter is clean and actively monitoring web traffic.'}
+            badge="Perimeter Clean"
+            badgeType="clean"
+            actionLabel={(selectedAction !== 'all' || searchQuery || selectedCategory !== 'all' || filterIp || selectedMethod !== 'all' || selectedStatusCode !== 'all') ? 'Reset All Filters' : undefined}
+            onAction={() => {
+              setSelectedAction('all');
+              setSearchQuery('');
+              setSelectedCategory('all');
+              setSelectedMethod('all');
+              setSelectedStatusCode('all');
+              setFilterIp('');
+              setPage(1);
+            }}
+            actionIcon={RefreshCw}
+          />
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table className="webcare-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>

@@ -43,6 +43,7 @@ import IdentityForensicsCard from './components/IdentityForensicsCard';
 import { WebAuthnPasskeyCard } from './components/WebAuthnPasskeyCard';
 import { AppPasswordSentinelCard } from './components/AppPasswordSentinelCard';
 import { ConfirmDialog } from './components/ConfirmDialog';
+import { UnsavedChangesBar } from './components/ui/UnsavedChangesBar';
 import { useWorkspaceMode } from './hooks/useWorkspaceMode';
 import { InlineConfirmPopover } from './components/InlineConfirmPopover';
 import { toast } from './utils/dialog';
@@ -386,8 +387,53 @@ export const AuthSecurityPage = ({
     });
   };
 
+  const isSettingsDirty = useMemo(() => {
+    if (!initialLoginSettingsSnapshot) return false;
+    try {
+      return JSON.stringify(loginSettings) !== initialLoginSettingsSnapshot;
+    } catch {
+      return false;
+    }
+  }, [loginSettings, initialLoginSettingsSnapshot]);
+
+  const handleDiscardSettings = () => {
+    if (!initialLoginSettingsSnapshot) return;
+    try {
+      setLoginSettings(JSON.parse(initialLoginSettingsSnapshot));
+      toast.info('Unsaved login security changes discarded.');
+    } catch {}
+  };
+
   // Tab switch handler with URL updating
   const handleTabSwitch = (tab: AuthSubTab, nestedSubTab?: string) => {
+    if (activeTab === 'settings' && isSettingsDirty && tab !== 'settings') {
+      requestAuthConfirm({
+        title: 'Discard unsaved changes?',
+        message: 'You have unsaved changes in Login Security & Rate Limiting. If you leave this tab now, your edits will be discarded.',
+        confirmLabel: 'Discard & Switch',
+        variant: 'warning',
+        onConfirm: () => {
+          handleDiscardSettings();
+          setActiveTab(tab);
+          if (onSubTabChange) {
+            onSubTabChange(tab, nestedSubTab);
+          } else {
+            try {
+              const url = new URL(window.location.href);
+              url.searchParams.set('tab', tab);
+              if (nestedSubTab) {
+                url.searchParams.set('subtab', nestedSubTab);
+              } else {
+                url.searchParams.delete('subtab');
+              }
+              window.history.pushState({ tab, subtab: nestedSubTab }, '', url.toString());
+            } catch (e) {}
+          }
+        },
+      });
+      return;
+    }
+
     setActiveTab(tab);
     if (onSubTabChange) {
       onSubTabChange(tab, nestedSubTab);
@@ -550,6 +596,7 @@ export const AuthSecurityPage = ({
     session_sentinel_enabled: true,
     session_block_concurrent: false,
   });
+  const [initialLoginSettingsSnapshot, setInitialLoginSettingsSnapshot] = useState<string | null>(null);
   const [savingSettings, setSavingSettings] = useState<boolean>(false);
   const [settingsSuccess, setSettingsSuccess] = useState<string | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
@@ -566,9 +613,9 @@ export const AuthSecurityPage = ({
         setPolicyEnforceAdmins(Boolean(res.auth_2fa_enforce_admins));
         setPolicyMode(res.auth_2fa_policy_mode || 'immediate');
         setPolicyGraceDays(typeof res.auth_2fa_grace_days === 'number' ? res.auth_2fa_grace_days : 0);
-        setLoginSettings({
+        const loaded = {
           auth_2fa_enabled: res.auth_2fa_enabled !== false,
-          auth_2fa_algorithm: res.auth_2fa_algorithm === 'sha512' ? 'sha512' : 'sha1',
+          auth_2fa_algorithm: (res.auth_2fa_algorithm === 'sha512' ? 'sha512' : 'sha1') as 'sha1' | 'sha512',
           auth_2fa_digits: res.auth_2fa_algorithm === 'sha512' || res.auth_2fa_digits === 8 ? 8 : 6,
           auth_2fa_remember_device: res.auth_2fa_remember_device !== false,
           auth_2fa_remember_days: res.auth_2fa_remember_days || 7,
@@ -577,7 +624,9 @@ export const AuthSecurityPage = ({
           login_lockout_duration: res.login_lockout_duration || 15,
           session_sentinel_enabled: res.session_sentinel_enabled !== false,
           session_block_concurrent: !!res.session_block_concurrent,
-        });
+        };
+        setLoginSettings(loaded);
+        setInitialLoginSettingsSnapshot(JSON.stringify(loaded));
       }
 
     } catch (err) {
@@ -1231,6 +1280,7 @@ export const AuthSecurityPage = ({
       });
 
       if (res && res.settings) {
+        setInitialLoginSettingsSnapshot(JSON.stringify(loginSettings));
         setSettingsSuccess('Login security & rate-limiting settings saved successfully!');
         setTimeout(() => setSettingsSuccess(null), 4000);
         loadStatus(true);
@@ -3394,6 +3444,15 @@ export const AuthSecurityPage = ({
       {activeTab === 'app_passwords' && (
         <AppPasswordSentinelCard apiRequest={apiRequest} />
       )}
+
+      {/* Sticky Unsaved Changes Action Bar */}
+      <UnsavedChangesBar
+        isDirty={activeTab === 'settings' && isSettingsDirty}
+        isSaving={savingSettings}
+        onSave={handleSaveSettings}
+        onDiscard={handleDiscardSettings}
+        message="You have unsaved login security settings"
+      />
 
       {/* Confirmation Modal */}
       <ConfirmDialog

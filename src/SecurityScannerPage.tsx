@@ -304,6 +304,19 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
   const [expandedIssue, setExpandedIssue] = useState<number | null>(null);
   const [copiedIssuePath, setCopiedIssuePath] = useState<string | null>(null);
 
+  // Close open forensic drawer when pressing Escape
+  useEffect(() => {
+    if (!expandedIssue) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setExpandedIssue(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [expandedIssue]);
+
   // Pagination
   const [findingsPage, setFindingsPage] = useState<number>(1);
   const [findingsPageSize, setFindingsPageSize] = useState<number>(100);
