@@ -59,6 +59,7 @@ import {
 } from 'lucide-react';
 import { useWorkspaceMode } from './hooks/useWorkspaceMode';
 import { ConfirmDialog } from './components/ConfirmDialog';
+import { BansAndAllowlistsPanel } from './components/BansAndAllowlistsPanel';
 import { formatRelativeTime, formatTelemetryDateFull } from './timeUtils';
 import { toast } from './utils/dialog';
 
@@ -527,26 +528,31 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
   });
   const [isExporting, setIsExporting] = useState<boolean>(false);
 
-  // Sub-Tab Navigation: 'local' (Server WAF Incidents) vs 'cloudflare' (Cloudflare Edge Block Events)
-  const getInitialLogTab = (): 'local' | 'cloudflare' => {
+  // Sub-Tab Navigation: 'local' (Server WAF Incidents) vs 'cloudflare' (Cloudflare Edge Block Events) vs 'rules' (Bans & Allowlists)
+  const getInitialLogTab = (): 'local' | 'cloudflare' | 'rules' => {
     try {
       const params = new URLSearchParams(window.location.search);
       const tab = params.get('tab') || params.get('subtab');
       if (tab === 'cloudflare' || tab === 'edge') {
         return 'cloudflare';
       }
+      if (tab === 'rules' || tab === 'bans' || tab === 'allowlist' || tab === 'allowlists') {
+        return 'rules';
+      }
     } catch (e) {}
     return 'local';
   };
 
-  const [activeLogTab, setActiveLogTab] = useState<'local' | 'cloudflare'>(getInitialLogTab);
+  const [activeLogTab, setActiveLogTab] = useState<'local' | 'cloudflare' | 'rules'>(getInitialLogTab);
 
-  const switchLogTab = (tab: 'local' | 'cloudflare') => {
+  const switchLogTab = (tab: 'local' | 'cloudflare' | 'rules') => {
     setActiveLogTab(tab);
     try {
       const url = new URL(window.location.href);
       if (tab === 'cloudflare') {
         url.searchParams.set('tab', 'cloudflare');
+      } else if (tab === 'rules') {
+        url.searchParams.set('tab', 'rules');
       } else {
         url.searchParams.delete('tab');
       }
@@ -1659,23 +1665,25 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
             )}
 
             {/* Refresh */}
-            <button
-              type="button"
-              className="webcare-btn webcare-btn-secondary"
-              onClick={() => {
-                if (activeLogTab === 'cloudflare') {
-                  loadStoredCfEvents();
-                } else {
-                  fetchLogs(true);
-                  fetchStats();
-                }
-              }}
-              disabled={activeLogTab === 'cloudflare' ? cfLoading : (refreshing || loading)}
-              style={{ fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-            >
-              <RefreshCw size={14} className={(activeLogTab === 'cloudflare' ? cfLoading : refreshing) ? 'webcare-spin-icon' : ''} />
-              <span>Refresh</span>
-            </button>
+            {activeLogTab !== 'rules' && (
+              <button
+                type="button"
+                className="webcare-btn webcare-btn-secondary"
+                onClick={() => {
+                  if (activeLogTab === 'cloudflare') {
+                    loadStoredCfEvents();
+                  } else {
+                    fetchLogs(true);
+                    fetchStats();
+                  }
+                }}
+                disabled={activeLogTab === 'cloudflare' ? cfLoading : (refreshing || loading)}
+                style={{ fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+              >
+                <RefreshCw size={14} className={(activeLogTab === 'cloudflare' ? cfLoading : refreshing) ? 'webcare-spin-icon' : ''} />
+                <span>Refresh</span>
+              </button>
+            )}
 
             {/* Export Logs Button (for Local Logs) */}
             {activeLogTab === 'local' && (
@@ -2040,6 +2048,17 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
                 {cfEvents.length}
               </span>
             )}
+          </button>
+
+          <button
+            type="button"
+            className={`webcare-tab-link ${activeLogTab === 'rules' ? 'is-active' : ''}`}
+            style={{ color: activeLogTab === 'rules' ? undefined : '#dc2626', fontWeight: 600 }}
+            onClick={() => { setIsMoreMenuOpen(false); switchLogTab('rules'); }}
+            title="Bans, Block & Allowlist Rules: Blocked IPs, Whitelists, URL Allowlist & Progressive Enforcement"
+          >
+            <Shield size={16} style={{ color: activeLogTab === 'rules' ? undefined : '#dc2626' }} />
+            <span>Bans &amp; Allowlists</span>
           </button>
         </div>
       </div>
@@ -4667,6 +4686,17 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
               </span>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* 4. TAB CONTENT: BANS, BLOCK & ALLOWLIST RULES */}
+      {activeLogTab === 'rules' && (
+        <div style={{ marginTop: '16px' }}>
+          <BansAndAllowlistsPanel
+            apiRequest={apiRequest}
+            onNotice={(type, msg) => setActionMessage({ type, text: msg })}
+            cfConfigured={Boolean(cfStatus?.configured)}
+          />
         </div>
       )}
 

@@ -6676,6 +6676,45 @@ export const FirewallPage = ({
 
           {/* Whitelisted IPs & Allowlisted URLs in ONE Single Column */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', minWidth: 0 }}>
+            {/* Quick Link Banner to Dedicated Bans & Allowlists Full Page View */}
+            <div
+              className="webcare-firewall-card"
+              style={{
+                padding: '12px 16px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: '12px',
+                background: 'var(--webcare-bg-surface-elevated, #f8fafc)',
+                border: '1px solid var(--webcare-border, #e2e8f0)',
+                borderRadius: '8px'
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Shield size={16} color="#dc2626" />
+                <span style={{ fontSize: '13px', color: 'var(--webcare-text-secondary, #475569)' }}>
+                  Prefer a full-screen dedicated management workspace?
+                </span>
+              </div>
+              <a
+                href="admin.php?page=webcare-pro-waf-logs&tab=rules"
+                className="webcare-btn webcare-btn-secondary"
+                style={{
+                  fontSize: '12px',
+                  padding: '5px 12px',
+                  fontWeight: 600,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  color: 'var(--webcare-text-primary, #0f172a)'
+                }}
+              >
+                <span>Open Dedicated Bans &amp; Allowlists Page</span>
+                <ArrowRight size={13} />
+              </a>
+            </div>
+
             {/* Blocked IP Addresses & Subnets (Central Blocklist Card) */}
             <div id="webcare-blocked-ips-section" className="webcare-firewall-card" style={{ padding: '20px' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>

@@ -471,6 +471,20 @@ export const NAVIGATION_CATALOG: NavigationItem[] = [
     intents: ['unban ip address', 'unblock customer', 'inspect blocked visitor request']
   },
   {
+    id: 'fw-bans-allowlists',
+    title: 'Bans, Block & Allowlist Rules',
+    desc: 'Banned IPs, trusted whitelists, URL exemptions, progressive enforcement & targeted bypasses',
+    icon: Ban,
+    pillar: 'Firewall & Edge',
+    slug: 'webcare-pro-waf-logs',
+    tab: 'rules',
+    badge: 'BANS & ALLOWLIST',
+    badgeType: 'danger',
+    isPopular: true,
+    keywords: ['bans', 'blocked', 'blocked ip', 'whitelist', 'allowlist', 'unban', 'allowlisted urls', 'progressive enforcement', 'soft block', 'bypass rules', 'visitor blocked', 'unban ip', 'safe ip'],
+    intents: ['manage blocked ip addresses', 'unban visitor', 'add whitelisted ip', 'allowlist url endpoint']
+  },
+  {
     id: 'fw-modular-waf',
     title: 'Modular Firewall Rules & AST Studio',
     desc: 'Autonomous site-tailored modular rules synthesized from PHP AST & endpoint profiles',
