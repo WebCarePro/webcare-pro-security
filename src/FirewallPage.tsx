@@ -333,6 +333,206 @@ export const FirewallPage = ({
     }
   };
 
+  // Rules form state
+  const [wafSettings, setWafSettings] = useState<{
+    waf_enabled: boolean;
+    waf_mode: 'enabled' | 'learning' | 'disabled';
+    waf_complementary_mode: boolean;
+    waf_ecommerce_safe_mode: boolean;
+    waf_woo_carding_protection: boolean;
+    waf_woo_checkout_max_attempts: number;
+    waf_woo_carding_lockout_duration: number;
+    waf_woo_coupon_protection: boolean;
+    waf_woo_coupon_max_failures: number;
+    waf_woo_coupon_lockout_duration: number;
+    waf_woo_registration_protection: boolean;
+    waf_woo_reg_max_per_ip: number;
+    waf_woo_reg_window_hours: number;
+    waf_woo_reg_block_disposable_emails: boolean;
+    waf_woo_cart_flood_protection: boolean;
+    waf_woo_max_cart_items: number;
+    waf_woo_add_to_cart_rate_limit: number;
+    waf_woo_scraping_protection: boolean;
+    waf_woo_scraping_max_requests: number;
+    waf_woo_scraping_lockout_duration: number;
+    waf_affiliate_shield_enabled: boolean;
+    waf_affiliate_max_clicks_min: number;
+    waf_affiliate_anti_injection: boolean;
+    waf_affiliate_reg_spam_protection: boolean;
+    waf_affiliate_direct_link_armor: boolean;
+    waf_forms_safe_mode: boolean;
+    form_spam_protection_enabled: boolean;
+    form_block_headless_browsers: boolean;
+    form_honeypot_enabled: boolean;
+    form_speed_gate_enabled: boolean;
+    form_flood_limit_enabled: boolean;
+    form_max_submits_per_window: number;
+    form_flood_window_minutes: number;
+    form_content_filtering: boolean;
+    waf_block_sqli: boolean;
+    waf_block_xss: boolean;
+    waf_block_traversal: boolean;
+    waf_block_php_injection: boolean;
+    waf_disable_xmlrpc: boolean;
+    waf_allow_jetpack_xmlrpc: boolean;
+    waf_whitelisted_ips: string;
+    waf_whitelist_require_admin: boolean;
+    waf_whitelist_log_telemetry: boolean;
+    waf_blocked_ips: string;
+    threat_intel_enabled: boolean;
+    threat_intel_block_blacklisted_ips: boolean;
+    waf_block_fake_bots: boolean;
+    waf_block_ai_scrapers: boolean;
+    waf_dynamic_robots_ai: boolean;
+    waf_block_404_scanners: boolean;
+    waf_404_threshold: number;
+    waf_404_window_seconds: number;
+    waf_404_lockout_duration: number;
+    waf_allow_uptime_monitors: boolean;
+    waf_allow_central_management: boolean;
+    waf_allow_page_builders: boolean;
+    waf_block_empty_post_ua_referer: boolean;
+    waf_block_empty_user_agent: boolean;
+    waf_enable_progressive_warnings: boolean;
+    waf_contact_support_url: string;
+    waf_whitelisted_urls: string;
+    waf_targeted_allowlist_rules: string;
+    waf_block_forbidden_usernames: boolean;
+    waf_forbidden_usernames_list: string;
+    waf_prevent_admin_registration: boolean;
+    waf_mask_login_errors: boolean;
+    waf_enforce_strong_passwords: boolean;
+    waf_strong_passwords_roles: string;
+    waf_check_pwned_passwords: boolean;
+    waf_block_malicious_uploads: boolean;
+    waf_block_unsafe_http_methods: boolean;
+    waf_block_null_byte_attacks: boolean;
+    waf_block_sensitive_file_probes: boolean;
+    waf_block_uploads_php_exec: boolean;
+    waf_block_external_cron: boolean;
+    waf_block_open_redirects: boolean;
+    waf_block_ssrf_metadata: boolean;
+    waf_block_install_php: boolean;
+    waf_disallow_phpmyadmin_plugins: boolean;
+    waf_disallow_filemanager_plugins: boolean;
+    waf_disallow_phpmyadmin_uploads: boolean;
+    waf_disallow_filemanager_uploads: boolean;
+    waf_block_rest_user_enum: boolean;
+    waf_block_author_scan: boolean;
+    waf_limit_lostpassword: boolean;
+    waf_enforce_host_allowlist: boolean;
+    waf_allowed_host_aliases: string;
+    waf_limit_admin_ajax: boolean;
+    waf_admin_ajax_limit_per_min: number;
+    waf_block_oversized_requests: boolean;
+    waf_block_ai_prompt_injection: boolean;
+    waf_guest_ajax_policy: 'monitor' | 'block' | 'off';
+    waf_guest_ajax_custom_allowlist: string;
+    waf_guest_rest_policy: 'block';
+    waf_guest_rest_custom_allowlist: string;
+    waf_runtime_rasp_privilege_guard: boolean;
+    waf_upload_deep_mime_sanitizer: boolean;
+  }>({
+    waf_enabled: true,
+    waf_mode: 'enabled',
+    waf_complementary_mode: true,
+    waf_ecommerce_safe_mode: false,
+    waf_woo_carding_protection: true,
+    waf_woo_checkout_max_attempts: 3,
+    waf_woo_carding_lockout_duration: 30,
+    waf_woo_coupon_protection: true,
+    waf_woo_coupon_max_failures: 5,
+    waf_woo_coupon_lockout_duration: 15,
+    waf_woo_registration_protection: true,
+    waf_woo_reg_max_per_ip: 3,
+    waf_woo_reg_window_hours: 1,
+    waf_woo_reg_block_disposable_emails: true,
+    waf_woo_cart_flood_protection: true,
+    waf_woo_max_cart_items: 50,
+    waf_woo_add_to_cart_rate_limit: 15,
+    waf_woo_scraping_protection: true,
+    waf_woo_scraping_max_requests: 60,
+    waf_woo_scraping_lockout_duration: 15,
+    waf_affiliate_shield_enabled: false,
+    waf_affiliate_max_clicks_min: 10,
+    waf_affiliate_anti_injection: true,
+    waf_affiliate_reg_spam_protection: true,
+    waf_affiliate_direct_link_armor: true,
+    waf_forms_safe_mode: true,
+    form_spam_protection_enabled: true,
+    form_block_headless_browsers: true,
+    form_honeypot_enabled: true,
+    form_speed_gate_enabled: true,
+    form_flood_limit_enabled: true,
+    form_max_submits_per_window: 5,
+    form_flood_window_minutes: 10,
+    form_content_filtering: true,
+    waf_block_sqli: true,
+    waf_block_xss: true,
+    waf_block_traversal: true,
+    waf_block_php_injection: true,
+    waf_disable_xmlrpc: false,
+    waf_allow_jetpack_xmlrpc: false,
+    waf_whitelisted_ips: '',
+    waf_whitelist_require_admin: true,
+    waf_whitelist_log_telemetry: true,
+    waf_blocked_ips: '',
+    threat_intel_enabled: true,
+    threat_intel_block_blacklisted_ips: true,
+    waf_block_fake_bots: true,
+    waf_block_ai_scrapers: false,
+    waf_dynamic_robots_ai: false,
+    waf_block_404_scanners: true,
+    waf_404_threshold: 10,
+    waf_404_window_seconds: 60,
+    waf_404_lockout_duration: 30,
+    waf_allow_uptime_monitors: false,
+    waf_allow_central_management: false,
+    waf_allow_page_builders: false,
+    waf_block_empty_post_ua_referer: true,
+    waf_block_empty_user_agent: true,
+    waf_enable_progressive_warnings: true,
+    waf_contact_support_url: '',
+    waf_whitelisted_urls: '',
+    waf_targeted_allowlist_rules: '[]',
+    waf_block_forbidden_usernames: true,
+    waf_forbidden_usernames_list: "admin\nadministrator\nroot",
+    waf_prevent_admin_registration: true,
+    waf_mask_login_errors: true,
+    waf_enforce_strong_passwords: true,
+    waf_strong_passwords_roles: 'administrator, editor',
+    waf_check_pwned_passwords: true,
+    waf_block_malicious_uploads: true,
+    waf_block_unsafe_http_methods: true,
+    waf_block_null_byte_attacks: true,
+    waf_block_sensitive_file_probes: true,
+    waf_block_uploads_php_exec: true,
+    waf_block_external_cron: false,
+    waf_block_open_redirects: true,
+    waf_block_ssrf_metadata: true,
+    waf_block_install_php: true,
+    waf_disallow_phpmyadmin_plugins: true,
+    waf_disallow_filemanager_plugins: true,
+    waf_disallow_phpmyadmin_uploads: true,
+    waf_disallow_filemanager_uploads: true,
+    waf_block_rest_user_enum: true,
+    waf_block_author_scan: true,
+    waf_limit_lostpassword: true,
+    waf_enforce_host_allowlist: true,
+    waf_allowed_host_aliases: '',
+    waf_limit_admin_ajax: true,
+    waf_admin_ajax_limit_per_min: 60,
+    waf_block_oversized_requests: true,
+    waf_block_ai_prompt_injection: true,
+    waf_guest_ajax_policy: 'monitor',
+    waf_guest_ajax_custom_allowlist: '',
+    waf_guest_rest_policy: 'block',
+    waf_guest_rest_custom_allowlist: '',
+    waf_runtime_rasp_privilege_guard: true,
+    waf_upload_deep_mime_sanitizer: true,
+  });
+  const [initialWafSettingsSnapshot, setInitialWafSettingsSnapshot] = useState<string | null>(null);
+
   // In-App Confirm Dialog State
   const [firewallConfirmDialog, setFirewallConfirmDialog] = useState<{
     isOpen: boolean;
@@ -383,6 +583,25 @@ export const FirewallPage = ({
         }
       },
     });
+  };
+
+  const isRulesDirty = useMemo(() => {
+    if (!initialWafSettingsSnapshot || activeTab !== 'rules') return false;
+    try {
+      return JSON.stringify(wafSettings) !== initialWafSettingsSnapshot;
+    } catch {
+      return false;
+    }
+  }, [wafSettings, initialWafSettingsSnapshot, activeTab]);
+
+  const handleDiscardRules = () => {
+    if (!initialWafSettingsSnapshot) return;
+    try {
+      setWafSettings(JSON.parse(initialWafSettingsSnapshot));
+      toast.info('Unsaved rule changes discarded.');
+    } catch {
+      // fallback
+    }
   };
 
   const copyToClipboard = (text: string, label: string) => {
@@ -1660,223 +1879,6 @@ export const FirewallPage = ({
   };
 
   // Rules form state
-  const [wafSettings, setWafSettings] = useState<{
-    waf_enabled: boolean;
-    waf_mode: 'enabled' | 'learning' | 'disabled';
-    waf_complementary_mode: boolean;
-    waf_block_sqli: boolean;
-    waf_block_xss: boolean;
-    waf_block_traversal: boolean;
-    waf_block_php_injection: boolean;
-    waf_disable_xmlrpc: boolean;
-    waf_allow_jetpack_xmlrpc: boolean;
-    waf_whitelisted_ips: string;
-    waf_whitelist_require_admin: boolean;
-    waf_whitelist_log_telemetry: boolean;
-    waf_blocked_ips: string;
-    threat_intel_enabled: boolean;
-    threat_intel_block_blacklisted_ips: boolean;
-    waf_block_fake_bots: boolean;
-    waf_block_ai_scrapers: boolean;
-    waf_dynamic_robots_ai: boolean;
-    waf_block_404_scanners: boolean;
-    waf_404_threshold: number;
-    waf_404_window_seconds: number;
-    waf_404_lockout_duration: number;
-    waf_allow_uptime_monitors: boolean;
-    waf_allow_central_management: boolean;
-    waf_allow_page_builders: boolean;
-    waf_ecommerce_safe_mode: boolean;
-    waf_woo_carding_protection: boolean;
-    waf_woo_checkout_max_attempts: number;
-    waf_woo_carding_lockout_duration: number;
-    waf_woo_coupon_protection: boolean;
-    waf_woo_coupon_max_failures: number;
-    waf_woo_coupon_lockout_duration: number;
-    waf_woo_registration_protection: boolean;
-    waf_woo_reg_max_per_ip: number;
-    waf_woo_reg_window_hours: number;
-    waf_woo_reg_block_disposable_emails: boolean;
-    waf_woo_cart_flood_protection: boolean;
-    waf_woo_max_cart_items: number;
-    waf_woo_add_to_cart_rate_limit: number;
-    waf_woo_scraping_protection: boolean;
-    waf_woo_scraping_max_requests: number;
-    waf_woo_scraping_lockout_duration: number;
-    waf_affiliate_shield_enabled: boolean;
-    waf_affiliate_max_clicks_min: number;
-    waf_affiliate_anti_injection: boolean;
-    waf_affiliate_reg_spam_protection: boolean;
-    waf_affiliate_direct_link_armor: boolean;
-    waf_forms_safe_mode: boolean;
-    form_spam_protection_enabled: boolean;
-    form_block_headless_browsers: boolean;
-    form_honeypot_enabled: boolean;
-    form_speed_gate_enabled: boolean;
-    form_flood_limit_enabled: boolean;
-    form_max_submits_per_window: number;
-    form_flood_window_minutes: number;
-    form_content_filtering: boolean;
-    waf_block_empty_post_ua_referer: boolean;
-    waf_block_empty_user_agent: boolean;
-    waf_enable_progressive_warnings: boolean;
-    waf_contact_support_url: string;
-    waf_whitelisted_urls: string;
-    waf_targeted_allowlist_rules: string;
-    waf_block_forbidden_usernames: boolean;
-    waf_forbidden_usernames_list: string;
-    waf_prevent_admin_registration: boolean;
-    waf_mask_login_errors: boolean;
-    waf_enforce_strong_passwords: boolean;
-    waf_strong_passwords_roles: string;
-    waf_check_pwned_passwords: boolean;
-    waf_block_malicious_uploads: boolean;
-    waf_block_unsafe_http_methods: boolean;
-    waf_block_null_byte_attacks: boolean;
-    waf_block_sensitive_file_probes: boolean;
-    waf_block_uploads_php_exec: boolean;
-    waf_block_external_cron: boolean;
-    waf_block_open_redirects: boolean;
-    waf_block_ssrf_metadata: boolean;
-    waf_block_install_php: boolean;
-    waf_disallow_phpmyadmin_plugins: boolean;
-    waf_disallow_filemanager_plugins: boolean;
-    waf_disallow_phpmyadmin_uploads: boolean;
-    waf_disallow_filemanager_uploads: boolean;
-    waf_block_rest_user_enum: boolean;
-    waf_block_author_scan: boolean;
-    waf_limit_lostpassword: boolean;
-    waf_enforce_host_allowlist: boolean;
-    waf_allowed_host_aliases: string;
-    waf_limit_admin_ajax: boolean;
-    waf_admin_ajax_limit_per_min: number;
-    waf_block_oversized_requests: boolean;
-    waf_block_ai_prompt_injection: boolean;
-    waf_guest_ajax_policy: 'monitor' | 'block' | 'off';
-    waf_guest_ajax_custom_allowlist: string;
-    waf_guest_rest_policy: 'monitor' | 'block' | 'off';
-    waf_guest_rest_custom_allowlist: string;
-    waf_runtime_rasp_privilege_guard: boolean;
-    waf_upload_deep_mime_sanitizer: boolean;
-  }>({
-    waf_enabled: true,
-    waf_mode: 'enabled',
-    waf_complementary_mode: true,
-    waf_ecommerce_safe_mode: false,
-    waf_woo_carding_protection: true,
-    waf_woo_checkout_max_attempts: 3,
-    waf_woo_carding_lockout_duration: 30,
-    waf_woo_coupon_protection: true,
-    waf_woo_coupon_max_failures: 5,
-    waf_woo_coupon_lockout_duration: 15,
-    waf_woo_registration_protection: true,
-    waf_woo_reg_max_per_ip: 3,
-    waf_woo_reg_window_hours: 1,
-    waf_woo_reg_block_disposable_emails: true,
-    waf_woo_cart_flood_protection: true,
-    waf_woo_max_cart_items: 50,
-    waf_woo_add_to_cart_rate_limit: 15,
-    waf_woo_scraping_protection: true,
-    waf_woo_scraping_max_requests: 60,
-    waf_woo_scraping_lockout_duration: 15,
-    waf_affiliate_shield_enabled: false,
-    waf_affiliate_max_clicks_min: 10,
-    waf_affiliate_anti_injection: true,
-    waf_affiliate_reg_spam_protection: true,
-    waf_affiliate_direct_link_armor: true,
-    waf_forms_safe_mode: true,
-    form_spam_protection_enabled: true,
-    form_block_headless_browsers: true,
-    form_honeypot_enabled: true,
-    form_speed_gate_enabled: true,
-    form_flood_limit_enabled: true,
-    form_max_submits_per_window: 5,
-    form_flood_window_minutes: 10,
-    form_content_filtering: true,
-    waf_block_sqli: true,
-    waf_block_xss: true,
-    waf_block_traversal: true,
-    waf_block_php_injection: true,
-    waf_disable_xmlrpc: false,
-    waf_allow_jetpack_xmlrpc: false,
-    waf_whitelisted_ips: '',
-    waf_whitelist_require_admin: true,
-    waf_whitelist_log_telemetry: true,
-    waf_blocked_ips: '',
-    threat_intel_enabled: true,
-    threat_intel_block_blacklisted_ips: true,
-    waf_block_fake_bots: true,
-    waf_block_ai_scrapers: false,
-    waf_dynamic_robots_ai: false,
-    waf_block_404_scanners: true,
-    waf_404_threshold: 10,
-    waf_404_window_seconds: 60,
-    waf_404_lockout_duration: 30,
-    waf_allow_uptime_monitors: false,
-    waf_allow_central_management: false,
-    waf_allow_page_builders: false,
-    waf_block_empty_post_ua_referer: true,
-    waf_block_empty_user_agent: true,
-    waf_enable_progressive_warnings: true,
-    waf_contact_support_url: '',
-    waf_whitelisted_urls: '',
-    waf_targeted_allowlist_rules: '[]',
-    waf_block_forbidden_usernames: true,
-    waf_forbidden_usernames_list: "admin\nadministrator\nroot",
-    waf_prevent_admin_registration: true,
-    waf_mask_login_errors: true,
-    waf_enforce_strong_passwords: true,
-    waf_strong_passwords_roles: 'administrator, editor',
-    waf_check_pwned_passwords: true,
-    waf_block_malicious_uploads: true,
-    waf_block_unsafe_http_methods: true,
-    waf_block_null_byte_attacks: true,
-    waf_block_sensitive_file_probes: true,
-    waf_block_uploads_php_exec: true,
-    waf_block_external_cron: false,
-    waf_block_open_redirects: true,
-    waf_block_ssrf_metadata: true,
-    waf_block_install_php: true,
-    waf_disallow_phpmyadmin_plugins: true,
-    waf_disallow_filemanager_plugins: true,
-    waf_disallow_phpmyadmin_uploads: true,
-    waf_disallow_filemanager_uploads: true,
-    waf_block_rest_user_enum: true,
-    waf_block_author_scan: true,
-    waf_limit_lostpassword: true,
-    waf_enforce_host_allowlist: true,
-    waf_allowed_host_aliases: '',
-    waf_limit_admin_ajax: true,
-    waf_admin_ajax_limit_per_min: 60,
-    waf_block_oversized_requests: true,
-    waf_block_ai_prompt_injection: true,
-    waf_guest_ajax_policy: 'monitor',
-    waf_guest_ajax_custom_allowlist: '',
-    waf_guest_rest_policy: 'block',
-    waf_guest_rest_custom_allowlist: '',
-    waf_runtime_rasp_privilege_guard: true,
-    waf_upload_deep_mime_sanitizer: true,
-  });
-  const [initialWafSettingsSnapshot, setInitialWafSettingsSnapshot] = useState<string | null>(null);
-
-  const isRulesDirty = useMemo(() => {
-    if (!initialWafSettingsSnapshot || activeTab !== 'rules') return false;
-    try {
-      return JSON.stringify(wafSettings) !== initialWafSettingsSnapshot;
-    } catch {
-      return false;
-    }
-  }, [wafSettings, initialWafSettingsSnapshot, activeTab]);
-
-  const handleDiscardRules = () => {
-    if (!initialWafSettingsSnapshot) return;
-    try {
-      setWafSettings(JSON.parse(initialWafSettingsSnapshot));
-      toast.info('Unsaved rule changes discarded.');
-    } catch {
-      // fallback
-    }
-  };
 
   const loadFirewallData = async (isSilent = false) => {
     try {

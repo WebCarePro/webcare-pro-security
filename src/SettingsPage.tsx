@@ -508,6 +508,8 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
 
   const [activeSubTab, setActiveSubTab] = useState<SettingsSubTab>(getStartingSubTab);
   const [copiedQuery, setCopiedQuery] = useState<boolean>(false);
+  const [settings, setSettings] = useState<ScannerSettings | null>(null);
+  const [initialSettingsSnapshot, setInitialSettingsSnapshot] = useState<string | null>(null);
 
   // In-App Confirm Dialog State
   const [settingsConfirmDialog, setSettingsConfirmDialog] = useState<{
@@ -679,8 +681,6 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
-  const [settings, setSettings] = useState<ScannerSettings | null>(null);
-  const [initialSettingsSnapshot, setInitialSettingsSnapshot] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [saving, setSaving] = useState<boolean>(false);
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);

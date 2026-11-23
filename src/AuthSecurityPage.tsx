@@ -335,6 +335,32 @@ export const AuthSecurityPage = ({
     } catch (e) {}
   };
 
+  // Settings State
+  const [loginSettings, setLoginSettings] = useState<{
+    auth_2fa_enabled: boolean;
+    auth_2fa_algorithm: 'sha1' | 'sha512';
+    auth_2fa_digits: number;
+    auth_2fa_remember_device: boolean;
+    auth_2fa_remember_days: number;
+    login_hardening_enabled: boolean;
+    login_max_retries: number;
+    login_lockout_duration: number;
+    session_sentinel_enabled: boolean;
+    session_block_concurrent: boolean;
+  }>({
+    auth_2fa_enabled: true,
+    auth_2fa_algorithm: 'sha1',
+    auth_2fa_digits: 6,
+    auth_2fa_remember_device: true,
+    auth_2fa_remember_days: 7,
+    login_hardening_enabled: true,
+    login_max_retries: 5,
+    login_lockout_duration: 15,
+    session_sentinel_enabled: true,
+    session_block_concurrent: false,
+  });
+  const [initialLoginSettingsSnapshot, setInitialLoginSettingsSnapshot] = useState<string | null>(null);
+
   // Global Dialog state for high-impact actions
   const [authConfirmDialog, setAuthConfirmDialog] = useState<{
     isOpen: boolean;
@@ -572,31 +598,6 @@ export const AuthSecurityPage = ({
   const [regeneratingCodes, setRegeneratingCodes] = useState<boolean>(false);
   const [regenSuccessMsg, setRegenSuccessMsg] = useState<string | null>(null);
 
-  // Settings State
-  const [loginSettings, setLoginSettings] = useState<{
-    auth_2fa_enabled: boolean;
-    auth_2fa_algorithm: 'sha1' | 'sha512';
-    auth_2fa_digits: number;
-    auth_2fa_remember_device: boolean;
-    auth_2fa_remember_days: number;
-    login_hardening_enabled: boolean;
-    login_max_retries: number;
-    login_lockout_duration: number;
-    session_sentinel_enabled: boolean;
-    session_block_concurrent: boolean;
-  }>({
-    auth_2fa_enabled: true,
-    auth_2fa_algorithm: 'sha1',
-    auth_2fa_digits: 6,
-    auth_2fa_remember_device: true,
-    auth_2fa_remember_days: 7,
-    login_hardening_enabled: true,
-    login_max_retries: 5,
-    login_lockout_duration: 15,
-    session_sentinel_enabled: true,
-    session_block_concurrent: false,
-  });
-  const [initialLoginSettingsSnapshot, setInitialLoginSettingsSnapshot] = useState<string | null>(null);
   const [savingSettings, setSavingSettings] = useState<boolean>(false);
   const [settingsSuccess, setSettingsSuccess] = useState<string | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
