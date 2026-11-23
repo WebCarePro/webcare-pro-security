@@ -1,6 +1,6 @@
 {
   "version": "3.25.3",
-  "generated_at": "2026-11-23T12:02:34.984Z",
+  "generated_at": "2026-11-23T12:06:44.792Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -64,12 +64,12 @@
       "size": 253945
     },
     "build/firewall.asset.php": {
-      "sha256": "204ce36b1c4b273e482fbb9ea3110008d5931b46b78e65db5a37d3072b66f325",
+      "sha256": "03c50ca8726da533c8845d8027f72a6f6281e441625f88ef93a55680a31eb492",
       "size": 163
     },
     "build/firewall.js": {
-      "sha256": "89cbcb78b524ddcc772e78f1f343816ee1f1cd4eb75214fae9c79ed1cf11c300",
-      "size": 990387
+      "sha256": "08f0c6f308313c566a06959c1be78065bde2690ca3b86df2d6be09e87603c56a",
+      "size": 990381
     },
     "build/global-rtl.css": {
       "sha256": "6b3b7423ba32579262fb7a31a4b0d5eaba8d87bc89c486857eb956c1853df538",
@@ -88,12 +88,12 @@
       "size": 1405
     },
     "build/index.asset.php": {
-      "sha256": "d8617a2d139b996bcf9e2c495829e35ead14572aa589b1354ec4451bbf51e49a",
+      "sha256": "7ff7952809ae720d2e49584728e820f634e35e19e0407d3fa4c0904ac8e9a53f",
       "size": 174
     },
     "build/index.js": {
-      "sha256": "b99c474dc257b6babe7c3538a1c736ae1bd1e9af271b778cd665a8133f56d68a",
-      "size": 2801733
+      "sha256": "69d87c491d5ecd1718a9663e8486b9c198953c641aad2e296775c6a4a286bdc0",
+      "size": 2801725
     },
     "build/modular-waf.asset.php": {
       "sha256": "b6b773cd1c2d1d40106bb480d6135bc89a6a2e91fb19120fb3368e4b7e48889f",
@@ -112,12 +112,12 @@
       "size": 151886
     },
     "build/scan.asset.php": {
-      "sha256": "6d96cfefbe5e76fe8d89b23bf822e3e3ad435bc7c3bc63d0320e9dfb503cde42",
+      "sha256": "00de6cd95394ef6de00b5e5e031bd6ddf8719700cac897d2bfbf4b6e5b6f7827",
       "size": 174
     },
     "build/scan.js": {
-      "sha256": "64903b4fe1c76f869de49e437c1185617d8af9f0c448de2e45390976c4b7e614",
-      "size": 2793268
+      "sha256": "9aad4701857f9ec5bf02f94ddcaf2fe1658aae68ef2b2f3b212ef8781b15d015",
+      "size": 2793260
     },
     "build/settings.asset.php": {
       "sha256": "4b8625b2cfc75e39e77fda11a7a3f2516cce25b80f08ac31bb22f5341c396943",

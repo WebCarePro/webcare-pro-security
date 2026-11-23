@@ -3,6 +3,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   Shield,
+  ArrowRight,
   Zap,
   CheckCircle,
   CheckCircle2,
