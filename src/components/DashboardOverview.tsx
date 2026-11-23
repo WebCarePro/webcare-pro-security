@@ -203,10 +203,42 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   // Vulnerability count for Plugin & Theme Risks tile
   const vulnTotal = (vulnReport?.plugins_vulnerable || 0) + (vulnReport?.themes_vulnerable || 0);
 
-  // Helper for navigating via onNavigate
-  const handleTileNavigate = (tab: string, sub?: string, sec?: string) => {
-    onNavigate(tab, sub, sec);
-  };
+  // Extract exact runtime telemetry from serverInfo (supporting both structured serverInfo and flat fallbacks)
+  const resolvedPhpVersion = useMemo(() => {
+    return (
+      serverInfo?.php?.version ||
+      serverInfo?.php_version ||
+      (window as any).webcareScannerSettings?.serverInfo?.php?.version ||
+      '8.4+'
+    );
+  }, [serverInfo]);
+
+  const resolvedWpVersion = useMemo(() => {
+    return (
+      serverInfo?.wordpress?.version ||
+      serverInfo?.wp_version ||
+      (window as any).webcareScannerSettings?.serverInfo?.wordpress?.version ||
+      '7.0+'
+    );
+  }, [serverInfo]);
+
+  const resolvedServerEngine = useMemo(() => {
+    const rawSoftware =
+      serverInfo?.server?.software ||
+      serverInfo?.server_software ||
+      (window as any).webcareScannerSettings?.serverInfo?.server?.software ||
+      '';
+
+    if (rawSoftware) {
+      if (rawSoftware.toLowerCase().includes('apache')) return 'Apache';
+      if (rawSoftware.toLowerCase().includes('litespeed')) return 'LiteSpeed';
+      if (rawSoftware.toLowerCase().includes('nginx')) return 'Nginx';
+      if (rawSoftware.toLowerCase().includes('caddy')) return 'Caddy';
+      if (rawSoftware.toLowerCase().includes('iis')) return 'IIS';
+      return rawSoftware.split('/')[0].split(' ')[0];
+    }
+    return 'Apache';
+  }, [serverInfo]);
 
   return (
     <div className="wcp-dash-container">
@@ -884,21 +916,21 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
           <span className="wcp-dash-footer-dot" />
           <span>PHP:</span>
           <span className="wcp-dash-footer-val wcp-dash-tabular">
-            {serverInfo?.php_version || '8.3+'}
+            {resolvedPhpVersion}
           </span>
         </div>
 
         <div className="wcp-dash-footer-item">
           <span>WordPress:</span>
           <span className="wcp-dash-footer-val wcp-dash-tabular">
-            {serverInfo?.wp_version || '7.0+'}
+            {resolvedWpVersion}
           </span>
         </div>
 
         <div className="wcp-dash-footer-item">
           <span>Server Engine:</span>
           <span className="wcp-dash-footer-val">
-            {serverInfo?.server_software ? String(serverInfo.server_software).split(' ')[0] : 'Linux / Nginx'}
+            {resolvedServerEngine}
           </span>
         </div>
 
