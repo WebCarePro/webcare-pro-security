@@ -1,6 +1,6 @@
 {
-  "version": "3.25.2",
-  "generated_at": "2026-11-23T03:22:49.371Z",
+  "version": "3.25.3",
+  "generated_at": "2026-11-23T11:16:35.456Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -152,8 +152,8 @@
       "size": 278362
     },
     "composer.json": {
-      "sha256": "c8da82c3bdaa6143faa9a2afb4bf49271716218c26dd822743de68066b642f46",
-      "size": 357
+      "sha256": "4b7f6c125e954dc13470ca7b32e862ca6ba97b4adece8a8639ff4612014205c0",
+      "size": 412
     },
     "includes/Admin/AdminMenu.php": {
       "sha256": "5782e0ae8229864e7d0ad83521e266e8420d1bcdcbf0d6b1a221ee50ae0d3b2b",
@@ -672,8 +672,8 @@
       "size": 15500
     },
     "includes/Firewall/NextGen/ResponseDlpSentinel.php": {
-      "sha256": "ac54a18af8444ac69147b47a46301cafd2bba180cf91a9d80ad811cfef8edfe2",
-      "size": 15384
+      "sha256": "231f1819fb16ca984724733807a8feb1922d1f509e5dfc49cc7be8d66255d5b2",
+      "size": 18152
     },
     "includes/Firewall/NextGen/RuntimeSqlRaspEngine.php": {
       "sha256": "c74b03d8c34ad665a14c191a776c6c63079971c3e877fdf14f07e6500819b344",
@@ -1088,15 +1088,15 @@
       "size": 28
     },
     "package.json": {
-      "sha256": "b9f11be1cad94b9f2837cb866864679eab2343558c1883b8e89b3e652bee4a3e",
+      "sha256": "5a62a68395cbe59105301d87da0cbf1f82611787d1303dec684d7ce0f4cdfc85",
       "size": 438
     },
     "README.md": {
-      "sha256": "3b653502ec623fbf8f0a1735004bc6b46fa7ecc8cc6de3fd411643abe5697257",
+      "sha256": "03a4dd69e0c0578885445fddad483eb1efaa0faec3ea12705cf9d97c48639fb2",
       "size": 28900
     },
     "readme.txt": {
-      "sha256": "1f6a4d39b40523a060c09f011b038afb41cdbbfd9901fa7b3b12efb20d700665",
+      "sha256": "b922b25340ffac65c8a811b72d81df0d9d685a44ab53650960934296ebf79498",
       "size": 15156
     },
     "uninstall.php": {
@@ -1104,7 +1104,7 @@
       "size": 15530
     },
     "webcare-pro-security.php": {
-      "sha256": "bd3e14121b395b129831c4085a7ec25f78cee6af143351d3c34648cd4dee0dff",
+      "sha256": "77c7ad17726aee82a86d9eb878ab663cee66dc8a324b124fe56a120f0046c6c3",
       "size": 8496
     }
   }

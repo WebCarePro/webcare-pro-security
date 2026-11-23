@@ -214,8 +214,8 @@ class ResponseDlpSentinel implements SecurityModuleInterface {
     /**
      * Maximum depth and node limits for safe recursive DLP inspection.
      */
-    public const MAX_RECURSION_DEPTH = 20;
-    public const MAX_RECURSION_NODES = 5000;
+    public const MAX_RECURSION_DEPTH = 25;
+    public const MAX_RECURSION_NODES = 25000;
 
     /**
      * Recursively inspect and redact strings inside nested arrays or objects (for REST responses).
@@ -226,6 +226,7 @@ class ResponseDlpSentinel implements SecurityModuleInterface {
      * @param int                $depth
      * @param int                $nodes
      * @param array<int, bool>   $visited
+     * @param int                $max_depth_seen
      * @return mixed Normalized array/primitive with secrets redacted.
      * @throws \RuntimeException If recursion depth, node budget, or circular reference detected.
      */
@@ -235,15 +236,34 @@ class ResponseDlpSentinel implements SecurityModuleInterface {
         string &$matched_pattern,
         int $depth = 0,
         int &$nodes = 0,
-        array &$visited = []
+        array &$visited = [],
+        int &$max_depth_seen = 0
     ) {
         if (self::$throw_mock_exception) {
             throw new \RuntimeException('Mock DLP exception for fail-closed testing.');
         }
 
         $nodes++;
-        if ($depth > self::MAX_RECURSION_DEPTH || $nodes > self::MAX_RECURSION_NODES) {
-            throw new \RuntimeException('DLP recursion limit exceeded (depth > 20 or nodes > 5000); failing closed.');
+        if ($depth > $max_depth_seen) {
+            $max_depth_seen = $depth;
+        }
+
+        if ($depth > self::MAX_RECURSION_DEPTH) {
+            // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped
+            throw new \RuntimeException(
+                // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped
+                sprintf('DLP recursion limit exceeded (depth %d > %d); failing closed.', $depth, self::MAX_RECURSION_DEPTH),
+                1001
+            );
+        }
+
+        if ($nodes > self::MAX_RECURSION_NODES) {
+            // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped
+            throw new \RuntimeException(
+                // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped
+                sprintf('DLP node budget exceeded (nodes %d > %d); failing closed.', $nodes, self::MAX_RECURSION_NODES),
+                1002
+            );
         }
 
         if (is_string($data)) {
@@ -261,7 +281,7 @@ class ResponseDlpSentinel implements SecurityModuleInterface {
         if (is_array($data)) {
             $cleaned = [];
             foreach ($data as $key => $val) {
-                $cleaned[$key] = self::redact_data_recursive($val, $has_leak, $matched_pattern, $depth + 1, $nodes, $visited);
+                $cleaned[$key] = self::redact_data_recursive($val, $has_leak, $matched_pattern, $depth + 1, $nodes, $visited, $max_depth_seen);
             }
             return $cleaned;
         }
@@ -269,14 +289,14 @@ class ResponseDlpSentinel implements SecurityModuleInterface {
         if (is_object($data)) {
             $oid = spl_object_id($data);
             if (isset($visited[$oid])) {
-                throw new \RuntimeException('Circular reference detected during DLP inspection; failing closed.');
+                throw new \RuntimeException('Circular reference detected during DLP inspection; failing closed.', 1003);
             }
             $visited[$oid] = true;
 
             $vars = get_object_vars($data);
             $cleaned_obj = [];
             foreach ($vars as $prop => $val) {
-                $cleaned_obj[$prop] = self::redact_data_recursive($val, $has_leak, $matched_pattern, $depth + 1, $nodes, $visited);
+                $cleaned_obj[$prop] = self::redact_data_recursive($val, $has_leak, $matched_pattern, $depth + 1, $nodes, $visited, $max_depth_seen);
             }
             unset($visited[$oid]);
             return $cleaned_obj;
@@ -347,10 +367,52 @@ class ResponseDlpSentinel implements SecurityModuleInterface {
             $data            = $result->get_data();
             $has_leak        = false;
             $matched_pattern = '';
-            $clean_data      = self::redact_data_recursive($data, $has_leak, $matched_pattern);
-            if ($has_leak) {
-                self::handle_dlp_breach($matched_pattern);
-                $result->set_data($clean_data);
+            $nodes           = 0;
+            $visited         = [];
+            $max_depth_seen  = 0;
+
+            try {
+                $clean_data = self::redact_data_recursive($data, $has_leak, $matched_pattern, 0, $nodes, $visited, $max_depth_seen);
+                if ($has_leak) {
+                    self::handle_dlp_breach($matched_pattern);
+                    $result->set_data($clean_data);
+                }
+            } catch (\Throwable $e) {
+                $code = $e->getCode();
+                $failure_type = match ($code) {
+                    1001    => 'depth_limit',
+                    1002    => 'node_budget',
+                    1003    => 'circular_reference',
+                    default => 'unexpected_error',
+                };
+
+                // Fallback string matching if exception code wasn't set or custom throw
+                if ($failure_type === 'unexpected_error') {
+                    $msg = $e->getMessage();
+                    if (str_contains($msg, 'depth')) {
+                        $failure_type = 'depth_limit';
+                    } elseif (str_contains($msg, 'nodes') || str_contains($msg, 'node budget')) {
+                        $failure_type = 'node_budget';
+                    } elseif (str_contains($msg, 'Circular reference')) {
+                        $failure_type = 'circular_reference';
+                    }
+                }
+
+                $sanitized_route = sanitize_text_field(substr($route, 0, 160));
+
+                if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                    \WebCareProScanner\System\AuditLogger::log('dlp_inspection_limit_exceeded', [
+                        'failure_type'   => $failure_type,
+                        'route'          => $sanitized_route,
+                        'nodes_visited'  => $nodes,
+                        'max_depth_seen' => $max_depth_seen,
+                    ]);
+                }
+
+                return new \WP_REST_Response([
+                    'code'    => 'webcare_dlp_inspection_unavailable',
+                    'message' => 'The response could not be safely inspected.',
+                ], 503);
             }
         }
         return $result;
