@@ -33,7 +33,7 @@ class Scheduler {
                 \WebCareProScanner\System\Cron\CronControlCenter::invoke_task_handler(self::CVE_AUDIT_HOOK, 'wp_cron');
             });
 
-            if (class_exists('\\WebCareProScanner\\Firewall\\Modular\\SiteBehavioralAnalyzer')) {
+            if (class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\SiteBehavioralAnalyzer')) {
                 \WebCareProScanner\Firewall\Modular\SiteBehavioralAnalyzer::register_cron_hook();
             }
 
@@ -53,7 +53,7 @@ class Scheduler {
         add_action(self::DIGEST_HOOK, [__CLASS__, 'run_weekly_digest']);
         add_action(self::CANARY_HOOK, ['\\WebCareProScanner\\Firewall\\RedirectCanaryEngine', 'run_scheduled_canary']);
         add_action(self::CVE_AUDIT_HOOK, ['\\WebCareProScanner\\Firewall\\CVEIntelligenceService', 'run_daily_cve_audit']);
-        if (class_exists('\\WebCareProScanner\\Firewall\\Modular\\SiteBehavioralAnalyzer')) {
+        if (class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\SiteBehavioralAnalyzer')) {
             \WebCareProScanner\Firewall\Modular\SiteBehavioralAnalyzer::register_cron_hook();
         }
         if (class_exists('\\WebCareProScanner\\Scan\\ScanBackgroundWorker')) {

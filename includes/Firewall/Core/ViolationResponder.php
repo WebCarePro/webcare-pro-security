@@ -713,7 +713,7 @@ final class ViolationResponder {
         }
 
         // Honor ModularFirewallSynthesizer runtime exempt rule IDs (WCP-14)
-        if (class_exists('\\WebCareProScanner\\Firewall\\Modular\\ModularFirewallSynthesizer')) {
+        if (class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\ModularFirewallSynthesizer')) {
             $modular_exempt_ids = \WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer::get_runtime_exempt_rule_ids();
             $cand_id = strtoupper((string) ($rule['id'] ?? ''));
             $is_exemptible_rule = (bool) preg_match('/^(?:MOD-(?:AJAX|REST|CVE|CUSTOM|UPLOAD|EGRESS)-[A-Z0-9_\-]+|BOT-[A-Z0-9_\-]+|RATE-[A-Z0-9_\-]+)$/', $cand_id);

@@ -3129,7 +3129,7 @@ class FirewallEngine {
             return null;
         }
 
-        if (class_exists('\\WebCareProScanner\\Firewall\\Modular\\ModularFirewallSynthesizer')) {
+        if (class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\ModularFirewallSynthesizer')) {
             return \WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer::verify_admin_custom_rule($rule);
         }
 

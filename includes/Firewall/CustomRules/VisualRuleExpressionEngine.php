@@ -1,5 +1,5 @@
 <?php
-namespace WebCareProScanner\Firewall\Modular;
+namespace WebCareProScanner\Firewall\CustomRules;
 
 use WebCareProScanner\Cloudflare\CloudflareService;
 use WebCareProScanner\Contracts\RequestContext;
@@ -1222,7 +1222,7 @@ class VisualRuleExpressionEngine {
 
         $ajax_actions = [];
         $rest_routes  = [];
-        if (class_exists('\\WebCareProScanner\\Firewall\\Modular\\BehavioralVaultManager')) {
+        if (class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\BehavioralVaultManager')) {
             $ep_map = BehavioralVaultManager::read_shard(BehavioralVaultManager::SHARD_ENDPOINTS);
             if (is_array($ep_map)) {
                 foreach (array_slice($ep_map, 0, 120) as $ep) {
@@ -1240,7 +1240,7 @@ class VisualRuleExpressionEngine {
         }
 
         $existing_custom_rules = [];
-        if (class_exists('\\WebCareProScanner\\Firewall\\Modular\\ModularFirewallSynthesizer')) {
+        if (class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\ModularFirewallSynthesizer')) {
             $idx = 0;
             foreach (ModularFirewallSynthesizer::get_active_rules() as $ar) {
                 if (!empty($ar['is_custom']) || ($ar['category'] ?? '') === 'custom') {

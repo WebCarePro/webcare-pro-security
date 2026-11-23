@@ -2139,7 +2139,7 @@ final class ScanController extends AbstractApiController {
         $report = UpdateScanner::get_detailed_report();
 
         $shielded_slugs = [];
-        if (class_exists('\\WebCareProScanner\\Firewall\\Modular\\ModularFirewallSynthesizer')) {
+        if (class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\ModularFirewallSynthesizer')) {
             foreach (\WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer::get_active_rules() as $mr) {
                 if (($mr['category'] ?? '') === 'cve_patch' && ($mr['current_mode'] ?? '') === 'enforce' && !empty($mr['component_slug'])) {
                     $shielded_slugs[$mr['component_slug']] = $mr['id'];
@@ -2160,7 +2160,7 @@ final class ScanController extends AbstractApiController {
      * Activate 1-click Virtual Shield (MOD-CVE-*) for an outdated or vulnerable component without updating.
      */
     public static function activate_vulnerability_virtual_shield(\WP_REST_Request $request) {
-        if (!class_exists('\\WebCareProScanner\\Firewall\\Modular\\ModularFirewallSynthesizer')) {
+        if (!class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\ModularFirewallSynthesizer')) {
             return new \WP_REST_Response(['success' => false, 'message' => __('Virtual shield synthesizer unavailable.', 'webcare-pro-security')], 500);
         }
         $params = $request->get_json_params() ?: [];

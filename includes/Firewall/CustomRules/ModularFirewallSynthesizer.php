@@ -17,10 +17,10 @@
  * Author: Mir Alamin (WebCare Pro)
  * Senior Linux SysAdmin & WordPress Security Engineer
  *
- * @package WebCareProScanner\Firewall\Modular
+ * @package WebCareProScanner\Firewall\CustomRules
  */
 
-namespace WebCareProScanner\Firewall\Modular;
+namespace WebCareProScanner\Firewall\CustomRules;
 
 if (!defined('ABSPATH')) {
     exit;
@@ -727,7 +727,7 @@ class ModularFirewallSynthesizer {
         $known_vendor_lib  = $finding['known_vendor_lib'] ?? null;
 
         // Fallback live verification if finding didn't include hashes
-        if ($file_sha256 === null && !empty($rule['file']) && class_exists('\\WebCareProScanner\\Firewall\\Modular\\ComponentIntegrityVerifier')) {
+        if ($file_sha256 === null && !empty($rule['file']) && class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\ComponentIntegrityVerifier')) {
             $forensics = ComponentIntegrityVerifier::verify_file_forensics($rule['file'], $comp);
             $file_sha256       = $forensics['file_sha256'];
             $file_md5          = $forensics['file_md5'];

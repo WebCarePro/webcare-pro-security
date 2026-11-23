@@ -407,7 +407,7 @@ final class ModularWafController extends AbstractApiController {
      * @return \WP_REST_Response
      */
     public static function start_modular_scan(\WP_REST_Request $request) {
-        if (!class_exists('\\WebCareProScanner\\Firewall\\Modular\\SiteBehavioralAnalyzer')) {
+        if (!class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\SiteBehavioralAnalyzer')) {
             return new \WP_REST_Response([
                 'success' => false,
                 'message' => __('Behavioral analyzer engine unavailable.', 'webcare-pro-security'),
@@ -426,7 +426,7 @@ final class ModularWafController extends AbstractApiController {
      * @return \WP_REST_Response
      */
     public static function process_modular_scan_batch(\WP_REST_Request $request) {
-        if (!class_exists('\\WebCareProScanner\\Firewall\\Modular\\SiteBehavioralAnalyzer')) {
+        if (!class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\SiteBehavioralAnalyzer')) {
             return new \WP_REST_Response([
                 'success' => false,
                 'message' => __('Behavioral analyzer engine unavailable.', 'webcare-pro-security'),
@@ -446,7 +446,7 @@ final class ModularWafController extends AbstractApiController {
      * @return \WP_REST_Response
      */
     public static function pause_modular_scan(\WP_REST_Request $request) {
-        if (!class_exists('\\WebCareProScanner\\Firewall\\Modular\\SiteBehavioralAnalyzer')) {
+        if (!class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\SiteBehavioralAnalyzer')) {
             return new \WP_REST_Response(['success' => false, 'message' => __('Behavioral analyzer engine unavailable.', 'webcare-pro-security')], 500);
         }
         return new \WP_REST_Response(\WebCareProScanner\Firewall\Modular\SiteBehavioralAnalyzer::pause_scan(), 200);
@@ -459,7 +459,7 @@ final class ModularWafController extends AbstractApiController {
      * @return \WP_REST_Response
      */
     public static function resume_modular_scan(\WP_REST_Request $request) {
-        if (!class_exists('\\WebCareProScanner\\Firewall\\Modular\\SiteBehavioralAnalyzer')) {
+        if (!class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\SiteBehavioralAnalyzer')) {
             return new \WP_REST_Response(['success' => false, 'message' => __('Behavioral analyzer engine unavailable.', 'webcare-pro-security')], 500);
         }
         return new \WP_REST_Response(\WebCareProScanner\Firewall\Modular\SiteBehavioralAnalyzer::resume_scan(), 200);
@@ -472,7 +472,7 @@ final class ModularWafController extends AbstractApiController {
      * @return \WP_REST_Response
      */
     public static function cancel_modular_scan(\WP_REST_Request $request) {
-        if (!class_exists('\\WebCareProScanner\\Firewall\\Modular\\SiteBehavioralAnalyzer')) {
+        if (!class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\SiteBehavioralAnalyzer')) {
             return new \WP_REST_Response(['success' => false, 'message' => __('Behavioral analyzer engine unavailable.', 'webcare-pro-security')], 500);
         }
         return new \WP_REST_Response(\WebCareProScanner\Firewall\Modular\SiteBehavioralAnalyzer::cancel_scan(), 200);
@@ -487,7 +487,7 @@ final class ModularWafController extends AbstractApiController {
     public static function get_modular_waf_status(\WP_REST_Request $request) {
         $ctx            = self::build_modular_dossier_context(false);
         $preload_active = defined('WEBCAREPRO_PRELOAD_WAF_ACTIVE') && WEBCAREPRO_PRELOAD_WAF_ACTIVE;
-        $autopilot      = class_exists('\\WebCareProScanner\\Firewall\\Modular\\ModularFirewallSynthesizer')
+        $autopilot      = class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\ModularFirewallSynthesizer')
             && \WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer::is_autopilot_enabled();
 
         return new \WP_REST_Response([
@@ -508,7 +508,7 @@ final class ModularWafController extends AbstractApiController {
      * Toggle Smart 48-Hour Auto-Pilot for Modular Firewall rules.
      */
     public static function toggle_modular_autopilot(\WP_REST_Request $request) {
-        if (!class_exists('\\WebCareProScanner\\Firewall\\Modular\\ModularFirewallSynthesizer')) {
+        if (!class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\ModularFirewallSynthesizer')) {
             return new \WP_REST_Response(['success' => false, 'message' => __('Modular firewall synthesizer unavailable.', 'webcare-pro-security')], 500);
         }
         $params  = $request->get_json_params() ?: [];
@@ -524,7 +524,7 @@ final class ModularWafController extends AbstractApiController {
      * @return \WP_REST_Response
      */
     public static function toggle_modular_rule(\WP_REST_Request $request) {
-        if (!class_exists('\\WebCareProScanner\\Firewall\\Modular\\ModularFirewallSynthesizer')) {
+        if (!class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\ModularFirewallSynthesizer')) {
             return new \WP_REST_Response([
                 'success' => false,
                 'message' => __('Modular firewall synthesizer unavailable.', 'webcare-pro-security'),
@@ -553,7 +553,7 @@ final class ModularWafController extends AbstractApiController {
      * @return \WP_REST_Response
      */
     public static function bulk_apply_modular_rules(\WP_REST_Request $request) {
-        if (!class_exists('\\WebCareProScanner\\Firewall\\Modular\\ModularFirewallSynthesizer')) {
+        if (!class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\ModularFirewallSynthesizer')) {
             return new \WP_REST_Response([
                 'success' => false,
                 'message' => __('Modular firewall synthesizer unavailable.', 'webcare-pro-security'),
@@ -571,7 +571,7 @@ final class ModularWafController extends AbstractApiController {
      * @return \WP_REST_Response
      */
     public static function save_custom_modular_rule(\WP_REST_Request $request) {
-        if (!class_exists('\\WebCareProScanner\\Firewall\\Modular\\ModularFirewallSynthesizer')) {
+        if (!class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\ModularFirewallSynthesizer')) {
             return new \WP_REST_Response([
                 'success' => false,
                 'message' => __('Modular firewall synthesizer unavailable.', 'webcare-pro-security'),
@@ -587,7 +587,7 @@ final class ModularWafController extends AbstractApiController {
      * Return Custom Firewall Rules field catalog plus live installed plugins/themes, roles, endpoints, AI & MCP status.
      */
     public static function get_modular_visual_fields(\WP_REST_Request $request) {
-        $ctx = class_exists('\\WebCareProScanner\\Firewall\\Modular\\VisualRuleExpressionEngine')
+        $ctx = class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\VisualRuleExpressionEngine')
             ? \WebCareProScanner\Firewall\Modular\VisualRuleExpressionEngine::get_site_context_data()
             : [
                 'fields'                => [],
@@ -632,7 +632,7 @@ final class ModularWafController extends AbstractApiController {
      * Dry-run simulate a Visual/Custom rule against recent WafFileLogger history.
      */
     public static function simulate_custom_modular_rule(\WP_REST_Request $request) {
-        if (!class_exists('\\WebCareProScanner\\Firewall\\Modular\\VisualRuleExpressionEngine')) {
+        if (!class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\VisualRuleExpressionEngine')) {
             return new \WP_REST_Response(['success' => false, 'message' => __('Visual expression engine unavailable.', 'webcare-pro-security')], 500);
         }
         $params = $request->get_json_params() ?: [];
@@ -658,7 +658,7 @@ final class ModularWafController extends AbstractApiController {
      * Push a Custom Firewall Rule's HTTP/Network Wirefilter expression directly to Cloudflare Edge Custom Ruleset.
      */
     public static function push_custom_rule_to_cloudflare(\WP_REST_Request $request) {
-        if (!class_exists('\\WebCareProScanner\\Firewall\\Modular\\VisualRuleExpressionEngine')) {
+        if (!class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\VisualRuleExpressionEngine')) {
             return new \WP_REST_Response(['success' => false, 'message' => __('Visual expression engine unavailable.', 'webcare-pro-security')], 500);
         }
         $params = $request->get_json_params() ?: [];
@@ -670,7 +670,7 @@ final class ModularWafController extends AbstractApiController {
      * Reorder custom modular firewall rules in priority sequence.
      */
     public static function reorder_custom_modular_rules(\WP_REST_Request $request) {
-        if (!class_exists('\\WebCareProScanner\\Firewall\\Modular\\ModularFirewallSynthesizer')) {
+        if (!class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\ModularFirewallSynthesizer')) {
             return new \WP_REST_Response(['success' => false, 'message' => __('Modular firewall synthesizer unavailable.', 'webcare-pro-security')], 500);
         }
         $params      = $request->get_json_params() ?: [];
@@ -686,7 +686,7 @@ final class ModularWafController extends AbstractApiController {
      * Parse an edited Wirefilter expression into structured visual condition groups.
      */
     public static function parse_wirefilter_expression(\WP_REST_Request $request) {
-        if (!class_exists('\\WebCareProScanner\\Firewall\\Modular\\VisualRuleExpressionEngine')) {
+        if (!class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\VisualRuleExpressionEngine')) {
             return new \WP_REST_Response(['success' => false, 'conditions' => [], 'group_logic' => 'OR'], 200);
         }
         $params      = $request->get_json_params() ?: [];
@@ -713,7 +713,7 @@ final class ModularWafController extends AbstractApiController {
      * into Visual Builder fields with safety diagnostics.
      */
     public static function parse_ai_rule_payload(\WP_REST_Request $request) {
-        if (!class_exists('\\WebCareProScanner\\Firewall\\Modular\\VisualRuleExpressionEngine')) {
+        if (!class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\VisualRuleExpressionEngine')) {
             return new \WP_REST_Response(['success' => false, 'message' => __('Visual expression engine unavailable.', 'webcare-pro-security')], 500);
         }
         $params    = $request->get_json_params() ?: [];
@@ -727,7 +727,7 @@ final class ModularWafController extends AbstractApiController {
      */
     public static function ai_generate_visual_rule(\WP_REST_Request $request) {
         if (
-            !class_exists('\\WebCareProScanner\\Firewall\\Modular\\VisualRuleExpressionEngine')
+            !class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\VisualRuleExpressionEngine')
             || !class_exists('\\WebCareProScanner\\System\\AIService')
         ) {
             return new \WP_REST_Response(['success' => false, 'message' => __('AI generator subsystem unavailable.', 'webcare-pro-security')], 500);
@@ -760,7 +760,7 @@ final class ModularWafController extends AbstractApiController {
      * @return \WP_REST_Response
      */
     public static function get_modular_code_preview(\WP_REST_Request $request) {
-        if (!class_exists('\\WebCareProScanner\\Firewall\\Modular\\ModularFirewallSynthesizer')) {
+        if (!class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\ModularFirewallSynthesizer')) {
             return new \WP_REST_Response([
                 'success' => false,
                 'message' => __('Modular firewall synthesizer unavailable.', 'webcare-pro-security'),
@@ -794,7 +794,7 @@ final class ModularWafController extends AbstractApiController {
      * @return \WP_REST_Response
      */
     public static function export_modular_waf_bundle(\WP_REST_Request $request) {
-        $synth = '\\WebCareProScanner\\Firewall\\Modular\\ModularFirewallSynthesizer';
+        $synth = '\\WebCareProScanner\\Firewall\\CustomRules\\ModularFirewallSynthesizer';
 
         $ctx        = self::build_modular_dossier_context(true);
         $rules_list = $ctx['rules'];
@@ -1675,7 +1675,7 @@ final class ModularWafController extends AbstractApiController {
 
         // 3. Gather active Modular WAF rules protecting REST / AJAX surfaces
         $active_surface_rules = [];
-        if (class_exists('\\WebCareProScanner\\Firewall\\Modular\\ModularFirewallSynthesizer')) {
+        if (class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\ModularFirewallSynthesizer')) {
             $all_rules = \WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer::get_active_rules();
             foreach ($all_rules as $rule) {
                 $cat = $rule['category'] ?? '';
@@ -1791,10 +1791,10 @@ final class ModularWafController extends AbstractApiController {
      * @return array
      */
     public static function build_modular_dossier_context(bool $deep_verify = false): array {
-        $vault_mgr = '\\WebCareProScanner\\Firewall\\Modular\\BehavioralVaultManager';
-        $synth     = '\\WebCareProScanner\\Firewall\\Modular\\ModularFirewallSynthesizer';
-        $analyzer  = '\\WebCareProScanner\\Firewall\\Modular\\SiteBehavioralAnalyzer';
-        $verifier  = '\\WebCareProScanner\\Firewall\\Modular\\ComponentIntegrityVerifier';
+        $vault_mgr = '\\WebCareProScanner\\Firewall\\CustomRules\\BehavioralVaultManager';
+        $synth     = '\\WebCareProScanner\\Firewall\\CustomRules\\ModularFirewallSynthesizer';
+        $analyzer  = '\\WebCareProScanner\\Firewall\\CustomRules\\SiteBehavioralAnalyzer';
+        $verifier  = '\\WebCareProScanner\\Firewall\\CustomRules\\ComponentIntegrityVerifier';
 
         $vault_summary = class_exists($vault_mgr) ? $vault_mgr::get_vault_summary() : null;
         $rules         = class_exists($synth) ? $synth::get_active_rules() : [];
@@ -1924,7 +1924,7 @@ final class ModularWafController extends AbstractApiController {
      * Build a deduplicated cryptographic hash index for all PHP files referenced by rules and findings.
      */
     public static function build_file_hash_index(array $rules, array $findings): array {
-        $verifier = '\\WebCareProScanner\\Firewall\\Modular\\ComponentIntegrityVerifier';
+        $verifier = '\\WebCareProScanner\\Firewall\\CustomRules\\ComponentIntegrityVerifier';
         $index    = [];
 
         foreach ($findings as $fd) {

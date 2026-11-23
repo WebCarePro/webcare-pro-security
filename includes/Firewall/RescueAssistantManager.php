@@ -62,7 +62,7 @@ class RescueAssistantManager {
      * Cron handler for Modular WAF 48-hour Smart Auto-Pilot rule promotion.
      */
     public static function run_autopilot_cron(): void {
-        if (class_exists('\\WebCareProScanner\\Firewall\\Modular\\ModularFirewallSynthesizer')) {
+        if (class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\ModularFirewallSynthesizer')) {
             \WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer::evaluate_autopilot_promotions();
         }
     }
@@ -556,7 +556,7 @@ class RescueAssistantManager {
         self::write_marker_file($preload_file, (string) wp_json_encode($preload_allow));
 
         // If a Modular WAF rule was triggered, switch it to monitor mode cleanly
-        if (str_starts_with($rule_id, 'MOD-') && class_exists('\\WebCareProScanner\\Firewall\\Modular\\ModularFirewallSynthesizer')) {
+        if (str_starts_with($rule_id, 'MOD-') && class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\ModularFirewallSynthesizer')) {
             \WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer::toggle_rule($rule_id, 'monitor');
         }
 

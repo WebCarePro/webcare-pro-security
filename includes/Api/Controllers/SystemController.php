@@ -692,11 +692,11 @@ final class SystemController extends AbstractApiController {
         ];
 
         // Behavioral Vault & Modular Rules Summary
-        $modular_vault_summary = class_exists('\\WebCareProScanner\\Firewall\\Modular\\BehavioralVaultManager')
+        $modular_vault_summary = class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\BehavioralVaultManager')
             ? \WebCareProScanner\Firewall\Modular\BehavioralVaultManager::get_vault_summary()
             : null;
 
-        $modular_rules = class_exists('\\WebCareProScanner\\Firewall\\Modular\\ModularFirewallSynthesizer')
+        $modular_rules = class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\ModularFirewallSynthesizer')
             ? \WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer::get_active_rules()
             : [];
 

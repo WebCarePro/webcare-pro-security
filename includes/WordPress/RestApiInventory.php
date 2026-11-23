@@ -324,7 +324,7 @@ class RestApiInventory {
 
             $internal_guard  = $attribution['internal_guard'] ?? '';
             $is_trusted_ext  = !empty($attribution['is_official']) || !empty($attribution['is_known_vendor']) || ($attribution['origin_type'] ?? '') === 'self_official';
-            $is_intentional  = class_exists('\\WebCareProScanner\\Firewall\\Modular\\SiteBehavioralAnalyzer')
+            $is_intentional  = class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\SiteBehavioralAnalyzer')
                 && \WebCareProScanner\Firewall\Modular\SiteBehavioralAnalyzer::is_intentional_public_rest_route($route_path, $namespace);
 
             // Classify true security posture instead of conflating Storefront APIs & WP index routes with unguarded writes
@@ -518,7 +518,7 @@ class RestApiInventory {
     private static function build_component_path_index(): array {
         $index = [];
 
-        if (class_exists('\\WebCareProScanner\\Firewall\\Modular\\SiteBehavioralAnalyzer')) {
+        if (class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\SiteBehavioralAnalyzer')) {
             // Leverage existing component discovery (non-blocking fast cached provenance lookup)
             $comps = \WebCareProScanner\Firewall\Modular\SiteBehavioralAnalyzer::discover_all_components(false);
             foreach ($comps as $c) {
@@ -552,7 +552,7 @@ class RestApiInventory {
      */
     private static function build_active_modular_rule_map(): array {
         $map = ['rest' => [], 'ajax' => []];
-        if (!class_exists('\\WebCareProScanner\\Firewall\\Modular\\ModularFirewallSynthesizer')) {
+        if (!class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\ModularFirewallSynthesizer')) {
             return $map;
         }
 
@@ -679,7 +679,7 @@ class RestApiInventory {
 
         // Evaluate internal nonce/capability/signature guard & mutation sinks on the declaring method AST slice
         // Core WordPress handlers are skipped as they are governed by official core permission callbacks
-        if (!$is_core_file && $method_abs_file && $method_start && $method_end && class_exists('\\WebCareProScanner\\Firewall\\Modular\\SiteBehavioralAnalyzer')) {
+        if (!$is_core_file && $method_abs_file && $method_start && $method_end && class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\SiteBehavioralAnalyzer')) {
             $posture_key = $method_abs_file . ':' . $method_start . '-' . $method_end;
             if (!isset($ast_posture_cache[$posture_key])) {
                 $ast_posture_cache[$posture_key] = self::inspect_method_ast_posture($method_abs_file, (int) $method_start, (int) $method_end);
@@ -735,7 +735,7 @@ class RestApiInventory {
                             ? 'authentic'
                             : 'core_runtime',
                     ];
-                } elseif (class_exists('\\WebCareProScanner\\Firewall\\Modular\\ComponentIntegrityVerifier')) {
+                } elseif (class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\ComponentIntegrityVerifier')) {
                     $file_cache[$norm_file] = \WebCareProScanner\Firewall\Modular\ComponentIntegrityVerifier::verify_file_forensics(
                         $norm_file,
                         $matched_comp ?: []

@@ -12,10 +12,10 @@
  * Author: Mir Alamin (WebCare Pro)
  * Senior Linux SysAdmin & WordPress Security Engineer
  *
- * @package WebCareProScanner\Firewall\Modular
+ * @package WebCareProScanner\Firewall\CustomRules
  */
 
-namespace WebCareProScanner\Firewall\Modular;
+namespace WebCareProScanner\Firewall\CustomRules;
 
 if (!defined('ABSPATH')) {
     exit;
