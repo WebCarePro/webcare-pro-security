@@ -83,13 +83,13 @@ final class ScanController extends AbstractApiController {
         ]);
 
         register_rest_route($namespace, '/scan/history', [
-            'methods'             => 'GET',
-            'callback'            => [self::class, 'get_scan_history'],
+            'methods'             => ['GET', 'DELETE'],
+            'callback'            => [self::class, 'handle_scan_history_route'],
             'permission_callback' => $permission,
         ]);
 
         register_rest_route($namespace, '/scan/history/clear', [
-            'methods'             => 'POST',
+            'methods'             => ['POST', 'DELETE'],
             'callback'            => [self::class, 'clear_scan_history'],
             'permission_callback' => $permission,
         ]);
@@ -1640,6 +1640,13 @@ final class ScanController extends AbstractApiController {
             'success' => true,
             'scans'   => $scans,
         ]);
+    }
+
+    public static function handle_scan_history_route(\WP_REST_Request $request) {
+        if ($request->get_method() === 'DELETE') {
+            return self::clear_scan_history($request);
+        }
+        return self::get_scan_history($request);
     }
 
     public static function clear_scan_history(\WP_REST_Request $request) {

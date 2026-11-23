@@ -55,7 +55,7 @@ import { getScanTargetInfo, ComponentForensicsCard, getFindingDisplayTitle, Safe
 import { formatRelativeTime, formatTelemetryDateFull, formatDateTimeComprehensive } from './timeUtils';
 import { FindingForensicsDrawer } from './components/FindingForensicsDrawer';
 import { EmptyStateCard } from './components/ui/EmptyStateCard';
-import { toast } from './utils/dialog';
+import { toast, showConfirm } from './utils/dialog';
 
 interface ScanLogsPageProps {
   apiRequest: (opts: any) => Promise<any>;
@@ -192,13 +192,37 @@ export const ScanLogsPage: React.FC<ScanLogsPageProps> = ({
   });
 
   const handleClearAllScanHistory = propHandleClearAllScanHistory || (async () => {
-    if (!window.confirm('Are you sure you want to delete all historical scan logs? This cannot be undone.')) return;
+    const isScanActive = scanning || Boolean(targetedScanning);
+    const confirmed = await showConfirm({
+      title: 'Clear Scan History & Logs',
+      message: isScanActive
+        ? 'A security scan is currently running! Clearing logs will preserve your active running scan and findings while removing all past historical logs. Do you want to proceed?'
+        : 'Are you sure you want to delete all historical scan logs? This cannot be undone.',
+      confirmLabel: isScanActive ? 'Clear Past Logs' : 'Clear All Scan Logs',
+      cancelLabel: 'Cancel',
+      variant: 'danger',
+    });
+
+    if (!confirmed) return;
+
     try {
-      await apiRequest({ path: '/webcare-pro-security/v1/scan/history', method: 'DELETE' });
-      setSelectedScanDetail(null);
-      await loadScanHistory();
-    } catch (e) {
+      setLocalHistoryLoading(true);
+      const res: any = await apiRequest({
+        path: '/webcare-pro-security/v1/scan/history/clear',
+        method: 'POST'
+      });
+      if (res?.success) {
+        setSelectedScanDetail(null);
+        toast.success(res?.message || (isScanActive ? 'Past scan logs cleared. Active scan continues running.' : 'All scan history logs have been cleared successfully.'));
+        await loadScanHistory();
+      } else {
+        toast.error(res?.message || 'Failed to clear scan history.');
+      }
+    } catch (e: any) {
       console.error('Failed to clear scan history', e);
+      toast.error(e?.message || 'Failed to clear scan history.');
+    } finally {
+      setLocalHistoryLoading(false);
     }
   });
 
