@@ -66,6 +66,7 @@ import { ServerSecurityTab } from './components/ServerSecurityTab';
 import { AttackSimulationCard } from './components/AttackSimulationCard';
 import { SbomSupplyChainCard } from './components/SbomSupplyChainCard';
 import { BehavioralWafCard } from './components/BehavioralWafCard';
+import { ModularFirewallStudio } from './components/ModularFirewallStudio';
 import { TargetedAllowlistManagerCard } from './components/TargetedAllowlistManagerCard';
 import { AiDefenseCard } from './components/AiDefenseCard';
 import { SiteAdvisorCard } from './components/SiteAdvisorCard';
@@ -241,11 +242,11 @@ interface FirewallPageProps {
   onNavigateToVpatch?: () => void;
   onNavigateToSettings?: (subTab: string) => void;
   onNavigateToServerTelemetry?: () => void;
-  initialSubTab?: 'stream' | 'rules' | 'caf' | 'drill' | 'supply_chain' | 'behavioral' | 'server_sec' | 'intel' | 'cloudflare' | 'vpatch' | 'ai_defense';
+  initialSubTab?: 'stream' | 'rules' | 'caf' | 'drill' | 'supply_chain' | 'behavioral' | 'server_sec' | 'intel' | 'cloudflare' | 'vpatch' | 'ai_defense' | 'modular_waf';
   initialSupplyChainSubTab?: 'sbom' | 'gatekeeper' | 'advisor' | 'lockfiles' | 'scripts';
   initialBehavioralSubTab?: 'learning' | 'honeytoken' | 'ratelimit' | 'distributed';
   initialAiDefenseSubTab?: 'ghost' | 'egress' | 'prompt' | 'credentials' | 'surface' | 'taint' | 'geo' | 'blocks';
-  onSubTabChange?: (tab: 'stream' | 'rules' | 'caf' | 'drill' | 'supply_chain' | 'behavioral' | 'server_sec' | 'intel' | 'cloudflare' | 'vpatch' | 'ai_defense', nested?: string) => void;
+  onSubTabChange?: (tab: 'stream' | 'rules' | 'caf' | 'drill' | 'supply_chain' | 'behavioral' | 'server_sec' | 'intel' | 'cloudflare' | 'vpatch' | 'ai_defense' | 'modular_waf', nested?: string) => void;
 }
 
 export const FirewallPage = ({
@@ -282,9 +283,9 @@ export const FirewallPage = ({
   const [wooRulesExpanded, setWooRulesExpanded] = useState<boolean>(true);
 
   // Normalize tab aliases to canonical FirewallPage tabs
-  const normalizeFirewallTab = (tab: string | null): ('stream' | 'rules' | 'caf' | 'drill' | 'supply_chain' | 'behavioral' | 'server_sec' | 'intel' | 'cloudflare' | 'vpatch' | 'ai_defense') | null => {
+  const normalizeFirewallTab = (tab: string | null): ('stream' | 'rules' | 'caf' | 'drill' | 'supply_chain' | 'behavioral' | 'server_sec' | 'intel' | 'cloudflare' | 'vpatch' | 'ai_defense' | 'modular_waf') | null => {
     if (!tab) return null;
-    const tabMap: Record<string, 'stream' | 'rules' | 'caf' | 'drill' | 'supply_chain' | 'behavioral' | 'server_sec' | 'intel' | 'cloudflare' | 'vpatch' | 'ai_defense'> = {
+    const tabMap: Record<string, 'stream' | 'rules' | 'caf' | 'drill' | 'supply_chain' | 'behavioral' | 'server_sec' | 'intel' | 'cloudflare' | 'vpatch' | 'ai_defense' | 'modular_waf'> = {
       protection: 'rules',
       rules: 'rules',
       traffic: 'stream',
@@ -294,7 +295,13 @@ export const FirewallPage = ({
       cloudflare: 'cloudflare',
       behavioral: 'behavioral',
       bots: 'behavioral',
-      'rule-builder': 'rules',
+      'rule-builder': 'modular_waf',
+      builder: 'modular_waf',
+      custom: 'modular_waf',
+      'modular-waf': 'modular_waf',
+      modular_waf: 'modular_waf',
+      dossier: 'modular_waf',
+      nextgen: 'modular_waf',
       'virtual-patches': 'vpatch',
       vpatch: 'vpatch',
       drill: 'drill',
@@ -307,7 +314,7 @@ export const FirewallPage = ({
   };
 
   // Initialize active tab from URL query param ?tab= if valid, else fallback to initialSubTab
-  const getStartingTab = (): 'stream' | 'rules' | 'caf' | 'drill' | 'supply_chain' | 'behavioral' | 'server_sec' | 'intel' | 'cloudflare' | 'vpatch' | 'ai_defense' => {
+  const getStartingTab = (): 'stream' | 'rules' | 'caf' | 'drill' | 'supply_chain' | 'behavioral' | 'server_sec' | 'intel' | 'cloudflare' | 'vpatch' | 'ai_defense' | 'modular_waf' => {
     if (initialSubTab) {
       const normalized = normalizeFirewallTab(initialSubTab);
       if (normalized) return normalized;
@@ -321,7 +328,7 @@ export const FirewallPage = ({
     return 'stream';
   };
 
-  const [activeTab, setActiveTab] = useState<'stream' | 'rules' | 'caf' | 'drill' | 'supply_chain' | 'behavioral' | 'server_sec' | 'intel' | 'cloudflare' | 'vpatch' | 'ai_defense'>(getStartingTab);
+  const [activeTab, setActiveTab] = useState<'stream' | 'rules' | 'caf' | 'drill' | 'supply_chain' | 'behavioral' | 'server_sec' | 'intel' | 'cloudflare' | 'vpatch' | 'ai_defense' | 'modular_waf'>(getStartingTab);
   const [copiedIp, setCopiedIp] = useState<string | null>(null);
   const [showDevTelemetry, setShowDevTelemetry] = useState<boolean>(false);
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState<boolean>(false);
@@ -671,7 +678,7 @@ export const FirewallPage = ({
 
   // Auto-switch to Developer Mode on explicit deep link to an engineer tab, or fallback to 'stream' if switched manually to Simple Mode
   useEffect(() => {
-    const engineerTabs = ['caf', 'cloudflare', 'drill', 'supply_chain', 'behavioral', 'server_sec', 'intel', 'vpatch', 'ai_defense'];
+    const engineerTabs = ['caf', 'cloudflare', 'drill', 'supply_chain', 'behavioral', 'server_sec', 'intel', 'vpatch', 'ai_defense', 'modular_waf'];
     if (isSimpleMode && engineerTabs.includes(activeTab)) {
       try {
         const urlParams = new URLSearchParams(window.location.search);
@@ -686,7 +693,7 @@ export const FirewallPage = ({
     }
   }, [isSimpleMode, activeTab]);
 
-  const handleSwitchTab = (tab: 'stream' | 'rules' | 'caf' | 'drill' | 'supply_chain' | 'behavioral' | 'server_sec' | 'intel' | 'cloudflare' | 'vpatch' | 'ai_defense') => {
+  const handleSwitchTab = (tab: 'stream' | 'rules' | 'caf' | 'drill' | 'supply_chain' | 'behavioral' | 'server_sec' | 'intel' | 'cloudflare' | 'vpatch' | 'ai_defense' | 'modular_waf') => {
     if (tab === activeTab) return;
     if (isRulesDirty && activeTab === 'rules') {
       requestFirewallConfirm({
@@ -704,7 +711,7 @@ export const FirewallPage = ({
     doSwitchTab(tab);
   };
 
-  const doSwitchTab = (tab: 'stream' | 'rules' | 'caf' | 'drill' | 'supply_chain' | 'behavioral' | 'server_sec' | 'intel' | 'cloudflare' | 'vpatch' | 'ai_defense') => {
+  const doSwitchTab = (tab: 'stream' | 'rules' | 'caf' | 'drill' | 'supply_chain' | 'behavioral' | 'server_sec' | 'intel' | 'cloudflare' | 'vpatch' | 'ai_defense' | 'modular_waf') => {
     setActiveTab(tab);
     try {
       const url = new URL(window.location.href);
@@ -3381,7 +3388,7 @@ export const FirewallPage = ({
               <div ref={moreMenuRef} style={{ position: 'relative', display: 'inline-block' }}>
                 <button
                   type="button"
-                  className={`webcare-tab-link ${['drill', 'supply_chain', 'server_sec', 'intel', 'vpatch'].includes(activeTab) ? 'is-active' : ''}`}
+                  className={`webcare-tab-link ${['drill', 'supply_chain', 'server_sec', 'intel', 'vpatch', 'modular_waf'].includes(activeTab) ? 'is-active' : ''}`}
                   onClick={() => setIsMoreMenuOpen(!isMoreMenuOpen)}
                   style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
                   aria-expanded={isMoreMenuOpen}
@@ -3393,7 +3400,8 @@ export const FirewallPage = ({
                     {activeTab === 'server_sec' && 'Server Security'}
                     {activeTab === 'intel' && 'Cloud Threat Intel'}
                     {activeTab === 'vpatch' && 'Virtual Patching'}
-                    {!['drill', 'supply_chain', 'server_sec', 'intel', 'vpatch'].includes(activeTab) && 'More Tools'}
+                    {activeTab === 'modular_waf' && 'Modular WAF Studio'}
+                    {!['drill', 'supply_chain', 'server_sec', 'intel', 'vpatch', 'modular_waf'].includes(activeTab) && 'More Tools'}
                   </span>
                   <ChevronDown size={14} style={{ transform: isMoreMenuOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s ease' }} />
                 </button>
@@ -3528,15 +3536,15 @@ export const FirewallPage = ({
 
                     <button
                       type="button"
-                      onClick={() => { setIsMoreMenuOpen(false); window.location.href = 'admin.php?page=webcare-pro-firewall&tab=protection'; }}
+                      onClick={() => { setIsMoreMenuOpen(false); handleSwitchTab('modular_waf'); }}
                       style={{
                         display: 'flex',
                         alignItems: 'center',
                         gap: '10px',
                         padding: '9px 14px',
-                        background: 'transparent',
-                        color: 'inherit',
-                        fontWeight: 500,
+                        background: activeTab === 'modular_waf' ? 'rgba(79, 70, 229, 0.08)' : 'transparent',
+                        color: activeTab === 'modular_waf' ? '#4f46e5' : 'inherit',
+                        fontWeight: activeTab === 'modular_waf' ? 600 : 500,
                         border: 'none',
                         textAlign: 'left',
                         cursor: 'pointer',
@@ -3587,7 +3595,7 @@ export const FirewallPage = ({
               type="button"
               className="webcare-btn-micro"
               onClick={() => {
-                window.location.href = 'admin.php?page=webcare-pro-firewall&tab=rule-builder';
+                handleSwitchTab('modular_waf');
               }}
               style={{
                 fontSize: '11.5px',
@@ -9718,6 +9726,13 @@ export const FirewallPage = ({
           apiRequest={apiRequest}
           onNavigateToSettings={() => setActiveTab('cloudflare')}
         />
+      )}
+
+      {/* TAB: Modular Firewall & Rule Builder Studio */}
+      {activeTab === 'modular_waf' && (
+        <div style={{ marginTop: '10px' }}>
+          <ModularFirewallStudio />
+        </div>
       )}
 
       {/* Modal: View Existing Cloudflare Rules & Slots Allocation */}
