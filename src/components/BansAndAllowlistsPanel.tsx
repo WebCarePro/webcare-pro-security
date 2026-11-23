@@ -1158,6 +1158,142 @@ export const BansAndAllowlistsPanel: React.FC<BansAndAllowlistsPanelProps> = ({
               />
             </div>
           </div>
+
+          {/* Secondary Row: Specific Rule or Category Group Multi-select */}
+          {newWhitelistScope !== 'global' && (
+            <div style={{ paddingTop: '8px', borderTop: '1px dashed var(--webcare-border, #e2e8f0)' }}>
+              {newWhitelistScope === 'rule' && (
+                <div>
+                  <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: 'var(--webcare-text-secondary, #475569)', marginBottom: '4px' }}>
+                    Select Specific Rule to Exempt:
+                  </label>
+                  <select
+                    value={newWhitelistSelectedRule}
+                    onChange={(e) => {
+                      const rId = e.target.value;
+                      setNewWhitelistSelectedRule(rId);
+                      if (!newWhitelistReason) {
+                        const found = rulesCatalog.find(r => r.id === rId);
+                        if (found) {
+                          setNewWhitelistReason(`Allowed for rule ${found.name}`);
+                        }
+                      }
+                    }}
+                    className="webcare-firewall-input"
+                    style={{ width: '100%', maxWidth: '500px', fontSize: '12px', padding: '7px 10px' }}
+                    required
+                  >
+                    <option value="">-- Choose Firewall Rule ({rulesCatalog.length || 30}+ Available) --</option>
+                    {Array.from(new Set(rulesCatalog.map(r => r.category))).map(cat => (
+                      <optgroup key={cat} label={`📂 ${cat}`}>
+                        {rulesCatalog.filter(r => r.category === cat).map(r => (
+                          <option key={r.id} value={r.id}>
+                            {r.name} [{r.id}]
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {newWhitelistScope === 'category' && (
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                    <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--webcare-text-secondary, #475569)' }}>
+                      Select Category Groups to Exempt ({newWhitelistSelectedCats.length} selected):
+                    </label>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const allCats = Array.from(new Set(rulesCatalog.map(r => r.category)));
+                          setNewWhitelistSelectedCats(allCats);
+                          if (!newWhitelistReason) {
+                            setNewWhitelistReason(`Allowed for all ${allCats.length} category groups`);
+                          }
+                        }}
+                        style={{ background: 'none', border: 'none', padding: 0, fontSize: '11px', color: '#4f46e5', cursor: 'pointer', fontWeight: 600, textDecoration: 'underline' }}
+                      >
+                        Select All
+                      </button>
+                      <span style={{ fontSize: '10px', color: 'var(--webcare-text-muted, #94a3b8)' }}>|</span>
+                      <button
+                        type="button"
+                        onClick={() => setNewWhitelistSelectedCats([])}
+                        style={{ background: 'none', border: 'none', padding: 0, fontSize: '11px', color: '#64748b', cursor: 'pointer', fontWeight: 500 }}
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{
+                    maxHeight: '140px',
+                    overflowY: 'auto',
+                    padding: '8px 10px',
+                    background: 'var(--webcare-bg-surface, #f8fafc)',
+                    border: '1px solid var(--webcare-border, #cbd5e1)',
+                    borderRadius: '6px',
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: '6px',
+                  }}>
+                    {Array.from(new Set(rulesCatalog.map(r => r.category))).map(cat => {
+                      const count = rulesCatalog.filter(r => r.category === cat).length;
+                      const isSelected = newWhitelistSelectedCats.includes(cat);
+                      return (
+                        <button
+                          key={cat}
+                          type="button"
+                          onClick={() => {
+                            setNewWhitelistSelectedCats(prev => {
+                              const updated = prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat];
+                              if (!newWhitelistReason && updated.length > 0) {
+                                setNewWhitelistReason(`Allowed for categories: ${updated.join(', ')}`);
+                              }
+                              return updated;
+                            });
+                          }}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '5px',
+                            padding: '4px 8px',
+                            borderRadius: '4px',
+                            fontSize: '11px',
+                            fontWeight: isSelected ? 600 : 500,
+                            cursor: 'pointer',
+                            transition: 'all 0.15s ease',
+                            border: isSelected ? '1px solid #4f46e5' : '1px solid var(--webcare-border, #cbd5e1)',
+                            background: isSelected ? 'rgba(79, 70, 229, 0.12)' : 'var(--webcare-bg-card, #ffffff)',
+                            color: isSelected ? '#4f46e5' : 'var(--webcare-text-primary, #0f172a)',
+                          }}
+                        >
+                          <span style={{ fontSize: '10px' }}>{isSelected ? '✓' : '+'}</span>
+                          <span>{cat}</span>
+                          <span style={{
+                            fontSize: '9.5px',
+                            opacity: 0.8,
+                            padding: '1px 4px',
+                            borderRadius: '3px',
+                            background: isSelected ? 'rgba(79, 70, 229, 0.2)' : 'var(--webcare-bg-elevated, #f1f5f9)'
+                          }}>
+                            {count}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {newWhitelistSelectedCats.length === 0 && (
+                    <div style={{ fontSize: '11px', color: '#dc2626', marginTop: '4px' }}>
+                      * Click one or more category badges above to exempt them.
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
             <button
               type="submit"

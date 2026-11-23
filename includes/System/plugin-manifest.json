@@ -1,6 +1,6 @@
 {
   "version": "3.25.3",
-  "generated_at": "2026-11-23T13:25:46.824Z",
+  "generated_at": "2026-11-23T13:29:55.840Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -88,12 +88,12 @@
       "size": 1405
     },
     "build/index.asset.php": {
-      "sha256": "270ee5cbd1124a04d2ae2e7b9fd3be78436c34f1f7e359c25fbe483426d25de8",
+      "sha256": "a403adffff52549de4cdbf5ff69b13081d363952c154c501614fee57d9af46f2",
       "size": 174
     },
     "build/index.js": {
-      "sha256": "183e3d9c1d64f247a803e859e138ebd4cdfc7368f1a4e813c0ca016dd3a05cd3",
-      "size": 2807061
+      "sha256": "92b0904643d5141fe9c6c691ea79d5e204cde775416faa2cc1b4e1dfc8348cf3",
+      "size": 2810425
     },
     "build/modular-waf.asset.php": {
       "sha256": "9e194a62b1bfb8490e0b5abdd849b13a36711b440192f99b17e17231e17fb4b3",
@@ -112,12 +112,12 @@
       "size": 160351
     },
     "build/scan.asset.php": {
-      "sha256": "777925688d4a451566a049e21e80a985ffbb4edf9038d94360eb6965bd73386a",
+      "sha256": "eb2d119edb0bed2c301f074fa6d28be72b1e527044a60c453f2b45da99f75536",
       "size": 174
     },
     "build/scan.js": {
-      "sha256": "de025508bb8601da5ebd6c818e46639bb87fdf8374ae775c719acdf5f0641d04",
-      "size": 2798596
+      "sha256": "2c4a84f73ac5e5e136f6ddd728ddab438f9b8d45a5e067d7325d6c698b279563",
+      "size": 2801960
     },
     "build/settings.asset.php": {
       "sha256": "9a75a40915d786b707d2525bad2c903e39950a7898362b6f67454f11a9f0c699",
@@ -136,12 +136,12 @@
       "size": 464262
     },
     "build/waf-logs.asset.php": {
-      "sha256": "b141b7f3057ec86b3d8486c4fbf765ffc23c331a9f4c9886c4b11839f1b1551f",
+      "sha256": "b4ece10c077b15b8f151faf65b68b53429226528e0701bcac8b49ff627a38647",
       "size": 163
     },
     "build/waf-logs.js": {
-      "sha256": "b8e94b9260350a43a7498f21a0eb2d266276f6e608ea76e0423c9b36754b5ce3",
-      "size": 384828
+      "sha256": "9b8b31f69c4797d1d61020e7f7e634efb740a5b842bf432b2a9569bca8623245",
+      "size": 388192
     },
     "build/wizard.asset.php": {
       "sha256": "a7482edcc9936c453548eeea8f32668b20f44ce3307fa8a3166a25e86b74350b",
