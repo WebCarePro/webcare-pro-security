@@ -1534,8 +1534,14 @@ export const App = ({ initialTab }: { initialTab?: NavTab } = {}) => {
       if (page === 'webcare-pro-vpatch' || page === 'webcare-scanner-vpatch' || ((page === 'webcare-pro-firewall' || page === 'webcare-scanner-firewall') && tabParam === 'vpatch') || ((page === 'webcare-pro-security' || page === 'webcare-security-scanner') && tabParam === 'vpatch')) {
         return 'firewall';
       }
-      if (tabParam && ['dashboard', 'scan', 'targeted', 'logs', 'forensics', 'vault', 'quarantine', 'backup', 'server', 'vulnerabilities', 'firewall', 'vpatch', 'waf_logs', 'fim', 'auth', 'notifications', 'settings', 'about'].includes(tabParam)) {
-        return (PAGE_TO_TAB[tabParam] || tabParam) as NavTab;
+      if (tabParam) {
+        if (tabParam === 'file-integrity') return 'fim';
+        if (tabParam === 'malware') return 'scan';
+        if (tabParam === 'scans') return 'logs';
+        if (tabParam === 'database') return 'backup';
+        if (['dashboard', 'scan', 'targeted', 'logs', 'forensics', 'vault', 'quarantine', 'backup', 'server', 'vulnerabilities', 'firewall', 'vpatch', 'waf_logs', 'fim', 'auth', 'notifications', 'settings', 'about'].includes(tabParam)) {
+          return (PAGE_TO_TAB[tabParam] || tabParam) as NavTab;
+        }
       }
       if (page && PAGE_TO_TAB[page]) {
         return PAGE_TO_TAB[page];
@@ -1856,11 +1862,20 @@ export const App = ({ initialTab }: { initialTab?: NavTab } = {}) => {
     };
 
     let target = pageMap[newTab] || TAB_TO_PAGE[newTab] || ('webcare-pro-security&tab=' + newTab);
-    if (subTab && !target.includes('&tab=')) {
-      target += '&tab=' + subTab;
+    if (subTab) {
+      const canonicalSub = subTab === 'rules' ? 'waf-rules' : (subTab === 'custom_rules' || subTab === 'rule-builder' || subTab === 'custom-rules') ? 'custom-waf-rules' : subTab;
+      if (target.includes('&tab=')) {
+        target = target.replace(/&tab=[^&]*/, '&tab=' + canonicalSub);
+      } else {
+        target += '&tab=' + canonicalSub;
+      }
     }
-    if (nestedSubTab && !target.includes('&subtab=')) {
-      target += '&subtab=' + nestedSubTab;
+    if (nestedSubTab) {
+      if (target.includes('&subtab=')) {
+        target = target.replace(/&subtab=[^&]*/, '&subtab=' + nestedSubTab);
+      } else {
+        target += '&subtab=' + nestedSubTab;
+      }
     }
     window.location.href = 'admin.php?page=' + target;
   };
@@ -5176,6 +5191,27 @@ Source Code,${escapeCsv(code)}
               <LayoutDashboard size={15} />
               <span>Dashboard</span>
             </button>
+
+            <button
+              type="button"
+              className={`nav-tab-btn ${['firewall', 'vpatch', 'custom_rules', 'modular_waf'].includes(navTab) ? 'active' : ''}`}
+              id="tabBtnFirewall"
+              onClick={() => handleNavTabChange('firewall')}
+            >
+              <Shield size={15} />
+              <span>Firewall</span>
+            </button>
+
+            <button
+              type="button"
+              className={`nav-tab-btn ${['waf_logs', 'activity_logs'].includes(navTab) ? 'active' : ''}`}
+              id="tabBtnLogs"
+              onClick={() => handleNavTabChange('waf_logs')}
+            >
+              <FileText size={15} />
+              <span>Logs &amp; Bans</span>
+            </button>
+
             <button
               type="button"
               className={`nav-tab-btn ${['scan', 'targeted', 'logs', 'fim', 'vulnerabilities'].includes(navTab) ? 'active' : ''}`}
@@ -5183,17 +5219,9 @@ Source Code,${escapeCsv(code)}
               onClick={() => handleNavTabChange('scan')}
             >
               <Radar size={15} />
-              <span>Scanner</span>
+              <span>Malware &amp; Scanner</span>
             </button>
-            <button
-              type="button"
-              className={`nav-tab-btn ${['firewall', 'waf_logs', 'vpatch'].includes(navTab) ? 'active' : ''}`}
-              id="tabBtnFirewall"
-              onClick={() => handleNavTabChange('firewall')}
-            >
-              <Shield size={15} />
-              <span>Firewall</span>
-            </button>
+
             <button
               type="button"
               className={`nav-tab-btn ${navTab === 'auth' ? 'active' : ''}`}
@@ -5201,8 +5229,9 @@ Source Code,${escapeCsv(code)}
               onClick={() => handleNavTabChange('auth')}
             >
               <Users size={15} />
-              <span>Identity</span>
+              <span>Login &amp; Access</span>
             </button>
+
             <button
               type="button"
               className={`nav-tab-btn ${['vault', 'quarantine', 'backup', 'forensics', 'server'].includes(navTab) ? 'active' : ''}`}
@@ -5210,16 +5239,17 @@ Source Code,${escapeCsv(code)}
               onClick={() => handleNavTabChange('vault')}
             >
               <Server size={15} />
-              <span>Vault &amp; Tools</span>
+              <span>Backups &amp; Vault</span>
             </button>
+
             <button
               type="button"
-              className={`nav-tab-btn ${['settings', 'notifications', 'activity_logs', 'about'].includes(navTab) ? 'active' : ''}`}
+              className={`nav-tab-btn ${['settings', 'notifications', 'about', 'cron_manager'].includes(navTab) ? 'active' : ''}`}
               id="tabBtnSettings"
               onClick={() => handleNavTabChange('settings')}
             >
               <SettingsIcon size={15} />
-              <span>Settings</span>
+              <span>Settings &amp; Doctor</span>
             </button>
 
             {/* Quick-Jump Mega Menu Button */}

@@ -186,12 +186,12 @@ class AdminMenu {
         elseif ($current_page === 'webcare-pro-custom-rules' || $current_page === 'webcare-pro-modular-waf') $active_tab = 'custom_rules';
         elseif ($current_page === 'webcare-pro-scan') $active_tab = 'scan';
         // Tab parameter fallback for main portal / sub-tab navigation
-        elseif ($tab_param === 'logs') $active_tab = 'logs';
+        elseif ($tab_param === 'logs' || $tab_param === 'scans') $active_tab = 'logs';
         elseif ($tab_param === 'targeted') $active_tab = 'targeted';
         elseif ($tab_param === 'vulnerabilities') $active_tab = 'vulnerabilities';
-        elseif ($tab_param === 'fim') $active_tab = 'fim';
+        elseif ($tab_param === 'fim' || $tab_param === 'file-integrity') $active_tab = 'fim';
         elseif ($tab_param === 'quarantine') $active_tab = 'quarantine';
-        elseif ($tab_param === 'backup') $active_tab = 'backup';
+        elseif ($tab_param === 'backup' || $tab_param === 'database') $active_tab = 'backup';
         elseif ($tab_param === 'server') $active_tab = 'server';
         elseif ($tab_param === 'forensics') $active_tab = 'forensics';
         elseif ($tab_param === 'vault') $active_tab = 'vault';
@@ -205,7 +205,7 @@ class AdminMenu {
         elseif ($tab_param === 'about') $active_tab = 'about';
         elseif ($tab_param === 'wizard') $active_tab = 'wizard';
         elseif (in_array($tab_param, ['custom-waf-rules', 'custom_waf_rules', 'custom_rules', 'custom-rules', 'rule-builder', 'modular_waf'], true)) $active_tab = 'custom_rules';
-        elseif ($tab_param === 'scan') $active_tab = 'scan';
+        elseif ($tab_param === 'scan' || $tab_param === 'malware') $active_tab = 'scan';
 
         $global_css_file = WEBCAREPROSCAN_PATH . 'build/global.css';
         $global_js_file  = WEBCAREPROSCAN_PATH . 'build/global.js';

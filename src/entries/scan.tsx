@@ -121,9 +121,13 @@ function mountScan() {
   const container = document.getElementById('webcare-scanner-root') || document.getElementById('webcare-pro-root');
   if (!container) return;
 
+  const urlParams = new URLSearchParams(window.location.search);
+  const tabParam = urlParams.get('tab');
+  const resolvedTab = tabParam === 'file-integrity' ? 'fim' : tabParam === 'malware' ? 'scan' : (tabParam || 'scan');
+
   const app = (
     <ScanErrorBoundary>
-      <App initialTab="scan" />
+      <App initialTab={resolvedTab as any} />
     </ScanErrorBoundary>
   );
 

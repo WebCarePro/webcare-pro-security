@@ -7,10 +7,14 @@ function mountAuth() {
   const container = document.getElementById('webcare-scanner-root') || document.getElementById('webcare-pro-root');
   if (!container) return;
 
+  const urlParams = new URLSearchParams(window.location.search);
+  const tabParam = (urlParams.get('tab') as any) || '2fa';
+
   const app = (
     <WebCareShell activeTab="auth">
       <AuthSecurityPage
         apiRequest={apiRequest}
+        initialSubTab={tabParam}
         onNavigateToDashboard={() => { window.location.href = 'admin.php?page=webcare-pro-security'; }}
       />
     </WebCareShell>
