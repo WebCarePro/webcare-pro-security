@@ -533,11 +533,11 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
   const getInitialLogTab = (): 'local' | 'cloudflare' | 'rules' => {
     try {
       const params = new URLSearchParams(window.location.search);
-      const tab = params.get('tab') || params.get('subtab');
-      if (tab === 'cloudflare' || tab === 'edge') {
+      const tab = params.get('tab') || params.get('subtab') || params.get('section');
+      if (tab === 'cloudflare-waf-logs' || tab === 'cloudflare' || tab === 'edge') {
         return 'cloudflare';
       }
-      if (tab === 'rules' || tab === 'bans' || tab === 'allowlist' || tab === 'allowlists') {
+      if (tab === 'bans-allow-lists' || tab === 'bans-allowlists' || tab === 'bans' || tab === 'rules' || tab === 'allowlist' || tab === 'allowlists') {
         return 'rules';
       }
     } catch (e) {}
@@ -551,16 +551,25 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
     try {
       const url = new URL(window.location.href);
       if (tab === 'cloudflare') {
-        url.searchParams.set('tab', 'cloudflare');
+        url.searchParams.set('tab', 'cloudflare-waf-logs');
       } else if (tab === 'rules') {
-        url.searchParams.set('tab', 'rules');
+        url.searchParams.set('tab', 'bans-allow-lists');
       } else {
         url.searchParams.delete('tab');
       }
       url.searchParams.delete('subtab');
-      window.history.replaceState({ tab }, '', url.toString());
+      url.searchParams.delete('section');
+      window.history.pushState({ tab }, '', url.toString());
     } catch (e) {}
   };
+
+  useEffect(() => {
+    const handlePopState = () => {
+      setActiveLogTab(getInitialLogTab());
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   // Modals
   const [ipInspectModal, setIpInspectModal] = useState<{ isOpen: boolean; ip: string | null }>({

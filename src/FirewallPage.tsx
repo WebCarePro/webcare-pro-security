@@ -6809,7 +6809,7 @@ export const FirewallPage = ({
                 </span>
               </div>
               <a
-                href="admin.php?page=webcare-pro-logs&tab=firewall"
+                href="admin.php?page=webcare-pro-logs&tab=bans-allow-lists"
                 className="webcare-btn webcare-btn-secondary"
                 style={{
                   fontSize: '12px',

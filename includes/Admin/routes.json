@@ -143,6 +143,18 @@
           "description": "Blocked requests, active bans, temporary IP lockouts, and unban controls."
         },
         {
+          "id": "bans-allow-lists",
+          "label": "Bans & Allowlists",
+          "mode": "all",
+          "description": "Comprehensive access control matrix: manage banned IPs, trusted admin allowlists, and targeted bypass rules."
+        },
+        {
+          "id": "cloudflare-waf-logs",
+          "label": "Cloudflare Edge Logs",
+          "mode": "all",
+          "description": "Cloudflare Anycast edge firewall block and challenge security event stream."
+        },
+        {
           "id": "activity",
           "label": "Admin Activity",
           "mode": "all",
