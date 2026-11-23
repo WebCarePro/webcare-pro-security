@@ -535,7 +535,8 @@ class RequestPipelineTest extends TestCase {
     }
 
     public function testAdaptiveRateLimiterRestWriteReachesBucketWithoutTypeError(): void {
-        $origSettings = \WebCareProScanner\Firewall\AdaptiveRateLimiter::get_settings();
+        $sentinel = new \stdClass();
+        $origRaw = get_option(\WebCareProScanner\Firewall\AdaptiveRateLimiter::OPTION_SETTINGS, $sentinel);
         \WebCareProScanner\Firewall\AdaptiveRateLimiter::update_settings(['enabled' => true]);
 
         try {
@@ -552,7 +553,11 @@ class RequestPipelineTest extends TestCase {
             $allowed = \WebCareProScanner\Firewall\AdaptiveRateLimiter::check_request('203.0.113.50');
             $this->assertTrue($allowed);
         } finally {
-            \WebCareProScanner\Firewall\AdaptiveRateLimiter::update_settings($origSettings);
+            if ($origRaw === $sentinel) {
+                delete_option(\WebCareProScanner\Firewall\AdaptiveRateLimiter::OPTION_SETTINGS);
+            } else {
+                update_option(\WebCareProScanner\Firewall\AdaptiveRateLimiter::OPTION_SETTINGS, $origRaw, false);
+            }
         }
     }
 
