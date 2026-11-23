@@ -56,13 +56,13 @@ register_deactivation_hook(__FILE__, static function (): void {
         wp_clear_scheduled_hook('webcareproscan_threat_intel_cron_sync');
         wp_clear_scheduled_hook('webcareproscan_backup_step_worker');
         wp_clear_scheduled_hook('webcareproscan_redirect_canary_event');
-        wp_clear_scheduled_hook('webcareproscan_modular_ast_step');
+        wp_clear_scheduled_hook('webcareproscan_custom_rules_ast_step');
         wp_clear_scheduled_hook('webcareproscan_weekly_digest_event');
         wp_clear_scheduled_hook('webcareproscan_waf_log_retention_prune');
         wp_clear_scheduled_hook('webcareproscan_domain_reputation_daily_check');
         wp_clear_scheduled_hook('webcareproscan_reinfection_hourly_check');
         wp_clear_scheduled_hook('webcareproscan_self_defense_watchdog_event');
-        wp_clear_scheduled_hook('webcareproscan_modular_autopilot_cron');
+        wp_clear_scheduled_hook('webcareproscan_custom_rules_autopilot_cron');
         wp_clear_scheduled_hook('webcareproscan_auto_rearm_waf');
         wp_clear_scheduled_hook('webcare_cloudflare_ip_sync_cron');
         wp_clear_scheduled_hook('webcare_cf_auto_sync_edge_cron');

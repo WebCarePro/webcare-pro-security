@@ -26,12 +26,12 @@ class BehavioralVaultManager {
     const VAULT_FOLDER = 'webcare-pro-security/intel-vault';
     const SHARD_EXT    = '.intel.gz';
     const META_FILE    = 'intel_meta.json';
-    const OPTION_STATE = 'webcareproscan_modular_scan_state';
+    const OPTION_STATE = 'webcareproscan_custom_rules_scan_state';
 
     const SHARD_INVENTORY = 'extension_inventory';
     const SHARD_ENDPOINTS = 'endpoint_behavior_map';
     const SHARD_FINDINGS  = 'ast_taint_findings';
-    const SHARD_RULES     = 'modular_firewall_rules';
+    const SHARD_RULES     = 'custom_firewall_rules';
 
     /**
      * Get or create the isolated, hardened intel vault directory in uploads.
@@ -358,7 +358,7 @@ class BehavioralVaultManager {
                 self::SHARD_INVENTORY => 'Component Inventory & Versions',
                 self::SHARD_ENDPOINTS => 'AJAX & REST Behavior Map',
                 self::SHARD_FINDINGS  => 'AST & Source-to-Sink Findings',
-                self::SHARD_RULES     => 'Modular Firewall Rules',
+                self::SHARD_RULES     => 'Custom Firewall Rules',
             ];
 
             $shard_details = [];

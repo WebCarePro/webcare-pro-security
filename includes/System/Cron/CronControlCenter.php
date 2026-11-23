@@ -281,7 +281,7 @@ class CronControlCenter {
                 self::ensure_scheduled($hook, (int) ($task['default_delay'] ?? 300), (string) ($task['default_recurrence'] ?? 'daily'));
             } elseif ($hook === 'webcare_cf_auto_sync_edge_cron' && (!get_option('webcare_cf_auto_sync_edge', true) || empty($settings['cloudflare_enabled']))) {
                 wp_clear_scheduled_hook($hook);
-            } elseif ($hook === 'webcareproscan_modular_ast_step' && empty($settings['cron_modular_ast_bg_enabled'] ?? true)) {
+            } elseif ($hook === 'webcareproscan_custom_rules_ast_step' && empty($settings['cron_custom_rules_ast_bg_enabled'] ?? true)) {
                 wp_clear_scheduled_hook($hook);
             } elseif ($hook === 'webcareproscan_scan_step_worker' && empty($settings['cron_scan_bg_enabled'] ?? true)) {
                 wp_clear_scheduled_hook($hook);
@@ -675,8 +675,8 @@ class CronControlCenter {
                         }
                         return ['status' => 'success', 'summary' => __('Scheduled malware audit executed.', 'webcare-pro-security')];
 
-                    case 'webcareproscan_modular_ast_step':
-                        $state = get_option('webcareproscan_modular_scan_state', []);
+                    case 'webcareproscan_custom_rules_ast_step':
+                        $state = get_option('webcareproscan_custom_rules_scan_state', []);
                         if (!is_array($state) || ($state['status'] ?? '') !== 'running') {
                             return [
                                 'status'  => 'skipped',
@@ -736,7 +736,7 @@ class CronControlCenter {
                             'metrics' => ['severity' => $rep['severity'] ?? 'clean', 'findings_count' => $findings, 'auto_healed' => !empty($rep['auto_healed'])],
                         ];
 
-                    case 'webcareproscan_modular_autopilot_cron':
+                    case 'webcareproscan_custom_rules_autopilot_cron':
                         $promoted = ModularFirewallSynthesizer::evaluate_autopilot_promotions();
                         return [
                             'status'  => 'success',

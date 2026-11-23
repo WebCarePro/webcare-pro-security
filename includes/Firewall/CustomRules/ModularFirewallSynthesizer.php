@@ -28,10 +28,10 @@ if (!defined('ABSPATH')) {
 
 class ModularFirewallSynthesizer {
 
-    const OPTION_RULES         = 'webcareproscan_modular_waf_rules';
-    const OPTION_AUTOPILOT     = 'webcareproscan_modular_autopilot';
-    const OPTION_AUTOPILOT_OBS = 'webcareproscan_modular_autopilot_obs';
-    const OPTION_CUSTOM_SEQ    = 'webcareproscan_modular_custom_rule_seq';
+    const OPTION_RULES         = 'webcareproscan_custom_waf_rules';
+    const OPTION_AUTOPILOT     = 'webcareproscan_custom_rules_autopilot';
+    const OPTION_AUTOPILOT_OBS = 'webcareproscan_custom_rules_autopilot_obs';
+    const OPTION_CUSTOM_SEQ    = 'webcareproscan_custom_rule_seq';
 
     private static array $runtime_exempt_rule_ids = [];
     private static bool $runtime_custom_allow_matched = false;

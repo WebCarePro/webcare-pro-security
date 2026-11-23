@@ -113,9 +113,9 @@ class CronRegistry {
                 'deep_link'           => 'admin.php?page=webcare-pro-settings&tab=schedules',
                 'default_delay'       => 0,
             ],
-            'webcareproscan_modular_ast_step' => [
-                'id'                  => 'modular_ast_worker',
-                'hook'                => 'webcareproscan_modular_ast_step',
+            'webcareproscan_custom_rules_ast_step' => [
+                'id'                  => 'custom_rules_ast_worker',
+                'hook'                => 'webcareproscan_custom_rules_ast_step',
                 'title'               => did_action('init') ? __('Custom Rules AST Scan Continuation', 'webcare-pro-security') : 'Custom Rules AST Scan Continuation',
                 'description'         => did_action('init') ? __('Resumes and finishes in-progress Custom Rules PHP AST scans via WP-Cron if the browser tab is closed.', 'webcare-pro-security') : 'Resumes and finishes in-progress Custom Rules PHP AST scans via WP-Cron if the browser tab is closed.',
                 'category'            => 'scanning',
@@ -123,7 +123,7 @@ class CronRegistry {
                 'default_recurrence'  => 'on_demand',
                 'allowed_recurrences' => [],
                 'can_disable'         => true,
-                'setting_key'         => 'cron_modular_ast_bg_enabled',
+                'setting_key'         => 'cron_custom_rules_ast_bg_enabled',
                 'setting_type'        => 'settings_manager',
                 'setting_location'    => did_action('init') ? __('Custom Rules -> Live AST Telemetry', 'webcare-pro-security') : 'Custom Rules -> Live AST Telemetry',
                 'deep_link'           => 'admin.php?page=webcare-pro-firewall&tab=rule-builder',
@@ -177,9 +177,9 @@ class CronRegistry {
                 'deep_link'           => 'admin.php?page=webcare-pro-firewall',
                 'default_delay'       => 60,
             ],
-            'webcareproscan_modular_autopilot_cron' => [
-                'id'                  => 'modular_autopilot_promo',
-                'hook'                => 'webcareproscan_modular_autopilot_cron',
+            'webcareproscan_custom_rules_autopilot_cron' => [
+                'id'                  => 'custom_rules_autopilot_promo',
+                'hook'                => 'webcareproscan_custom_rules_autopilot_cron',
                 'title'               => did_action('init') ? __('Custom Rules 48h Auto-Pilot Promotion', 'webcare-pro-security') : 'Custom Rules 48h Auto-Pilot Promotion',
                 'description'         => did_action('init') ? __('Evaluates monitored Custom Rules after the 48-hour false-positive soak period for safe promotion.', 'webcare-pro-security') : 'Evaluates monitored Custom Rules after the 48-hour false-positive soak period for safe promotion.',
                 'category'            => 'firewall_edge',
@@ -187,7 +187,7 @@ class CronRegistry {
                 'default_recurrence'  => 'hourly',
                 'allowed_recurrences' => ['hourly', 'twicedaily', 'daily'],
                 'can_disable'         => true,
-                'setting_key'         => 'cron_modular_autopilot_enabled',
+                'setting_key'         => 'cron_custom_rules_autopilot_enabled',
                 'setting_type'        => 'settings_manager',
                 'setting_location'    => did_action('init') ? __('Custom Rules -> Smart Auto-Pilot', 'webcare-pro-security') : 'Custom Rules -> Smart Auto-Pilot',
                 'deep_link'           => 'admin.php?page=webcare-pro-firewall&tab=rule-builder',
@@ -381,13 +381,7 @@ class CronRegistry {
      */
     public static function get_task(string $hook): ?array {
         $tasks = self::get_tasks();
-        if (isset($tasks[$hook])) {
-            return $tasks[$hook];
-        }
-        if ($hook === 'webcareproscan_modular_scan_cron_step') {
-            return $tasks['webcareproscan_modular_ast_step'] ?? null;
-        }
-        return null;
+        return $tasks[$hook] ?? null;
     }
 
     /**
@@ -402,7 +396,6 @@ class CronRegistry {
                     array_keys(self::get_tasks()),
                     [
                         'webcareproscan_scheduled_scan_cron',
-                        'webcareproscan_modular_scan_cron_step',
                         'webcareproscan_scan_vault_temp_prune',
                     ]
                 )

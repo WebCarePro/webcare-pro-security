@@ -293,8 +293,8 @@ class SettingsManager {
             'cron_domain_reputation_enabled'     => false, // Opt-in required for automated DNSBL & SSL reputation audits
             'cron_redirect_canary_enabled'       => true,
             'cron_reinfection_watchdog_enabled'  => true,
-            'cron_modular_autopilot_enabled'     => true,
-            'cron_modular_ast_bg_enabled'        => true,
+            'cron_custom_rules_autopilot_enabled'     => true,
+            'cron_custom_rules_ast_bg_enabled'        => true,
             'cron_scan_bg_enabled'               => true,
             'cron_backup_bg_enabled'             => true,
             'cron_task_schedules'                => [],
@@ -1276,8 +1276,8 @@ class SettingsManager {
             'cron_domain_reputation_enabled',
             'cron_redirect_canary_enabled',
             'cron_reinfection_watchdog_enabled',
-            'cron_modular_autopilot_enabled',
-            'cron_modular_ast_bg_enabled',
+            'cron_custom_rules_autopilot_enabled',
+            'cron_custom_rules_ast_bg_enabled',
             'cron_scan_bg_enabled',
             'cron_backup_bg_enabled',
         ];

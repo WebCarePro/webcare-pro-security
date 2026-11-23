@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-23T18:42:48.904Z",
+  "generated_at": "2026-11-23T18:52:56.697Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -584,20 +584,20 @@
       "size": 18083
     },
     "includes/Firewall/CustomRules/BehavioralVaultManager.php": {
-      "sha256": "ef1e63c9aa79fb3a9069063d324546a82bd1fab0a1faafc795e617cbce0ba63b",
-      "size": 15172
+      "sha256": "6dd48d9b24eac27645b7d533df01cb299e7e70292fd995da6a9b1cf6f3e23fb4",
+      "size": 15175
     },
     "includes/Firewall/CustomRules/ComponentIntegrityVerifier.php": {
       "sha256": "b9dcf8ccdbb0cb90bbe2b60b6285602cde6af227aae5256874706811fcafbe51",
       "size": 51319
     },
     "includes/Firewall/CustomRules/ModularFirewallSynthesizer.php": {
-      "sha256": "1e7891915c1162c75d03b4f6d89dec112e296406e7db33ffa31932fbaa47c3bd",
-      "size": 126298
+      "sha256": "7e2f9778ea3c050f846f5ae84525eed371f3ea5f4676178258bbedb716d72113",
+      "size": 126299
     },
     "includes/Firewall/CustomRules/SiteBehavioralAnalyzer.php": {
-      "sha256": "6ff049bbec849cc1447eba3f37f100bf488bf2c1ab31a61fab12ae89a6e0d084",
-      "size": 94658
+      "sha256": "f8c30d9531fdd5afdba8209b3edaea1af12fb885bd607fdb4ad1382c79cf15f6",
+      "size": 94460
     },
     "includes/Firewall/CustomRules/VisualRuleExpressionEngine.php": {
       "sha256": "c448192c3272bd4c4fc2110bac12df4d722188d6978b63e07948eebcb3a4426b",
@@ -700,8 +700,8 @@
       "size": 39707
     },
     "includes/Firewall/RescueAssistantManager.php": {
-      "sha256": "46dbcf9b4e1ca975455a8f1c6a9f7517df9f3a77b20927e0ac737434ae10e5e9",
-      "size": 59100
+      "sha256": "7aaaf00652480b4ac94b8c61c5ce1bb578bf46dc03cfdd5f8e2f7af6f9eb6c66",
+      "size": 59105
     },
     "includes/Firewall/ServerSecurityEngine.php": {
       "sha256": "0c945023326b76a57e3aeaff1bb1854a9d8ae8dec1b29f0b46f2b3ee0239ab40",
@@ -1012,16 +1012,16 @@
       "size": 33259
     },
     "includes/System/Cron/CronControlCenter.php": {
-      "sha256": "10f05f471da67a3a2ccec8f355e85dae330bb536b1c0416d27262d4d4f7ed5e7",
-      "size": 53042
+      "sha256": "a3f5a01ca2af2c71602444d919505d1920d75ceba85e010a3d8c48d1277af780",
+      "size": 53067
     },
     "includes/System/Cron/CronExecutionLogger.php": {
       "sha256": "a6829cf16db27c2488ed7b9644f7f6ea374a7163473a3713d2da3990821d9e30",
       "size": 19448
     },
     "includes/System/Cron/CronRegistry.php": {
-      "sha256": "08c393ae5222e564db5304ea1f58dba57177799b3a8d5d8e1075f303c5ed6033",
-      "size": 28318
+      "sha256": "8290c834d0125ed70b47f7acb1950314262d48b367ed8f4123709e457f44eae5",
+      "size": 28085
     },
     "includes/System/PulseHealthCheck.php": {
       "sha256": "074d2d5369b0be288bc49b85349e9bcd638571461b8f00c24d2694cdedafc284",
@@ -1036,8 +1036,8 @@
       "size": 24882
     },
     "includes/System/SettingsManager.php": {
-      "sha256": "3b998aae69abda740c2a1575b577fe6fd150c2208cb2e19961830f8a05cb9fc9",
-      "size": 121166
+      "sha256": "b292bd44c7613f00fe254c77ef1a85b3b543577b2b60da68d2d5e2349dd2a052",
+      "size": 121186
     },
     "includes/System/SystemDoctor.php": {
       "sha256": "199fec2cb6026bce6889a3c2237bfeb7e94fd08dd161b296ad3600818d9bbc2e",
@@ -1108,12 +1108,12 @@
       "size": 15293
     },
     "uninstall.php": {
-      "sha256": "ddc8a1e6f7d51b3b29bad7427ee596af23e3df06658f34e2ef3a12d15fe9f5cb",
-      "size": 15530
+      "sha256": "4e86ee275335748b678c2648321585a5e216ad8c4c890a4049125fdf60cc79a6",
+      "size": 15540
     },
     "webcare-pro-security.php": {
-      "sha256": "fc6311c7a7fce129428c25c51a16b214190ffef33e157b6aa16447c07a8818dc",
-      "size": 8494
+      "sha256": "cb8fb77dcdc573a66111a48d2d8d206dd0078ebf5fc8915302336f44a11b78e9",
+      "size": 8504
     }
   }
 }

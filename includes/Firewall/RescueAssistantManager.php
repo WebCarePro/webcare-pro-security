@@ -27,7 +27,7 @@ class RescueAssistantManager {
     const OPTION_TRUSTED_ACTIONS = 'webcareproscan_rescue_trusted_actions';
     const OPTION_SAFE_UPDATES    = 'webcareproscan_safe_update_backups';
     const CRON_REARM_HOOK        = 'webcareproscan_auto_rearm_waf';
-    const CRON_AUTOPILOT_HOOK    = 'webcareproscan_modular_autopilot_cron';
+    const CRON_AUTOPILOT_HOOK    = 'webcareproscan_custom_rules_autopilot_cron';
 
     /**
      * Register hooks for cron auto-rearm, 48h auto-pilot promotion, and WordPress Admin Bar popover.
