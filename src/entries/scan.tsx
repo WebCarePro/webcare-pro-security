@@ -123,7 +123,15 @@ function mountScan() {
 
   const urlParams = new URLSearchParams(window.location.search);
   const tabParam = urlParams.get('tab');
-  const resolvedTab = tabParam === 'file-integrity' ? 'fim' : tabParam === 'malware' ? 'scan' : (tabParam || 'scan');
+  const resolvedTab = (tabParam === 'file-changes' || tabParam === 'file-integrity')
+    ? 'fim'
+    : (tabParam === 'risks' || tabParam === 'vulnerabilities')
+    ? 'vulnerabilities'
+    : (tabParam === 'malware' || tabParam === 'scan')
+    ? 'scan'
+    : tabParam === 'targeted'
+    ? 'targeted'
+    : (tabParam || 'scan');
 
   const app = (
     <ScanErrorBoundary>

@@ -1535,10 +1535,14 @@ export const App = ({ initialTab }: { initialTab?: NavTab } = {}) => {
         return 'firewall';
       }
       if (tabParam) {
-        if (tabParam === 'file-integrity') return 'fim';
+        if (tabParam === 'file-changes' || tabParam === 'file-integrity') return 'fim';
+        if (tabParam === 'risks' || tabParam === 'vulnerabilities') return 'vulnerabilities';
         if (tabParam === 'malware') return 'scan';
         if (tabParam === 'scans') return 'logs';
         if (tabParam === 'database') return 'backup';
+        if (tabParam === 'diagnostics') return 'forensics';
+        if (tabParam === 'doctor') return 'settings';
+        if (tabParam === 'lockdown') return 'settings';
         if (['dashboard', 'scan', 'targeted', 'logs', 'forensics', 'vault', 'quarantine', 'backup', 'server', 'vulnerabilities', 'firewall', 'vpatch', 'waf_logs', 'fim', 'auth', 'notifications', 'settings', 'about'].includes(tabParam)) {
           return (PAGE_TO_TAB[tabParam] || tabParam) as NavTab;
         }
@@ -1891,7 +1895,17 @@ export const App = ({ initialTab }: { initialTab?: NavTab } = {}) => {
       const tabParam = urlParams.get('tab');
       const subtabParam = urlParams.get('subtab');
 
-      if (matched === 'firewall') {
+      if (matched === 'scan') {
+        if (tabParam === 'file-changes' || tabParam === 'file-integrity') {
+          setNavTab('fim');
+        } else if (tabParam === 'risks' || tabParam === 'vulnerabilities') {
+          setNavTab('vulnerabilities');
+        } else if (tabParam === 'targeted') {
+          setNavTab('targeted');
+        } else if (tabParam === 'malware' || tabParam === 'scan') {
+          setNavTab('scan');
+        }
+      } else if (matched === 'firewall') {
         if (tabParam) setInitialFirewallSubTab(tabParam as any);
         if (subtabParam) {
           if (['sbom', 'gatekeeper', 'advisor', 'lockfiles', 'scripts'].includes(subtabParam)) {

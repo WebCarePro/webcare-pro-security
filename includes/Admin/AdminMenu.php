@@ -188,20 +188,20 @@ class AdminMenu {
         // Tab parameter fallback for main portal / sub-tab navigation
         elseif ($tab_param === 'logs' || $tab_param === 'scans') $active_tab = 'logs';
         elseif ($tab_param === 'targeted') $active_tab = 'targeted';
-        elseif ($tab_param === 'vulnerabilities') $active_tab = 'vulnerabilities';
-        elseif ($tab_param === 'fim' || $tab_param === 'file-integrity') $active_tab = 'fim';
+        elseif ($tab_param === 'vulnerabilities' || $tab_param === 'risks') $active_tab = 'vulnerabilities';
+        elseif ($tab_param === 'fim' || $tab_param === 'file-integrity' || $tab_param === 'file-changes') $active_tab = 'fim';
         elseif ($tab_param === 'quarantine') $active_tab = 'quarantine';
         elseif ($tab_param === 'backup' || $tab_param === 'database') $active_tab = 'backup';
         elseif ($tab_param === 'server') $active_tab = 'server';
-        elseif ($tab_param === 'forensics') $active_tab = 'forensics';
+        elseif ($tab_param === 'forensics' || $tab_param === 'diagnostics') $active_tab = 'forensics';
         elseif ($tab_param === 'vault') $active_tab = 'vault';
         elseif ($tab_param === 'waf_logs') $active_tab = 'waf_logs';
-        elseif (in_array($tab_param, ['firewall', 'waf-rules', 'rules', 'protection', 'vpatch', 'caf'], true)) $active_tab = 'firewall';
-        elseif ($tab_param === 'auth') $active_tab = 'auth';
+        elseif (in_array($tab_param, ['firewall', 'waf-rules', 'rules', 'protection', 'vpatch', 'caf', 'adaptive', 'bots'], true)) $active_tab = 'firewall';
+        elseif ($tab_param === 'auth' || $tab_param === '2fa') $active_tab = 'auth';
         elseif ($tab_param === 'notifications') $active_tab = 'notifications';
         elseif ($tab_param === 'activity_logs') $active_tab = 'activity_logs';
         elseif ($tab_param === 'cron_manager') $active_tab = 'cron_manager';
-        elseif ($tab_param === 'settings') $active_tab = 'settings';
+        elseif ($tab_param === 'settings' || $tab_param === 'doctor' || $tab_param === 'lockdown') $active_tab = 'settings';
         elseif ($tab_param === 'about') $active_tab = 'about';
         elseif ($tab_param === 'wizard') $active_tab = 'wizard';
         elseif (in_array($tab_param, ['custom-waf-rules', 'custom_waf_rules', 'custom_rules', 'custom-rules', 'rule-builder', 'modular_waf'], true)) $active_tab = 'custom_rules';
