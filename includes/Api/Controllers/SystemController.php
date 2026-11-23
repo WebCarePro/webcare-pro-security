@@ -1805,14 +1805,15 @@ final class SystemController extends AbstractApiController {
     }
 
     /**
-     * Test a specific notification event
+     * Test a specific notification event or dispatch a general test alert across channels
      */
     public static function test_notification_event(\WP_REST_Request $request) {
         $params = $request->get_json_params() ?: [];
         $event_key = sanitize_text_field($params['event_key'] ?? '');
 
+        // Default to 'scan_threats_found' if no specific event key was supplied (e.g. from the Setup Studio verifier)
         if (empty($event_key)) {
-            return new \WP_Error('missing_event', __('Event key is required for notification testing.', 'webcare-pro-security'), ['status' => 400]);
+            $event_key = 'scan_threats_found';
         }
 
         $catalog = \WebCareProScanner\Notifications\NotificationDispatcher::get_event_catalog();
@@ -1820,22 +1821,59 @@ final class SystemController extends AbstractApiController {
             return new \WP_Error('invalid_event', __('Unknown security event identifier.', 'webcare-pro-security'), ['status' => 404]);
         }
 
-        $result = \WebCareProScanner\Notifications\NotificationDispatcher::trigger($event_key, [
+        // Support channel overrides from the setup studio/caller
+        $payload = [
             /* translators: %s: event title */
             'title'   => sprintf(__('[TEST] %s', 'webcare-pro-security'), $catalog[$event_key]['title']),
             /* translators: %s: event title */
-            'message' => sprintf(__('This is an instant verification alert triggered from the WebCare Notification Center for "%s".', 'webcare-pro-security'), $catalog[$event_key]['title']),
+            'message' => sprintf(__('This is an instant verification alert triggered from WebCare Pro Security for "%s".', 'webcare-pro-security'), $catalog[$event_key]['title']),
+            'force_email'   => true,
+            'force_webhook' => true,
             'details' => [
                 'triggered_by' => wp_get_current_user()->user_login ?: 'admin',
                 'event_code'   => $event_key,
                 'test_mode'    => 'manual_verification',
             ],
-        ]);
+        ];
+
+        // If email or webhooks are explicitly provided in request, save/apply them temporarily
+        $temp_settings_revert = null;
+        if (!empty($params['email']) || !empty($params['slack_webhook']) || !empty($params['discord_webhook']) || !empty($params['custom_webhook'])) {
+            $current_settings = \WebCareProScanner\System\SettingsManager::get_settings();
+            $temp_settings_revert = $current_settings;
+            $updated = $current_settings;
+            $updated['notification_master_enabled'] = true;
+
+            if (!empty($params['email'])) {
+                $updated['alert_emails'] = sanitize_text_field($params['email']);
+            }
+            if (!empty($params['slack_webhook'])) {
+                $updated['slack_enabled'] = true;
+                $updated['slack_webhook_url'] = esc_url_raw($params['slack_webhook']);
+            }
+            if (!empty($params['discord_webhook'])) {
+                $updated['discord_enabled'] = true;
+                $updated['discord_webhook_url'] = esc_url_raw($params['discord_webhook']);
+            }
+            if (!empty($params['custom_webhook'])) {
+                $updated['generic_webhook_enabled'] = true;
+                $updated['generic_webhook_url'] = esc_url_raw($params['custom_webhook']);
+            }
+            \WebCareProScanner\System\SettingsManager::save_settings($updated);
+        }
+
+        try {
+            $result = \WebCareProScanner\Notifications\NotificationDispatcher::trigger($event_key, $payload);
+        } finally {
+            if ($temp_settings_revert !== null) {
+                \WebCareProScanner\System\SettingsManager::save_settings($temp_settings_revert);
+            }
+        }
 
         return rest_ensure_response([
             'success' => true,
             /* translators: %s: event title */
-            'message' => sprintf(__('Test notification dispatched for event: %s', 'webcare-pro-security'), $catalog[$event_key]['title']),
+            'message' => sprintf(__('Test notification dispatched successfully for: %s', 'webcare-pro-security'), $catalog[$event_key]['title']),
             'result'  => $result,
         ]);
     }
