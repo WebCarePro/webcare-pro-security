@@ -5,11 +5,19 @@ namespace WebCareProScanner\Tests\Unit;
 
 use PHPUnit\Framework\TestCase;
 use WebCareProScanner\Api\MCPAgentService;
+use WebCareProScanner\System\AuditLogger;
 
 final class MCPAgentServiceTest extends TestCase {
+    private ?\Closure $orig_cache_hook = null;
+    private ?\Closure $orig_post_exec_hook = null;
+    private $orig_audit_hook = null;
+
     #[\Override]
     protected function setUp(): void {
         parent::setUp();
+        $this->orig_cache_hook = MCPAgentService::$cache_invalidate_hook;
+        $this->orig_post_exec_hook = MCPAgentService::$post_execution_hook;
+        $this->orig_audit_hook = AuditLogger::$operational_log_hook;
         delete_option(MCPAgentService::STAGED_OPTION_KEY);
         delete_option(MCPAgentService::LEDGER_LOCK_OPTION);
         \wp_set_current_user(1, 'administrator');
@@ -18,6 +26,9 @@ final class MCPAgentServiceTest extends TestCase {
 
     #[\Override]
     protected function tearDown(): void {
+        MCPAgentService::$cache_invalidate_hook = $this->orig_cache_hook;
+        MCPAgentService::$post_execution_hook = $this->orig_post_exec_hook;
+        AuditLogger::$operational_log_hook = $this->orig_audit_hook;
         \wp_set_current_user(0);
         unset($GLOBALS['wp_mock_current_user_can']);
         delete_option(MCPAgentService::STAGED_OPTION_KEY);
@@ -377,30 +388,36 @@ final class MCPAgentServiceTest extends TestCase {
         $claim_key = 'webcareproscan_mcp_claim_' . sanitize_key($staged_id);
         delete_option($claim_key);
 
-        // Wipe the staged actions ledger
-        update_option(MCPAgentService::STAGED_OPTION_KEY, [], false);
+        $list = [
+            [
+                'id'         => $staged_id,
+                'tool'       => 'webcareproscan_get_containment_status',
+                'parameters' => [],
+                'status'     => 'pending_approval',
+                'created_at' => time(),
+            ],
+        ];
+        update_option(MCPAgentService::STAGED_OPTION_KEY, $list, false);
 
-        $abort_reason = null;
-        $token2 = MCPAgentService::acquire_ledger_lock();
-        $this->assertNotEmpty($token2);
+        // When containment status finishes executing, empty the ledger option via post-execution hook
+        // simulating another process or administrator wiping/purging the action mid-execution
+        MCPAgentService::$post_execution_hook = function (string $action_id, array $exec_result) {
+            update_option(MCPAgentService::STAGED_OPTION_KEY, [], false);
+        };
 
-        $mutation = MCPAgentService::mutate_ledger_fenced($token2, function (array $fresh_list) use ($staged_id, &$abort_reason) {
-            $found = false;
-            foreach ($fresh_list as $f_idx => $f_action) {
-                if (($f_action['id'] ?? '') === $staged_id) {
-                    $found = true;
-                    break;
-                }
-            }
-            if (!$found) {
-                $abort_reason = 'Staged action record not found during finalization.';
-            }
-            return $fresh_list;
-        });
-        MCPAgentService::release_ledger_lock($token2);
+        try {
+            $res = MCPAgentService::approve_staged_action($staged_id, 1);
 
-        $this->assertTrue($mutation['success']);
-        $this->assertSame('Staged action record not found during finalization.', $abort_reason);
+            $this->assertFalse($res['success']);
+            $this->assertSame(500, $res['status']);
+            $this->assertTrue($res['finalization_pending'] ?? false);
+            $this->assertSame($staged_id, $res['staged_id'] ?? '');
+            $this->assertNotEmpty($res['exec_result'] ?? []);
+            $this->assertSame('Staged action record not found during finalization.', $res['message'] ?? '');
+        } finally {
+            delete_option($claim_key);
+            MCPAgentService::$post_execution_hook = null;
+        }
     }
 
     public function test_db_failure_injection_start_transaction_fails(): void {
@@ -666,14 +683,53 @@ final class MCPAgentServiceTest extends TestCase {
         $GLOBALS['wpdb'] = $mock;
         MCPAgentService::reset_engine_cache();
 
+        // 1. Inject a throwing cache invalidation hook
+        $logged_action = null;
+        $logged_context = null;
+        AuditLogger::$operational_log_hook = function (string $action, array $context) use (&$logged_action, &$logged_context) {
+            $logged_action = $action;
+            $logged_context = $context;
+        };
+
+        MCPAgentService::$cache_invalidate_hook = function (array $list) {
+            throw new \RuntimeException('Simulated Redis cache delete failure');
+        };
+
         try {
             $res = MCPAgentService::mutate_ledger_fenced('token_123', function ($list) { return [['id' => 'saved_1']]; });
+            $this->assertTrue($res['success']);
+            $this->assertTrue($state->commit_called);
+            $this->assertFalse($state->rollback_called);
+            $this->assertSame('mcp_ledger_cache_invalidation_failed', $logged_action);
+            $this->assertSame(MCPAgentService::STAGED_OPTION_KEY, $logged_context['option'] ?? '');
+            $this->assertStringContainsString('Simulated Redis cache delete failure', $logged_context['reason'] ?? '');
+        } finally {
+            MCPAgentService::$cache_invalidate_hook = null;
+            AuditLogger::$operational_log_hook = null;
+        }
+
+        // 2. Verify that if AuditLogger itself throws during cache failure logging, mutate_ledger_fenced STILL returns success => true
+        $state->rollback_called = false;
+        $state->commit_called = false;
+
+        MCPAgentService::$cache_invalidate_hook = function (array $list) {
+            throw new \RuntimeException('Simulated Memcached cluster down');
+        };
+
+        AuditLogger::$operational_log_hook = function (string $action, array $context) {
+            throw new \RuntimeException('Simulated Logger disk full exception');
+        };
+
+        try {
+            $res = MCPAgentService::mutate_ledger_fenced('token_123', function ($list) { return [['id' => 'saved_2']]; });
             $this->assertTrue($res['success']);
             $this->assertTrue($state->commit_called);
             $this->assertFalse($state->rollback_called);
         } finally {
             $GLOBALS['wpdb'] = $original_wpdb;
             MCPAgentService::reset_engine_cache();
+            MCPAgentService::$cache_invalidate_hook = null;
+            AuditLogger::$operational_log_hook = null;
         }
     }
 }

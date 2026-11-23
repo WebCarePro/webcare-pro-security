@@ -107,6 +107,20 @@ class MCPAgentService {
     const LEDGER_LOCK_OPTION = 'webcareproscan_mcp_ledger_lock';
 
     /**
+     * Optional closure hook to override cache invalidation during testing.
+     *
+     * @var \Closure|null
+     */
+    public static ?\Closure $cache_invalidate_hook = null;
+
+    /**
+     * Optional closure hook called after tool execution but before ledger finalization (for testing).
+     *
+     * @var \Closure|null
+     */
+    public static ?\Closure $post_execution_hook = null;
+
+    /**
      * Cached check for transactional database storage engine (InnoDB).
      *
      * @var bool|null
@@ -120,6 +134,57 @@ class MCPAgentService {
      */
     public static function reset_engine_cache(): void {
         self::$is_transactional_engine = null;
+    }
+
+    /**
+     * Invalidate WordPress object cache for the staged actions ledger post-commit.
+     * Checks both thrown exceptions and failed delete results when a stale entry remains in cache.
+     * On failure, attempts a safe overwrite with the freshly committed list and logs an operational event.
+     * NEVER throws and NEVER fails the transaction return.
+     *
+     * @param array $committed_list The committed list to overwrite into cache if deletion fails
+     * @return void
+     */
+    private static function invalidate_staged_ledger_cache(array $committed_list): void {
+        try {
+            if (self::$cache_invalidate_hook !== null) {
+                (self::$cache_invalidate_hook)($committed_list);
+                return;
+            }
+
+            $deleted = wp_cache_delete(self::STAGED_OPTION_KEY, 'options');
+            wp_cache_delete('alloptions', 'options');
+
+            // If delete returned false, verify whether a stale cache entry remains
+            if (!$deleted) {
+                $cached = wp_cache_get(self::STAGED_OPTION_KEY, 'options');
+                if ($cached !== false) {
+                    // Stale entry remains: attempt overwrite recovery
+                    try {
+                        wp_cache_set(self::STAGED_OPTION_KEY, $committed_list, 'options');
+                    } catch (\Throwable) {}
+
+                    try {
+                        \WebCareProScanner\System\AuditLogger::log_operational('mcp_ledger_cache_invalidation_failed', [
+                            'option' => self::STAGED_OPTION_KEY,
+                            'reason' => 'wp_cache_delete returned false and stale cache entry detected',
+                        ]);
+                    } catch (\Throwable) {}
+                }
+            }
+        } catch (\Throwable $cache_err) {
+            // Attempt overwrite recovery on exception
+            try {
+                wp_cache_set(self::STAGED_OPTION_KEY, $committed_list, 'options');
+            } catch (\Throwable) {}
+
+            try {
+                \WebCareProScanner\System\AuditLogger::log_operational('mcp_ledger_cache_invalidation_failed', [
+                    'option' => self::STAGED_OPTION_KEY,
+                    'reason' => $cache_err->getMessage(),
+                ]);
+            } catch (\Throwable) {}
+        }
     }
 
     /**
@@ -401,7 +466,9 @@ class MCPAgentService {
                 $committed = true;
             } catch (\Throwable $e) {
                 if ($tx_started && !$committed) {
-                    $wpdb->query('ROLLBACK');
+                    try {
+                        $wpdb->query('ROLLBACK');
+                    } catch (\Throwable) {}
                 }
                 try {
                     \WebCareProScanner\System\AuditLogger::log_operational('mcp_ledger_mutation_failed', [
@@ -416,17 +483,8 @@ class MCPAgentService {
                 ];
             }
 
-            // Invalidate options cache strictly AFTER commit inside its own exception-safe block
-            try {
-                wp_cache_delete(self::STAGED_OPTION_KEY, 'options');
-                wp_cache_delete('alloptions', 'options');
-            } catch (\Throwable $cache_err) {
-                try {
-                    \WebCareProScanner\System\AuditLogger::log_operational('mcp_ledger_cache_invalidation_failed', [
-                        'error' => $cache_err->getMessage(),
-                    ]);
-                } catch (\Throwable) {}
-            }
+            // Invalidate options cache strictly AFTER commit inside its own resilient helper
+            self::invalidate_staged_ledger_cache($updated_list);
 
             return [
                 'success' => true,
@@ -2052,6 +2110,7 @@ class MCPAgentService {
                     foreach ($fresh as $f_idx => $f_action) {
                         if (($f_action['id'] ?? '') === $staged_id) {
                             if (($f_action['status'] ?? '') !== 'pending_approval') {
+                                /* translators: %s: current staged action status */
                                 $abort_reason = sprintf(__('Action status is %s and cannot be marked as expired.', 'webcare-pro-security'), $f_action['status'] ?? 'unknown');
                                 return $fresh;
                             }
@@ -2229,6 +2288,12 @@ class MCPAgentService {
         $tool_args = is_array($target_action['args'] ?? null) ? $target_action['args'] : (is_array($target_action['parameters'] ?? null) ? $target_action['parameters'] : []);
         $exec_result = self::execute_tool($target_action['tool'], $tool_args, true);
 
+        if (self::$post_execution_hook !== null) {
+            try {
+                (self::$post_execution_hook)($staged_id, $exec_result);
+            } catch (\Throwable) {}
+        }
+
         // Update staged action record under mutex lock on fresh list
         $current_user = get_userdata($approver_id);
         $approver_name = ($current_user && $current_user->exists()) ? $current_user->user_login : 'administrator';
@@ -2346,6 +2411,7 @@ class MCPAgentService {
                         $found = true;
                         // Prevent rejection of executing, approved, or failed actions
                         if (($action['status'] ?? '') !== 'pending_approval') {
+                            /* translators: %s: current staged action status */
                             $abort_reason = sprintf(__('Cannot reject action because its status is already %s.', 'webcare-pro-security'), $action['status'] ?? 'unknown');
                             return $list;
                         }
