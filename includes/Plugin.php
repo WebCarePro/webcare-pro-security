@@ -60,16 +60,7 @@ class Plugin {
             return $trigger;
         }, 10, 3);
 
-        // 1. Text Domain & Internationalization: load cleanly on init
-        add_action('init', static function (): void {
-            load_plugin_textdomain(
-                'webcare-pro-security',
-                false,
-                dirname(plugin_basename(WEBCAREPROSCAN_FILE)) . '/languages'
-            );
-        }, 1);
-
-        // 2. Always-On Lightweight Runtime Security & Compiled Stack Lifecycle
+        // 1. Always-On Lightweight Runtime Security & Compiled Stack Lifecycle
         \WebCareProScanner\Core\PolicyManager::load_policy();
         \WebCareProScanner\Core\CompiledStackManifest::register_lifecycle_hooks();
         \WebCareProScanner\Firewall\WafFileLogger::init();
