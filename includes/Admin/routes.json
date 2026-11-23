@@ -63,9 +63,9 @@
           "default_section": "list",
           "sections": [
             { "id": "list", "label": "My Rules", "mode": "developer" },
+            { "id": "dossier", "label": "Behavior Dossier", "mode": "developer" },
             { "id": "builder", "label": "Visual Rule Builder", "mode": "developer" },
-            { "id": "packs", "label": "Protection Packs", "mode": "developer" },
-            { "id": "simulator", "label": "Rule Tester", "mode": "developer" }
+            { "id": "packs", "label": "Protection Packs", "mode": "developer" }
           ]
         },
         {

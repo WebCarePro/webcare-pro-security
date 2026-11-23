@@ -97,20 +97,22 @@ export function useWebCareRoute() {
     };
   }
 
-  // Update on popstate (browser back/forward)
+  // Update on popstate (browser back/forward) and same-pillar custom route-change event
   useEffect(() => {
-    const handlePopState = () => {
+    const handleSync = () => {
       const next = computeRouteState();
       setRoute(next);
       updateDocumentTitle(next.page, next.tab, next.section);
     };
 
-    window.addEventListener('popstate', handlePopState);
+    window.addEventListener('popstate', handleSync);
+    window.addEventListener('webcare:route-change', handleSync);
     // Initial document title sync
     updateDocumentTitle(route.page, route.tab, route.section);
 
     return () => {
-      window.removeEventListener('popstate', handlePopState);
+      window.removeEventListener('popstate', handleSync);
+      window.removeEventListener('webcare:route-change', handleSync);
     };
   }, []);
 
@@ -132,6 +134,11 @@ export function useWebCareRoute() {
         const next = computeRouteState();
         setRoute(next);
         updateDocumentTitle(next.page, next.tab, next.section);
+        try {
+          window.dispatchEvent(new CustomEvent('webcare:route-change', {
+            detail: { page: targetPage, tab: targetTab, section: targetSection },
+          }));
+        } catch (_) {}
       } else {
         window.location.href = targetUrl;
       }

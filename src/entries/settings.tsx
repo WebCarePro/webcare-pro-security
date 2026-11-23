@@ -2,6 +2,7 @@ import { Component, createRoot, render } from '@wordpress/element';
 import { SettingsPage } from '../SettingsPage';
 import { WebCareShell } from '../components/WebCareShell';
 import { apiRequest } from '../utils/api';
+import { PILLAR_MAP } from '../utils/routeRegistry';
 
 class SettingsErrorBoundary extends Component<{ children: any }, { hasError: boolean; error: Error | null }> {
   constructor(props: { children: any }) {
@@ -67,7 +68,8 @@ function mountSettings() {
   if (!container) return;
 
   const urlParams = new URLSearchParams(window.location.search);
-  const tabParam = (urlParams.get('tab') as any) || 'schedule';
+  const defaultTab = PILLAR_MAP['webcare-pro-settings']?.default_tab || 'doctor';
+  const tabParam = (urlParams.get('tab') as any) || defaultTab;
 
   const app = (
     <SettingsErrorBoundary>

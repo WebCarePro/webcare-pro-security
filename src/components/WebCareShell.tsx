@@ -49,13 +49,17 @@ export const WebCareShell = ({ activeTab, activePillarId, children }: WebCareShe
 
   const [routeState, setRouteState] = useState(() => parseCurrentRoute());
 
-  // Listen to popstate for browser Back/Forward navigation
+  // Listen to popstate and same-pillar custom route-change event
   useEffect(() => {
-    const handlePopState = () => {
+    const handleSync = () => {
       setRouteState(parseCurrentRoute());
     };
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
+    window.addEventListener('popstate', handleSync);
+    window.addEventListener('webcare:route-change', handleSync);
+    return () => {
+      window.removeEventListener('popstate', handleSync);
+      window.removeEventListener('webcare:route-change', handleSync);
+    };
   }, []);
 
   const [megaMenuOpen, setMegaMenuOpen] = useState(false);

@@ -58,17 +58,45 @@ export function buildAdminUrl(
   const params = new URLSearchParams();
   params.set('page', page);
 
-  const defaultTab = pillar?.default_tab || '';
-  if (tabId && (tabId !== defaultTab || sectionId || Object.keys(extraArgs).length > 0)) {
-    params.set('tab', tabId);
+  // Discard section if tabId is empty
+  let effectiveTab = tabId;
+  let effectiveSection = effectiveTab ? sectionId : '';
+
+  // Validate tab and section against pillar schema if known
+  if (pillar && effectiveTab) {
+    const tabObj = pillar.tabs.find((t) => t.id === effectiveTab);
+    if (!tabObj) {
+      effectiveTab = '';
+      effectiveSection = '';
+    } else if (effectiveSection && tabObj.sections) {
+      const secObj = tabObj.sections.find((s) => s.id === effectiveSection);
+      if (!secObj) {
+        effectiveSection = '';
+      }
+    } else if (effectiveSection && !tabObj.sections) {
+      effectiveSection = '';
+    }
   }
 
-  if (sectionId) {
-    params.set('section', sectionId);
-  }
-
+  const reservedKeys = new Set(['page', 'tab', 'section']);
+  const cleanExtraArgs: Record<string, string> = {};
   Object.entries(extraArgs).forEach(([k, v]) => {
-    params.set(k, String(v));
+    if (!reservedKeys.has(k) && k.trim() !== '') {
+      cleanExtraArgs[k] = String(v);
+    }
+  });
+
+  const defaultTab = pillar?.default_tab || '';
+  if (effectiveTab && (effectiveTab !== defaultTab || effectiveSection || Object.keys(cleanExtraArgs).length > 0)) {
+    params.set('tab', effectiveTab);
+  }
+
+  if (effectiveSection) {
+    params.set('section', effectiveSection);
+  }
+
+  Object.entries(cleanExtraArgs).forEach(([k, v]) => {
+    params.set(k, v);
   });
 
   return `admin.php?${params.toString()}`;
@@ -100,6 +128,11 @@ export function navigateToRoute(
       window.history.pushState({ page: targetPage, tab: tabId, section: sectionId }, '', url);
     }
     updateDocumentTitle(targetPage, tabId, sectionId);
+    try {
+      window.dispatchEvent(new CustomEvent('webcare:route-change', {
+        detail: { page: targetPage, tab: tabId, section: sectionId },
+      }));
+    } catch (_) {}
     if (options.onTabChange) {
       options.onTabChange(tabId, sectionId);
     }
@@ -148,27 +181,67 @@ export function parseCurrentRoute(): {
   activeSection: RouteSection | undefined;
 } {
   const params = new URLSearchParams(window.location.search);
-  const page = params.get('page') || 'webcare-pro-security';
-  const pillar = PILLAR_MAP[page];
+  const rawPage = params.get('page') || 'webcare-pro-security';
+  const pillar = PILLAR_MAP[rawPage];
+  const page = pillar ? pillar.id : rawPage;
 
-  let tab = params.get('tab') || '';
-  if (!tab && pillar?.default_tab) {
-    tab = pillar.default_tab;
+  let rawTab = params.get('tab') || '';
+  let activeTab: RouteTab | undefined = undefined;
+
+  if (pillar) {
+    if (rawTab) {
+      activeTab = pillar.tabs.find((t) => t.id === rawTab);
+      if (!activeTab) {
+        // Invalid tab requested: normalize to default_tab
+        rawTab = pillar.default_tab || '';
+        activeTab = pillar.tabs.find((t) => t.id === rawTab);
+      }
+    } else if (pillar.default_tab) {
+      rawTab = pillar.default_tab;
+      activeTab = pillar.tabs.find((t) => t.id === rawTab);
+    }
   }
 
-  let section = params.get('section') || '';
+  let rawSection = params.get('section') || '';
+  let activeSection: RouteSection | undefined = undefined;
 
-  const activeTab = pillar?.tabs.find((t) => t.id === tab);
-  if (activeTab && !section && activeTab.default_section) {
-    section = activeTab.default_section;
+  if (activeTab) {
+    if (rawSection) {
+      activeSection = activeTab.sections?.find((s) => s.id === rawSection);
+      if (!activeSection) {
+        rawSection = activeTab.default_section || '';
+        activeSection = activeTab.sections?.find((s) => s.id === rawSection);
+      }
+    } else if (activeTab.default_section) {
+      rawSection = activeTab.default_section;
+      activeSection = activeTab.sections?.find((s) => s.id === rawSection);
+    }
+  } else {
+    rawSection = '';
   }
 
-  const activeSection = activeTab?.sections?.find((s) => s.id === section);
+  // If URL had invalid tab or section, normalize URL via replaceState
+  if (typeof window !== 'undefined' && window.location) {
+    const currentTabParam = params.get('tab') || '';
+    const currentSecParam = params.get('section') || '';
+    if (currentTabParam && !activeTab) {
+      params.delete('tab');
+      params.delete('section');
+      const newQuery = params.toString();
+      const newUrl = `${window.location.pathname}${newQuery ? `?${newQuery}` : ''}`;
+      window.history.replaceState({ page, tab: rawTab, section: rawSection }, '', newUrl);
+    } else if (currentSecParam && !activeSection) {
+      params.delete('section');
+      const newQuery = params.toString();
+      const newUrl = `${window.location.pathname}${newQuery ? `?${newQuery}` : ''}`;
+      window.history.replaceState({ page, tab: rawTab, section: rawSection }, '', newUrl);
+    }
+  }
 
   return {
     page,
-    tab,
-    section,
+    tab: rawTab,
+    section: rawSection,
     pillar,
     activeTab,
     activeSection,

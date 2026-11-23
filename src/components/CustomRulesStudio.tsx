@@ -167,7 +167,7 @@ export const CustomRulesStudio: React.FC = () => {
           rules: 'list',
           builder: 'builder',
           nextgen: 'packs',
-          dossier: 'list',
+          dossier: 'dossier',
         };
         url.searchParams.set('section', sectionMap[tab]);
         url.searchParams.delete('subtab');

@@ -100,10 +100,48 @@ class MCPAgentService {
         'webcareproscan_toggle_cron_task',
     ];
 
-    const AUDIT_OPTION_KEY  = 'webcareproscan_mcp_audit_log';
-    const MAX_AUDIT_LOGS    = 150;
-    const STAGED_OPTION_KEY = 'webcareproscan_mcp_staged_actions';
+    const AUDIT_OPTION_KEY   = 'webcareproscan_mcp_audit_log';
+    const MAX_AUDIT_LOGS     = 150;
+    const STAGED_OPTION_KEY  = 'webcareproscan_mcp_staged_actions';
     const MAX_STAGED_ACTIONS = 100;
+    const LEDGER_LOCK_OPTION = 'webcareproscan_mcp_ledger_lock';
+
+    /**
+     * Acquire atomic bounded database mutex lock for the staged action ledger.
+     * Retries briefly with backoff and breaks stale locks older than 15 seconds.
+     *
+     * @param int $timeout Max retry duration in seconds (default: 15)
+     * @return bool True if lock acquired, false otherwise
+     */
+    public static function acquire_ledger_lock(int $timeout = 15): bool {
+        $start = time();
+        while ((time() - $start) < $timeout) {
+            if (add_option(self::LEDGER_LOCK_OPTION, time(), '', false)) {
+                return true;
+            }
+
+            // Check if existing lock is stale (> 15 seconds)
+            $lock_time = (int) get_option(self::LEDGER_LOCK_OPTION, 0);
+            if ($lock_time > 0 && (time() - $lock_time) > 15) {
+                delete_option(self::LEDGER_LOCK_OPTION);
+                if (add_option(self::LEDGER_LOCK_OPTION, time(), '', false)) {
+                    return true;
+                }
+            }
+
+            usleep(20000); // 20ms backoff
+        }
+        return false;
+    }
+
+    /**
+     * Release atomic staged action ledger lock.
+     *
+     * @return void
+     */
+    public static function release_ledger_lock(): void {
+        delete_option(self::LEDGER_LOCK_OPTION);
+    }
 
     /**
      * Build map of all registered valid tools (core + dynamic ModuleRegistry).
@@ -1357,15 +1395,28 @@ class MCPAgentService {
             'expires_at'         => time() + 86400, // 24 hours
         ];
 
-        $staged_list = get_option(self::STAGED_OPTION_KEY, []);
-        if (!is_array($staged_list)) {
-            $staged_list = [];
+        // Serialize shared staged-action list mutation under atomic DB mutex
+        self::acquire_ledger_lock();
+        try {
+            $staged_list = get_option(self::STAGED_OPTION_KEY, []);
+            if (!is_array($staged_list)) {
+                $staged_list = [];
+            }
+            array_unshift($staged_list, $staged_entry);
+            if (count($staged_list) > self::MAX_STAGED_ACTIONS) {
+                $pruned = array_slice($staged_list, self::MAX_STAGED_ACTIONS);
+                $staged_list = array_slice($staged_list, 0, self::MAX_STAGED_ACTIONS);
+                // Clean up claim options for pruned terminal actions
+                foreach ($pruned as $old_action) {
+                    if (!empty($old_action['id'])) {
+                        delete_option('webcareproscan_mcp_claim_' . sanitize_key($old_action['id']));
+                    }
+                }
+            }
+            update_option(self::STAGED_OPTION_KEY, $staged_list, false);
+        } finally {
+            self::release_ledger_lock();
         }
-        array_unshift($staged_list, $staged_entry);
-        if (count($staged_list) > self::MAX_STAGED_ACTIONS) {
-            $staged_list = array_slice($staged_list, 0, self::MAX_STAGED_ACTIONS);
-        }
-        update_option(self::STAGED_OPTION_KEY, $staged_list, false);
 
         $duration_ms = round((microtime(true) - $start_time) * 1000, 2);
         self::log_audit_event([
@@ -1540,40 +1591,78 @@ class MCPAgentService {
             }
         }
 
-        // P1: Atomic Single-Use Database-Backed Claim
+        // P1: Atomic Single-Use Database-Backed Claim with Abandoned-Claim Recovery
         // Relies on MySQL's UNIQUE KEY option_name: add_option returns false if the option already exists.
         $claim_key = 'webcareproscan_mcp_claim_' . sanitize_key($staged_id);
         if (!add_option($claim_key, time(), '', false)) {
-            return [
-                'success' => false,
-                'status'  => 409,
-                'message' => __('Staged action already claimed or executed.', 'webcare-pro-security'),
-            ];
+            $claim_time = (int) get_option($claim_key, 0);
+            // Recover abandoned claims: claim > 120s old AND action still pending_approval (e.g. PHP crashed right after claiming)
+            if ($claim_time > 0 && (time() - $claim_time) > 120 && $target_action['status'] === 'pending_approval') {
+                delete_option($claim_key);
+                if (!add_option($claim_key, time(), '', false)) {
+                    return [
+                        'success' => false,
+                        'status'  => 409,
+                        'message' => __('Staged action already claimed or executed.', 'webcare-pro-security'),
+                    ];
+                }
+            } else {
+                return [
+                    'success' => false,
+                    'status'  => 409,
+                    'message' => __('Staged action already claimed or executed.', 'webcare-pro-security'),
+                ];
+            }
         }
 
-        // Single-Use Atomic Invalidation: Mark token as consumed immediately before executing the tool to prevent replay attacks
-        $list[$target_index]['status']      = 'executing';
-        $list[$target_index]['consumed_at'] = time();
-        $list[$target_index]['confirmation_token'] = null; // Invalidate token immediately
-        update_option(self::STAGED_OPTION_KEY, $list, false);
+        // Single-Use Atomic Invalidation: Mark token as consumed and status executing under mutex lock
+        self::acquire_ledger_lock();
+        try {
+            $fresh_list = get_option(self::STAGED_OPTION_KEY, []);
+            if (is_array($fresh_list)) {
+                foreach ($fresh_list as $f_idx => $f_action) {
+                    if (($f_action['id'] ?? '') === $staged_id) {
+                        $fresh_list[$f_idx]['status']             = 'executing';
+                        $fresh_list[$f_idx]['consumed_at']        = time();
+                        $fresh_list[$f_idx]['confirmation_token'] = null; // Invalidate token immediately
+                        break;
+                    }
+                }
+                update_option(self::STAGED_OPTION_KEY, $fresh_list, false);
+            }
+        } finally {
+            self::release_ledger_lock();
+        }
 
-        // Execute the tool with gate bypass
+        // Execute the tool with gate bypass (outside of mutex lock)
         $tool_args = is_array($target_action['args'] ?? null) ? $target_action['args'] : (is_array($target_action['parameters'] ?? null) ? $target_action['parameters'] : []);
         $exec_result = self::execute_tool($target_action['tool'], $tool_args, true);
 
-        // Update staged action record
+        // Update staged action record under mutex lock on fresh list
         $current_user = get_userdata($approver_id);
         $approver_name = ($current_user && $current_user->exists()) ? $current_user->user_login : 'administrator';
 
         $is_failed = !empty($exec_result['isError']) || (($exec_result['success'] ?? true) === false);
         $final_status = $is_failed ? 'failed' : 'approved';
 
-        $list[$target_index]['status']      = $final_status;
-        $list[$target_index]['approved_at'] = time();
-        $list[$target_index]['approved_by'] = $approver_name;
-        $list[$target_index]['exec_result'] = $exec_result;
-
-        update_option(self::STAGED_OPTION_KEY, $list, false);
+        self::acquire_ledger_lock();
+        try {
+            $fresh_list = get_option(self::STAGED_OPTION_KEY, []);
+            if (is_array($fresh_list)) {
+                foreach ($fresh_list as $f_idx => $f_action) {
+                    if (($f_action['id'] ?? '') === $staged_id) {
+                        $fresh_list[$f_idx]['status']      = $final_status;
+                        $fresh_list[$f_idx]['approved_at'] = time();
+                        $fresh_list[$f_idx]['approved_by'] = $approver_name;
+                        $fresh_list[$f_idx]['exec_result'] = $exec_result;
+                        break;
+                    }
+                }
+                update_option(self::STAGED_OPTION_KEY, $fresh_list, false);
+            }
+        } finally {
+            self::release_ledger_lock();
+        }
 
         if ($is_failed) {
             $err_msg = (string) ($exec_result['message'] ?? ($exec_result['error'] ?? __('Tool execution failed.', 'webcare-pro-security')));

@@ -2,13 +2,15 @@ import { createRoot, render } from '@wordpress/element';
 import { FirewallPage } from '../FirewallPage';
 import { WebCareShell } from '../components/WebCareShell';
 import { apiRequest } from '../utils/api';
+import { PILLAR_MAP } from '../utils/routeRegistry';
 
 function mountFirewall() {
   const container = document.getElementById('webcare-scanner-root') || document.getElementById('webcare-pro-root');
   if (!container) return;
 
   const urlParams = new URLSearchParams(window.location.search);
-  const tabParam = (urlParams.get('tab') as any) || 'stream';
+  const defaultTab = PILLAR_MAP['webcare-pro-firewall']?.default_tab || 'rules';
+  const tabParam = (urlParams.get('tab') as any) || defaultTab;
 
   const app = (
     <WebCareShell activeTab="firewall">

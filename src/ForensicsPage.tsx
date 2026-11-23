@@ -91,9 +91,9 @@ export const ForensicsPage: React.FC<ForensicsPageProps> = ({
     }
   }, [initialSubTab]);
 
-  // Popstate listener to switch forensics subtab on browser back/forward navigation
+  // Popstate and route-change listener to switch forensics subtab on browser navigation
   useEffect(() => {
-    const handlePopState = () => {
+    const handleSync = () => {
       try {
         const urlParams = new URLSearchParams(window.location.search);
         const section = normalizeForensicsSection(urlParams.get('section') || urlParams.get('subtab') || urlParams.get('tab'));
@@ -103,8 +103,12 @@ export const ForensicsPage: React.FC<ForensicsPageProps> = ({
         }
       } catch (e) {}
     };
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
+    window.addEventListener('popstate', handleSync);
+    window.addEventListener('webcare:route-change', handleSync);
+    return () => {
+      window.removeEventListener('popstate', handleSync);
+      window.removeEventListener('webcare:route-change', handleSync);
+    };
   }, [onSubTabChange]);
 
   // If scannedFiles is empty, attempt to load them from latest scan files endpoint

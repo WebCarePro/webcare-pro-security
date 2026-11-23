@@ -709,7 +709,7 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
   }, [initialSubTab]);
 
   useEffect(() => {
-    const handlePopState = () => {
+    const handleSync = () => {
       try {
         const urlParams = new URLSearchParams(window.location.search);
         const sub = urlParams.get('tab') || urlParams.get('subtab');
@@ -719,8 +719,12 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
         }
       } catch (e) {}
     };
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
+    window.addEventListener('popstate', handleSync);
+    window.addEventListener('webcare:route-change', handleSync);
+    return () => {
+      window.removeEventListener('popstate', handleSync);
+      window.removeEventListener('webcare:route-change', handleSync);
+    };
   }, []);
   const [loading, setLoading] = useState<boolean>(true);
   const [saving, setSaving] = useState<boolean>(false);

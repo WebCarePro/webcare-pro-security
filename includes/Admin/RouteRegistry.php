@@ -292,29 +292,9 @@ final class RouteRegistry {
         if ($tab_id === '') {
             $section_id = '';
         } else {
-            // Validate section against declared tab sections if pillar is found
-            if ($section_id !== '' && $pillar !== null) {
-                $matched_tab = null;
-                foreach ($pillar['tabs'] as $t) {
-                    if ($t['id'] === $tab_id) {
-                        $matched_tab = $t;
-                        break;
-                    }
-                }
-                if ($matched_tab !== null) {
-                    $valid_sec = false;
-                    foreach ($matched_tab['sections'] as $s) {
-                        if ($s['id'] === $section_id) {
-                            $valid_sec = true;
-                            break;
-                        }
-                    }
-                    if (!$valid_sec) {
-                        $section_id = '';
-                    }
-                } else {
-                    $section_id = '';
-                }
+            // Validate (pillar, tab, section) against schema
+            if (!self::is_valid_route($canonical_page, $tab_id, $section_id)) {
+                $section_id = '';
             }
         }
 
@@ -329,8 +309,13 @@ final class RouteRegistry {
         }
 
         if (!empty($extra_args)) {
+            $reserved_keys = ['page', 'tab', 'section'];
             foreach ($extra_args as $k => $v) {
-                $query[sanitize_key((string)$k)] = sanitize_text_field((string)$v);
+                $k_clean = sanitize_key((string)$k);
+                if (in_array($k_clean, $reserved_keys, true) || $k_clean === '') {
+                    continue;
+                }
+                $query[$k_clean] = sanitize_text_field((string)$v);
             }
         }
 

@@ -667,9 +667,9 @@ export const FirewallPage = ({
     }
   }, [initialSubTab]);
 
-  // Synchronize browser back/forward history navigation
+  // Synchronize browser back/forward history navigation and same-pillar custom route-change event
   useEffect(() => {
-    const handlePopState = () => {
+    const handleSync = () => {
       try {
         const urlParams = new URLSearchParams(window.location.search);
         const tabParam = urlParams.get('tab');
@@ -677,12 +677,16 @@ export const FirewallPage = ({
         if (normalized) {
           setActiveTab(normalized);
         } else if (!tabParam) {
-          setActiveTab('stream');
+          setActiveTab('rules');
         }
       } catch (e) {}
     };
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
+    window.addEventListener('popstate', handleSync);
+    window.addEventListener('webcare:route-change', handleSync);
+    return () => {
+      window.removeEventListener('popstate', handleSync);
+      window.removeEventListener('webcare:route-change', handleSync);
+    };
   }, []);
 
   // Auto-switch to Developer Mode on explicit deep link to an engineer tab, or fallback to 'stream' if switched manually to Simple Mode

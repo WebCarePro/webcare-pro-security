@@ -18,14 +18,18 @@ export const LogsAndActivityUnifiedPage: React.FC<LogsAndActivityUnifiedPageProp
   });
 
   useEffect(() => {
-    const handlePopState = () => {
+    const handleSync = () => {
       const route = parseCurrentRoute();
       if (route.tab === 'activity') setActiveTab('activity');
       else if (route.tab === 'scans' || route.tab === 'scan_logs') setActiveTab('scans');
       else setActiveTab('firewall');
     };
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
+    window.addEventListener('popstate', handleSync);
+    window.addEventListener('webcare:route-change', handleSync);
+    return () => {
+      window.removeEventListener('popstate', handleSync);
+      window.removeEventListener('webcare:route-change', handleSync);
+    };
   }, []);
 
   const handleTabSwitch = (tab: 'firewall' | 'activity' | 'scans') => {
