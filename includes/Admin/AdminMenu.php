@@ -71,7 +71,7 @@ class AdminMenu {
     public static function add_menu_page() {
         $menu_icon = self::get_menu_icon();
 
-        // Main Menu: Dashboard
+        // Register Primary Top-Level Menu
         add_menu_page(
             __('WebCare Pro Security & Firewall', 'webcare-pro-security'),
             __('WebCare Pro', 'webcare-pro-security'),
@@ -83,244 +83,22 @@ class AdminMenu {
         );
 
         // =========================================================================
-        // PRIMARY VISIBLE MENU PILLARS (Strictly Consolidated 8 Daily Pillars)
+        // CANONICAL PILLARS REGISTERED FROM RouteRegistry (7 Visible + 1 Hidden Setup)
         // =========================================================================
+        $pillars = RouteRegistry::get_pillars();
+        foreach ($pillars as $pillar) {
+            $is_hidden = !empty($pillar['hidden']);
+            $parent = $is_hidden ? null : 'webcare-pro-security';
 
-        // 1. Submenu: Dashboard
-        add_submenu_page(
-            'webcare-pro-security',
-            __('WebCare Pro Dashboard', 'webcare-pro-security'),
-            __('Dashboard', 'webcare-pro-security'),
-            'manage_options',
-            'webcare-pro-security',
-            [__CLASS__, 'render_app_container']
-        );
-
-        // 2. Submenu: Firewall & WAF
-        add_submenu_page(
-            'webcare-pro-security',
-            __('Web Application Firewall, Rules & Traffic Defense', 'webcare-pro-security'),
-            __('Firewall & WAF', 'webcare-pro-security'),
-            'manage_options',
-            'webcare-pro-firewall',
-            [__CLASS__, 'render_app_container']
-        );
-
-        // 3. Submenu: WAF Logs & Bans
-        add_submenu_page(
-            'webcare-pro-security',
-            __('WAF Incident Logs & Attack Forensics', 'webcare-pro-security'),
-            __('WAF Logs & Bans', 'webcare-pro-security'),
-            'manage_options',
-            'webcare-pro-waf-logs',
-            [__CLASS__, 'render_app_container']
-        );
-
-        // 4. Submenu: Scanner & CVEs
-        add_submenu_page(
-            'webcare-pro-security',
-            __('Deep Security Scanner & Vulnerability Findings', 'webcare-pro-security'),
-            __('Scanner & CVEs', 'webcare-pro-security'),
-            'manage_options',
-            'webcare-pro-scan',
-            [__CLASS__, 'render_app_container']
-        );
-
-        // 5. Submenu: Login & Access
-        add_submenu_page(
-            'webcare-pro-security',
-            __('Zero-Trust Identity, 2FA & Access Control', 'webcare-pro-security'),
-            __('Login & Access', 'webcare-pro-security'),
-            'manage_options',
-            'webcare-pro-auth',
-            [__CLASS__, 'render_app_container']
-        );
-
-        // 6. Submenu: Vault & Tools
-        add_submenu_page(
-            'webcare-pro-security',
-            __('Quarantine Vault, Forensics, Backups & Tools', 'webcare-pro-security'),
-            __('Vault & Tools', 'webcare-pro-security'),
-            'manage_options',
-            'webcare-pro-vault',
-            [__CLASS__, 'render_app_container']
-        );
-
-        // 7. Submenu: Settings & Doctor
-        add_submenu_page(
-            'webcare-pro-security',
-            __('Security Settings, Doctor Diagnostics & Governance', 'webcare-pro-security'),
-            __('Settings & Doctor', 'webcare-pro-security'),
-            'manage_options',
-            'webcare-pro-settings',
-            [__CLASS__, 'render_app_container']
-        );
-
-        // =========================================================================
-        // COMPANION SUB-PAGES (Accessible via Tabs, Direct Deep-Links & Mega-Menu)
-        // Hidden from primary admin sidebar menu by registering with parent_slug = null
-        // =========================================================================
-
-        // Companion Page: Activity Logs (Deep-link & Cross-link accessible)
-        add_submenu_page(
-            null,
-            __('Plugin Activity & Audit Logs', 'webcare-pro-security'),
-            __('Activity Logs', 'webcare-pro-security'),
-            'manage_options',
-            'webcare-pro-activity-logs',
-            [__CLASS__, 'render_app_container']
-        );
-        // =========================================================================
-
-        // Sub-Page: Modular Intelligence Firewall (Redirects to Firewall & Logs)
-        add_submenu_page(
-            null,
-            __('Modular Intelligence Firewall', 'webcare-pro-security'),
-            __('Modular WAF', 'webcare-pro-security'),
-            'manage_options',
-            'webcare-pro-modular-waf',
-            [__CLASS__, 'render_app_container']
-        );
-
-        // Sub-Page: Virtual Patching & 0-Day Exploit Studio
-        add_submenu_page(
-            null,
-            __('Virtual Patching & 0-Day Exploit Studio', 'webcare-pro-security'),
-            __('Virtual Patching', 'webcare-pro-security'),
-            'manage_options',
-            'webcare-pro-vpatch',
-            [__CLASS__, 'render_app_container']
-        );
-
-        // Sub-Page: About & Services
-        add_submenu_page(
-            null,
-            __('About WebCare Pro & Direct Support', 'webcare-pro-security'),
-            __('About & Support', 'webcare-pro-security'),
-            'manage_options',
-            'webcare-pro-about',
-            [__CLASS__, 'render_app_container']
-        );
-
-        // Sub-Page: Targeted Scans
-        add_submenu_page(
-            null,
-            __('Targeted Security Audits', 'webcare-pro-security'),
-            __('Targeted Scans', 'webcare-pro-security'),
-            'manage_options',
-            'webcare-pro-tools',
-            [__CLASS__, 'render_app_container']
-        );
-
-        // Sub-Page: Scan Logs & History
-        add_submenu_page(
-            null,
-            __('Scan Logs & Audit History', 'webcare-pro-security'),
-            __('Scan Logs', 'webcare-pro-security'),
-            'manage_options',
-            'webcare-pro-logs',
-            [__CLASS__, 'render_app_container']
-        );
-
-        // Sub-Page: System Forensics & Deep Diagnostics
-        add_submenu_page(
-            null,
-            __('System Forensics & Deep Diagnostics', 'webcare-pro-security'),
-            __('System Forensics', 'webcare-pro-security'),
-            'manage_options',
-            'webcare-pro-forensics',
-            [__CLASS__, 'render_app_container']
-        );
-
-        // Sub-Page: File Integrity Monitoring (FIM) & Code Diff
-        add_submenu_page(
-            null,
-            __('File Integrity Monitoring (FIM) & Code Diff', 'webcare-pro-security'),
-            __('File Integrity (FIM)', 'webcare-pro-security'),
-            'manage_options',
-            'webcare-pro-fim',
-            [__CLASS__, 'render_app_container']
-        );
-
-        // Sub-Page: Vulnerabilities & Updates (Outdated Themes/Plugins/Core with CVEs)
-        add_submenu_page(
-            null,
-            __('Vulnerabilities & Updates', 'webcare-pro-security'),
-            __('Vulnerabilities', 'webcare-pro-security'),
-            'manage_options',
-            'webcare-pro-vulnerabilities',
-            [__CLASS__, 'render_app_container']
-        );
-
-        // Sub-Page: Onboarding & Protection Quickstart Wizard
-        add_submenu_page(
-            null,
-            __('WebCare Pro Protection Quickstart Wizard', 'webcare-pro-security'),
-            __('Protection Wizard', 'webcare-pro-security'),
-            'manage_options',
-            'webcare-pro-wizard',
-            [__CLASS__, 'render_app_container']
-        );
-
-        // Sub-Page: Database Backup Vault
-        add_submenu_page(
-            null,
-            __('Database Backup Vault', 'webcare-pro-security'),
-            __('Database Backup', 'webcare-pro-security'),
-            'manage_options',
-            'webcare-pro-backup',
-            [__CLASS__, 'render_app_container']
-        );
-
-        // Sub-Page: Server & Host Infrastructure Telemetry
-        add_submenu_page(
-            null,
-            __('Server & Host Infrastructure Telemetry', 'webcare-pro-security'),
-            __('Host Telemetry', 'webcare-pro-security'),
-            'manage_options',
-            'webcare-pro-server',
-            [__CLASS__, 'render_app_container']
-        );
-
-        // Sub-Page: Notifications & Alerts
-        add_submenu_page(
-            null,
-            __('Notifications & Security Alerts', 'webcare-pro-security'),
-            __('Notifications', 'webcare-pro-security'),
-            'manage_options',
-            'webcare-pro-notifications',
-            [__CLASS__, 'render_app_container']
-        );
-
-        // Sub-Page: Cron & Scheduled Tasks Control Center
-        add_submenu_page(
-            null,
-            __('Cron & Scheduled Tasks Control Center', 'webcare-pro-security'),
-            __('Cron Manager', 'webcare-pro-security'),
-            'manage_options',
-            'webcare-pro-cron-manager',
-            [__CLASS__, 'render_app_container']
-        );
-
-        // Sub-Page: Context-Adaptive Firewall (CAF)
-        add_submenu_page(
-            null,
-            __('Context-Adaptive Firewall (CAF) & StackGuard', 'webcare-pro-security'),
-            __('CAF Defense', 'webcare-pro-security'),
-            'manage_options',
-            'webcare-pro-caf',
-            [__CLASS__, 'render_app_container']
-        );
-
-        // Sub-Page: Quarantine Vault
-        add_submenu_page(
-            null,
-            __('Quarantine Vault & Safety Recoveries', 'webcare-pro-security'),
-            __('Quarantine Vault', 'webcare-pro-security'),
-            'manage_options',
-            'webcare-pro-quarantine',
-            [__CLASS__, 'render_app_container']
-        );
+            add_submenu_page(
+                $parent,
+                $pillar['page_title'],
+                $pillar['menu_title'],
+                'manage_options',
+                $pillar['id'],
+                [__CLASS__, 'render_app_container']
+            );
+        }
     }
 
     /**
@@ -332,33 +110,10 @@ class AdminMenu {
         if (empty($title)) {
             // phpcs:ignore WordPress.Security.NonceVerification.Recommended
             $page = isset($_GET['page']) ? sanitize_key(wp_unslash($_GET['page'])) : '';
-            $title_map = [
-                'webcare-pro-security'       => __('WebCare Pro Security & Firewall', 'webcare-pro-security'),
-                'webcare-pro-wizard'         => __('WebCare Pro Setup Studio', 'webcare-pro-security'),
-                'webcare-pro-scan'           => __('Security Scan & Findings', 'webcare-pro-security'),
-                'webcare-pro-firewall'       => __('Web Application Firewall (WAF Lite)', 'webcare-pro-security'),
-                'webcare-pro-caf'            => __('Context-Adaptive Firewall (CAF) & StackGuard', 'webcare-pro-security'),
-                'webcare-pro-vpatch'         => __('Virtual Patching & 0-Day Exploit Studio', 'webcare-pro-security'),
-                'webcare-pro-auth'           => __('Multi-Factor Authentication (2FA) & Login Security', 'webcare-pro-security'),
-                'webcare-pro-vault'          => __('WebCare Pro Vault & Safety Recoveries', 'webcare-pro-security'),
-                'webcare-pro-settings'       => __('Scanner Settings & AI Configuration', 'webcare-pro-security'),
-                'webcare-pro-about'          => __('About WebCare Pro & Services', 'webcare-pro-security'),
-                'webcare-pro-tools'          => __('Targeted Security Audits', 'webcare-pro-security'),
-                'webcare-pro-logs'           => __('Scan Logs & Audit History', 'webcare-pro-security'),
-                'webcare-pro-forensics'      => __('System Forensics & Deep Diagnostics', 'webcare-pro-security'),
-                'webcare-pro-fim'            => __('File Integrity Monitoring (FIM) & Code Diff', 'webcare-pro-security'),
-                'webcare-pro-vulnerabilities'=> __('Vulnerabilities & Updates', 'webcare-pro-security'),
-                'webcare-pro-backup'         => __('Database Backup Vault', 'webcare-pro-security'),
-                'webcare-pro-server'         => __('Server & Host Infrastructure Telemetry', 'webcare-pro-security'),
-                'webcare-pro-waf-logs'       => __('WAF Incident Logs & Attack Forensics', 'webcare-pro-security'),
-                'webcare-pro-notifications'  => __('Notifications & Security Alerts', 'webcare-pro-security'),
-                'webcare-pro-activity-logs'  => __('Plugin Activity & Audit Logs', 'webcare-pro-security'),
-                'webcare-pro-cron-manager'   => __('Cron & Scheduled Tasks Control Center', 'webcare-pro-security'),
-                'webcare-pro-modular-waf'    => __('Modular WAF Engine', 'webcare-pro-security'),
-            ];
+            $pillar = RouteRegistry::get_pillar($page);
 
-            if (isset($title_map[$page])) {
-                $title = $title_map[$page];
+            if ($pillar !== null && !empty($pillar['page_title'])) {
+                $title = $pillar['page_title'];
             } elseif (strpos($page, 'webcare-') !== false || $page === 'webcare-pro-security') {
                 $title = __('WebCare Pro Security & Firewall', 'webcare-pro-security');
             }
@@ -370,31 +125,11 @@ class AdminMenu {
     }
 
     public static function enqueue_assets($hook) {
-        $valid_hooks = [
-            'toplevel_page_webcare-pro-security',
-            'webcare-pro-security_page_webcare-pro-scan',
-            'webcare-pro-security_page_webcare-pro-vault',
-            'webcare-pro-security_page_webcare-pro-tools',
-            'webcare-pro-security_page_webcare-pro-logs',
-            'webcare-pro-security_page_webcare-pro-forensics',
-            'webcare-pro-security_page_webcare-pro-quarantine',
-            'webcare-pro-security_page_webcare-pro-backup',
-            'webcare-pro-security_page_webcare-pro-server',
-            'webcare-pro-security_page_webcare-pro-vulnerabilities',
-            'webcare-pro-security_page_webcare-pro-firewall',
-            'webcare-pro-security_page_webcare-pro-caf',
-            'webcare-pro-security_page_webcare-pro-vpatch',
-            'webcare-pro-security_page_webcare-pro-waf-logs',
-            'webcare-pro-security_page_webcare-pro-fim',
-            'webcare-pro-security_page_webcare-pro-auth',
-            'webcare-pro-security_page_webcare-pro-notifications',
-            'webcare-pro-security_page_webcare-pro-activity-logs',
-            'webcare-pro-security_page_webcare-pro-cron-manager',
-            'webcare-pro-security_page_webcare-pro-settings',
-            'webcare-pro-security_page_webcare-pro-about',
-            'webcare-pro-security_page_webcare-pro-wizard',
-            'webcare-pro-security_page_webcare-pro-modular-waf',
-        ];
+        // Collect all valid hook names dynamically from RouteRegistry
+        $valid_hooks = ['toplevel_page_webcare-pro-security'];
+        foreach (RouteRegistry::get_pillars() as $pillar) {
+            $valid_hooks[] = 'webcare-pro-security_page_' . $pillar['id'];
+        }
 
         // Also check query param fallback
         // phpcs:ignore WordPress.Security.NonceVerification.Recommended
@@ -485,35 +220,11 @@ class AdminMenu {
             wp_enqueue_script('webcare-global-script', WEBCAREPROSCAN_URL . 'build/global.js', ['wp-element'], $global_js_ver, true);
         }
 
-        $is_scan_cluster = ($current_page === 'webcare-pro-scan')
-            || in_array($active_tab, ['scan', 'targeted', 'logs', 'vulnerabilities'], true);
-
         // 2. Select decoupled per-page bundle (ensures individual page updates never break other pages)
+        $resolved_bundle = RouteRegistry::resolve_bundle($current_page, $tab_param);
         $page_bundle = 'index';
-        if ($is_scan_cluster && file_exists(WEBCAREPROSCAN_PATH . 'build/scan.js')) {
-            $page_bundle = 'scan';
-        } elseif ($active_tab === 'firewall' && file_exists(WEBCAREPROSCAN_PATH . 'build/firewall.js')) {
-            $page_bundle = 'firewall';
-        } elseif ($active_tab === 'waf_logs' && file_exists(WEBCAREPROSCAN_PATH . 'build/waf-logs.js')) {
-            $page_bundle = 'waf-logs';
-        } elseif ($active_tab === 'auth' && file_exists(WEBCAREPROSCAN_PATH . 'build/auth.js')) {
-            $page_bundle = 'auth';
-        } elseif (in_array($active_tab, ['vault', 'quarantine', 'backup', 'server', 'forensics'], true) && file_exists(WEBCAREPROSCAN_PATH . 'build/vault.js')) {
-            $page_bundle = 'vault';
-        } elseif ($active_tab === 'fim' && file_exists(WEBCAREPROSCAN_PATH . 'build/fim.js')) {
-            $page_bundle = 'fim';
-        } elseif ($active_tab === 'settings' && file_exists(WEBCAREPROSCAN_PATH . 'build/settings.js')) {
-            $page_bundle = 'settings';
-        } elseif ($active_tab === 'notifications' && file_exists(WEBCAREPROSCAN_PATH . 'build/notifications.js')) {
-            $page_bundle = 'notifications';
-        } elseif ($active_tab === 'activity_logs' && file_exists(WEBCAREPROSCAN_PATH . 'build/activity-logs.js')) {
-            $page_bundle = 'activity-logs';
-        } elseif ($active_tab === 'cron_manager' && file_exists(WEBCAREPROSCAN_PATH . 'build/cron-manager.js')) {
-            $page_bundle = 'cron-manager';
-        } elseif ($active_tab === 'wizard' && file_exists(WEBCAREPROSCAN_PATH . 'build/wizard.js')) {
-            $page_bundle = 'wizard';
-        } elseif ($active_tab === 'modular_waf' && file_exists(WEBCAREPROSCAN_PATH . 'build/modular-waf.js')) {
-            $page_bundle = 'modular-waf';
+        if ($resolved_bundle !== 'index' && file_exists(WEBCAREPROSCAN_PATH . "build/{$resolved_bundle}.js")) {
+            $page_bundle = $resolved_bundle;
         }
 
         $js_rel = "build/{$page_bundle}.js";

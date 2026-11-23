@@ -215,9 +215,9 @@ class TwoFactorAuth {
             $current_page = isset($_GET['page']) ? sanitize_text_field(wp_unslash($_GET['page'])) : '';
             // phpcs:ignore WordPress.Security.NonceVerification.Recommended
             $current_tab  = isset($_GET['tab']) ? sanitize_text_field(wp_unslash($_GET['tab'])) : '';
-            $is_auth_page = ($current_page === 'webcare-pro-auth') || ($current_page === 'webcare-pro-security' && $current_tab === 'auth');
+            $is_auth_page = ($current_page === 'webcare-pro-login') || ($current_page === 'webcare-pro-auth');
             if (!$is_auth_page) {
-                wp_safe_redirect(admin_url('admin.php?page=webcare-pro-auth&tab=2fa&forced=1'));
+                wp_safe_redirect(\WebCareProScanner\Admin\RouteRegistry::url('webcare-pro-login', '2fa', '', ['forced' => '1']));
                 exit;
             }
         }
@@ -239,7 +239,7 @@ class TwoFactorAuth {
         $compliance = self::get_user_compliance_status($user_id);
         if ($compliance['status'] === 'remind_login') {
             $days_left = $compliance['days_left'] ?? 1;
-            $setup_url = admin_url('admin.php?page=webcare-pro-auth&tab=2fa&setup=1');
+            $setup_url = \WebCareProScanner\Admin\RouteRegistry::url('webcare-pro-login', '2fa', '', ['setup' => '1']);
             ?>
             <div class="notice notice-info is-dismissible" style="border-left-color: #0284c7; padding: 12px 16px;">
                 <p style="margin: 0; font-size: 13.5px; font-weight: 500; color: #1e293b;">
@@ -256,7 +256,7 @@ class TwoFactorAuth {
             <?php
         } elseif ($compliance['status'] === 'grace_period') {
             $days_left = $compliance['days_left'] ?? 1;
-            $setup_url = admin_url('admin.php?page=webcare-pro-auth&tab=2fa&setup=1');
+            $setup_url = \WebCareProScanner\Admin\RouteRegistry::url('webcare-pro-login', '2fa', '', ['setup' => '1']);
             ?>
             <div class="notice notice-warning is-dismissible" style="border-left-color: #f59e0b; padding: 12px 16px;">
                 <p style="margin: 0; font-size: 13.5px; font-weight: 500; color: #1e293b;">
@@ -272,7 +272,7 @@ class TwoFactorAuth {
             </div>
             <?php
         } elseif ($compliance['status'] === 'enforcement_required') {
-            $setup_url = admin_url('admin.php?page=webcare-pro-auth&tab=2fa&setup=1');
+            $setup_url = \WebCareProScanner\Admin\RouteRegistry::url('webcare-pro-login', '2fa', '', ['setup' => '1']);
             ?>
             <div class="notice notice-error" style="border-left-color: #ef4444; padding: 12px 16px;">
                 <p style="margin: 0; font-size: 13.5px; font-weight: 600; color: #991b1b;">
@@ -1028,7 +1028,7 @@ class TwoFactorAuth {
                 if ($compliance['status'] === 'enforcement_required') {
                     // Force redirect directly to 2FA configuration wizard upon completing password auth
                     add_filter('login_redirect', function ($url, $requested, $user_obj) {
-                        return admin_url('admin.php?page=webcare-pro-security&tab=auth&subtab=2fa&setup=1&forced=1');
+                        return \WebCareProScanner\Admin\RouteRegistry::url('webcare-pro-login', '2fa', '', ['setup' => '1', 'forced' => '1']);
                     }, 99, 3);
                 }
             }

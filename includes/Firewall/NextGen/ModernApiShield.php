@@ -61,7 +61,7 @@ class ModernApiShield implements SecurityModuleInterface, WafEvaluatorInterface 
             'version'     => defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '2.12.0',
             'author'      => 'Mir Alamin (WebCare Pro)',
             'enable_key'  => 'waf_nextgen_modern_api_enabled',
-            'deep_link'   => 'admin.php?page=webcare-pro-modular-waf&tab=nextgen',
+            'deep_link'   => 'admin.php?page=webcare-pro-firewall&tab=protection',
             'badge'       => 'API & GraphQL',
         ];
     }

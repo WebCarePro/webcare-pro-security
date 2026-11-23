@@ -111,7 +111,7 @@ class ActivityTamperNotifier {
         $message .= "an unauthorized direct file modification.\n\n";
         $message .= "IMMEDIATE RECOMMENDED ACTIONS:\n";
         $message .= "1. Log into your WordPress administrative dashboard to review the incident report:\n";
-        $message .= "   " . admin_url('admin.php?page=webcare-pro-activity-logs') . "\n";
+        $message .= "   " . \WebCareProScanner\Admin\RouteRegistry::url('webcare-pro-logs', 'activity') . "\n";
         $message .= "2. Inspect web server access logs around " . $time_utc . ".\n";
         $message .= "3. Run a complete WebCare Pro Security Deep System & Malware Audit.\n";
         $message .= "4. Check for newly created or modified administrator accounts.\n\n";

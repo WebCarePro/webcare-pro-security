@@ -20,7 +20,8 @@ import {
   AlertTriangle,
   PlayCircle,
   Search,
-  ChevronRight
+  ChevronRight,
+  FileText
 } from 'lucide-react';
 import WebCareBrandLogo from './WebCareBrandLogo';
 import MegaMenuModal from './MegaMenuModal';
@@ -33,16 +34,29 @@ import { toast } from '../utils/dialog';
 import { useWorkspaceMode } from '../hooks/useWorkspaceMode';
 import { ToastProvider } from './ui/ToastProvider';
 import { ConfirmModalHost } from './ui/ConfirmModal';
+import { buildAdminUrl, navigateToRoute, parseCurrentRoute, PILLARS, PILLAR_MAP } from '../utils/routeRegistry';
 
 interface WebCareShellProps {
-  activeTab: 'dashboard' | 'scan' | 'firewall' | 'modular_waf' | 'waf_logs' | 'auth' | 'vault' | 'fim' | 'forensics' | 'settings' | 'notifications' | 'activity_logs' | 'cron_manager' | 'about' | 'wizard';
+  activeTab?: string;
+  activePillarId?: string;
   children: ReactNode;
 }
 
-export const WebCareShell = ({ activeTab, children }: WebCareShellProps) => {
+export const WebCareShell = ({ activeTab, activePillarId, children }: WebCareShellProps) => {
   const [themeMode, setThemeMode] = useState<'dark' | 'light'>(() => getWebCareTheme());
   const { mode: currentWorkspaceMode, isDeveloperMode, setMode } = useWorkspaceMode();
   const workspaceMode = isDeveloperMode ? 'advanced' : 'essential';
+
+  const [routeState, setRouteState] = useState(() => parseCurrentRoute());
+
+  // Listen to popstate for browser Back/Forward navigation
+  useEffect(() => {
+    const handlePopState = () => {
+      setRouteState(parseCurrentRoute());
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   const [megaMenuOpen, setMegaMenuOpen] = useState(false);
   const [quickJumpOpen, setQuickJumpOpen] = useState(false);
@@ -216,51 +230,48 @@ export const WebCareShell = ({ activeTab, children }: WebCareShellProps) => {
 
   const PAGE_MAP: Record<string, string> = {
     dashboard: 'webcare-pro-security',
-    scan: 'webcare-pro-scan',
-    targeted: 'webcare-pro-scan&tab=targeted',
-    logs: 'webcare-pro-scan&tab=logs',
-    fim: 'webcare-pro-fim',
-    vulnerabilities: 'webcare-pro-scan&tab=vulnerabilities',
+    overview: 'webcare-pro-security',
+    'webcare-pro-security': 'webcare-pro-security',
+    scan: 'webcare-pro-scanner',
+    scanner: 'webcare-pro-scanner',
+    'webcare-pro-scanner': 'webcare-pro-scanner',
+    'webcare-pro-scan': 'webcare-pro-scanner',
     firewall: 'webcare-pro-firewall',
-    modular_waf: 'webcare-pro-modular-waf',
-    waf_logs: 'webcare-pro-waf-logs',
-    vpatch: 'webcare-pro-firewall&tab=vpatch',
-    auth: 'webcare-pro-auth',
-    vault: 'webcare-pro-vault',
-    quarantine: 'webcare-pro-vault&tab=quarantine',
-    backup: 'webcare-pro-vault&tab=database',
-    forensics: 'webcare-pro-forensics',
-    server: 'webcare-pro-vault&tab=server',
+    'webcare-pro-firewall': 'webcare-pro-firewall',
+    logs: 'webcare-pro-logs',
+    waf_logs: 'webcare-pro-logs',
+    'webcare-pro-logs': 'webcare-pro-logs',
+    'webcare-pro-waf-logs': 'webcare-pro-logs',
+    auth: 'webcare-pro-login',
+    login: 'webcare-pro-login',
+    'webcare-pro-login': 'webcare-pro-login',
+    'webcare-pro-auth': 'webcare-pro-login',
+    vault: 'webcare-pro-backups',
+    backup: 'webcare-pro-backups',
+    backups: 'webcare-pro-backups',
+    'webcare-pro-backups': 'webcare-pro-backups',
+    'webcare-pro-vault': 'webcare-pro-backups',
     settings: 'webcare-pro-settings',
-    notifications: 'webcare-pro-notifications',
-    activity_logs: 'webcare-pro-activity-logs',
-    cron_manager: 'webcare-pro-cron-manager',
-    about: 'webcare-pro-settings&tab=about',
-    wizard: 'webcare-pro-wizard',
+    'webcare-pro-settings': 'webcare-pro-settings',
+    wizard: 'webcare-pro-setup',
+    setup: 'webcare-pro-setup',
+    'webcare-pro-setup': 'webcare-pro-setup',
+    'webcare-pro-wizard': 'webcare-pro-setup',
   };
 
+  const currentPillarId = activePillarId || (
+    activeTab ? (PAGE_MAP[activeTab] || 'webcare-pro-security') : routeState.page
+  );
+
   const navigateTo = (slug: string, tabParam?: string) => {
-    let target = PAGE_MAP[slug] || (slug.startsWith('webcare-pro-') ? slug : `webcare-pro-${slug}`);
-    if (tabParam) {
-      if (target.includes('&tab=')) {
-        target += `&subtab=${tabParam}`;
-      } else {
-        target += `&tab=${tabParam}`;
-      }
-    }
-    window.location.href = `admin.php?page=${target}`;
+    const targetPillar = PAGE_MAP[slug] || (slug.startsWith('webcare-pro-') ? slug : `webcare-pro-${slug}`);
+    navigateToRoute(targetPillar, tabParam || '');
   };
 
   const handleMegaMenuNavigate = (tab: string, subTab?: string, nestedSubTab?: string) => {
     setMegaMenuOpen(false);
-    let target = PAGE_MAP[tab] || (tab.startsWith('webcare-pro-') ? tab : `webcare-pro-${tab}`);
-    if (subTab && !target.includes('&tab=')) {
-      target += `&tab=${subTab}`;
-    }
-    if (nestedSubTab && !target.includes('&subtab=')) {
-      target += `&subtab=${nestedSubTab}`;
-    }
-    window.location.href = `admin.php?page=${target}`;
+    const targetPillar = PAGE_MAP[tab] || (tab.startsWith('webcare-pro-') ? tab : `webcare-pro-${tab}`);
+    navigateToRoute(targetPillar, subTab || '', nestedSubTab || '');
   };
 
   return (
@@ -473,67 +484,84 @@ export const WebCareShell = ({ activeTab, children }: WebCareShellProps) => {
           </div>
         </div>
 
-        {/* TIER 2: PRIMARY NAVIGATION ROW (6 CORE PILLARS + ALL MODULES) */}
+        {/* TIER 2: PRIMARY NAVIGATION ROW (7 CANONICAL PILLARS + ALL MODULES) */}
         <div className="webcare-header-tier-bottom">
-          <nav className="nav-tabs">
+          <nav className="nav-tabs" aria-label="Main Security Pillars">
             <button
               type="button"
-              className={`nav-tab-btn ${activeTab === 'dashboard' ? 'active' : ''}`}
+              className={`nav-tab-btn ${currentPillarId === 'webcare-pro-security' ? 'active' : ''}`}
               id="tabBtnDashboard"
-              onClick={() => navigateTo('dashboard')}
+              onClick={() => navigateTo('webcare-pro-security')}
+              aria-current={currentPillarId === 'webcare-pro-security' ? 'page' : undefined}
             >
               <LayoutDashboard size={15} />
-              <span>Dashboard</span>
+              <span>Overview</span>
             </button>
 
             <button
               type="button"
-              className={`nav-tab-btn ${['scan', 'targeted', 'logs', 'fim', 'vulnerabilities'].includes(activeTab) ? 'active' : ''}`}
-              id="tabBtnScan"
-              onClick={() => navigateTo('scan')}
-            >
-              <Radar size={15} />
-              <span>Scanner &amp; CVEs</span>
-            </button>
-
-            <button
-              type="button"
-              className={`nav-tab-btn ${['firewall', 'modular_waf', 'waf_logs', 'vpatch'].includes(activeTab) ? 'active' : ''}`}
+              className={`nav-tab-btn ${currentPillarId === 'webcare-pro-firewall' ? 'active' : ''}`}
               id="tabBtnFirewall"
-              onClick={() => navigateTo('firewall')}
+              onClick={() => navigateTo('webcare-pro-firewall')}
+              aria-current={currentPillarId === 'webcare-pro-firewall' ? 'page' : undefined}
             >
               <Shield size={15} />
-              <span>Firewall &amp; Logs</span>
+              <span>Firewall</span>
             </button>
 
             <button
               type="button"
-              className={`nav-tab-btn ${activeTab === 'auth' ? 'active' : ''}`}
+              className={`nav-tab-btn ${currentPillarId === 'webcare-pro-logs' ? 'active' : ''}`}
+              id="tabBtnLogs"
+              onClick={() => navigateTo('webcare-pro-logs')}
+              aria-current={currentPillarId === 'webcare-pro-logs' ? 'page' : undefined}
+            >
+              <FileText size={15} />
+              <span>Logs &amp; Activity</span>
+            </button>
+
+            <button
+              type="button"
+              className={`nav-tab-btn ${currentPillarId === 'webcare-pro-scanner' ? 'active' : ''}`}
+              id="tabBtnScan"
+              onClick={() => navigateTo('webcare-pro-scanner')}
+              aria-current={currentPillarId === 'webcare-pro-scanner' ? 'page' : undefined}
+            >
+              <Radar size={15} />
+              <span>Malware &amp; Scanner</span>
+            </button>
+
+            <button
+              type="button"
+              className={`nav-tab-btn ${currentPillarId === 'webcare-pro-login' ? 'active' : ''}`}
               id="tabBtnIdentity"
-              onClick={() => navigateTo('auth')}
+              onClick={() => navigateTo('webcare-pro-login')}
+              aria-current={currentPillarId === 'webcare-pro-login' ? 'page' : undefined}
             >
               <Users size={15} />
-              <span>Login &amp; Access</span>
+              <span>Login &amp; 2FA</span>
             </button>
 
             <button
               type="button"
-              className={`nav-tab-btn ${['vault', 'quarantine', 'backup', 'forensics', 'server'].includes(activeTab) ? 'active' : ''}`}
+              className={`nav-tab-btn ${currentPillarId === 'webcare-pro-backups' ? 'active' : ''}`}
               id="tabBtnVault"
-              onClick={() => navigateTo('vault')}
+              onClick={() => navigateTo('webcare-pro-backups')}
+              aria-current={currentPillarId === 'webcare-pro-backups' ? 'page' : undefined}
             >
               <Server size={15} />
-              <span>Vault &amp; Tools</span>
+              <span>Backups &amp; Recovery</span>
             </button>
 
             <button
               type="button"
-              className={`nav-tab-btn ${['settings', 'notifications', 'activity_logs', 'cron_manager', 'about'].includes(activeTab) ? 'active' : ''}`}
+              className={`nav-tab-btn ${currentPillarId === 'webcare-pro-settings' ? 'active' : ''}`}
               id="tabBtnSettings"
-              onClick={() => navigateTo('settings')}
+              onClick={() => navigateTo('webcare-pro-settings')}
+              aria-current={currentPillarId === 'webcare-pro-settings' ? 'page' : undefined}
             >
               <SettingsIcon size={15} />
-              <span>Settings &amp; Doctor</span>
+              <span>Settings</span>
             </button>
 
             {/* Quick-Jump Mega Menu Button */}
@@ -551,80 +579,15 @@ export const WebCareShell = ({ activeTab, children }: WebCareShellProps) => {
         </div>
       </header>
 
-      {/* Compact Breadcrumb Trail */}
+      {/* Dynamic Canonical Breadcrumb Trail from RouteRegistry */}
       {(() => {
-        let currentUrlTab = '';
-        try {
-          currentUrlTab = new URLSearchParams(window.location.search).get('tab') || '';
-        } catch {}
-
-        const pillarMeta: Record<string, { label: string; slug: string }> = {
-          dashboard: { label: 'Dashboard', slug: 'dashboard' },
-          scan: { label: 'Scanner & CVEs', slug: 'scan' },
-          targeted: { label: 'Scanner & CVEs', slug: 'scan' },
-          logs: { label: 'Scanner & CVEs', slug: 'scan' },
-          fim: { label: 'Scanner & CVEs', slug: 'fim' },
-          vulnerabilities: { label: 'Scanner & CVEs', slug: 'scan' },
-          firewall: { label: 'Firewall & Edge', slug: 'firewall' },
-          modular_waf: { label: 'Firewall & Edge', slug: 'modular_waf' },
-          waf_logs: { label: 'Firewall & Edge', slug: 'waf_logs' },
-          vpatch: { label: 'Firewall & Edge', slug: 'firewall' },
-          auth: { label: 'Login & Access', slug: 'auth' },
-          vault: { label: 'Vault & Tools', slug: 'vault' },
-          quarantine: { label: 'Vault & Tools', slug: 'vault' },
-          backup: { label: 'Vault & Tools', slug: 'vault' },
-          forensics: { label: 'Vault & Tools', slug: 'forensics' },
-          server: { label: 'Vault & Tools', slug: 'vault' },
-          settings: { label: 'Settings & Doctor', slug: 'settings' },
-          notifications: { label: 'Settings & Doctor', slug: 'notifications' },
-          activity_logs: { label: 'Settings & Doctor', slug: 'activity_logs' },
-          cron_manager: { label: 'Settings & Doctor', slug: 'cron_manager' },
-          about: { label: 'Settings & Doctor', slug: 'settings' },
-          wizard: { label: 'Settings & System', slug: 'wizard' },
-        };
-
-        const tabLabels: Record<string, string> = {
-          stream: 'Live Traffic',
-          rules: 'Rules & Presets',
-          caf: 'Adaptive (CAF)',
-          cloudflare: 'Cloudflare',
-          behavioral: 'Bot & Behavior',
-          ai_defense: 'AI Defense',
-          drill: 'Attack Drill',
-          supply_chain: 'Supply-Chain & SBOM',
-          server_sec: 'Server Security',
-          intel: 'Cloud Threat Intel',
-          vpatch: 'Virtual Patching',
-          builder: 'Visual Rule Builder',
-          dossier: 'Behavioral Dossier',
-          nextgen: 'Next-Gen Sentinels',
-          '2fa': 'Two-Factor Auth',
-          passkeys: 'Passkeys',
-          admins: 'Admin 2FA Policy',
-          zero_trust: 'Session Forensics',
-          sessions: 'Active Sessions',
-          lockouts: 'Brute-Force Lockouts',
-          app_passwords: 'App Passwords',
-          quarantine: 'Quarantine Vault',
-          database: 'Database Backup',
-          rollback: 'Safety Rollback',
-          secrets: 'Secrets Vault',
-          forensics: 'Forensics',
-          server: 'Host Telemetry',
-          containment: 'Panic Containment',
-          schedule: 'Schedule & General',
-          email: 'Email Alerts',
-          webhooks: 'Webhooks',
-          headers: 'Security Headers',
-          ai: 'AI Copilot',
-          mcp: 'Autonomous MCP',
-          performance: 'Scanner Tuning',
-          import_export: 'Import / Export',
-          cleanup: 'Maintenance Purge',
-        };
-
-        const activePillar = pillarMeta[activeTab] || { label: 'Security Center', slug: 'dashboard' };
-        const subLabel = currentUrlTab ? (tabLabels[currentUrlTab] || currentUrlTab.replace(/_/g, ' ')) : null;
+        const activePillar = PILLAR_MAP[currentPillarId] || PILLAR_MAP['webcare-pro-security'];
+        const currentTabId = routeState.tab || activePillar?.default_tab || '';
+        const activeTabObj = activePillar?.tabs?.find((t) => t.id === currentTabId);
+        const subLabel = activeTabObj?.label;
+        const currentSecId = routeState.section || activeTabObj?.default_section || '';
+        const activeSecObj = activeTabObj?.sections?.find((s) => s.id === currentSecId);
+        const secLabel = activeSecObj?.label;
 
         return (
           <nav
@@ -645,7 +608,7 @@ export const WebCareShell = ({ activeTab, children }: WebCareShellProps) => {
           >
             <button
               type="button"
-              onClick={() => navigateTo('dashboard')}
+              onClick={() => navigateTo('webcare-pro-security')}
               style={{
                 background: 'none',
                 border: 'none',
@@ -665,7 +628,7 @@ export const WebCareShell = ({ activeTab, children }: WebCareShellProps) => {
 
             <button
               type="button"
-              onClick={() => navigateTo(activePillar.slug)}
+              onClick={() => navigateTo(activePillar?.id || 'webcare-pro-security')}
               style={{
                 background: 'none',
                 border: 'none',
@@ -677,15 +640,31 @@ export const WebCareShell = ({ activeTab, children }: WebCareShellProps) => {
               }}
               onMouseEnter={(e) => { e.currentTarget.style.color = '#4f46e5'; }}
               onMouseLeave={(e) => { e.currentTarget.style.color = subLabel ? 'var(--webcare-text-muted, #64748b)' : 'var(--webcare-text-primary, #0f172a)'; }}
+              aria-current={!subLabel ? 'page' : undefined}
             >
-              {activePillar.label}
+              {activePillar?.menu_title || 'Overview'}
             </button>
 
             {subLabel && (
               <>
                 <span style={{ opacity: 0.5 }}>›</span>
-                <span style={{ color: 'var(--webcare-text-primary, #0f172a)', fontWeight: 700 }}>
+                <span 
+                  style={{ 
+                    color: secLabel ? 'var(--webcare-text-muted, #64748b)' : 'var(--webcare-text-primary, #0f172a)', 
+                    fontWeight: secLabel ? 500 : 700 
+                  }}
+                  aria-current={!secLabel ? 'page' : undefined}
+                >
                   {subLabel}
+                </span>
+              </>
+            )}
+
+            {secLabel && (
+              <>
+                <span style={{ opacity: 0.5 }}>›</span>
+                <span style={{ color: 'var(--webcare-text-primary, #0f172a)', fontWeight: 700 }} aria-current="page">
+                  {secLabel}
                 </span>
               </>
             )}

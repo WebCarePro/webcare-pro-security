@@ -92,7 +92,7 @@ class WebhookService {
         $settings = SettingsManager::get_settings();
         $site_name = wp_specialchars_decode(get_bloginfo('name'), ENT_QUOTES) ?: 'WordPress';
         $site_url  = get_site_url();
-        $dashboard_url = admin_url('admin.php?page=webcare-pro-security');
+        $dashboard_url = \WebCareProScanner\Admin\RouteRegistry::url('webcare-pro-security');
         $plugin_version = defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '2.7.1';
 
         if ($platform === 'slack') {
@@ -261,7 +261,7 @@ class WebhookService {
 
         $site_name = wp_specialchars_decode(get_bloginfo('name'), ENT_QUOTES) ?: 'WordPress';
         $site_url  = get_site_url();
-        $dashboard_url = admin_url('admin.php?page=webcare-pro-security');
+        $dashboard_url = \WebCareProScanner\Admin\RouteRegistry::url('webcare-pro-security');
         $plugin_version = defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '2.7.1';
 
         $is_danger = ($critical_count > 0 || $high_count > 0);
@@ -447,7 +447,7 @@ class WebhookService {
 
         $site_name = wp_specialchars_decode(get_bloginfo('name'), ENT_QUOTES) ?: 'WordPress';
         $site_url  = get_site_url();
-        $fim_url   = admin_url('admin.php?page=webcare-pro-fim');
+        $fim_url   = \WebCareProScanner\Admin\RouteRegistry::url('webcare-pro-scanner', 'file-integrity');
         $count     = count($changed_files);
 
         $sample_paths = array_slice(array_map(function ($f) {
@@ -581,7 +581,7 @@ class WebhookService {
 
         $site_name = wp_specialchars_decode(get_bloginfo('name'), ENT_QUOTES) ?: 'WordPress';
         $site_url  = get_site_url();
-        $waf_url   = admin_url('admin.php?page=webcare-pro-firewall');
+        $waf_url   = \WebCareProScanner\Admin\RouteRegistry::url('webcare-pro-firewall');
 
         $category = $incident['category'] ?? 'Exploit Probe';
         $rule     = $incident['name'] ?? 'WAF Rule';

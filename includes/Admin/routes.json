@@ -1,0 +1,382 @@
+{
+  "version": "3.26.0",
+  "pillars": [
+    {
+      "id": "webcare-pro-security",
+      "title": "Overview",
+      "menu_title": "Overview",
+      "page_title": "WebCare Pro Security — Overview",
+      "description": "Site protection status, recent blocks, and quick actions.",
+      "bundle": "index",
+      "icon": "shield",
+      "default_tab": "",
+      "mode": "all",
+      "tabs": []
+    },
+    {
+      "id": "webcare-pro-firewall",
+      "title": "Firewall",
+      "menu_title": "Firewall",
+      "page_title": "Firewall & Traffic Defense",
+      "description": "Block attacks, manage rules, bots, AI crawlers, and Cloudflare.",
+      "bundle": "firewall",
+      "icon": "firewall",
+      "default_tab": "protection",
+      "mode": "all",
+      "tabs": [
+        {
+          "id": "protection",
+          "label": "Protection & Rules",
+          "mode": "all",
+          "description": "Core firewall rules, inspection modes, and attack defense."
+        },
+        {
+          "id": "traffic",
+          "label": "Live Traffic",
+          "mode": "all",
+          "description": "Real-time traffic stream, inspection inspector, and IP lookups."
+        },
+        {
+          "id": "cloudflare",
+          "label": "Cloudflare",
+          "mode": "all",
+          "description": "Cloudflare Edge sync, Turnstile, and edge rule synchronization."
+        },
+        {
+          "id": "bots",
+          "label": "Bots & AI Crawlers",
+          "mode": "all",
+          "description": "Search engine bots, AI scrapers, bad bots, and crawler policies."
+        },
+        {
+          "id": "rule-builder",
+          "label": "Custom Rule Builder",
+          "mode": "developer",
+          "description": "Author custom CIDR, header, path, query, and user-agent WAF rules."
+        },
+        {
+          "id": "adaptive",
+          "label": "Adaptive Protection",
+          "mode": "developer",
+          "description": "Context-adaptive stack profiling, WooCommerce safeguards, and auto-tuning."
+        },
+        {
+          "id": "virtual-patches",
+          "label": "Virtual Patches",
+          "mode": "developer",
+          "description": "0-day hotfixes, declarative CVE mitigations, and targeted shields."
+        },
+        {
+          "id": "advanced",
+          "label": "Advanced Tools",
+          "mode": "developer",
+          "description": "Server rules, AI traps, supply chain defenses, and attack simulation.",
+          "default_section": "server-rules",
+          "sections": [
+            { "id": "server-rules", "label": "Server Rules (.htaccess/Nginx)", "mode": "developer" },
+            { "id": "ai-traps", "label": "AI Traps & Honeypots", "mode": "developer" },
+            { "id": "supply-chain", "label": "Supply Chain & Third-Party Guard", "mode": "developer" },
+            { "id": "attack-test", "label": "Firewall Simulator & Attack Test", "mode": "developer" },
+            { "id": "threat-feeds", "label": "Threat Intelligence Feeds", "mode": "developer" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "webcare-pro-logs",
+      "title": "Logs & Activity",
+      "menu_title": "Logs & Activity",
+      "page_title": "Security Logs & Forensic Activity",
+      "description": "See blocked visitors, unban IPs, and review admin changes.",
+      "bundle": "waf-logs",
+      "icon": "logs",
+      "default_tab": "firewall",
+      "mode": "all",
+      "tabs": [
+        {
+          "id": "firewall",
+          "label": "Blocked Traffic & Bans",
+          "mode": "all",
+          "description": "Blocked requests, active bans, temporary IP lockouts, and unban controls."
+        },
+        {
+          "id": "activity",
+          "label": "Admin Activity",
+          "mode": "all",
+          "description": "Immutable 7-day administrative activity logs, user logins, and setting changes."
+        },
+        {
+          "id": "scans",
+          "label": "Scan History",
+          "mode": "all",
+          "description": "Historical malware and integrity scan reports and audit logs."
+        }
+      ]
+    },
+    {
+      "id": "webcare-pro-scanner",
+      "title": "Malware & Scanner",
+      "menu_title": "Malware & Scanner",
+      "page_title": "Malware Scanner & Integrity Verification",
+      "description": "Scan files for malware, plugin vulnerabilities, and core changes.",
+      "bundle": "scan",
+      "icon": "scanner",
+      "default_tab": "malware",
+      "mode": "all",
+      "tabs": [
+        {
+          "id": "malware",
+          "label": "Malware Scan",
+          "mode": "all",
+          "description": "Full file scanner, heuristic analysis, webshell detection, and threat quarantine."
+        },
+        {
+          "id": "vulnerabilities",
+          "label": "Plugin & Theme Risks",
+          "mode": "all",
+          "description": "Known CVE vulnerabilities in active plugins, themes, and WordPress core."
+        },
+        {
+          "id": "file-integrity",
+          "label": "Core File Changes",
+          "mode": "all",
+          "description": "File integrity monitoring (FIM), official checksum diffs, and unexpected modifications."
+        },
+        {
+          "id": "targeted",
+          "label": "Targeted Checks",
+          "mode": "developer",
+          "description": "Focused directory scans, database content inspection, and custom malware signatures."
+        }
+      ]
+    },
+    {
+      "id": "webcare-pro-login",
+      "title": "Login & 2FA",
+      "menu_title": "Login & 2FA",
+      "page_title": "Login Security & Multi-Factor Authentication",
+      "description": "Protect wp-admin with 2FA, passkeys, and brute-force limits.",
+      "bundle": "auth",
+      "icon": "lock",
+      "default_tab": "2fa",
+      "mode": "all",
+      "tabs": [
+        {
+          "id": "2fa",
+          "label": "Two-Factor (2FA)",
+          "mode": "all",
+          "description": "TOTP authenticator app enforcement, user enrolment, and recovery codes."
+        },
+        {
+          "id": "passkeys",
+          "label": "Passkeys",
+          "mode": "all",
+          "description": "FIDO2 / WebAuthn biometric passkeys, hardware security keys, and instant sign-in."
+        },
+        {
+          "id": "lockouts",
+          "label": "Blocked Logins",
+          "mode": "all",
+          "description": "Brute-force lockout status, failed attempt telemetry, and instant unblock."
+        },
+        {
+          "id": "settings",
+          "label": "Login Rules",
+          "mode": "all",
+          "description": "Brute-force thresholds, lockout durations, custom login URL, and reCAPTCHA/Turnstile."
+        },
+        {
+          "id": "sessions",
+          "label": "Active Sessions",
+          "mode": "developer",
+          "description": "Inspect and revoke active user login sessions across devices and IP addresses."
+        },
+        {
+          "id": "admins",
+          "label": "Admin Watch",
+          "mode": "developer",
+          "description": "Monitor administrator accounts, unauthorized role escalations, and newly created admins."
+        },
+        {
+          "id": "app-passwords",
+          "label": "App Passwords",
+          "mode": "developer",
+          "description": "Manage application passwords for REST API and external integrations safely."
+        }
+      ]
+    },
+    {
+      "id": "webcare-pro-backups",
+      "title": "Backups & Recovery",
+      "menu_title": "Backups & Recovery",
+      "page_title": "Backups, Quarantine & Disaster Recovery",
+      "description": "Database backups, quarantined files, rollbacks, and diagnostics.",
+      "bundle": "vault",
+      "icon": "archive",
+      "default_tab": "database",
+      "mode": "all",
+      "tabs": [
+        {
+          "id": "database",
+          "label": "Database Backups",
+          "mode": "all",
+          "description": "One-click atomic database snapshots, download SQL dumps, and point-in-time restore."
+        },
+        {
+          "id": "quarantine",
+          "label": "Quarantined Files",
+          "mode": "all",
+          "description": "Isolated infected files, safe code preview, restoration, and permanent deletion."
+        },
+        {
+          "id": "rollback",
+          "label": "Undo & Rollback",
+          "mode": "all",
+          "description": "Revert recent security interventions, restored files, and automated changes."
+        },
+        {
+          "id": "server",
+          "label": "Server Health",
+          "mode": "developer",
+          "description": "PHP environment, OPcache status, file permissions, open ports, and memory telemetry."
+        },
+        {
+          "id": "forensics",
+          "label": "Deep Diagnostics",
+          "mode": "developer",
+          "description": "Persistence mechanisms, watchdog integrity, cron integrity, and attack chain inspection."
+        },
+        {
+          "id": "secrets",
+          "label": "Encryption Keys",
+          "mode": "developer",
+          "description": "SecretVault HMAC rotation, encryption keys, and cryptographic integrity tokens."
+        }
+      ]
+    },
+    {
+      "id": "webcare-pro-settings",
+      "title": "Settings",
+      "menu_title": "Settings",
+      "page_title": "Settings & Security Governance",
+      "description": "Health check, alerts, schedules, hardening, AI, and support.",
+      "bundle": "settings",
+      "icon": "settings",
+      "default_tab": "health",
+      "mode": "all",
+      "tabs": [
+        {
+          "id": "health",
+          "label": "Site Doctor & Rescue",
+          "mode": "all",
+          "group": "Health & Rescue",
+          "description": "System health diagnostics, configuration auditor, and 15-minute emergency safe mode."
+        },
+        {
+          "id": "emergency",
+          "label": "Emergency Lockdown",
+          "mode": "developer",
+          "group": "Health & Rescue",
+          "description": "Immediate site-wide freeze, admin-only access lockdown, and breach containment."
+        },
+        {
+          "id": "alerts",
+          "label": "Email & Alerts",
+          "mode": "all",
+          "group": "Alerts & Automation",
+          "description": "Security email notifications, threat alert thresholds, and recipient settings."
+        },
+        {
+          "id": "schedules",
+          "label": "Scan Schedule",
+          "mode": "all",
+          "group": "Alerts & Automation",
+          "description": "Automated background scan frequencies, daily schedules, and maintenance windows."
+        },
+        {
+          "id": "webhooks",
+          "label": "Webhooks",
+          "mode": "developer",
+          "group": "Alerts & Automation",
+          "description": "Slack, Discord, Telegram, and generic HTTPS egress webhook integrations."
+        },
+        {
+          "id": "cron",
+          "label": "Scheduled Tasks (Cron)",
+          "mode": "developer",
+          "group": "Alerts & Automation",
+          "description": "WordPress cron schedules, background worker status, and scheduled task runner."
+        },
+        {
+          "id": "headers",
+          "label": "Security Headers",
+          "mode": "developer",
+          "group": "Hardening & AI",
+          "description": "HTTP security headers: CSP, HSTS, X-Frame-Options, Permissions-Policy."
+        },
+        {
+          "id": "ai",
+          "label": "AI Assistant",
+          "mode": "developer",
+          "group": "Hardening & AI",
+          "description": "Multi-provider AI security assistant configuration (OpenAI, Gemini, Anthropic)."
+        },
+        {
+          "id": "mcp",
+          "label": "AI Agents (MCP)",
+          "mode": "developer",
+          "group": "Hardening & AI",
+          "description": "Model Context Protocol server configuration, tools, and autonomous agent safety."
+        },
+        {
+          "id": "performance",
+          "label": "Speed & Limits",
+          "mode": "developer",
+          "group": "System & Data",
+          "description": "Engine performance tuning, scan rate limits, memory allocations, and chunk sizing."
+        },
+        {
+          "id": "import-export",
+          "label": "Import & Export",
+          "mode": "developer",
+          "group": "System & Data",
+          "description": "Export plugin configuration to encrypted JSON or import policy templates."
+        },
+        {
+          "id": "updates",
+          "label": "Updates & Rollback",
+          "mode": "all",
+          "group": "System & Data",
+          "description": "In-plugin 1-click GitHub releases, automatic update settings, and version control."
+        },
+        {
+          "id": "data",
+          "label": "Data & Reset",
+          "mode": "all",
+          "group": "System & Data",
+          "description": "Database tables size, log pruning retention periods, and uninstall purge options."
+        },
+        {
+          "id": "support",
+          "label": "Help & About",
+          "mode": "all",
+          "group": "Help",
+          "description": "Plugin documentation, expert 1-on-1 assistance with Mir Alamin, and diagnostics."
+        }
+      ]
+    },
+    {
+      "id": "webcare-pro-setup",
+      "title": "Quick Setup",
+      "menu_title": "Quick Setup",
+      "page_title": "Protection Quickstart Setup Studio",
+      "description": "Guided 30-second express or custom protection setup.",
+      "bundle": "wizard",
+      "icon": "wizard",
+      "default_tab": "",
+      "mode": "all",
+      "hidden": true,
+      "tabs": []
+    }
+  ]
+}

@@ -72,9 +72,9 @@ final class DashboardWidget {
         }
 
         // URLs
-        $dashboard_url = admin_url('admin.php?page=webcare-pro-security');
-        $waf_logs_url  = admin_url('admin.php?page=webcare-pro-waf-logs');
-        $scanner_url   = admin_url('admin.php?page=webcare-pro-security&tab=scan');
+        $dashboard_url = \WebCareProScanner\Admin\RouteRegistry::url('webcare-pro-security');
+        $waf_logs_url  = \WebCareProScanner\Admin\RouteRegistry::url('webcare-pro-logs');
+        $scanner_url   = \WebCareProScanner\Admin\RouteRegistry::url('webcare-pro-scanner');
 
         ?>
         <div class="webcare-widget-wrapper" style="margin: -6px -12px -12px; padding: 14px 16px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen-Sans, Ubuntu, Cantarell, sans-serif;">

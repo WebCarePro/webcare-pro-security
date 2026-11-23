@@ -673,8 +673,8 @@ class NotificationDispatcher {
             'datetime'    => $gmt_time,
             'site_name'   => wp_specialchars_decode(get_bloginfo('name'), ENT_QUOTES) ?: 'WordPress',
             'site_url'    => get_site_url(),
-            'dashboard_url' => admin_url('admin.php?page=webcare-pro-security'),
-            'notifications_url' => admin_url('admin.php?page=webcare-pro-notifications'),
+            'dashboard_url' => \WebCareProScanner\Admin\RouteRegistry::url('webcare-pro-security'),
+            'notifications_url' => \WebCareProScanner\Admin\RouteRegistry::url('webcare-pro-settings', 'alerts'),
         ], $payload);
 
         $full_payload['details'] = $enhanced_details;
@@ -714,7 +714,7 @@ class NotificationDispatcher {
         $time      = $payload['datetime'];
         $site_url  = $payload['site_url'];
         $dash_url  = $payload['dashboard_url'];
-        $notif_url = !empty($payload['notifications_url']) ? $payload['notifications_url'] : admin_url('admin.php?page=webcare-pro-notifications');
+        $notif_url = !empty($payload['notifications_url']) ? $payload['notifications_url'] : \WebCareProScanner\Admin\RouteRegistry::url('webcare-pro-settings', 'alerts');
 
         // High-density factual subject line for AI parsing
         $host = wp_parse_url($site_url, PHP_URL_HOST) ?: $site_url;

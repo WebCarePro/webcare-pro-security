@@ -28,7 +28,7 @@ class CronControlCenterModule implements SecurityModuleInterface {
             'category'    => 'operations',
             'version'     => defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '2.12.0',
             'author'      => 'Mir Alamin (WebCare Pro)',
-            'deep_link'   => 'admin.php?page=webcare-pro-cron-manager',
+            'deep_link'   => 'admin.php?page=webcare-pro-settings&tab=cron',
             'badge'       => 'Core Module',
         ];
     }

@@ -18,8 +18,9 @@ uploads.ini
 AGENTS.md
 
 # Test scripts and temporary developer tools
-test_*.php
+tests/
 !tests/test_review_followup_regressions.php
+test_*.php
 test_*.js
 *.test.js
 *.spec.js

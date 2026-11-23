@@ -934,7 +934,7 @@ class RescueAssistantManager {
         $wp_admin_bar->add_node([
             'id'    => 'webcare-pro-bar',
             'title' => '<span class="ab-icon dashicons dashicons-shield" style="margin-top:2px;"></span>WebCare Pro' . $badge,
-            'href'  => admin_url('admin.php?page=webcare-pro-security'),
+            'href'  => \WebCareProScanner\Admin\RouteRegistry::url('webcare-pro-security'),
         ]);
 
         // Quick Unblock Customer (#WEBCARE-XXXX) Popover Node
@@ -957,14 +957,14 @@ class RescueAssistantManager {
             'id'     => 'webcare-pro-bar-rescue',
             'parent' => 'webcare-pro-bar',
             'title'  => esc_html__('Something Not Working? Click to Troubleshoot', 'webcare-pro-security'),
-            'href'   => admin_url('admin.php?page=webcare-pro-security&rescue=1'),
+            'href'   => \WebCareProScanner\Admin\RouteRegistry::url('webcare-pro-security', '', '', ['rescue' => '1']),
         ]);
 
         $wp_admin_bar->add_node([
             'id'     => 'webcare-pro-bar-modular',
             'parent' => 'webcare-pro-bar',
-            'title'  => esc_html__('Modular Intelligence Firewall', 'webcare-pro-security'),
-            'href'   => admin_url('admin.php?page=webcare-pro-modular-waf'),
+            'title'  => esc_html__('Firewall Rules & Defense', 'webcare-pro-security'),
+            'href'   => \WebCareProScanner\Admin\RouteRegistry::url('webcare-pro-firewall'),
         ]);
     }
 

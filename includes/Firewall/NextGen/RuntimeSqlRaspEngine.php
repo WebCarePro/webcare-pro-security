@@ -76,7 +76,7 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
             'version'     => defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '2.12.0',
             'author'      => 'Mir Alamin (WebCare Pro)',
             'enable_key'  => 'waf_nextgen_sql_rasp_enabled',
-            'deep_link'   => 'admin.php?page=webcare-pro-modular-waf&tab=nextgen',
+            'deep_link'   => 'admin.php?page=webcare-pro-firewall&tab=protection',
             'badge'       => 'Next-Gen RASP',
         ];
     }

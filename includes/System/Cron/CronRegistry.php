@@ -110,7 +110,7 @@ class CronRegistry {
                 'setting_key'         => 'schedule_enabled',
                 'setting_type'        => 'settings_manager',
                 'setting_location'    => did_action('init') ? __('Settings -> Schedule & Automation', 'webcare-pro-security') : 'Settings -> Schedule & Automation',
-                'deep_link'           => 'admin.php?page=webcare-pro-settings&tab=schedule',
+                'deep_link'           => 'admin.php?page=webcare-pro-settings&tab=schedules',
                 'default_delay'       => 0,
             ],
             'webcareproscan_modular_ast_step' => [
@@ -126,7 +126,7 @@ class CronRegistry {
                 'setting_key'         => 'cron_modular_ast_bg_enabled',
                 'setting_type'        => 'settings_manager',
                 'setting_location'    => did_action('init') ? __('Modular WAF -> Live AST Telemetry', 'webcare-pro-security') : 'Modular WAF -> Live AST Telemetry',
-                'deep_link'           => 'admin.php?page=webcare-pro-modular-waf',
+                'deep_link'           => 'admin.php?page=webcare-pro-firewall&tab=rule-builder',
                 'default_delay'       => 15,
             ],
             'webcareproscan_scan_step_worker' => [
@@ -190,7 +190,7 @@ class CronRegistry {
                 'setting_key'         => 'cron_modular_autopilot_enabled',
                 'setting_type'        => 'settings_manager',
                 'setting_location'    => did_action('init') ? __('Modular WAF -> Smart Auto-Pilot', 'webcare-pro-security') : 'Modular WAF -> Smart Auto-Pilot',
-                'deep_link'           => 'admin.php?page=webcare-pro-modular-waf',
+                'deep_link'           => 'admin.php?page=webcare-pro-firewall&tab=rule-builder',
                 'default_delay'       => HOUR_IN_SECONDS,
             ],
             'webcare_cloudflare_ip_sync_cron' => [
@@ -206,7 +206,7 @@ class CronRegistry {
                 'setting_key'         => 'cloudflare_auto_sync_bans',
                 'setting_type'        => 'settings_manager',
                 'setting_location'    => did_action('init') ? __('Settings -> Cloudflare Edge', 'webcare-pro-security') : 'Settings -> Cloudflare Edge',
-                'deep_link'           => 'admin.php?page=webcare-pro-settings&tab=cloudflare',
+                'deep_link'           => 'admin.php?page=webcare-pro-firewall&tab=cloudflare',
                 'default_delay'       => 300,
             ],
             'webcare_cf_auto_sync_edge_cron' => [
@@ -222,7 +222,7 @@ class CronRegistry {
                 'setting_key'         => 'webcare_cf_auto_sync_edge',
                 'setting_type'        => 'wp_option',
                 'setting_location'    => did_action('init') ? __('Firewall -> Context-Adaptive (CAF)', 'webcare-pro-security') : 'Firewall -> Context-Adaptive (CAF)',
-                'deep_link'           => 'admin.php?page=webcare-pro-caf',
+                'deep_link'           => 'admin.php?page=webcare-pro-firewall&tab=adaptive',
                 'default_delay'       => 5,
             ],
             'webcareproscan_self_defense_watchdog_event' => [
@@ -238,7 +238,7 @@ class CronRegistry {
                 'setting_key'         => 'self_defense_watchdog_enabled',
                 'setting_type'        => 'settings_manager',
                 'setting_location'    => did_action('init') ? __('Forensics -> Plugin Self-Defense', 'webcare-pro-security') : 'Forensics -> Plugin Self-Defense',
-                'deep_link'           => 'admin.php?page=webcare-pro-forensics&tab=self_defense',
+                'deep_link'           => 'admin.php?page=webcare-pro-backups&tab=forensics',
                 'default_delay'       => 300,
             ],
             'webcareproscan_reinfection_hourly_check' => [
@@ -254,7 +254,7 @@ class CronRegistry {
                 'setting_key'         => 'cron_reinfection_watchdog_enabled',
                 'setting_type'        => 'settings_manager',
                 'setting_location'    => did_action('init') ? __('Forensics -> 72h Watchdog', 'webcare-pro-security') : 'Forensics -> 72h Watchdog',
-                'deep_link'           => 'admin.php?page=webcare-pro-forensics&tab=watchdog',
+                'deep_link'           => 'admin.php?page=webcare-pro-backups&tab=forensics',
                 'default_delay'       => HOUR_IN_SECONDS,
             ],
             'webcareproscan_domain_reputation_daily_check' => [
@@ -270,7 +270,7 @@ class CronRegistry {
                 'setting_key'         => 'cron_domain_reputation_enabled',
                 'setting_type'        => 'settings_manager',
                 'setting_location'    => did_action('init') ? __('Forensics -> Domain Reputation', 'webcare-pro-security') : 'Forensics -> Domain Reputation',
-                'deep_link'           => 'admin.php?page=webcare-pro-forensics&tab=watchdog&subtab=reputation',
+                'deep_link'           => 'admin.php?page=webcare-pro-backups&tab=forensics',
                 'default_delay'       => DAY_IN_SECONDS,
             ],
             'webcareproscan_waf_log_retention_prune' => [
@@ -286,7 +286,7 @@ class CronRegistry {
                 'setting_key'         => 'cron_waf_log_prune_enabled',
                 'setting_type'        => 'settings_manager',
                 'setting_location'    => did_action('init') ? __('WAF Logs -> Retention Policy', 'webcare-pro-security') : 'WAF Logs -> Retention Policy',
-                'deep_link'           => 'admin.php?page=webcare-pro-waf-logs',
+                'deep_link'           => 'admin.php?page=webcare-pro-logs&tab=firewall',
                 'default_delay'       => HOUR_IN_SECONDS,
             ],
             'webcareproscan_daily_cve_audit' => [
@@ -302,7 +302,7 @@ class CronRegistry {
                 'setting_key'         => 'cron_cve_audit_enabled',
                 'setting_type'        => 'settings_manager',
                 'setting_location'    => did_action('init') ? __('Scanner -> Daily CVE Watch', 'webcare-pro-security') : 'Scanner -> Daily CVE Watch',
-                'deep_link'           => 'admin.php?page=webcare-pro-scanner&tab=cve',
+                'deep_link'           => 'admin.php?page=webcare-pro-scanner&tab=vulnerabilities',
                 'default_delay'       => HOUR_IN_SECONDS,
             ],
             'webcareproscan_weekly_digest_event' => [
@@ -318,7 +318,7 @@ class CronRegistry {
                 'setting_key'         => 'email_digest_enabled',
                 'setting_type'        => 'settings_digest',
                 'setting_location'    => did_action('init') ? __('Notifications -> Weekly Digest', 'webcare-pro-security') : 'Notifications -> Weekly Digest',
-                'deep_link'           => 'admin.php?page=webcare-pro-notifications',
+                'deep_link'           => 'admin.php?page=webcare-pro-settings&tab=alerts',
                 'default_delay'       => 0,
             ],
             'webcareproscan_backup_step_worker' => [
@@ -334,7 +334,7 @@ class CronRegistry {
                 'setting_key'         => 'cron_backup_bg_enabled',
                 'setting_type'        => 'settings_manager',
                 'setting_location'    => did_action('init') ? __('Vault -> Database Backup', 'webcare-pro-security') : 'Vault -> Database Backup',
-                'deep_link'           => 'admin.php?page=webcare-pro-backup',
+                'deep_link'           => 'admin.php?page=webcare-pro-backups&tab=database',
                 'default_delay'       => 1,
             ],
             'webcareproscan_auto_rearm_waf' => [
