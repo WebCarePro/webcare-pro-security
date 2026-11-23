@@ -23,8 +23,8 @@ interface MegaMenuModalProps {
 const PILLAR_ORDER: NavigationPillar[] = [
   'Scanner & CVEs',
   'Firewall & Edge',
-  'Login & 2FA',
-  'Vault & Forensics',
+  'Login & Access',
+  'Vault & Tools',
   'Settings & System'
 ];
 

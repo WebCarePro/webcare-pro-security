@@ -126,37 +126,27 @@ class AdminMenu {
             [__CLASS__, 'render_app_container']
         );
 
-        // 5. Submenu: Login & 2FA
+        // 5. Submenu: Login & Access
         add_submenu_page(
             'webcare-pro-security',
             __('Zero-Trust Identity, 2FA & Access Control', 'webcare-pro-security'),
-            __('Login & 2FA', 'webcare-pro-security'),
+            __('Login & Access', 'webcare-pro-security'),
             'manage_options',
             'webcare-pro-auth',
             [__CLASS__, 'render_app_container']
         );
 
-        // 6. Submenu: Vault & Backups
+        // 6. Submenu: Vault & Tools
         add_submenu_page(
             'webcare-pro-security',
             __('Quarantine Vault, Forensics, Backups & Tools', 'webcare-pro-security'),
-            __('Vault & Backups', 'webcare-pro-security'),
+            __('Vault & Tools', 'webcare-pro-security'),
             'manage_options',
             'webcare-pro-vault',
             [__CLASS__, 'render_app_container']
         );
 
-        // 7. Submenu: Activity Logs
-        add_submenu_page(
-            'webcare-pro-security',
-            __('Plugin Activity & Audit Logs', 'webcare-pro-security'),
-            __('Activity Logs', 'webcare-pro-security'),
-            'manage_options',
-            'webcare-pro-activity-logs',
-            [__CLASS__, 'render_app_container']
-        );
-
-        // 8. Submenu: Settings & Doctor
+        // 7. Submenu: Settings & Doctor
         add_submenu_page(
             'webcare-pro-security',
             __('Security Settings, Doctor Diagnostics & Governance', 'webcare-pro-security'),
@@ -168,6 +158,18 @@ class AdminMenu {
 
         // =========================================================================
         // COMPANION SUB-PAGES (Accessible via Tabs, Direct Deep-Links & Mega-Menu)
+        // Hidden from primary admin sidebar menu by registering with parent_slug = null
+        // =========================================================================
+
+        // Companion Page: Activity Logs (Deep-link & Cross-link accessible)
+        add_submenu_page(
+            null,
+            __('Plugin Activity & Audit Logs', 'webcare-pro-security'),
+            __('Activity Logs', 'webcare-pro-security'),
+            'manage_options',
+            'webcare-pro-activity-logs',
+            [__CLASS__, 'render_app_container']
+        );
         // =========================================================================
 
         // Sub-Page: Modular Intelligence Firewall (Redirects to Firewall & Logs)

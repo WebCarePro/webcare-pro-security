@@ -43,6 +43,7 @@ import {
   Target,
   List,
   Ban,
+  Filter,
   ListFilter,
   ChevronDown,
   ChevronUp,
