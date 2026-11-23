@@ -185,63 +185,79 @@ export function parseCurrentRoute(): {
   const pillar = PILLAR_MAP[rawPage];
   const page = pillar ? pillar.id : rawPage;
 
-  let rawTab = params.get('tab') || '';
+  const urlTab = params.get('tab') || '';
+  const urlSection = params.get('section') || '';
+
+  let resolvedTab = urlTab;
   let activeTab: RouteTab | undefined = undefined;
+  let tabWasInvalid = false;
 
   if (pillar) {
-    if (rawTab) {
-      activeTab = pillar.tabs.find((t) => t.id === rawTab);
+    if (urlTab) {
+      activeTab = pillar.tabs.find((t) => t.id === urlTab);
       if (!activeTab) {
-        // Invalid tab requested: normalize to default_tab
-        rawTab = pillar.default_tab || '';
-        activeTab = pillar.tabs.find((t) => t.id === rawTab);
+        tabWasInvalid = true;
+        resolvedTab = pillar.default_tab || '';
+        activeTab = pillar.tabs.find((t) => t.id === resolvedTab);
       }
     } else if (pillar.default_tab) {
-      rawTab = pillar.default_tab;
-      activeTab = pillar.tabs.find((t) => t.id === rawTab);
+      resolvedTab = pillar.default_tab;
+      activeTab = pillar.tabs.find((t) => t.id === resolvedTab);
     }
   }
 
-  let rawSection = params.get('section') || '';
+  let resolvedSection = urlSection;
   let activeSection: RouteSection | undefined = undefined;
+  let sectionWasInvalid = false;
 
   if (activeTab) {
-    if (rawSection) {
-      activeSection = activeTab.sections?.find((s) => s.id === rawSection);
+    if (urlSection) {
+      activeSection = activeTab.sections?.find((s) => s.id === urlSection);
       if (!activeSection) {
-        rawSection = activeTab.default_section || '';
-        activeSection = activeTab.sections?.find((s) => s.id === rawSection);
+        sectionWasInvalid = true;
+        resolvedSection = activeTab.default_section || '';
+        activeSection = activeTab.sections?.find((s) => s.id === resolvedSection);
       }
     } else if (activeTab.default_section) {
-      rawSection = activeTab.default_section;
-      activeSection = activeTab.sections?.find((s) => s.id === rawSection);
+      resolvedSection = activeTab.default_section;
+      activeSection = activeTab.sections?.find((s) => s.id === resolvedSection);
     }
   } else {
-    rawSection = '';
+    if (urlSection) {
+      sectionWasInvalid = true;
+    }
+    resolvedSection = '';
   }
 
-  // If URL had invalid tab or section, normalize URL via replaceState
+  // If URL had invalid tab or section, normalize URL via replaceState so address bar reflects valid canonical state
   if (typeof window !== 'undefined' && window.location) {
-    const currentTabParam = params.get('tab') || '';
-    const currentSecParam = params.get('section') || '';
-    if (currentTabParam && !activeTab) {
-      params.delete('tab');
-      params.delete('section');
+    if (tabWasInvalid || sectionWasInvalid) {
+      if (tabWasInvalid) {
+        if (resolvedTab && resolvedTab !== pillar?.default_tab) {
+          params.set('tab', resolvedTab);
+        } else {
+          params.delete('tab');
+        }
+      }
+
+      if (sectionWasInvalid || tabWasInvalid) {
+        if (resolvedSection && resolvedSection !== activeTab?.default_section) {
+          params.set('section', resolvedSection);
+        } else {
+          params.delete('section');
+        }
+      }
+
       const newQuery = params.toString();
       const newUrl = `${window.location.pathname}${newQuery ? `?${newQuery}` : ''}`;
-      window.history.replaceState({ page, tab: rawTab, section: rawSection }, '', newUrl);
-    } else if (currentSecParam && !activeSection) {
-      params.delete('section');
-      const newQuery = params.toString();
-      const newUrl = `${window.location.pathname}${newQuery ? `?${newQuery}` : ''}`;
-      window.history.replaceState({ page, tab: rawTab, section: rawSection }, '', newUrl);
+      window.history.replaceState({ page, tab: resolvedTab, section: resolvedSection }, '', newUrl);
     }
   }
 
   return {
     page,
-    tab: rawTab,
-    section: rawSection,
+    tab: resolvedTab,
+    section: resolvedSection,
     pillar,
     activeTab,
     activeSection,

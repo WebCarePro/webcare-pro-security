@@ -293,7 +293,12 @@ final class RouteRegistry {
             $section_id = '';
         } else {
             // Validate (pillar, tab, section) against schema
-            if (!self::is_valid_route($canonical_page, $tab_id, $section_id)) {
+            if (!self::is_valid_route($canonical_page, $tab_id, '')) {
+                // Discard invalid tab
+                $tab_id = '';
+                $section_id = '';
+            } elseif ($section_id !== '' && !self::is_valid_route($canonical_page, $tab_id, $section_id)) {
+                // Discard invalid section
                 $section_id = '';
             }
         }
