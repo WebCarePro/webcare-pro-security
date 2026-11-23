@@ -59,6 +59,7 @@ final class RouteClassifier {
         $commerce_matched = false;
         $path_trailing = rtrim($path, '/') . '/';
 
+        // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.MissingUnslash, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
         $uri_raw = (string) ($server['REQUEST_URI'] ?? ($_SERVER['REQUEST_URI'] ?? '/'));
         $uri = sanitize_text_field(wp_unslash($uri_raw));
         $query_str = (string) (wp_parse_url($uri, PHP_URL_QUERY) ?? '');

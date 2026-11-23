@@ -58,12 +58,14 @@ final class WafVaultManager {
         $base = defined('WP_CONTENT_DIR') ? WP_CONTENT_DIR : ABSPATH . 'wp-content';
         $dir  = wp_normalize_path(rtrim($base, '/\\') . '/' . self::VAULT_DIR_NAME);
 
+        // phpcs:disable WordPress.WP.AlternativeFunctions.file_system_operations_chmod
         if (!is_dir($dir)) {
             wp_mkdir_p($dir);
             @chmod($dir, 0750);
         } else {
             @chmod($dir, 0750);
         }
+        // phpcs:enable
 
         self::ensure_vault_secured($dir);
 
@@ -82,6 +84,7 @@ final class WafVaultManager {
 
         // Hardening 1: Apache .htaccess with tamper repair
         $htaccess = $dir . '/.htaccess';
+        // phpcs:disable WordPress.WP.AlternativeFunctions.file_system_operations_chmod
         $content = "# WebCare Pro Security - Protect Vault Artifacts\n"
             . "Options -Indexes\n"
             . "<IfModule mod_authz_core.c>\n"
@@ -115,6 +118,7 @@ final class WafVaultManager {
             @file_put_contents($web_config, $canonical_web_config, LOCK_EX);
             @chmod($web_config, 0600);
         }
+        // phpcs:enable
     }
 
     /**
@@ -221,6 +225,7 @@ final class WafVaultManager {
         // Also clean up vault/logs/daily-index.json to keep telemetry clean
         $daily_index = $dir . '/logs/daily-index.json';
         if (file_exists($daily_index)) {
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
             $dfp = @fopen($daily_index, 'c+');
             if ($dfp && flock($dfp, LOCK_EX)) {
                 ftruncate($dfp, 0);
@@ -396,15 +401,18 @@ final class WafVaultManager {
         // Rotate at 2 MB to prevent unbounded disk growth
         if (file_exists($file) && (filesize($file) ?: 0) > 2097152) {
             $rot = $file . '.1';
+            // phpcs:disable WordPress.WP.AlternativeFunctions.unlink_unlink, WordPress.WP.AlternativeFunctions.rename_rename, WordPress.WP.AlternativeFunctions.file_system_operations_chmod
             @unlink($rot);
             @rename($file, $rot);
             @chmod($rot, 0600);
+            // phpcs:enable
         }
 
         $line = wp_json_encode($event) . "\n";
         // phpcs:ignore WordPress.WP.AlternativeFileSystem.file_put_contents_file_put_contents
         $written = (bool) @file_put_contents($file, $line, FILE_APPEND | LOCK_EX);
         if ($written) {
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod
             @chmod($file, 0600);
         }
         return $written;

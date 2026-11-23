@@ -137,6 +137,7 @@ final class TransientRateLimiter {
                     'warning'
                 );
             } else {
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
                 error_log(sprintf('[WebCare Pro] TransientRateLimiter lock contention on key: %s', substr($key, 0, 60)));
             }
 

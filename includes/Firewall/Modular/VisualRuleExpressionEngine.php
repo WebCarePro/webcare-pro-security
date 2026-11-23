@@ -395,12 +395,14 @@ class VisualRuleExpressionEngine {
                 // Cap subject length to 8192 bytes and set conservative backtrack limit to prevent ReDoS
                 $capped_subject = strlen($subject) > 8192 ? substr($subject, 0, 8192) : $subject;
                 $prev_backtrack = ini_get('pcre.backtrack_limit');
+                // phpcs:ignore Squiz.PHP.DiscouragedFunctions.Discouraged
                 @ini_set('pcre.backtrack_limit', '10000');
                 try {
                     $rx = self::wrap_regex($want);
                     return @preg_match($rx, $capped_subject) === 1;
                 } finally {
                     if ($prev_backtrack !== false) {
+                        // phpcs:ignore Squiz.PHP.DiscouragedFunctions.Discouraged
                         @ini_set('pcre.backtrack_limit', (string) $prev_backtrack);
                     }
                 }

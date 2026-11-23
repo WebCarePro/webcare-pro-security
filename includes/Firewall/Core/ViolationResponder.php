@@ -114,9 +114,8 @@ final class ViolationResponder {
             if ($is_virtual_patch) {
                 $can_translate = function_exists('did_action') && did_action('init');
                 /* translators: 1: Attacker IP address, 2: Target rule name, 3: Incident ID */
-                $patch_msg_fmt = $can_translate
-                    ? __('Virtual Patch intercepted an exploit payload from %1$s targeting "%2$s" [Incident: %3$s].', 'webcare-pro-security')
-                    : 'Virtual Patch intercepted an exploit payload from %1$s targeting "%2$s" [Incident: %3$s].';
+                $vpatch_trans = __('Virtual Patch intercepted an exploit payload from %1$s targeting "%2$s" [Incident: %3$s].', 'webcare-pro-security');
+                $patch_msg_fmt = $can_translate ? $vpatch_trans : 'Virtual Patch intercepted an exploit payload from %1$s targeting "%2$s" [Incident: %3$s].';
                 \WebCareProScanner\Notifications\NotificationDispatcher::trigger('waf_virtual_patch_hit', [
                     'severity' => 'critical',
                     'message'  => sprintf(
@@ -943,9 +942,8 @@ final class ViolationResponder {
                 set_transient('webcareproscan_waf_block_surge_alerted', 1, 300); // Throttle alerts to once per 5 minutes
                 $can_translate = function_exists('did_action') && did_action('init');
                 /* translators: %1$d: Number of blocked attack requests in under 60 seconds */
-                $surge_msg_fmt = $can_translate
-                    ? __('WAF Lite intercepted an abnormal surge of blocked attacks (%1$d blocks in under 60 seconds).', 'webcare-pro-security')
-                    : 'WAF Lite intercepted an abnormal surge of blocked attacks (%1$d blocks in under 60 seconds).';
+                $surge_trans = __('WAF Lite intercepted an abnormal surge of blocked attacks (%1$d blocks in under 60 seconds).', 'webcare-pro-security');
+                $surge_msg_fmt = $can_translate ? $surge_trans : 'WAF Lite intercepted an abnormal surge of blocked attacks (%1$d blocks in under 60 seconds).';
                 \WebCareProScanner\Notifications\NotificationDispatcher::trigger('waf_block_surge', [
                     'severity' => 'high',
                     /* translators: 1: number of blocks */

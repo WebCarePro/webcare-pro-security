@@ -78,6 +78,7 @@ class WafFileLogger {
     public static function ensure_directory_secured(): bool {
         $dir = self::get_storage_dir();
 
+        // phpcs:disable WordPress.WP.AlternativeFunctions.file_system_operations_chmod
         if (!is_dir($dir)) {
             // phpcs:ignore WordPress.WP.AlternativeFileSystem.mkdir_mkdir
             wp_mkdir_p($dir);
@@ -136,6 +137,7 @@ class WafFileLogger {
             }
             @chmod($web_config_file, 0600);
         }
+        // phpcs:enable
 
         return true;
     }

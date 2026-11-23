@@ -78,6 +78,7 @@ final class PolicyManager {
             }
         } catch (\Throwable $e) {
             if (defined('WP_DEBUG') && WP_DEBUG) {
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
                 @error_log('[WebCare Pro Policy Error] Failed loading webcare-policy.php: ' . $e->getMessage());
             }
         }

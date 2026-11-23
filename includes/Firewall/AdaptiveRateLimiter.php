@@ -781,6 +781,7 @@ class AdaptiveRateLimiter {
 
         // 3. If expired, perform an atomic conditional UPDATE (only one concurrent process can succeed)
         if ($wpdb && isset($wpdb->options)) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
             $updated = $wpdb->query(
                 $wpdb->prepare(
                     "UPDATE {$wpdb->options} SET option_value = %s WHERE option_name = %s AND CAST(option_value AS UNSIGNED) <= %d",

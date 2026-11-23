@@ -325,6 +325,7 @@ class RequestContext {
 
         // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Pre-dispatch file extension extraction from $_FILES
         if (!empty($_FILES) && is_array($_FILES)) {
+            // phpcs:ignore WordPress.Security.NonceVerification.Missing
             $ctx->files = $_FILES;
             $queue = [];
             // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Pre-dispatch file metadata audit

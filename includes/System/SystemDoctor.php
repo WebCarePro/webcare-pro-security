@@ -248,8 +248,8 @@ final class SystemDoctor {
 
             if ($probe_success) {
                 $waf_prot_status  = 'pass';
-                /* translators: 1: Web server name (e.g. Nginx or Caddy), 2: HTTP status code */
                 $waf_prot_message = sprintf(
+                    /* translators: 1: Web server name (e.g. Nginx or Caddy), 2: HTTP status code */
                     __('WAF log storage HTTP denial verified on %1$s (HTTP %2$d confirmed).', 'webcare-pro-security'),
                     $is_nginx ? 'Nginx' : 'Caddy',
                     $probe_code
@@ -257,8 +257,8 @@ final class SystemDoctor {
                 $waf_prot_current = sprintf('Live Verified Block (HTTP %d on %s)', $probe_code, $is_nginx ? 'Nginx' : 'Caddy');
             } else {
                 $waf_prot_status  = 'fail';
-                /* translators: %s: Web server name (e.g. Nginx or Caddy) */
                 $waf_prot_message = sprintf(
+                    /* translators: %s: Web server name (e.g. Nginx or Caddy) */
                     __('%1$s does not parse .htaccess automatically. Add "location ^~ /wp-content/webcare-waf/ { deny all; return 403; }" to your server configuration, or define WEBCARE_WAF_STORAGE_DIR above webroot.', 'webcare-pro-security'),
                     $is_nginx ? 'Nginx' : 'Caddy'
                 );

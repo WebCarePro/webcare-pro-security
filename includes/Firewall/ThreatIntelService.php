@@ -203,6 +203,7 @@ class ThreatIntelService {
         if ($public_cidr_enabled) {
             $feed_urls = [
                 'https://www.spamhaus.org/drop/drop.txt',
+                // phpcs:ignore PluginCheck.CodeAnalysis.Offloading.OffloadedContent
                 'https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level1.netset',
             ];
 
@@ -256,12 +257,14 @@ class ThreatIntelService {
             if (class_exists('\\WebCareProScanner\\Firewall\\Core\\WafVaultManager')) {
                 $vault_dir = \WebCareProScanner\Firewall\Core\WafVaultManager::get_vault_dir();
                 $cidr_file = $vault_dir . '/public-threat-cidrs.json';
+                // phpcs:disable WordPress.WP.AlternativeFunctions.file_system_operations_fopen, WordPress.WP.AlternativeFunctions.file_system_operations_fwrite, WordPress.WP.AlternativeFunctions.file_system_operations_fclose, WordPress.WP.AlternativeFunctions.file_system_operations_chmod
                 $fp = @fopen($cidr_file, 'wb');
                 if ($fp) {
                     @fwrite($fp, (string) wp_json_encode($blacklisted_ips));
                     @fclose($fp);
                     @chmod($cidr_file, 0600);
                 }
+                // phpcs:enable
             }
         }
 

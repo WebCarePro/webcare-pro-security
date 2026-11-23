@@ -483,7 +483,7 @@ final readonly class AuthAndAjaxSurfaceEvaluator implements WafEvaluatorInterfac
         $confusion_key = '';
 
         foreach ($sensitive_auth_keys as $s_key) {
-            // phpcs:ignore WordPress.Security.NonceVerification.Recommended, WordPress.Security.NonceVerification.Missing
+            // phpcs:disable WordPress.Security.NonceVerification.Recommended, WordPress.Security.NonceVerification.Missing
             if ((isset($ctx->queryParams[$s_key]) && is_array($ctx->queryParams[$s_key]))
                 || (isset($ctx->formParams[$s_key]) && is_array($ctx->formParams[$s_key]))
                 || (isset($_GET[$s_key]) && is_array($_GET[$s_key]))
@@ -493,6 +493,7 @@ final readonly class AuthAndAjaxSurfaceEvaluator implements WafEvaluatorInterfac
                 $confusion_key = $s_key;
                 break;
             }
+            // phpcs:enable
         }
 
         if ($has_auth_type_confusion) {

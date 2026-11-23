@@ -88,6 +88,7 @@ class RescueAssistantManager {
      */
     private static function write_marker_file(string $path, string $content): bool {
         $dir = dirname($path);
+        // phpcs:disable WordPress.WP.AlternativeFunctions.file_system_operations_chmod
         if (!is_dir($dir)) {
             wp_mkdir_p($dir);
             @chmod($dir, 0750);
@@ -114,6 +115,7 @@ class RescueAssistantManager {
             @chmod($path, 0600);
             return true;
         }
+        // phpcs:enable
 
         return false;
     }
@@ -447,14 +449,12 @@ class RescueAssistantManager {
             $rest_q   = strtolower((string) ($ctx->queryParams['rest_route'] ?? ''));
             $method   = $ctx->method;
         } else {
-            // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-            // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+            // phpcs:disable WordPress.Security.NonceVerification.Recommended, WordPress.Security.NonceVerification.Missing
             $ajax_act = isset($_GET['action'])
                 ? sanitize_key(wp_unslash($_GET['action']))
-                // phpcs:ignore WordPress.Security.NonceVerification.Missing
                 : (isset($_POST['action']) ? sanitize_key(wp_unslash($_POST['action'])) : '');
-            // phpcs:ignore WordPress.Security.NonceVerification.Recommended
             $rest_q   = isset($_GET['rest_route']) ? strtolower(sanitize_text_field(wp_unslash($_GET['rest_route']))) : '';
+            // phpcs:enable
             $method   = isset($_SERVER['REQUEST_METHOD']) ? sanitize_text_field(wp_unslash((string) $_SERVER['REQUEST_METHOD'])) : 'GET';
         }
 

@@ -1038,6 +1038,7 @@ class DistributedVelocityShield {
                         sprintf('Redis EVAL velocity tracking failed after retry for %s; degraded response returned without file split-write.', substr($cache_key, 0, 32))
                     );
                 } else {
+                    // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
                     error_log(sprintf('[WebCare Pro] Redis EVAL velocity tracking failed after retry for %s.', substr($cache_key, 0, 32)));
                 }
 
@@ -1096,6 +1097,7 @@ class DistributedVelocityShield {
         $data_file = $dir . '/dvs_' . substr(md5($cache_key), 0, 8) . '.php';
         $lock_file = $data_file . '.lock';
 
+        // phpcs:disable WordPress.WP.AlternativeFunctions.file_system_operations_fopen, WordPress.WP.AlternativeFunctions.file_system_operations_fclose, WordPress.PHP.DevelopmentFunctions.error_log_error_log
         $lock_fp = @fopen($lock_file, 'c+');
         if (!$lock_fp) {
             return;
@@ -1123,6 +1125,7 @@ class DistributedVelocityShield {
             }
             return;
         }
+        // phpcs:enable
 
         try {
             $raw = '';
@@ -1165,6 +1168,7 @@ class DistributedVelocityShield {
             $payload = "<?php exit; ?>\n" . json_encode($data);
             $tmp = $data_file . '.tmp.' . bin2hex(random_bytes(4));
 
+            // phpcs:disable WordPress.WP.AlternativeFunctions.file_system_operations_fopen, WordPress.WP.AlternativeFunctions.file_system_operations_fwrite, WordPress.WP.AlternativeFunctions.file_system_operations_fclose, WordPress.WP.AlternativeFunctions.unlink_unlink, WordPress.WP.AlternativeFunctions.file_system_operations_chmod, WordPress.WP.AlternativeFunctions.rename_rename
             $tmp_fp = @fopen($tmp, 'wb');
             if (!$tmp_fp) {
                 if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
@@ -1205,6 +1209,7 @@ class DistributedVelocityShield {
         } finally {
             @flock($lock_fp, LOCK_UN);
             @fclose($lock_fp);
+            // phpcs:enable
         }
     }
 
@@ -1297,6 +1302,7 @@ class DistributedVelocityShield {
                         sprintf('DVS Redis slice metrics encountered %d failed slices out of %d for %s; degraded response returned.', $failed_slices, self::BUCKET_SLICES, substr($cache_key, 0, 32))
                     );
                 } else {
+                    // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
                     error_log(sprintf('[WebCare Pro] DVS Redis slice metrics encountered %d failed slices for %s.', $failed_slices, substr($cache_key, 0, 32)));
                 }
             }
@@ -1520,6 +1526,7 @@ class DistributedVelocityShield {
         if ($dir !== '') {
             $file = $dir . '/dvs_' . substr(md5($cache_key), 0, 8) . '.php';
             if (file_exists($file)) {
+                // phpcs:disable WordPress.WP.AlternativeFunctions.file_system_operations_fopen, WordPress.WP.AlternativeFunctions.file_system_operations_fread, WordPress.PHP.DevelopmentFunctions.error_log_error_log, WordPress.WP.AlternativeFunctions.file_system_operations_fclose
                 $fp = @fopen($file, 'rb');
                 if ($fp) {
                     $read_locked = false;
@@ -1553,6 +1560,7 @@ class DistributedVelocityShield {
                         $raw = '';
                     }
                     @fclose($fp);
+                    // phpcs:enable
 
                     if ($raw !== '' && str_starts_with($raw, "<?php exit; ?>\n")) {
                         $parsed = json_decode(substr($raw, 15), true);

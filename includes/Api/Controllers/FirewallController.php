@@ -557,29 +557,31 @@ final class FirewallController extends AbstractApiController {
 
         // Validate client parameters against authoritative incident record to prevent parameter/method forgery
         if ($method !== '' && $method !== $authoritative_method) {
+            $err_msg = sprintf(
+                /* translators: 1: Supplied HTTP method, 2: Authoritative incident HTTP method */
+                __('Supplied method "%1$s" does not match authoritative incident method "%2$s".', 'webcare-pro-security'),
+                $method,
+                $authoritative_method
+            );
             return new \WP_REST_Response([
                 'success' => false,
                 'code'    => 'method_mismatch',
-                /* translators: 1: Supplied HTTP method, 2: Authoritative incident HTTP method */
-                'message' => sprintf(
-                    __('Supplied method "%1$s" does not match authoritative incident method "%2$s".', 'webcare-pro-security'),
-                    $method,
-                    $authoritative_method
-                ),
+                'message' => $err_msg,
             ], 400);
         }
         $method = $authoritative_method;
 
         if ($rule_id !== '' && $rule_id !== $authoritative_rule) {
+            $err_msg = sprintf(
+                /* translators: 1: Supplied rule ID, 2: Authoritative incident rule ID */
+                __('Supplied rule ID "%1$s" does not match authoritative incident rule ID "%2$s".', 'webcare-pro-security'),
+                $rule_id,
+                $authoritative_rule
+            );
             return new \WP_REST_Response([
                 'success' => false,
                 'code'    => 'rule_mismatch',
-                /* translators: 1: Supplied rule ID, 2: Authoritative incident rule ID */
-                'message' => sprintf(
-                    __('Supplied rule ID "%1$s" does not match authoritative incident rule ID "%2$s".', 'webcare-pro-security'),
-                    $rule_id,
-                    $authoritative_rule
-                ),
+                'message' => $err_msg,
             ], 400);
         }
         $rule_id = $authoritative_rule;
@@ -589,15 +591,16 @@ final class FirewallController extends AbstractApiController {
             $client_clean_path = (string) strtok($uri, '?');
         }
         if ($client_clean_path !== '' && $client_clean_path !== $authoritative_path) {
+            $err_msg = sprintf(
+                /* translators: 1: Supplied URI path, 2: Authoritative incident path */
+                __('Supplied URI path "%1$s" does not match authoritative incident path "%2$s".', 'webcare-pro-security'),
+                $client_clean_path,
+                $authoritative_path
+            );
             return new \WP_REST_Response([
                 'success' => false,
                 'code'    => 'uri_mismatch',
-                /* translators: 1: Supplied URI path, 2: Authoritative incident path */
-                'message' => sprintf(
-                    __('Supplied URI path "%1$s" does not match authoritative incident path "%2$s".', 'webcare-pro-security'),
-                    $client_clean_path,
-                    $authoritative_path
-                ),
+                'message' => $err_msg,
             ], 400);
         }
         $target_uri = $authoritative_path;
@@ -612,15 +615,16 @@ final class FirewallController extends AbstractApiController {
                 ], 400);
             }
             if ($param_key !== $authoritative_param_key) {
+                $err_msg = sprintf(
+                    /* translators: 1: Supplied parameter key, 2: Authoritative incident parameter key */
+                    __('Supplied parameter key "%1$s" does not match authoritative incident parameter key "%2$s".', 'webcare-pro-security'),
+                    $param_key,
+                    $authoritative_param_key
+                );
                 return new \WP_REST_Response([
                     'success' => false,
                     'code'    => 'param_key_mismatch',
-                    /* translators: 1: Supplied parameter key, 2: Authoritative incident parameter key */
-                    'message' => sprintf(
-                        __('Supplied parameter key "%1$s" does not match authoritative incident parameter key "%2$s".', 'webcare-pro-security'),
-                        $param_key,
-                        $authoritative_param_key
-                    ),
+                    'message' => $err_msg,
                 ], 400);
             }
         } else {
@@ -908,8 +912,8 @@ final class FirewallController extends AbstractApiController {
                 [
                     'cleared_count' => $cleared_count,
                     'cf_unbanned'   => $cf_unbanned,
-                    /* translators: %1$s: user login, %2$s: client IP, %3$d: cleared count, %4$d: Cloudflare unbanned count */
                     'description'   => sprintf(
+                        /* translators: %1$s: user login, %2$s: client IP, %3$d: cleared count, %4$d: Cloudflare unbanned count */
                         __('All banned IPs (%3$d total, %4$d Cloudflare edge rules) unbanned by %1$s from IP %2$s.', 'webcare-pro-security'),
                         $user_login,
                         $client_ip,

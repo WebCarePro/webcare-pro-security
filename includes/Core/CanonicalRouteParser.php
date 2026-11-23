@@ -30,6 +30,7 @@ final class CanonicalRouteParser {
      * @return string Normalized leading-and-trailing slash path (e.g. '/wp-json/wp/v2/posts/').
      */
     public static function get_normalized_path(array $server = []): string {
+        // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.MissingUnslash, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
         $uri_raw = (string) ($server['REQUEST_URI'] ?? ($_SERVER['REQUEST_URI'] ?? '/'));
         $uri = sanitize_text_field(wp_unslash($uri_raw));
 
@@ -63,6 +64,7 @@ final class CanonicalRouteParser {
      * @return string Normalized route with leading slash (e.g. '/webcare-pro-security/v1/scan/status') or empty string.
      */
     public static function resolve_rest_route(array $server = []): string {
+        // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.MissingUnslash, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
         $uri_raw = (string) ($server['REQUEST_URI'] ?? ($_SERVER['REQUEST_URI'] ?? '/'));
         $uri = sanitize_text_field(wp_unslash($uri_raw));
         $query_str = (string) (wp_parse_url($uri, PHP_URL_QUERY) ?? '');

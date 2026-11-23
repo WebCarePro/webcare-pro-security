@@ -87,10 +87,12 @@ final class CompiledStackManifest {
         if (!is_dir($storage_dir)) {
             wp_mkdir_p($storage_dir);
             // Protect directory
+            // phpcs:disable PluginCheck.CodeAnalysis.WriteFile.PluginDirectoryWrite, WordPress.WP.AlternativeFunctions.file_system_operations_chmod
             @file_put_contents(trailingslashit($storage_dir) . 'index.php', "<?php\n// Silence is golden.\n");
             @chmod(trailingslashit($storage_dir) . 'index.php', 0600);
             @file_put_contents(trailingslashit($storage_dir) . '.htaccess', "Order Deny,Allow\nDeny from all\n<IfModule mod_authz_core.c>\nRequire all denied\n</IfModule>\n");
             @chmod(trailingslashit($storage_dir) . '.htaccess', 0600);
+            // phpcs:enable
         }
 
         $active_plugins = (array) get_option('active_plugins', []);
@@ -267,6 +269,7 @@ final class CompiledStackManifest {
         ];
 
         // Format into OPcache-executable standalone array
+        // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_var_export
         $export = var_export($manifest_data, true);
         $php_content = "<?php\n" .
             "/**\n" .
@@ -297,6 +300,7 @@ final class CompiledStackManifest {
             ];
         }
 
+        // phpcs:disable WordPress.WP.AlternativeFunctions.rename_rename, WordPress.WP.AlternativeFunctions.unlink_unlink, WordPress.WP.AlternativeFunctions.file_system_operations_chmod
         if (!rename($temp_file, $target_file)) {
             if (function_exists('wp_delete_file')) {
                 wp_delete_file($temp_file);
@@ -311,6 +315,7 @@ final class CompiledStackManifest {
         }
 
         @chmod($target_file, 0600);
+        // phpcs:enable
 
         // Store HMAC signature with fail-closed key derivation
         $secret_key = class_exists(SecretVault::class) ? SecretVault::get_key() : (defined('AUTH_KEY') && AUTH_KEY !== '' ? AUTH_KEY : '');

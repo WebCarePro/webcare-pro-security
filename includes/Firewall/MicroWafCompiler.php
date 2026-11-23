@@ -364,7 +364,7 @@ class MicroWafCompiler {
         }
 
         // Rename atomically
-        // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename -- Atomic move of compiled WAF cache.
+        // phpcs:disable WordPress.WP.AlternativeFunctions.rename_rename, WordPress.WP.AlternativeFunctions.unlink_unlink
         if (!rename($temp_file, $compiled_file)) {
             if (function_exists('wp_delete_file')) {
                 wp_delete_file($temp_file);
@@ -376,6 +376,7 @@ class MicroWafCompiler {
                 'message' => __('Failed to atomically deploy compiled Micro-WAF script.', 'webcare-pro-security'),
             ];
         }
+        // phpcs:enable
 
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod
         @chmod($compiled_file, 0600);
@@ -733,6 +734,7 @@ class MicroWafCompiler {
             : ['direct_scripts_blocked' => [], 'ajax_actions_enforced' => [], 'rest_routes_enforced' => [], 'custom_rules_enforced' => [], 'visual_rules_enforced' => []];
         $modular_json_escaped = addcslashes((string) wp_json_encode($mod_compiled), "\\'");
 
+        // phpcs:disable WordPress.PHP.DevelopmentFunctions.error_log_var_export
         $safe_mode_marker_literal = class_exists('\\WebCareProScanner\\Firewall\\Core\\WafVaultManager')
             ? var_export(\WebCareProScanner\Firewall\Core\WafVaultManager::get_safe_mode_marker_path(), true)
             : "dirname(__DIR__) . '/webcare-waf/.rescue_pause_until'";
@@ -740,6 +742,7 @@ class MicroWafCompiler {
         $preload_allow_literal = class_exists('\\WebCareProScanner\\Firewall\\Core\\WafVaultManager')
             ? var_export(\WebCareProScanner\Firewall\Core\WafVaultManager::get_preload_allow_path(), true)
             : "dirname(__DIR__) . '/webcare-waf/.rescue_allow.json'";
+        // phpcs:enable
 
         $out .= "        \$mod_rescue_paused = false;\n";
         $out .= "        \$rp_file = {$safe_mode_marker_literal};\n";
@@ -1134,6 +1137,7 @@ class MicroWafCompiler {
         if (!empty($chained_file)) {
             $real_chained = realpath($chained_file);
             $target_chained = ($real_chained !== false) ? $real_chained : $chained_file;
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_var_export
             $chained_export = var_export($target_chained, true);
             $out .= "// Chained pre-existing auto_prepend_file runtime\n";
             $out .= "if (file_exists({$chained_export})) {\n";
@@ -1518,7 +1522,7 @@ class MicroWafCompiler {
             return false;
         }
 
-        // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename -- Atomic move of compiled WAF cache.
+        // phpcs:disable WordPress.WP.AlternativeFunctions.rename_rename, WordPress.WP.AlternativeFunctions.unlink_unlink
         if (!rename($temp_file, $caf_file)) {
             if (function_exists('wp_delete_file')) {
                 wp_delete_file($temp_file);
@@ -1527,6 +1531,7 @@ class MicroWafCompiler {
             }
             return false;
         }
+        // phpcs:enable
 
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod
         @chmod($caf_file, 0600);
