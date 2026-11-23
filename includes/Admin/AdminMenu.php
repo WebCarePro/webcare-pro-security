@@ -183,7 +183,7 @@ class AdminMenu {
         elseif ($current_page === 'webcare-pro-settings') $active_tab = 'settings';
         elseif ($current_page === 'webcare-pro-about') $active_tab = 'about';
         elseif ($current_page === 'webcare-pro-wizard') $active_tab = 'wizard';
-        elseif ($current_page === 'webcare-pro-modular-waf') $active_tab = 'modular_waf';
+        elseif ($current_page === 'webcare-pro-custom-rules' || $current_page === 'webcare-pro-modular-waf') $active_tab = 'custom_rules';
         elseif ($current_page === 'webcare-pro-scan') $active_tab = 'scan';
         // Tab parameter fallback for main portal / sub-tab navigation
         elseif ($tab_param === 'logs') $active_tab = 'logs';
@@ -204,7 +204,7 @@ class AdminMenu {
         elseif ($tab_param === 'settings') $active_tab = 'settings';
         elseif ($tab_param === 'about') $active_tab = 'about';
         elseif ($tab_param === 'wizard') $active_tab = 'wizard';
-        elseif ($tab_param === 'modular_waf') $active_tab = 'modular_waf';
+        elseif ($tab_param === 'custom_rules' || $tab_param === 'modular_waf') $active_tab = 'custom_rules';
         elseif ($tab_param === 'scan') $active_tab = 'scan';
 
         $global_css_file = WEBCAREPROSCAN_PATH . 'build/global.css';

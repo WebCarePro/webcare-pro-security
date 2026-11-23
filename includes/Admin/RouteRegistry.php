@@ -34,7 +34,7 @@ final class RouteRegistry {
         'activity-logs',
         'cron-manager',
         'notifications',
-        'modular-waf',
+        'custom-rules',
     ];
 
     /**

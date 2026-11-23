@@ -310,7 +310,7 @@ final class ModularWafController extends AbstractApiController {
 
         register_rest_route($namespace, '/custom-rules/status', [
             'methods'             => 'GET',
-            'callback'            => [self::class, 'get_modular_waf_status'],
+            'callback'            => [self::class, 'get_custom_rules_status'],
             'permission_callback' => $permission,
         ]);
 
@@ -340,7 +340,7 @@ final class ModularWafController extends AbstractApiController {
 
         register_rest_route($namespace, '/custom-rules/export', [
             'methods'             => 'GET',
-            'callback'            => [self::class, 'export_modular_waf_bundle'],
+            'callback'            => [self::class, 'export_custom_rules_bundle'],
             'permission_callback' => $permission,
         ]);
 
@@ -484,7 +484,7 @@ final class ModularWafController extends AbstractApiController {
      * @param \WP_REST_Request $request
      * @return \WP_REST_Response
      */
-    public static function get_modular_waf_status(\WP_REST_Request $request) {
+    public static function get_custom_rules_status(\WP_REST_Request $request) {
         $ctx            = self::build_modular_dossier_context(false);
         $preload_active = defined('WEBCAREPRO_PRELOAD_WAF_ACTIVE') && WEBCAREPRO_PRELOAD_WAF_ACTIVE;
         $autopilot      = class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\ModularFirewallSynthesizer')
@@ -793,7 +793,7 @@ final class ModularWafController extends AbstractApiController {
      * @param \WP_REST_Request $request
      * @return \WP_REST_Response
      */
-    public static function export_modular_waf_bundle(\WP_REST_Request $request) {
+    public static function export_custom_rules_bundle(\WP_REST_Request $request) {
         $synth = '\\WebCareProScanner\\Firewall\\CustomRules\\ModularFirewallSynthesizer';
 
         $ctx        = self::build_modular_dossier_context(true);
@@ -846,7 +846,7 @@ final class ModularWafController extends AbstractApiController {
 
         $payload = [
             'success'                     => true,
-            'webcare_export_type'         => 'modular_waf_forensic_dossier',
+            'webcare_export_type'         => 'custom_rules_forensic_dossier',
             'format_version'              => defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '2.11.0',
             'exported_at'                 => gmdate('c'),
             'exported_timestamp'          => time(),
