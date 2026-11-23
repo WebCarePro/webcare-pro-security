@@ -4073,14 +4073,14 @@ final class ScanController extends AbstractApiController {
             $latest_version = $theme_update['new_version'] ?? null;
             $has_update = !empty($latest_version) && (!empty($version) ? version_compare($latest_version, $version, '>') : true);
             $update_package = $theme_update['package'] ?? '';
-            $package_url = is_string($update_package) ? $update_package : '';
-            $theme_url = is_string($theme_update['url'] ?? '') ? $theme_update['url'] : '';
-            if (strpos($package_url, 'wordpress.org') !== false || strpos($theme_url, 'wordpress.org') !== false) {
+            $package_url = (isset($update_package) && is_string($update_package)) ? $update_package : '';
+            $theme_url = (isset($theme_update['url']) && is_string($theme_update['url'])) ? $theme_update['url'] : '';
+            if (($package_url !== '' && str_contains($package_url, 'wordpress.org')) || ($theme_url !== '' && str_contains($theme_url, 'wordpress.org'))) {
                 $is_wporg = true;
             }
         } elseif (!empty($update_themes->checked[$theme_slug])) {
             $latest_version = $update_themes->checked[$theme_slug];
-            if (strpos($theme_uri, 'wordpress.org/themes') !== false || (bool) preg_match('/^twenty(ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|nineteen|twenty|twentyone|twentytwo|twentythree|twentyfour|twentyfive|twentysix)/i', $theme_slug)) {
+            if (($theme_uri !== '' && str_contains($theme_uri, 'wordpress.org/themes')) || (bool) preg_match('/^twenty(ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|nineteen|twenty|twentyone|twentytwo|twentythree|twentyfour|twentyfive|twentysix)/i', $theme_slug)) {
                 $is_wporg = true;
             }
         }
@@ -4247,18 +4247,17 @@ final class ScanController extends AbstractApiController {
 
         // Check if update entry is verified from WordPress.org repository
         if (is_object($update_entry)) {
-            $entry_id = is_string($update_entry->id ?? '') ? $update_entry->id : '';
-            $entry_url = is_string($update_entry->url ?? '') ? $update_entry->url : '';
-            $entry_pkg = is_string($update_entry->package ?? '') ? $update_entry->package : '';
-            if (strpos($entry_id, 'w.org/') !== false || strpos($entry_id, 'wordpress.org') !== false
-                || strpos($entry_url, 'wordpress.org/plugins') !== false
-                || strpos($entry_pkg, 'downloads.wordpress.org') !== false
-                || strpos($entry_pkg, 'wordpress.org') !== false) {
+            $entry_id = (isset($update_entry->id) && is_string($update_entry->id)) ? $update_entry->id : '';
+            $entry_url = (isset($update_entry->url) && is_string($update_entry->url)) ? $update_entry->url : '';
+            $entry_pkg = (isset($update_entry->package) && is_string($update_entry->package)) ? $update_entry->package : '';
+            if (($entry_id !== '' && (str_contains($entry_id, 'w.org/') || str_contains($entry_id, 'wordpress.org')))
+                || ($entry_url !== '' && str_contains($entry_url, 'wordpress.org/plugins'))
+                || ($entry_pkg !== '' && (str_contains($entry_pkg, 'downloads.wordpress.org') || str_contains($entry_pkg, 'wordpress.org')))) {
                 $is_wporg = true;
             }
         }
 
-        if (!$is_wporg && strpos($plugin_uri, 'wordpress.org/plugins') !== false) {
+        if (!$is_wporg && $plugin_uri !== '' && str_contains($plugin_uri, 'wordpress.org/plugins')) {
             $is_wporg = true;
         }
 

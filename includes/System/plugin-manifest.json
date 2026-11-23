@@ -1,6 +1,6 @@
 {
   "version": "3.25.2",
-  "generated_at": "2026-11-23T03:17:04.643Z",
+  "generated_at": "2026-11-23T03:22:49.371Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -208,8 +208,8 @@
       "size": 42693
     },
     "includes/Api/Controllers/ScanController.php": {
-      "sha256": "166101e8bf12c1e36f75ee6f6b7ef3e76aa21b91e7ad6c6186b53bef02807bed",
-      "size": 296203
+      "sha256": "9ee6877381675d117d08c630538e647ee4e875f5511ae648177c1302ee55b618",
+      "size": 296449
     },
     "includes/Api/Controllers/SystemController.php": {
       "sha256": "2b039d49917915acbf9630d0b250c429283788adfb3cb2cc99fef3933fac8a67",
