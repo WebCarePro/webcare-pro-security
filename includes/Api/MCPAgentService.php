@@ -120,8 +120,147 @@ class MCPAgentService {
     }
 
     /**
+     * Atomically mutate the staged-action ledger in the database under strict lease fencing.
+     *
+     * Performs a database transaction with row-level locking (SELECT ... FOR UPDATE on the lock row)
+     * to verify that $owner_token is STILL the active, unexpired lock holder at the exact moment
+     * the ledger option is updated. If the lease expired or was broken by another process,
+     * the transaction rolls back and returns false, preventing any stale/delayed writes.
+     *
+     * @param string   $owner_token Active lock token returned by acquire_ledger_lock()
+     * @param callable $mutator     Callback receiving array $current_list, returning array $updated_list
+     * @return array{success: bool, error: string, list: array}
+     */
+    public static function mutate_ledger_fenced(string $owner_token, callable $mutator): array {
+        if ($owner_token === '') {
+            return ['success' => false, 'error' => 'Empty lock token.', 'list' => []];
+        }
+
+        global $wpdb;
+        if ($wpdb && isset($wpdb->options)) {
+            $wpdb->query('START TRANSACTION');
+
+            // 1. Lock the mutex row with FOR UPDATE to prevent concurrent break or reassignment during write
+            $lock_row = $wpdb->get_row(
+                $wpdb->prepare(
+                    "SELECT option_value FROM {$wpdb->options} WHERE option_name = %s FOR UPDATE",
+                    self::LEDGER_LOCK_OPTION
+                )
+            );
+
+            $is_valid = false;
+            if ($lock_row && !empty($lock_row->option_value)) {
+                $existing = maybe_unserialize($lock_row->option_value);
+                if (is_array($existing) && ($existing['owner'] ?? '') === $owner_token) {
+                    $created = (int) ($existing['created'] ?? 0);
+                    // Strict lease boundary: must still be within 15 seconds
+                    if ($created > 0 && (time() - $created) <= 15) {
+                        $is_valid = true;
+                    }
+                }
+            }
+
+            if (!$is_valid) {
+                $wpdb->query('ROLLBACK');
+                return [
+                    'success' => false,
+                    'error'   => 'Fencing lease expired or stolen before ledger mutation.',
+                    'list'    => [],
+                ];
+            }
+
+            // 2. Fetch current ledger under row lock FOR UPDATE
+            $ledger_row = $wpdb->get_row(
+                $wpdb->prepare(
+                    "SELECT option_value FROM {$wpdb->options} WHERE option_name = %s FOR UPDATE",
+                    self::STAGED_OPTION_KEY
+                )
+            );
+
+            $current_list = [];
+            if ($ledger_row && !empty($ledger_row->option_value)) {
+                $unserialized = maybe_unserialize($ledger_row->option_value);
+                if (is_array($unserialized)) {
+                    $current_list = $unserialized;
+                }
+            }
+
+            // 3. Execute mutator
+            $updated_list = $mutator($current_list);
+            if (!is_array($updated_list)) {
+                $wpdb->query('ROLLBACK');
+                return [
+                    'success' => false,
+                    'error'   => 'Mutator callback returned invalid data.',
+                    'list'    => [],
+                ];
+            }
+
+            $serialized_val = maybe_serialize($updated_list);
+
+            // 4. Update ledger row atomically within the same transaction
+            if ($ledger_row) {
+                $wpdb->update(
+                    $wpdb->options,
+                    ['option_value' => $serialized_val],
+                    ['option_name' => self::STAGED_OPTION_KEY]
+                );
+            } else {
+                $wpdb->insert(
+                    $wpdb->options,
+                    [
+                        'option_name'  => self::STAGED_OPTION_KEY,
+                        'option_value' => $serialized_val,
+                        'autoload'     => 'no',
+                    ]
+                );
+            }
+
+            $wpdb->query('COMMIT');
+
+            // Invalidate options cache for staged actions
+            wp_cache_delete(self::STAGED_OPTION_KEY, 'options');
+            wp_cache_delete('alloptions', 'options');
+
+            return [
+                'success' => true,
+                'error'   => '',
+                'list'    => $updated_list,
+            ];
+        }
+
+        // Fallback for non-wpdb environments (e.g. lightweight unit test mocks)
+        $current = get_option(self::LEDGER_LOCK_OPTION);
+        $is_valid = false;
+        if (is_array($current) && ($current['owner'] ?? '') === $owner_token) {
+            $created = (int) ($current['created'] ?? 0);
+            if ($created > 0 && (time() - $created) <= 15) {
+                $is_valid = true;
+            }
+        }
+
+        if (!$is_valid) {
+            return [
+                'success' => false,
+                'error'   => 'Fencing lease expired or stolen before ledger mutation.',
+                'list'    => [],
+            ];
+        }
+
+        $list = get_option(self::STAGED_OPTION_KEY, []);
+        $updated_list = $mutator(is_array($list) ? $list : []);
+        update_option(self::STAGED_OPTION_KEY, $updated_list, false);
+
+        return [
+            'success' => true,
+            'error'   => '',
+            'list'    => $updated_list,
+        ];
+    }
+
+    /**
      * Check if a given owner token currently holds a valid, active ledger lease.
-     * Used as a fencing guard before committing state mutations.
+     * Used as a pre-check guard before entering slow phases.
      *
      * @param string $owner_token
      * @return bool True if the owner token matches the active, unexpired lock in DB
@@ -1529,7 +1668,7 @@ class MCPAgentService {
             'expires_at'         => time() + 86400, // 24 hours
         ];
 
-        // Serialize shared staged-action list mutation under atomic DB mutex (fail-closed)
+        // Serialize shared staged-action list mutation under atomic DB mutex & fenced transaction (fail-closed)
         $lock_token = self::acquire_ledger_lock();
         if ($lock_token === '') {
             return [
@@ -1541,48 +1680,27 @@ class MCPAgentService {
         }
 
         try {
-            // Fencing check: verify lease is still valid before mutating
-            if (!self::is_lock_owner_valid($lock_token)) {
+            $mutation = self::mutate_ledger_fenced($lock_token, function (array $staged_list) use ($staged_entry) {
+                array_unshift($staged_list, $staged_entry);
+                if (count($staged_list) > self::MAX_STAGED_ACTIONS) {
+                    $pruned = array_slice($staged_list, self::MAX_STAGED_ACTIONS);
+                    $staged_list = array_slice($staged_list, 0, self::MAX_STAGED_ACTIONS);
+                    // Clean up claim options for pruned terminal actions
+                    foreach ($pruned as $old_action) {
+                        if (!empty($old_action['id'])) {
+                            delete_option('webcareproscan_mcp_claim_' . sanitize_key($old_action['id']));
+                        }
+                    }
+                }
+                return $staged_list;
+            });
+
+            if (!$mutation['success']) {
                 return [
                     'isError' => true,
                     'status'  => 503,
-                    'error'   => __('Ledger lease expired during staging. Please retry.', 'webcare-pro-security'),
-                ];
-            }
-
-            $staged_list = get_option(self::STAGED_OPTION_KEY, []);
-            if (!is_array($staged_list)) {
-                $staged_list = [];
-            }
-            array_unshift($staged_list, $staged_entry);
-            if (count($staged_list) > self::MAX_STAGED_ACTIONS) {
-                $pruned = array_slice($staged_list, self::MAX_STAGED_ACTIONS);
-                $staged_list = array_slice($staged_list, 0, self::MAX_STAGED_ACTIONS);
-                // Clean up claim options for pruned terminal actions
-                foreach ($pruned as $old_action) {
-                    if (!empty($old_action['id'])) {
-                        delete_option('webcareproscan_mcp_claim_' . sanitize_key($old_action['id']));
-                    }
-                }
-            }
-            update_option(self::STAGED_OPTION_KEY, $staged_list, false);
-
-            // Verification of persisted state
-            $verify_list = get_option(self::STAGED_OPTION_KEY, []);
-            $persisted = false;
-            if (is_array($verify_list)) {
-                foreach ($verify_list as $v_item) {
-                    if (($v_item['id'] ?? '') === $staged_id) {
-                        $persisted = true;
-                        break;
-                    }
-                }
-            }
-            if (!$persisted) {
-                return [
-                    'isError' => true,
-                    'status'  => 500,
-                    'error'   => __('Failed to persist staged action to storage.', 'webcare-pro-security'),
+                    'error'   => sanitize_text_field($mutation['error']),
+                    'content' => [['type' => 'text', 'text' => __('Action staging lease expired or failed to commit.', 'webcare-pro-security')]],
                 ];
             }
         } finally {
@@ -1707,53 +1825,34 @@ class MCPAgentService {
             }
 
             try {
-                // Fencing check: verify lease is still valid
-                if (!self::is_lock_owner_valid($lock_token)) {
-                    return [
-                        'success' => false,
-                        'status'  => 503,
-                        'message' => __('Ledger lease expired during action expiry. Please retry.', 'webcare-pro-security'),
-                    ];
-                }
-
-                $fresh = get_option(self::STAGED_OPTION_KEY, []);
-                if (is_array($fresh)) {
+                $mutation = self::mutate_ledger_fenced($lock_token, function (array $fresh) use ($staged_id, &$abort_reason) {
                     foreach ($fresh as $f_idx => $f_action) {
                         if (($f_action['id'] ?? '') === $staged_id) {
-                            // Re-verify under lock: only transition to expired if currently still pending_approval
-                            // If action was concurrently rejected, keep terminal status rejected
                             if (($f_action['status'] ?? '') !== 'pending_approval') {
-                                return [
-                                    'success' => false,
-                                    /* translators: %s: current status */
-                                    'message' => sprintf(__('Action status is %s and cannot be marked as expired.', 'webcare-pro-security'), $f_action['status'] ?? 'unknown'),
-                                ];
+                                $abort_reason = sprintf(__('Action status is %s and cannot be marked as expired.', 'webcare-pro-security'), $f_action['status'] ?? 'unknown');
+                                return $fresh;
                             }
                             $fresh[$f_idx]['status'] = 'expired';
                             $fresh[$f_idx]['confirmation_token'] = null;
                             break;
                         }
                     }
-                    update_option(self::STAGED_OPTION_KEY, $fresh, false);
+                    return $fresh;
+                });
 
-                    // Verify persistence of expired status
-                    $verify = get_option(self::STAGED_OPTION_KEY, []);
-                    $persisted = false;
-                    if (is_array($verify)) {
-                        foreach ($verify as $v_action) {
-                            if (($v_action['id'] ?? '') === $staged_id && ($v_action['status'] ?? '') === 'expired') {
-                                $persisted = true;
-                                break;
-                            }
-                        }
-                    }
-                    if (!$persisted) {
-                        return [
-                            'success' => false,
-                            'status'  => 500,
-                            'message' => __('Failed to persist expired status in ledger.', 'webcare-pro-security'),
-                        ];
-                    }
+                if (!empty($abort_reason)) {
+                    return [
+                        'success' => false,
+                        'message' => $abort_reason,
+                    ];
+                }
+
+                if (!$mutation['success']) {
+                    return [
+                        'success' => false,
+                        'status'  => 503,
+                        'message' => __('Failed to persist expired status under active lease. Please retry.', 'webcare-pro-security'),
+                    ];
                 }
             } finally {
                 self::release_ledger_lock($lock_token);
@@ -1856,68 +1955,47 @@ class MCPAgentService {
         }
 
         try {
-            // Fencing check: verify lease is still valid before mutating
-            if (!self::is_lock_owner_valid($lock_token)) {
-                delete_option($claim_key);
-                return [
-                    'success' => false,
-                    'status'  => 503,
-                    'message' => __('Ledger lease expired during approval transition. Please retry.', 'webcare-pro-security'),
-                ];
-            }
-
-            $fresh_list = get_option(self::STAGED_OPTION_KEY, []);
-            $found_idx = -1;
-            if (is_array($fresh_list)) {
+            $abort_reason = '';
+            $mutation = self::mutate_ledger_fenced($lock_token, function (array $fresh_list) use ($staged_id, &$abort_reason) {
+                $found_idx = -1;
                 foreach ($fresh_list as $f_idx => $f_action) {
                     if (($f_action['id'] ?? '') === $staged_id) {
                         $found_idx = $f_idx;
                         break;
                     }
                 }
-            }
 
-            if ($found_idx === -1) {
-                delete_option($claim_key);
-                return [
-                    'success' => false,
-                    'message' => __('Staged action not found in ledger.', 'webcare-pro-security'),
-                ];
-            }
-
-            // Re-verify that action status is STILL pending_approval inside the mutex lock
-            // (Prevents race where a concurrent rejection or expiration modified it)
-            if ($fresh_list[$found_idx]['status'] !== 'pending_approval') {
-                delete_option($claim_key);
-                return [
-                    'success' => false,
-                    /* translators: %s: current status */
-                    'message' => sprintf(__('Action cannot be executed because status is %s.', 'webcare-pro-security'), $fresh_list[$found_idx]['status']),
-                ];
-            }
-
-            $fresh_list[$found_idx]['status']             = 'executing';
-            $fresh_list[$found_idx]['consumed_at']        = time();
-            $fresh_list[$found_idx]['confirmation_token'] = null; // Invalidate token immediately
-            update_option(self::STAGED_OPTION_KEY, $fresh_list, false);
-
-            // Verification of persisted executing status
-            $verify = get_option(self::STAGED_OPTION_KEY, []);
-            $persisted_exec = false;
-            if (is_array($verify)) {
-                foreach ($verify as $v_action) {
-                    if (($v_action['id'] ?? '') === $staged_id && ($v_action['status'] ?? '') === 'executing') {
-                        $persisted_exec = true;
-                        break;
-                    }
+                if ($found_idx === -1) {
+                    $abort_reason = __('Staged action not found in ledger.', 'webcare-pro-security');
+                    return $fresh_list;
                 }
-            }
-            if (!$persisted_exec) {
+
+                if ($fresh_list[$found_idx]['status'] !== 'pending_approval') {
+                    /* translators: %s: current status */
+                    $abort_reason = sprintf(__('Action cannot be executed because status is %s.', 'webcare-pro-security'), $fresh_list[$found_idx]['status']);
+                    return $fresh_list;
+                }
+
+                $fresh_list[$found_idx]['status']             = 'executing';
+                $fresh_list[$found_idx]['consumed_at']        = time();
+                $fresh_list[$found_idx]['confirmation_token'] = null; // Invalidate token immediately
+                return $fresh_list;
+            });
+
+            if (!empty($abort_reason)) {
                 delete_option($claim_key);
                 return [
                     'success' => false,
-                    'status'  => 500,
-                    'message' => __('Failed to persist executing state in ledger.', 'webcare-pro-security'),
+                    'message' => $abort_reason,
+                ];
+            }
+
+            if (!$mutation['success']) {
+                delete_option($claim_key);
+                return [
+                    'success' => false,
+                    'status'  => 503,
+                    'message' => __('Ledger lease expired during approval transition. Please retry.', 'webcare-pro-security'),
                 ];
             }
         } finally {
@@ -1949,22 +2027,8 @@ class MCPAgentService {
             ];
         }
 
-        $persisted_final = false;
         try {
-            // Fencing check: verify lease is still valid before final write
-            if (!self::is_lock_owner_valid($final_lock_token)) {
-                return [
-                    'success'              => false,
-                    'status'               => 500,
-                    'staged_id'            => $staged_id,
-                    'finalization_pending' => true,
-                    'exec_result'          => $exec_result,
-                    'message'              => __('Tool executed, but finalization lease expired. Ledger status remains executing; please reconcile.', 'webcare-pro-security'),
-                ];
-            }
-
-            $fresh_list = get_option(self::STAGED_OPTION_KEY, []);
-            if (is_array($fresh_list)) {
+            $mutation = self::mutate_ledger_fenced($final_lock_token, function (array $fresh_list) use ($staged_id, $final_status, $approver_name, $exec_result) {
                 foreach ($fresh_list as $f_idx => $f_action) {
                     if (($f_action['id'] ?? '') === $staged_id) {
                         $fresh_list[$f_idx]['status']      = $final_status;
@@ -1974,32 +2038,21 @@ class MCPAgentService {
                         break;
                     }
                 }
-                update_option(self::STAGED_OPTION_KEY, $fresh_list, false);
+                return $fresh_list;
+            });
 
-                // Verification of persisted final status
-                $verify_final = get_option(self::STAGED_OPTION_KEY, []);
-                if (is_array($verify_final)) {
-                    foreach ($verify_final as $v_action) {
-                        if (($v_action['id'] ?? '') === $staged_id && ($v_action['status'] ?? '') === $final_status) {
-                            $persisted_final = true;
-                            break;
-                        }
-                    }
-                }
+            if (!$mutation['success']) {
+                return [
+                    'success'              => false,
+                    'status'               => 500,
+                    'staged_id'            => $staged_id,
+                    'finalization_pending' => true,
+                    'exec_result'          => $exec_result,
+                    'message'              => __('Tool executed, but finalization lease expired or failed to commit. Ledger status requires reconciliation.', 'webcare-pro-security'),
+                ];
             }
         } finally {
             self::release_ledger_lock($final_lock_token);
-        }
-
-        if (!$persisted_final) {
-            return [
-                'success'              => false,
-                'status'               => 500,
-                'staged_id'            => $staged_id,
-                'finalization_pending' => true,
-                'exec_result'          => $exec_result,
-                'message'              => __('Tool executed, but failed to confirm persisted final status. Ledger status requires reconciliation.', 'webcare-pro-security'),
-            ];
         }
 
         if ($is_failed) {
@@ -2039,64 +2092,46 @@ class MCPAgentService {
         }
 
         try {
-            // Fencing check: verify lease is still valid before mutating
-            if (!self::is_lock_owner_valid($lock_token)) {
+            $abort_reason = '';
+            $mutation = self::mutate_ledger_fenced($lock_token, function (array $list) use ($staged_id, $rejector_id, &$abort_reason) {
+                $found = false;
+                $current_user = get_userdata($rejector_id);
+                $rejector_name = ($current_user && $current_user->exists()) ? $current_user->user_login : 'administrator';
+
+                foreach ($list as $idx => $action) {
+                    if (($action['id'] ?? '') === $staged_id) {
+                        $found = true;
+                        // Prevent rejection of executing, approved, or failed actions
+                        if (($action['status'] ?? '') !== 'pending_approval') {
+                            $abort_reason = sprintf(__('Cannot reject action because its status is already %s.', 'webcare-pro-security'), $action['status'] ?? 'unknown');
+                            return $list;
+                        }
+                        $list[$idx]['status']      = 'rejected';
+                        $list[$idx]['rejected_at'] = time();
+                        $list[$idx]['rejected_by'] = $rejector_name;
+                        break;
+                    }
+                }
+
+                if (!$found) {
+                    $abort_reason = __('Staged action not found.', 'webcare-pro-security');
+                }
+
+                return $list;
+            });
+
+            if (!empty($abort_reason)) {
+                return [
+                    'success' => false,
+                    'message' => $abort_reason,
+                ];
+            }
+
+            if (!$mutation['success']) {
                 return [
                     'success' => false,
                     'status'  => 503,
                     'message' => __('Ledger lease expired during rejection. Please retry.', 'webcare-pro-security'),
-                ];
-            }
-
-            $list = get_option(self::STAGED_OPTION_KEY, []);
-            if (!is_array($list)) {
-                return ['success' => false, 'message' => __('No staged actions found.', 'webcare-pro-security')];
-            }
-
-            $found = false;
-            $current_user = get_userdata($rejector_id);
-            $rejector_name = ($current_user && $current_user->exists()) ? $current_user->user_login : 'administrator';
-
-            foreach ($list as $idx => $action) {
-                if (($action['id'] ?? '') === $staged_id) {
-                    $found = true;
-                    // Prevent rejection of executing, approved, or failed actions
-                    if (($action['status'] ?? '') !== 'pending_approval') {
-                        return [
-                            'success' => false,
-                            /* translators: %s: current status */
-                            'message' => sprintf(__('Cannot reject action because its status is already %s.', 'webcare-pro-security'), $action['status'] ?? 'unknown'),
-                        ];
-                    }
-                    $list[$idx]['status']      = 'rejected';
-                    $list[$idx]['rejected_at'] = time();
-                    $list[$idx]['rejected_by'] = $rejector_name;
-                    break;
-                }
-            }
-
-            if (!$found) {
-                return ['success' => false, 'message' => __('Staged action not found.', 'webcare-pro-security')];
-            }
-
-            update_option(self::STAGED_OPTION_KEY, $list, false);
-
-            // Verification of persisted rejection
-            $verify_rej = get_option(self::STAGED_OPTION_KEY, []);
-            $persisted_rej = false;
-            if (is_array($verify_rej)) {
-                foreach ($verify_rej as $v_action) {
-                    if (($v_action['id'] ?? '') === $staged_id && ($v_action['status'] ?? '') === 'rejected') {
-                        $persisted_rej = true;
-                        break;
-                    }
-                }
-            }
-            if (!$persisted_rej) {
-                return [
-                    'success' => false,
-                    'status'  => 500,
-                    'message' => __('Failed to persist rejected status in ledger.', 'webcare-pro-security'),
                 ];
             }
         } finally {
