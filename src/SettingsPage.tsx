@@ -1,4 +1,6 @@
 import { useState, useEffect, useMemo } from '@wordpress/element';
+import { CronManagerPage } from './CronManager/CronManagerPage';
+import { NotificationsPage } from './NotificationsPage';
 import {
   Settings,
   Calendar,
@@ -178,7 +180,9 @@ export type SettingsSubTab =
   | 'containment'
   | 'troubleshooter'
   | 'schedule'
+  | 'cron'
   | 'email'
+  | 'alerts'
   | 'webhooks'
   | 'cloudflare'
   | 'headers'
@@ -345,11 +349,25 @@ const SETTINGS_CATEGORIES: SettingsCategoryGroup[] = [
         getBadge: (s) => (s?.schedule_enabled ? { text: 'Active Cron', bg: '#ecfdf5', color: '#059669' } : { text: 'Manual Only', bg: '#f1f5f9', color: '#64748b' })
       },
       {
+        id: 'cron',
+        label: 'Scheduled Tasks (Cron)',
+        shortDesc: '15 Background WP-Cron tasks & logs',
+        icon: Clock,
+        getBadge: () => ({ text: '15 Tasks', bg: '#e0f2fe', color: '#0284c7' })
+      },
+      {
         id: 'email',
         label: 'Email Alerts',
         shortDesc: 'Instant threat & digest notices',
         icon: Mail,
         getBadge: (s) => (s?.email_alerts_enabled ? { text: 'Alerts On', bg: '#ecfdf5', color: '#059669' } : { text: 'Off', bg: '#f1f5f9', color: '#64748b' })
+      },
+      {
+        id: 'alerts',
+        label: 'Security Notifications',
+        shortDesc: '60+ event notification matrix',
+        icon: ShieldAlert,
+        getBadge: () => ({ text: '60+ Events', bg: '#fef3c7', color: '#b45309' })
       },
       {
         id: 'webhooks',
@@ -483,13 +501,15 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
     const tabMap: Record<string, SettingsSubTab> = {
       health: 'troubleshooter',
       troubleshooter: 'troubleshooter',
+      doctor: 'troubleshooter',
       emergency: 'containment',
       containment: 'containment',
-      cron: 'schedule',
+      cron: 'cron',
+      'cron-manager': 'cron',
       schedules: 'schedule',
       schedule: 'schedule',
-      alerts: 'email',
-      notifications: 'email',
+      alerts: 'alerts',
+      notifications: 'alerts',
       email: 'email',
       webhooks: 'webhooks',
       cloudflare: 'cloudflare',
@@ -1805,7 +1825,9 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
             const ownerEssentialTabIds: SettingsSubTab[] = [
               'troubleshooter',
               'email',
+              'alerts',
               'schedule',
+              'cron',
               'cloudflare',
               'updates',
               'cleanup',
@@ -2490,6 +2512,15 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
       )}
 
       {/* =========================================================================
+          TAB 1B: CENTRALIZED CRON MANAGER
+          ========================================================================= */}
+      {activeSubTab === 'cron' && (
+        <div style={{ marginTop: '4px' }}>
+          <CronManagerPage apiRequest={apiRequest} />
+        </div>
+      )}
+
+      {/* =========================================================================
           TAB 2: EMAIL NOTIFICATIONS
           ========================================================================= */}
       {activeSubTab === 'email' && (
@@ -2739,6 +2770,18 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
               <strong style={{ color: 'var(--webcare-text-primary, #0f172a)' }}>Email Delivery Tip:</strong> Ensure your server's <code>wp_mail()</code> or SMTP plugin (e.g. WP Mail SMTP, FluentSMTP) is properly configured with SPF/DKIM records so security notices land reliably in your primary inbox without being filtered into spam.
             </div>
           </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          TAB 2B: NOTIFICATION MATRIX (ALERTS)
+          ========================================================================= */}
+      {activeSubTab === 'alerts' && (
+        <div style={{ marginTop: '4px' }}>
+          <NotificationsPage
+            apiRequest={apiRequest}
+            onNavigateToSettings={() => handleTabChange('webhooks')}
+          />
         </div>
       )}
 
