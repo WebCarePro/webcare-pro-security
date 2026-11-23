@@ -82,9 +82,7 @@ class AdminMenu {
             80
         );
 
-        // =========================================================================
-        // CANONICAL PILLARS REGISTERED FROM RouteRegistry (7 Visible + 1 Hidden Setup)
-        // =========================================================================
+        // Canonical Pillar Menu Pages (7 visible submenus under WebCare Pro + 1 hidden setup)
         $pillars = RouteRegistry::get_pillars();
         foreach ($pillars as $pillar) {
             $is_hidden = !empty($pillar['hidden']);
@@ -99,6 +97,16 @@ class AdminMenu {
                 [__CLASS__, 'render_app_container']
             );
         }
+
+        // Register legacy / alias hidden slug 'webcare-pro-wizard' redirecting or mapping to 'webcare-pro-setup'
+        add_submenu_page(
+            null,
+            __('Protection Quickstart Setup Studio', 'webcare-pro-security'),
+            __('Quick Setup', 'webcare-pro-security'),
+            'manage_options',
+            'webcare-pro-wizard',
+            [__CLASS__, 'render_app_container']
+        );
     }
 
     /**
@@ -528,8 +536,8 @@ class AdminMenu {
 
             // phpcs:ignore WordPress.Security.NonceVerification.Recommended
             $page = isset($_GET['page']) ? sanitize_key(wp_unslash($_GET['page'])) : '';
-            if ($page !== 'webcare-pro-wizard') {
-                wp_safe_redirect(admin_url('admin.php?page=webcare-pro-wizard'));
+            if ($page !== 'webcare-pro-setup' && $page !== 'webcare-pro-wizard') {
+                wp_safe_redirect(admin_url('admin.php?page=webcare-pro-setup'));
                 exit;
             }
         }

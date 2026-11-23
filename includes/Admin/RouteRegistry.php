@@ -265,6 +265,10 @@ final class RouteRegistry {
      * @return string Allowlisted bundle identifier (e.g. 'firewall', 'scan', 'index')
      */
     public static function resolve_bundle(string $pillar_id, string $tab_id = ''): string {
+        if ($pillar_id === 'webcare-pro-wizard') {
+            $pillar_id = 'webcare-pro-setup';
+        }
+
         $pillar = self::get_pillar($pillar_id);
         if ($pillar !== null && !empty($pillar['bundle']) && in_array($pillar['bundle'], self::ALLOWED_BUNDLES, true)) {
             return $pillar['bundle'];

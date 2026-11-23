@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-23T23:27:33.520Z",
+  "generated_at": "2026-11-23T23:36:45.959Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -180,16 +180,16 @@
       "size": 357
     },
     "includes/Admin/AdminMenu.php": {
-      "sha256": "3aee93f2db4e33cd86544a1ccc262a49d42056cb41106b1aac8a22f577c8cb4f",
-      "size": 39533
+      "sha256": "b0dd40159060ee62a8a2fb3b62c77d708978ffb7d3b06314346d89016fea7209",
+      "size": 39817
     },
     "includes/Admin/DashboardWidget.php": {
       "sha256": "75ef0d38402404c78a148bea690b2fb6d355453f691060890b4dfe3cf3d27095",
       "size": 11801
     },
     "includes/Admin/RouteRegistry.php": {
-      "sha256": "8d64c24a3eced35c43d265255527ca79f0a3dda400c00809659a70f645c968a2",
-      "size": 15158
+      "sha256": "be989a6b08e59ec10177f9ae918f605a8ab626ce130c4089ce0f39cca4e1a189",
+      "size": 15266
     },
     "includes/Admin/routes.json": {
       "sha256": "8c3ccd82037d3a13fda3f392aa344ef0e7e26f49ec7e90aad81d9e881005c1d4",
