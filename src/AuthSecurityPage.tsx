@@ -405,9 +405,19 @@ export const AuthSecurityPage = ({
     }
   };
 
-  // Auto-fallback to owner-essential '2fa' tab if user switches into Simple Mode while on an engineer-only tab
+  // Auto-switch to Developer Mode on explicit deep link to an engineer-only tab, or fallback to '2fa' if switched manually to Simple Mode
   useEffect(() => {
-    if (isSimpleMode && ['admins', 'zero_trust', 'sessions', 'app_passwords'].includes(activeTab)) {
+    const engineerTabs = ['admins', 'zero_trust', 'sessions', 'app_passwords'];
+    if (isSimpleMode && engineerTabs.includes(activeTab)) {
+      try {
+        const urlParams = new URLSearchParams(window.location.search);
+        const requestedTab = urlParams.get('tab') || urlParams.get('subtab');
+        if (requestedTab && engineerTabs.includes(requestedTab)) {
+          setMode('developer');
+          toast.info(`Switched to Developer Mode for ${requestedTab.replace('_', ' ')}.`);
+          return;
+        }
+      } catch (e) {}
       handleTabSwitch('2fa');
     }
   }, [isSimpleMode, activeTab]);
@@ -1357,7 +1367,10 @@ export const AuthSecurityPage = ({
           <button
             type="button"
             className="webcare-btn-micro"
-            onClick={() => setMode('developer')}
+            onClick={() => {
+              setMode('developer');
+              toast.info('Switched to Developer Mode.');
+            }}
             style={{
               marginLeft: 'auto',
               display: 'inline-flex',
@@ -1368,7 +1381,7 @@ export const AuthSecurityPage = ({
               fontSize: '11px',
               fontWeight: 600,
               background: 'var(--webcare-surface-elevated, #f1f5f9)',
-              color: 'var(--webcare-text-secondary, #475569)',
+              color: 'var(--webcare-primary, #6366f1)',
               border: '1px solid var(--webcare-border, #cbd5e1)',
               cursor: 'pointer',
               transition: 'all 0.15s ease',
@@ -1376,7 +1389,7 @@ export const AuthSecurityPage = ({
             title="Switch to Developer Mode to manage Administrator policies, Zero-Trust rules, active sessions, and REST app passwords"
           >
             <Sliders size={12} color="#0284c7" />
-            <span>Switch to Developer Mode →</span>
+            <span>+ Show 4 Pro Tabs</span>
           </button>
         )}
       </div>

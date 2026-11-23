@@ -74,6 +74,7 @@ import { ConfirmDialog } from './components/ConfirmDialog';
 import { InlineConfirmPopover } from './components/InlineConfirmPopover';
 import { formatRelativeTime, formatTelemetryDateFull } from './timeUtils';
 import { useWorkspaceMode } from './hooks/useWorkspaceMode';
+import { toast } from './utils/dialog';
 
 interface ServerTelemetry {
   linux_uname: string;
@@ -416,10 +417,19 @@ export const FirewallPage = ({
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  // Auto-fallback to owner-essential 'stream' if user switches into Simple Mode while on an engineer tab
+  // Auto-switch to Developer Mode on explicit deep link to an engineer tab, or fallback to 'stream' if switched manually to Simple Mode
   useEffect(() => {
     const engineerTabs = ['caf', 'cloudflare', 'drill', 'supply_chain', 'behavioral', 'server_sec', 'intel', 'vpatch', 'ai_defense'];
     if (isSimpleMode && engineerTabs.includes(activeTab)) {
+      try {
+        const urlParams = new URLSearchParams(window.location.search);
+        const requestedTab = urlParams.get('tab');
+        if (requestedTab && engineerTabs.includes(requestedTab)) {
+          setMode('developer');
+          toast.info(`Switched to Developer Mode for ${requestedTab.replace('_', ' ')}.`);
+          return;
+        }
+      } catch (e) {}
       handleSwitchTab('stream');
     }
   }, [isSimpleMode, activeTab]);
@@ -3465,6 +3475,34 @@ export const FirewallPage = ({
                 )}
               </div>
             </>
+          )}
+
+          {isSimpleMode && (
+            <button
+              type="button"
+              className="webcare-btn-micro"
+              onClick={() => {
+                setMode('developer');
+                toast.info('Switched to Developer Mode.');
+              }}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '5px 12px',
+                borderRadius: '6px',
+                fontSize: '11px',
+                fontWeight: 600,
+                background: 'var(--webcare-surface-elevated, #f1f5f9)',
+                color: 'var(--webcare-primary, #6366f1)',
+                border: '1px solid var(--webcare-border, #cbd5e1)',
+                cursor: 'pointer'
+              }}
+              title="Show 9 Advanced Developer Firewall Tabs"
+            >
+              <Sliders size={12} />
+              <span>+ Show 9 Pro Tabs</span>
+            </button>
           )}
 
           <button

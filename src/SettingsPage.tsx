@@ -302,10 +302,10 @@ interface SettingsCategoryGroup {
 
 const SETTINGS_CATEGORIES: SettingsCategoryGroup[] = [
   {
-    id: 'incident_response',
-    name: 'Incident Response & Lockdown',
-    tagline: 'Instant zero-hour containment, filesystem freeze & session liquidation',
-    badge: 'Containment',
+    id: 'health_rescue',
+    name: 'Health & Rescue',
+    tagline: 'Live runtime diagnostics, 15m Safe Mode & emergency containment',
+    badge: 'Rescue',
     accent: '#dc2626',
     accentLight: '#fef2f2',
     accentBorder: '#fecaca',
@@ -328,8 +328,8 @@ const SETTINGS_CATEGORIES: SettingsCategoryGroup[] = [
     ]
   },
   {
-    id: 'automations',
-    name: 'Automations & Alerts',
+    id: 'alerts_schedules',
+    name: 'Alerts & Schedules',
     tagline: 'Scan schedules, email delivery & DevSecOps webhooks',
     badge: 'Pipelines',
     accent: '#0284c7',
@@ -359,25 +359,13 @@ const SETTINGS_CATEGORIES: SettingsCategoryGroup[] = [
           const activeCount = [s?.slack_enabled, s?.discord_enabled, s?.clickup_enabled, s?.asana_enabled, s?.generic_webhook_enabled].filter(Boolean).length;
           return activeCount > 0 ? { text: `${activeCount} Webhook(s)`, bg: '#dcfce7', color: '#15803d' } : { text: 'Slack/Discord', bg: '#f1f5f9', color: '#64748b' };
         }
-      },
-      {
-        id: 'cloudflare',
-        label: 'Cloudflare Edge API',
-        shortDesc: 'API token, Zone ID & Edge sync',
-        icon: Cloud,
-        getBadge: (_s, _audit, cfStatus) => {
-          const isConnected = !!(cfStatus?.configured || (cfStatus?.zone_id && cfStatus?.zone_name));
-          return isConnected
-            ? { text: 'EDGE API Connected', bg: '#ecfdf5', color: '#047857' }
-            : { text: 'Edge API', bg: '#ffedd5', color: '#c2410c' };
-        }
       }
     ]
   },
   {
-    id: 'security_ai',
-    name: 'Defenses & AI Intelligence',
-    tagline: 'HTTP hardening, LLM threat analysis & MCP agentic abilities',
+    id: 'hardening_ai',
+    name: 'Hardening & AI',
+    tagline: 'HTTP hardening, Cloudflare edge status & AI heuristics',
     badge: 'Defense Core',
     accent: '#7c3aed',
     accentLight: '#f5f3ff',
@@ -389,6 +377,18 @@ const SETTINGS_CATEGORIES: SettingsCategoryGroup[] = [
         shortDesc: '1-Click A+ HTTP security presets',
         icon: ShieldCheck,
         getBadge: (_s, audit) => (audit?.grade ? { text: `Grade ${audit.grade}`, bg: '#ecfdf5', color: '#047857' } : { text: 'A+ Preset', bg: '#ecfdf5', color: '#047857' })
+      },
+      {
+        id: 'cloudflare',
+        label: 'Cloudflare Edge Status',
+        shortDesc: 'Edge synchronization status & jump to WAF',
+        icon: Cloud,
+        getBadge: (_s, _audit, cfStatus) => {
+          const isConnected = !!(cfStatus?.configured || (cfStatus?.zone_id && cfStatus?.zone_name));
+          return isConnected
+            ? { text: 'Edge Connected', bg: '#ecfdf5', color: '#047857' }
+            : { text: 'Edge Setup', bg: '#ffedd5', color: '#c2410c' };
+        }
       },
       {
         id: 'ai',
@@ -408,8 +408,27 @@ const SETTINGS_CATEGORIES: SettingsCategoryGroup[] = [
     ]
   },
   {
-    id: 'operations',
-    name: 'Engine & Operations',
+    id: 'logs_activity',
+    name: 'Logs & Activity',
+    tagline: 'Cryptographic audit ledger & forensic event trail',
+    badge: 'Forensics',
+    accent: '#0284c7',
+    accentLight: '#f0f9ff',
+    accentBorder: '#bae6fd',
+    tabs: [
+      {
+        id: 'activity_logs',
+        label: 'Plugin Activity & Audit Logs',
+        shortDesc: 'Cryptographic audit ledger & tamper defense',
+        icon: Activity,
+        isNew: true,
+        getBadge: () => ({ text: 'Forensic Ledger', bg: '#e0f2fe', color: '#0284c7' })
+      }
+    ]
+  },
+  {
+    id: 'system_updates',
+    name: 'System & Updates',
     tagline: 'Resource limits, configuration backup, cleanup & direct support',
     badge: 'System',
     accent: '#0f766e',
@@ -444,14 +463,6 @@ const SETTINGS_CATEGORIES: SettingsCategoryGroup[] = [
         shortDesc: 'Database tables & uninstall behavior',
         icon: Trash2,
         getBadge: (s) => (s?.delete_data_on_uninstall ? { text: 'Auto-Purge', bg: '#fee2e2', color: '#991b1b' } : { text: 'Retain', bg: '#f1f5f9', color: '#64748b' })
-      },
-      {
-        id: 'activity_logs',
-        label: 'Plugin Activity & Audit Logs',
-        shortDesc: 'Cryptographic audit ledger & tamper defense',
-        icon: Activity,
-        isNew: true,
-        getBadge: () => ({ text: 'Forensic Ledger', bg: '#e0f2fe', color: '#0284c7' })
       },
       {
         id: 'support',
@@ -559,7 +570,7 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
     } catch (e) {}
   };
 
-  // Auto-fallback to owner-essential 'troubleshooter' if user switches into Simple Mode while on an engineer tab
+  // Auto-switch to Developer Mode on explicit deep link to an engineer tab, or fallback to 'troubleshooter' if switched manually to Simple Mode
   useEffect(() => {
     const engineerTabs: SettingsSubTab[] = [
       'containment',
@@ -572,6 +583,15 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
       'activity_logs',
     ];
     if (isSimpleMode && engineerTabs.includes(activeSubTab)) {
+      try {
+        const urlParams = new URLSearchParams(window.location.search);
+        const requestedTab = (urlParams.get('tab') || urlParams.get('subtab')) as SettingsSubTab | null;
+        if (requestedTab && engineerTabs.includes(requestedTab)) {
+          setMode('developer');
+          toast.info(`Switched to Developer Mode for ${requestedTab.replace('_', ' ')}.`);
+          return;
+        }
+      } catch (e) {}
       handleTabChange('troubleshooter');
     }
   }, [isSimpleMode, activeSubTab]);
@@ -1941,7 +1961,10 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
             {isSimpleMode && (
               <button
                 type="button"
-                onClick={() => setMode('developer')}
+                onClick={() => {
+                  setMode('developer');
+                  toast.info('Switched to Developer Mode.');
+                }}
                 className="webcare-btn-micro"
                 style={{
                   display: 'inline-flex',
@@ -1957,7 +1980,7 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
                   cursor: 'pointer',
                 }}
               >
-                Show all 15 developer settings →
+                + Show 8 Pro Tabs
               </button>
             )}
             <div
@@ -3369,13 +3392,13 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
       )}
 
       {/* =========================================================================
-          TAB: CLOUDFLARE API CREDENTIALS & EDGE DEFENSE SETUP
+          TAB: CLOUDFLARE EDGE DEFENSE STATUS & 1-CLICK JUMP
           ========================================================================= */}
       {activeSubTab === 'cloudflare' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-          {/* Cloudflare Overview & Status Card */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          {/* Compact Cloudflare Edge Status Card */}
           <div className="webcare-card" style={{ background: 'var(--webcare-bg-card, #ffffff)', borderRadius: '12px', border: '1px solid var(--webcare-border, #e2e8f0)', padding: '24px' }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px', marginBottom: '20px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px', marginBottom: '20px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
                 <div style={{
                   width: '48px',
@@ -3392,7 +3415,7 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
                 </div>
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                    <h3 style={{ margin: 0, fontSize: '18px', color: 'var(--webcare-text-primary, #0f172a)' }}>Cloudflare API Credentials &amp; Edge Integration</h3>
+                    <h3 style={{ margin: 0, fontSize: '18px', color: 'var(--webcare-text-primary, #0f172a)' }}>Cloudflare Edge Defense</h3>
                     <span style={{
                       fontSize: '11px',
                       fontWeight: 700,
@@ -3430,215 +3453,70 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
                     )}
                   </div>
                   <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#64748b' }}>
-                    Configure your Cloudflare API Bearer Token and Zone ID to power Edge WAF rulesets, automatic real-time IP bans, and zero-resource perimeter defense.
+                    All Cloudflare API tokens, Edge WAF rulesets, IP Access Rules, and live Edge logs are managed centrally under Firewall &amp; WAF.
                   </p>
                 </div>
               </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <a
-                  href="https://dash.cloudflare.com/profile/api-tokens?name=WebCare%20Security%20Scanner&permissionGroupKeys=%5B%7B%22key%22%3A%22zone%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22zone_waf%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22firewall_services%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22analytics%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22cache%22%2C%22type%22%3A%22purge%22%7D%5D&accountId=*&zoneId=all"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="webcare-btn"
-                  style={{
-                    background: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
-                    color: '#fff',
-                    border: 'none',
-                    padding: '8px 16px',
-                    borderRadius: '8px',
-                    fontWeight: 600,
-                    fontSize: '13px',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    textDecoration: 'none',
-                    boxShadow: '0 2px 4px rgba(234, 88, 12, 0.2)'
-                  }}
-                >
-                  <Key size={14} /> 1-Click Pre-configure Cloudflare Token ↗
-                </a>
-              </div>
+              <button
+                type="button"
+                className="webcare-btn"
+                onClick={() => { window.location.href = 'admin.php?page=webcare-pro-firewall&tab=cloudflare'; }}
+                style={{
+                  background: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
+                  color: '#fff',
+                  border: 'none',
+                  padding: '9px 18px',
+                  borderRadius: '8px',
+                  fontWeight: 600,
+                  fontSize: '13px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  cursor: 'pointer',
+                  boxShadow: '0 2px 6px rgba(234, 88, 12, 0.25)'
+                }}
+              >
+                <Cloud size={16} />
+                <span>Open Firewall → Cloudflare Edge →</span>
+              </button>
             </div>
 
-            {/* Required Permissions Info */}
+            {/* Connection Telemetry Details */}
             <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+              gap: '12px',
+              padding: '16px',
+              borderRadius: '8px',
               background: 'var(--webcare-bg-surface, #f8fafc)',
               border: '1px solid var(--webcare-border, #e2e8f0)',
-              borderRadius: '8px',
-              padding: '12px 16px',
-              marginBottom: '20px',
-              fontSize: '12px'
+              fontSize: '12.5px'
             }}>
-              <strong style={{ color: 'var(--webcare-text-primary, #0f172a)', display: 'block', marginBottom: '6px' }}>Required Cloudflare API Token Scopes:</strong>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
-                <span style={{ background: '#e0f2fe', color: '#0369a1', padding: '2px 8px', borderRadius: '4px', fontWeight: 600 }}>Zone.Zone: Read</span>
-                <span style={{ background: '#e0f2fe', color: '#0369a1', padding: '2px 8px', borderRadius: '4px', fontWeight: 600 }}>Zone.Zone WAF: Edit</span>
-                <span style={{ background: '#fef3c7', color: '#92400e', padding: '2px 8px', borderRadius: '4px', fontWeight: 600 }}>Zone.Firewall Services: Edit (IP Access Rules)</span>
-                <span style={{ background: '#ecfdf5', color: '#047857', padding: '2px 8px', borderRadius: '4px', fontWeight: 600 }}>Zone.Analytics: Read (Edge Block Logs)</span>
-                <span style={{ background: '#e0f2fe', color: '#0369a1', padding: '2px 8px', borderRadius: '4px', fontWeight: 600 }}>Zone.Cache Purge: Purge</span>
-              </div>
-              <p style={{ margin: '8px 0 0 0', color: '#64748b', fontSize: '11.5px', lineHeight: 1.5 }}>
-                Under <strong>Zone Resources</strong> in Cloudflare, choose <code>Specific zone &gt; {cfStatus?.site_root_domain || cfStatus?.zone_name || 'your-domain.com'}</code>.
-              </p>
-            </div>
-
-            {/* Inputs: Token & Zone ID */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px', marginBottom: '20px' }}>
               <div>
-                <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '12px', fontWeight: 600, marginBottom: '6px', color: 'var(--webcare-text-primary, #0f172a)' }}>
-                  <span>Cloudflare API Token:</span>
-                  {cfStatus?.has_token && (
-                    <span style={{ fontSize: '11px', color: '#059669', background: '#ecfdf5', padding: '1px 6px', borderRadius: '4px', fontWeight: 600 }}>
-                      ✓ Encrypted in Vault
-                    </span>
-                  )}
-                </label>
-                <div style={{ position: 'relative' }}>
-                  <input
-                    type={showCfToken ? 'text' : 'password'}
-                    value={cfToken}
-                    onChange={(e) => setCfToken(e.target.value)}
-                    placeholder={cfStatus?.configured ? '••••••••••••••••••••••••••••' : 'Enter Cloudflare API Bearer Token'}
-                    className="webcare-input"
-                    style={{ width: '100%', padding: '9px 36px 9px 12px', fontFamily: 'monospace', fontSize: '13px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowCfToken(!showCfToken)}
-                    title={showCfToken ? 'Hide token' : 'Show token'}
-                    style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', padding: 0, display: 'flex', alignItems: 'center' }}
-                  >
-                    {showCfToken ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
-                </div>
+                <span style={{ color: '#64748b', display: 'block', fontSize: '11px', fontWeight: 600, textTransform: 'uppercase' }}>Zone Name</span>
+                <span style={{ fontWeight: 600, color: 'var(--webcare-text-primary, #0f172a)' }}>
+                  {cfStatus?.zone_name || cfStatus?.site_root_domain || 'Auto-detection'}
+                </span>
               </div>
-
               <div>
-                <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '12px', fontWeight: 600, marginBottom: '6px', color: 'var(--webcare-text-primary, #0f172a)' }}>
-                  <span>Zone ID (Leave blank to auto-detect):</span>
-                  {cfStatus?.zone_name && (
-                    <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <span style={{ color: '#0369a1', fontWeight: 600, fontSize: '11px', background: '#e0f2fe', padding: '1px 8px', borderRadius: '4px' }}>
-                        Zone: {cfStatus.zone_name}
-                      </span>
-                      {cfZoneId && (
-                        <button
-                          type="button"
-                          onClick={() => setCfZoneId('')}
-                          style={{
-                            background: 'none',
-                            border: 'none',
-                            color: '#0284c7',
-                            fontSize: '11px',
-                            cursor: 'pointer',
-                            textDecoration: 'underline',
-                            padding: 0
-                          }}
-                        >
-                          Clear to Auto-detect
-                        </button>
-                      )}
-                    </span>
-                  )}
-                </label>
-                <div style={{ position: 'relative' }}>
-                  <input
-                    type={showCfZone ? 'text' : 'password'}
-                    value={cfZoneId}
-                    onChange={(e) => setCfZoneId(e.target.value)}
-                    placeholder={cfStatus?.configured ? (cfStatus.zone_id || '••••••••••••••••••••••••••••••••') : `Leave blank to auto-detect for ${cfStatus?.site_root_domain || 'site domain'}`}
-                    className="webcare-input"
-                    style={{ width: '100%', padding: '9px 36px 9px 12px', fontFamily: 'monospace', fontSize: '13px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowCfZone(!showCfZone)}
-                    title={showCfZone ? 'Hide Zone ID' : 'Show Zone ID'}
-                    style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', padding: 0, display: 'flex', alignItems: 'center' }}
-                  >
-                    {showCfZone ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
-                </div>
+                <span style={{ color: '#64748b', display: 'block', fontSize: '11px', fontWeight: 600, textTransform: 'uppercase' }}>Plan</span>
+                <span style={{ fontWeight: 600, color: 'var(--webcare-text-primary, #0f172a)' }}>
+                  {cfStatus?.plan || 'Free / Pro'}
+                </span>
               </div>
-            </div>
-
-            {/* Auto-Sync Bans Toggle */}
-            <div style={{ marginBottom: '20px', padding: '12px 16px', background: 'var(--webcare-bg-surface, #f8fafc)', borderRadius: '8px', border: '1px solid var(--webcare-border, #e2e8f0)' }}>
-              <ToggleSwitch
-                checked={cfAutoSyncBans}
-                onChange={handleToggleAutoSyncBans}
-                label="Real-time WAF Auto-Ban Sync to Cloudflare Edge"
-                description="When WebCare Origin WAF intercepts brute-force attacks or malicious exploit attempts, automatically ban the offending IP at the Cloudflare Global Anycast Edge via IP Access Rules."
-                badge={cfAutoSyncBans ? (
-                  <span style={{ fontSize: '11px', background: '#ecfdf5', color: '#059669', padding: '2px 8px', borderRadius: '10px', fontWeight: 600 }}>Active</span>
-                ) : (
-                  <span style={{ fontSize: '11px', background: '#f1f5f9', color: '#64748b', padding: '2px 8px', borderRadius: '10px', fontWeight: 500 }}>Disabled</span>
-                )}
-                activeColor="#10b981"
-              />
-            </div>
-
-            {/* Action Buttons & Status Result */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <button
-                  type="button"
-                  className="webcare-btn"
-                  style={{
-                    background: '#ea580c',
-                    color: '#fff',
-                    border: 'none',
-                    padding: '9px 18px',
-                    fontWeight: 600,
-                    fontSize: '13px',
-                    borderRadius: '8px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    boxShadow: '0 2px 4px rgba(234, 88, 12, 0.2)'
-                  }}
-                  disabled={cfVerifying}
-                  onClick={handleVerifyCloudflare}
-                >
-                  {cfVerifying ? <Loader2 size={15} className="webcare-spin" /> : <CheckCircle2 size={15} />}
-                  Verify &amp; Save Credentials
-                </button>
-
-                {cfStatus?.configured && (
-                  <button
-                    type="button"
-                    className="webcare-btn"
-                    style={{
-                      background: 'var(--webcare-bg-card, #ffffff)',
-                      color: '#dc2626',
-                      border: '1px solid #fecaca',
-                      padding: '9px 14px',
-                      fontWeight: 600,
-                      fontSize: '12px',
-                      borderRadius: '8px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px'
-                    }}
-                    disabled={disconnectingCf}
-                    onClick={handleDisconnectCloudflare}
-                  >
-                    {disconnectingCf ? <Loader2 size={14} className="webcare-spin" /> : <Trash2 size={14} />}
-                    Disconnect Cloudflare
-                  </button>
-                )}
+              <div>
+                <span style={{ color: '#64748b', display: 'block', fontSize: '11px', fontWeight: 600, textTransform: 'uppercase' }}>Token Status</span>
+                <span style={{ fontWeight: 600, color: cfStatus?.has_token ? '#059669' : '#d97706' }}>
+                  {cfStatus?.has_token ? '✓ Sealed in Vault' : 'Not Configured'}
+                </span>
               </div>
-
-              {cfVerifyResult ? (
-                <div style={{ fontSize: '13px', fontWeight: 600, color: cfVerifyResult.success ? '#166534' : '#991b1b' }}>
-                  {cfVerifyResult.success ? `✓ Connected to ${cfVerifyResult.zone_name} (${cfVerifyResult.plan} Plan)` : `✗ ${cfVerifyResult.message}`}
-                </div>
-              ) : cfStatus?.configured ? (
-                <div style={{ fontSize: '13px', fontWeight: 600, color: '#166534' }}>
-                  ✓ Connected to <strong>{cfStatus.zone_name}</strong> ({cfStatus.plan} Plan)
-                </div>
-              ) : null}
+              <div>
+                <span style={{ color: '#64748b', display: 'block', fontSize: '11px', fontWeight: 600, textTransform: 'uppercase' }}>Auto-Ban Sync</span>
+                <span style={{ fontWeight: 600, color: cfAutoSyncBans ? '#059669' : '#64748b' }}>
+                  {cfAutoSyncBans ? 'Active Edge Sync' : 'Disabled'}
+                </span>
+              </div>
             </div>
           </div>
         </div>

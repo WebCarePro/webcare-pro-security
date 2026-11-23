@@ -83,7 +83,7 @@ class AdminMenu {
         );
 
         // =========================================================================
-        // PRIMARY VISIBLE MENU PILLARS (Strictly Consolidated 6 SOC Pillars)
+        // PRIMARY VISIBLE MENU PILLARS (Strictly Consolidated 8 Daily Pillars)
         // =========================================================================
 
         // 1. Submenu: Dashboard
@@ -96,17 +96,27 @@ class AdminMenu {
             [__CLASS__, 'render_app_container']
         );
 
-        // 2. Submenu: Firewall & Logs
+        // 2. Submenu: Firewall & WAF
         add_submenu_page(
             'webcare-pro-security',
             __('Web Application Firewall, Rules & Traffic Defense', 'webcare-pro-security'),
-            __('Firewall & Logs', 'webcare-pro-security'),
+            __('Firewall & WAF', 'webcare-pro-security'),
             'manage_options',
             'webcare-pro-firewall',
             [__CLASS__, 'render_app_container']
         );
 
-        // 3. Submenu: Scanner & CVEs
+        // 3. Submenu: WAF Logs & Bans
+        add_submenu_page(
+            'webcare-pro-security',
+            __('WAF Incident Logs & Attack Forensics', 'webcare-pro-security'),
+            __('WAF Logs & Bans', 'webcare-pro-security'),
+            'manage_options',
+            'webcare-pro-waf-logs',
+            [__CLASS__, 'render_app_container']
+        );
+
+        // 4. Submenu: Scanner & CVEs
         add_submenu_page(
             'webcare-pro-security',
             __('Deep Security Scanner & Vulnerability Findings', 'webcare-pro-security'),
@@ -116,27 +126,37 @@ class AdminMenu {
             [__CLASS__, 'render_app_container']
         );
 
-        // 4. Submenu: Login & Access
+        // 5. Submenu: Login & 2FA
         add_submenu_page(
             'webcare-pro-security',
             __('Zero-Trust Identity, 2FA & Access Control', 'webcare-pro-security'),
-            __('Login & Access', 'webcare-pro-security'),
+            __('Login & 2FA', 'webcare-pro-security'),
             'manage_options',
             'webcare-pro-auth',
             [__CLASS__, 'render_app_container']
         );
 
-        // 5. Submenu: Vault & Tools
+        // 6. Submenu: Vault & Backups
         add_submenu_page(
             'webcare-pro-security',
             __('Quarantine Vault, Forensics, Backups & Tools', 'webcare-pro-security'),
-            __('Vault & Tools', 'webcare-pro-security'),
+            __('Vault & Backups', 'webcare-pro-security'),
             'manage_options',
             'webcare-pro-vault',
             [__CLASS__, 'render_app_container']
         );
 
-        // 6. Submenu: Settings & Doctor
+        // 7. Submenu: Activity Logs
+        add_submenu_page(
+            'webcare-pro-security',
+            __('Plugin Activity & Audit Logs', 'webcare-pro-security'),
+            __('Activity Logs', 'webcare-pro-security'),
+            'manage_options',
+            'webcare-pro-activity-logs',
+            [__CLASS__, 'render_app_container']
+        );
+
+        // 8. Submenu: Settings & Doctor
         add_submenu_page(
             'webcare-pro-security',
             __('Security Settings, Doctor Diagnostics & Governance', 'webcare-pro-security'),
@@ -260,16 +280,6 @@ class AdminMenu {
             [__CLASS__, 'render_app_container']
         );
 
-        // Sub-Page: WAF Incident Logs & Telemetry
-        add_submenu_page(
-            null,
-            __('WAF Incident Logs & Attack Forensics', 'webcare-pro-security'),
-            __('WAF Logs', 'webcare-pro-security'),
-            'manage_options',
-            'webcare-pro-waf-logs',
-            [__CLASS__, 'render_app_container']
-        );
-
         // Sub-Page: Notifications & Alerts
         add_submenu_page(
             null,
@@ -277,16 +287,6 @@ class AdminMenu {
             __('Notifications', 'webcare-pro-security'),
             'manage_options',
             'webcare-pro-notifications',
-            [__CLASS__, 'render_app_container']
-        );
-
-        // Sub-Page: Activity & Audit Logs
-        add_submenu_page(
-            null,
-            __('Plugin Activity & Audit Logs', 'webcare-pro-security'),
-            __('Activity Logs', 'webcare-pro-security'),
-            'manage_options',
-            'webcare-pro-activity-logs',
             [__CLASS__, 'render_app_container']
         );
 

@@ -220,13 +220,15 @@ final class SystemDoctor {
                         ? wp_safe_remote_get($probe_url, [
                             'timeout'     => 5,
                             'redirection' => 0,
-                            'sslverify'   => false,
+                            // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- Standard WordPress core filter for local loopback requests
+                            'sslverify'   => apply_filters('https_local_ssl_verify', false),
                             'user-agent'  => 'WEBCARE-Doctor-Probe/1.0',
                         ])
                         : (function_exists('wp_remote_get') ? wp_remote_get($probe_url, [
                             'timeout'     => 5,
                             'redirection' => 0,
-                            'sslverify'   => false,
+                            // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- Standard WordPress core filter for local loopback requests
+                            'sslverify'   => apply_filters('https_local_ssl_verify', false),
                             'user-agent'  => 'WEBCARE-Doctor-Probe/1.0',
                         ]) : null);
 

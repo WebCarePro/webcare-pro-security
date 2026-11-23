@@ -118,7 +118,8 @@ class AttackSimulationEngine {
             $args = [
                 'timeout'     => 10,
                 'redirection' => 0,
-                'sslverify'   => false,
+                // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- Standard WordPress core filter for local loopback requests
+                'sslverify'   => apply_filters('https_local_ssl_verify', false),
                 'user-agent'  => 'WEBCARE-Security-Drill/1.0 (+https://webcarespro.com)',
                 'headers'     => [
                     'X-WebCare-Drill-Token' => $drill_token,

@@ -686,7 +686,8 @@ class ServerSecurityEngine {
         $args = [
             'timeout'     => 8,
             'redirection' => 0,
-            'sslverify'   => false,
+            // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- Standard WordPress core filter for local loopback requests
+            'sslverify'   => apply_filters('https_local_ssl_verify', false),
             'user-agent'  => 'WEBCARE-Server-Verifier/1.0',
         ];
 

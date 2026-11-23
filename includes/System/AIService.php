@@ -956,8 +956,13 @@ class AIService {
         if (!empty($gemini_key)) {
             try {
                 // phpcs:ignore PluginCheck.CodeAnalysis.AIProvider.DirectIntegration -- Multi-provider AI security assistant with proprietary prompts and direct user-supplied API keys
-                $url = "https://generativelanguage.googleapis.com/v1beta/models?key=" . urlencode($gemini_key);
-                $resp = wp_remote_get($url, ['timeout' => 15]);
+                $url = "https://generativelanguage.googleapis.com/v1beta/models";
+                $resp = wp_safe_remote_get($url, [
+                    'timeout' => 15,
+                    'headers' => [
+                        'x-goog-api-key' => $gemini_key,
+                    ],
+                ]);
                 if (!is_wp_error($resp) && wp_remote_retrieve_response_code($resp) === 200) {
                     $json = json_decode(wp_remote_retrieve_body($resp), true);
                     if (!empty($json['models']) && is_array($json['models'])) {

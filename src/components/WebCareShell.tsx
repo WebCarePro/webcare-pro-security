@@ -225,7 +225,7 @@ export const WebCareShell = ({ activeTab, children }: WebCareShellProps) => {
     auth: 'webcare-pro-auth',
     vault: 'webcare-pro-vault',
     quarantine: 'webcare-pro-vault&tab=quarantine',
-    backup: 'webcare-pro-vault&tab=backup',
+    backup: 'webcare-pro-vault&tab=database',
     forensics: 'webcare-pro-forensics',
     server: 'webcare-pro-vault&tab=server',
     settings: 'webcare-pro-settings',
@@ -539,11 +539,10 @@ export const WebCareShell = ({ activeTab, children }: WebCareShellProps) => {
               className={`nav-tab-btn webcare-mega-menu-trigger ${megaMenuOpen ? 'active' : ''}`}
               id="tabBtnAllModules"
               onClick={() => setMegaMenuOpen(true)}
-              title="Explore all modules, tools & settings (Ctrl + K)"
+              title="Explore all modules, tools & settings"
             >
               <Grid size={15} />
               <span>All Modules</span>
-              <span className="webcare-kbd-shortcut">⌘K</span>
             </button>
           </nav>
         </div>

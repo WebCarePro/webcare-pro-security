@@ -125,7 +125,6 @@ class LearningModeEngine {
             // phpcs:enable WordPress.Security.NonceVerification.Recommended, WordPress.Security.NonceVerification.Missing
             return 'rest:' . ($prefix ?: 'root');
         }
-        // phpcs:enable WordPress.Security.NonceVerification.Recommended, WordPress.Security.NonceVerification.Missing
 
         // 4. WP-Admin screen routes
         $is_admin = function_exists('is_admin') ? is_admin() : (strpos($uri, '/wp-admin/') !== false);

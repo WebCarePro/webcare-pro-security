@@ -53,7 +53,18 @@ function copyDirRecursive(src, dest) {
       continue;
     }
     // Skip dev files, tests, map files if any
-    if (entry.name === 'tests' || entry.name === 'node_modules' || entry.name.endsWith('.map')) {
+    const forbiddenNames = [
+      'tests',
+      'node_modules',
+      'scratch',
+      '.agents',
+      '.gemini',
+      'AGENTS.md',
+      'compose.yaml',
+      'phpunit.xml',
+      'webcare_v325_production_signoff_plan.md',
+    ];
+    if (forbiddenNames.includes(entry.name) || entry.name.endsWith('.map')) {
       continue;
     }
     // WordPress.org Directory Assets Rule:

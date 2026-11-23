@@ -38,7 +38,8 @@ class PulseHealthCheck {
             $res = wp_remote_get($ep['url'], [
                 'timeout'     => 6,
                 'redirection' => 3,
-                'sslverify'   => false,
+                // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- Standard WordPress core filter for local loopback requests
+                'sslverify'   => apply_filters('https_local_ssl_verify', false),
                 'headers'     => [
                     'X-WebCare-Pulse-Check' => '1',
                     'User-Agent'        => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) WEBCARE-PulseCheck/2.3.0 (+https://webcarepro.com)',
