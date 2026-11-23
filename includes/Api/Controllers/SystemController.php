@@ -693,7 +693,7 @@ final class SystemController extends AbstractApiController {
 
         // Behavioral Vault & Modular Rules Summary
         $modular_vault_summary = class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\BehavioralVaultManager')
-            ? \WebCareProScanner\Firewall\Modular\BehavioralVaultManager::get_vault_summary()
+            ? ::get_vault_summary()
             : null;
 
         $modular_rules = class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\ModularFirewallSynthesizer')

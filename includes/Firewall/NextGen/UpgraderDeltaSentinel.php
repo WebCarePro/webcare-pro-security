@@ -4,7 +4,7 @@ namespace WebCareProScanner\Firewall\NextGen;
 use WebCareProScanner\Contracts\SecurityModuleInterface;
 use WebCareProScanner\Firewall\MicroWafCompiler;
 use WebCareProScanner\Firewall\CustomRules\ModularFirewallSynthesizer;
-use WebCareProScanner\Firewall\Modular\SiteBehavioralAnalyzer;
+use ;
 use WebCareProScanner\Malware\TaintAnalysisEngine;
 
 if (!defined('ABSPATH')) {

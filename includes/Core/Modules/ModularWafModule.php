@@ -9,7 +9,7 @@ use WebCareProScanner\Contracts\SecurityModuleInterface;
 use WebCareProScanner\Contracts\WafEvaluatorInterface;
 use WebCareProScanner\Contracts\WafVerdict;
 use WebCareProScanner\Firewall\CustomRules\ModularFirewallSynthesizer;
-use WebCareProScanner\Firewall\Modular\VisualRuleExpressionEngine;
+use ;
 use WebCareProScanner\Security\PromptInjectionGuard;
 
 if (!defined('ABSPATH')) {

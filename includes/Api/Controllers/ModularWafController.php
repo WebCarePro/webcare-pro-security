@@ -415,7 +415,7 @@ final class ModularWafController extends AbstractApiController {
         }
 
         $params = $request->get_json_params() ?: [];
-        $result = \WebCareProScanner\Firewall\Modular\SiteBehavioralAnalyzer::start_scan($params);
+        $result = ::start_scan($params);
         return new \WP_REST_Response($result, 200);
     }
 
@@ -435,7 +435,7 @@ final class ModularWafController extends AbstractApiController {
 
         $params = $request->get_json_params() ?: [];
         $batch_size = max(10, min(500, intval($params['batch_size'] ?? 400)));
-        $result = \WebCareProScanner\Firewall\Modular\SiteBehavioralAnalyzer::process_batch($batch_size);
+        $result = ::process_batch($batch_size);
         return new \WP_REST_Response($result, 200);
     }
 
@@ -449,7 +449,7 @@ final class ModularWafController extends AbstractApiController {
         if (!class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\SiteBehavioralAnalyzer')) {
             return new \WP_REST_Response(['success' => false, 'message' => __('Behavioral analyzer engine unavailable.', 'webcare-pro-security')], 500);
         }
-        return new \WP_REST_Response(\WebCareProScanner\Firewall\Modular\SiteBehavioralAnalyzer::pause_scan(), 200);
+        return new \WP_REST_Response(::pause_scan(), 200);
     }
 
     /**
@@ -462,7 +462,7 @@ final class ModularWafController extends AbstractApiController {
         if (!class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\SiteBehavioralAnalyzer')) {
             return new \WP_REST_Response(['success' => false, 'message' => __('Behavioral analyzer engine unavailable.', 'webcare-pro-security')], 500);
         }
-        return new \WP_REST_Response(\WebCareProScanner\Firewall\Modular\SiteBehavioralAnalyzer::resume_scan(), 200);
+        return new \WP_REST_Response(::resume_scan(), 200);
     }
 
     /**
@@ -475,7 +475,7 @@ final class ModularWafController extends AbstractApiController {
         if (!class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\SiteBehavioralAnalyzer')) {
             return new \WP_REST_Response(['success' => false, 'message' => __('Behavioral analyzer engine unavailable.', 'webcare-pro-security')], 500);
         }
-        return new \WP_REST_Response(\WebCareProScanner\Firewall\Modular\SiteBehavioralAnalyzer::cancel_scan(), 200);
+        return new \WP_REST_Response(::cancel_scan(), 200);
     }
 
     /**
@@ -588,7 +588,7 @@ final class ModularWafController extends AbstractApiController {
      */
     public static function get_modular_visual_fields(\WP_REST_Request $request) {
         $ctx = class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\VisualRuleExpressionEngine')
-            ? \WebCareProScanner\Firewall\Modular\VisualRuleExpressionEngine::get_site_context_data()
+            ? ::get_site_context_data()
             : [
                 'fields'                => [],
                 'installed_components'  => [],
@@ -637,7 +637,7 @@ final class ModularWafController extends AbstractApiController {
         }
         $params = $request->get_json_params() ?: [];
         $limit  = isset($params['limit']) ? intval($params['limit']) : 500;
-        $res    = \WebCareProScanner\Firewall\Modular\VisualRuleExpressionEngine::simulate_against_recent_logs($params, $limit);
+        $res    = ::simulate_against_recent_logs($params, $limit);
         return new \WP_REST_Response($res, 200);
     }
 
@@ -662,7 +662,7 @@ final class ModularWafController extends AbstractApiController {
             return new \WP_REST_Response(['success' => false, 'message' => __('Visual expression engine unavailable.', 'webcare-pro-security')], 500);
         }
         $params = $request->get_json_params() ?: [];
-        $res    = \WebCareProScanner\Firewall\Modular\VisualRuleExpressionEngine::push_rule_to_cloudflare_edge($params);
+        $res    = ::push_rule_to_cloudflare_edge($params);
         return new \WP_REST_Response($res, 200);
     }
 
@@ -691,18 +691,18 @@ final class ModularWafController extends AbstractApiController {
         }
         $params      = $request->get_json_params() ?: [];
         $expr        = (string) ($params['wirefilter_expr'] ?? '');
-        $tree        = \WebCareProScanner\Firewall\Modular\VisualRuleExpressionEngine::parse_wirefilter_tree($expr);
+        $tree        = ::parse_wirefilter_tree($expr);
         $conditions  = $tree['conditions'];
         $group_logic = $tree['group_logic'];
         $unparsed    = $tree['unparsed_clauses'] ?? [];
-        $wf          = \WebCareProScanner\Firewall\Modular\VisualRuleExpressionEngine::to_wirefilter($conditions, $group_logic);
-        $warnings    = \WebCareProScanner\Firewall\Modular\VisualRuleExpressionEngine::lint_rule_safety($conditions, $wf, $unparsed);
+        $wf          = ::to_wirefilter($conditions, $group_logic);
+        $warnings    = ::lint_rule_safety($conditions, $wf, $unparsed);
         return new \WP_REST_Response([
             'success'          => !empty($conditions),
             'conditions'       => $conditions,
             'group_logic'      => $group_logic,
             'wirefilter'       => $wf,
-            'cf_edge'          => \WebCareProScanner\Firewall\Modular\VisualRuleExpressionEngine::to_cloudflare_edge_wirefilter($conditions, $group_logic),
+            'cf_edge'          => ::to_cloudflare_edge_wirefilter($conditions, $group_logic),
             'warnings'         => $warnings,
             'unparsed_clauses' => $unparsed,
         ], 200);
@@ -718,7 +718,7 @@ final class ModularWafController extends AbstractApiController {
         }
         $params    = $request->get_json_params() ?: [];
         $raw_input = (string) ($params['raw_input'] ?? ($params['wirefilter_expr'] ?? ''));
-        $parsed    = \WebCareProScanner\Firewall\Modular\VisualRuleExpressionEngine::parse_ai_rule_payload($raw_input);
+        $parsed    = ::parse_ai_rule_payload($raw_input);
         return new \WP_REST_Response($parsed, 200);
     }
 
@@ -739,14 +739,14 @@ final class ModularWafController extends AbstractApiController {
             return new \WP_REST_Response(['success' => false, 'message' => __('Please describe what firewall rule you want AI to create.', 'webcare-pro-security')], 400);
         }
 
-        $prompt = \WebCareProScanner\Firewall\Modular\VisualRuleExpressionEngine::build_ai_markdown_prompt($goal);
+        $prompt = ::build_ai_markdown_prompt($goal);
         $system = 'You are a WordPress WAF Rule Architect. Output ONLY a single valid JSON object inside ```json ... ``` matching the requested schema (title, description, expression, action_type, ban_ttl, block_uploads, placement) using strictly the provided field IDs and operators.';
         $res    = \WebCareProScanner\System\AIService::generate_text_completion($system, $prompt, 0.15, 900, 45);
         if (empty($res['success'])) {
             return new \WP_REST_Response($res, 200);
         }
 
-        $parsed             = \WebCareProScanner\Firewall\Modular\VisualRuleExpressionEngine::parse_ai_rule_payload((string) ($res['text'] ?? ''));
+        $parsed             = ::parse_ai_rule_payload((string) ($res['text'] ?? ''));
         $parsed['provider'] = $res['provider'] ?? '';
         $parsed['model']    = $res['model'] ?? '';
         $parsed['raw_ai']   = (string) ($res['text'] ?? '');

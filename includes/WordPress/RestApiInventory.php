@@ -325,7 +325,7 @@ class RestApiInventory {
             $internal_guard  = $attribution['internal_guard'] ?? '';
             $is_trusted_ext  = !empty($attribution['is_official']) || !empty($attribution['is_known_vendor']) || ($attribution['origin_type'] ?? '') === 'self_official';
             $is_intentional  = class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\SiteBehavioralAnalyzer')
-                && \WebCareProScanner\Firewall\Modular\SiteBehavioralAnalyzer::is_intentional_public_rest_route($route_path, $namespace);
+                && ::is_intentional_public_rest_route($route_path, $namespace);
 
             // Classify true security posture instead of conflating Storefront APIs & WP index routes with unguarded writes
             $shielded_by     = [];
@@ -520,7 +520,7 @@ class RestApiInventory {
 
         if (class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\SiteBehavioralAnalyzer')) {
             // Leverage existing component discovery (non-blocking fast cached provenance lookup)
-            $comps = \WebCareProScanner\Firewall\Modular\SiteBehavioralAnalyzer::discover_all_components(false);
+            $comps = ::discover_all_components(false);
             foreach ($comps as $c) {
                 if (!empty($c['path'])) {
                     $index[] = [
@@ -736,7 +736,7 @@ class RestApiInventory {
                             : 'core_runtime',
                     ];
                 } elseif (class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\ComponentIntegrityVerifier')) {
-                    $file_cache[$norm_file] = \WebCareProScanner\Firewall\Modular\ComponentIntegrityVerifier::verify_file_forensics(
+                    $file_cache[$norm_file] = ::verify_file_forensics(
                         $norm_file,
                         $matched_comp ?: []
                     );
@@ -831,8 +831,8 @@ class RestApiInventory {
         }
 
         return [
-            'internal_guard'     => \WebCareProScanner\Firewall\Modular\SiteBehavioralAnalyzer::tokens_have_auth_guard($slice),
-            'has_dangerous_sink' => \WebCareProScanner\Firewall\Modular\SiteBehavioralAnalyzer::tokens_have_dangerous_sink($slice),
+            'internal_guard'     => ::tokens_have_auth_guard($slice),
+            'has_dangerous_sink' => ::tokens_have_dangerous_sink($slice),
         ];
     }
 }

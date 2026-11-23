@@ -34,7 +34,7 @@ class Scheduler {
             });
 
             if (class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\SiteBehavioralAnalyzer')) {
-                \WebCareProScanner\Firewall\Modular\SiteBehavioralAnalyzer::register_cron_hook();
+                ::register_cron_hook();
             }
 
             if (class_exists('\\WebCareProScanner\\Scan\\ScanBackgroundWorker')) {
@@ -54,7 +54,7 @@ class Scheduler {
         add_action(self::CANARY_HOOK, ['\\WebCareProScanner\\Firewall\\RedirectCanaryEngine', 'run_scheduled_canary']);
         add_action(self::CVE_AUDIT_HOOK, ['\\WebCareProScanner\\Firewall\\CVEIntelligenceService', 'run_daily_cve_audit']);
         if (class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\SiteBehavioralAnalyzer')) {
-            \WebCareProScanner\Firewall\Modular\SiteBehavioralAnalyzer::register_cron_hook();
+            ::register_cron_hook();
         }
         if (class_exists('\\WebCareProScanner\\Scan\\ScanBackgroundWorker')) {
             \WebCareProScanner\Scan\ScanBackgroundWorker::register();
