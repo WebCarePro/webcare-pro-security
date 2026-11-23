@@ -198,13 +198,20 @@ class MCPAgentService {
             // P1: Check START TRANSACTION explicitly
             $tx_res = $wpdb->query('START TRANSACTION');
             if ($tx_res === false) {
+                try {
+                    \WebCareProScanner\System\AuditLogger::log_operational('mcp_ledger_mutation_failed', [
+                        'stage'    => 'start_transaction',
+                        'db_error' => $wpdb->last_error ?: 'START TRANSACTION returned false',
+                    ]);
+                } catch (\Throwable) {}
                 return [
                     'success' => false,
-                    'error'   => 'Failed to start database transaction for ledger mutation.',
+                    'error'   => 'Ledger mutation failed. Please retry.',
                     'list'    => [],
                 ];
             }
             $tx_started = true;
+            $committed  = false;
 
             try {
                 // Clear any previous error before query
@@ -220,9 +227,15 @@ class MCPAgentService {
 
                 if ($wpdb->last_error !== '') {
                     $wpdb->query('ROLLBACK');
+                    try {
+                        \WebCareProScanner\System\AuditLogger::log_operational('mcp_ledger_mutation_failed', [
+                            'stage'    => 'select_lock_for_update',
+                            'db_error' => $wpdb->last_error,
+                        ]);
+                    } catch (\Throwable) {}
                     return [
                         'success' => false,
-                        'error'   => 'Database error querying ledger lock for update: ' . $wpdb->last_error,
+                        'error'   => 'Ledger mutation failed. Please retry.',
                         'list'    => [],
                     ];
                 }
@@ -259,9 +272,15 @@ class MCPAgentService {
 
                 if ($wpdb->last_error !== '') {
                     $wpdb->query('ROLLBACK');
+                    try {
+                        \WebCareProScanner\System\AuditLogger::log_operational('mcp_ledger_mutation_failed', [
+                            'stage'    => 'select_ledger_for_update',
+                            'db_error' => $wpdb->last_error,
+                        ]);
+                    } catch (\Throwable) {}
                     return [
                         'success' => false,
-                        'error'   => 'Database error querying staged ledger for update: ' . $wpdb->last_error,
+                        'error'   => 'Ledger mutation failed. Please retry.',
                         'list'    => [],
                     ];
                 }
@@ -308,9 +327,15 @@ class MCPAgentService {
 
                     if ($upd_res === false || $wpdb->last_error !== '') {
                         $wpdb->query('ROLLBACK');
+                        try {
+                            \WebCareProScanner\System\AuditLogger::log_operational('mcp_ledger_mutation_failed', [
+                                'stage'    => 'update_ledger',
+                                'db_error' => $wpdb->last_error ?: 'update returned false',
+                            ]);
+                        } catch (\Throwable) {}
                         return [
                             'success' => false,
-                            'error'   => 'Failed to update ledger option: ' . $wpdb->last_error,
+                            'error'   => 'Ledger mutation failed. Please retry.',
                             'list'    => [],
                         ];
                     }
@@ -318,9 +343,15 @@ class MCPAgentService {
                     // If update returned 0 affected rows, only treat as success if serialized value is byte-for-byte identical
                     if ($upd_res === 0 && $serialized_val !== $existing_raw_val) {
                         $wpdb->query('ROLLBACK');
+                        try {
+                            \WebCareProScanner\System\AuditLogger::log_operational('mcp_ledger_mutation_failed', [
+                                'stage'    => 'update_ledger_mismatch',
+                                'db_error' => '0 rows updated with non-identical serialized value',
+                            ]);
+                        } catch (\Throwable) {}
                         return [
                             'success' => false,
-                            'error'   => 'Ledger update affected 0 rows unexpectedly.',
+                            'error'   => 'Ledger mutation failed. Please retry.',
                             'list'    => [],
                         ];
                     }
@@ -336,9 +367,15 @@ class MCPAgentService {
 
                     if ($ins_res === false || $wpdb->last_error !== '') {
                         $wpdb->query('ROLLBACK');
+                        try {
+                            \WebCareProScanner\System\AuditLogger::log_operational('mcp_ledger_mutation_failed', [
+                                'stage'    => 'insert_ledger',
+                                'db_error' => $wpdb->last_error ?: 'insert returned false',
+                            ]);
+                        } catch (\Throwable) {}
                         return [
                             'success' => false,
-                            'error'   => 'Failed to insert ledger option: ' . $wpdb->last_error,
+                            'error'   => 'Ledger mutation failed. Please retry.',
                             'list'    => [],
                         ];
                     }
@@ -348,33 +385,55 @@ class MCPAgentService {
                 $commit_res = $wpdb->query('COMMIT');
                 if ($commit_res === false) {
                     $wpdb->query('ROLLBACK');
+                    try {
+                        \WebCareProScanner\System\AuditLogger::log_operational('mcp_ledger_mutation_failed', [
+                            'stage'    => 'commit_transaction',
+                            'db_error' => $wpdb->last_error ?: 'COMMIT returned false',
+                        ]);
+                    } catch (\Throwable) {}
                     return [
                         'success' => false,
-                        'error'   => 'Failed to commit ledger transaction.',
+                        'error'   => 'Ledger mutation failed. Please retry.',
                         'list'    => [],
                     ];
                 }
 
-                // Invalidate options cache for staged actions ONLY after confirmed COMMIT
-                wp_cache_delete(self::STAGED_OPTION_KEY, 'options');
-                wp_cache_delete('alloptions', 'options');
-
-                return [
-                    'success' => true,
-                    'error'   => '',
-                    'list'    => $updated_list,
-                    'meta'    => $meta,
-                ];
+                $committed = true;
             } catch (\Throwable $e) {
-                if ($tx_started) {
+                if ($tx_started && !$committed) {
                     $wpdb->query('ROLLBACK');
                 }
+                try {
+                    \WebCareProScanner\System\AuditLogger::log_operational('mcp_ledger_mutation_failed', [
+                        'stage'    => 'transaction_exception',
+                        'db_error' => $e->getMessage(),
+                    ]);
+                } catch (\Throwable) {}
                 return [
                     'success' => false,
-                    'error'   => 'Exception during ledger mutation: ' . $e->getMessage(),
+                    'error'   => 'Ledger mutation failed. Please retry.',
                     'list'    => [],
                 ];
             }
+
+            // Invalidate options cache strictly AFTER commit inside its own exception-safe block
+            try {
+                wp_cache_delete(self::STAGED_OPTION_KEY, 'options');
+                wp_cache_delete('alloptions', 'options');
+            } catch (\Throwable $cache_err) {
+                try {
+                    \WebCareProScanner\System\AuditLogger::log_operational('mcp_ledger_cache_invalidation_failed', [
+                        'error' => $cache_err->getMessage(),
+                    ]);
+                } catch (\Throwable) {}
+            }
+
+            return [
+                'success' => true,
+                'error'   => '',
+                'list'    => $updated_list,
+                'meta'    => $meta,
+            ];
         }
 
         // Fallback for non-wpdb environments (e.g. lightweight unit test mocks)

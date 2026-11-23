@@ -608,6 +608,27 @@ if (!function_exists('__')) {
     }
 }
 
+if (!function_exists('maybe_serialize')) {
+    function maybe_serialize($data) {
+        if (is_array($data) || is_object($data)) {
+            return serialize($data);
+        }
+        return $data;
+    }
+}
+
+if (!function_exists('maybe_unserialize')) {
+    function maybe_unserialize($data) {
+        if (is_string($data)) {
+            $unserialized = @unserialize($data);
+            if ($unserialized !== false || $data === 'b:0;') {
+                return $unserialized;
+            }
+        }
+        return $data;
+    }
+}
+
 // Mock minimal WP_REST_Request class if not loaded
 if (!class_exists('WP_REST_Request')) {
     class WP_REST_Request {

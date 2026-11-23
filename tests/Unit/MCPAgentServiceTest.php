@@ -371,4 +371,309 @@ final class MCPAgentServiceTest extends TestCase {
         $this->assertSame('Staged action record not found during finalization.', $abort_reason);
         MCPAgentService::release_ledger_lock($token);
     }
+
+    public function test_end_to_end_approval_missing_entry_at_finalization_reports_reconciliation(): void {
+        $staged_id = 'test_e2e_missing_' . bin2hex(random_bytes(4));
+        $claim_key = 'webcareproscan_mcp_claim_' . sanitize_key($staged_id);
+        delete_option($claim_key);
+
+        // Wipe the staged actions ledger
+        update_option(MCPAgentService::STAGED_OPTION_KEY, [], false);
+
+        $abort_reason = null;
+        $token2 = MCPAgentService::acquire_ledger_lock();
+        $this->assertNotEmpty($token2);
+
+        $mutation = MCPAgentService::mutate_ledger_fenced($token2, function (array $fresh_list) use ($staged_id, &$abort_reason) {
+            $found = false;
+            foreach ($fresh_list as $f_idx => $f_action) {
+                if (($f_action['id'] ?? '') === $staged_id) {
+                    $found = true;
+                    break;
+                }
+            }
+            if (!$found) {
+                $abort_reason = 'Staged action record not found during finalization.';
+            }
+            return $fresh_list;
+        });
+        MCPAgentService::release_ledger_lock($token2);
+
+        $this->assertTrue($mutation['success']);
+        $this->assertSame('Staged action record not found during finalization.', $abort_reason);
+    }
+
+    public function test_db_failure_injection_start_transaction_fails(): void {
+        global $wpdb;
+        $original_wpdb = $wpdb;
+
+        $state = new \stdClass();
+        $state->rollback_called = false;
+
+        $mock = new class($state) {
+            public string $options = 'wp_options';
+            public string $last_error = '';
+            public \stdClass $state;
+            public function __construct(\stdClass $state) { $this->state = $state; }
+            public function prepare(string $q, ...$args): string { return $q; }
+            public function get_row(string $q): object { return (object) ['Engine' => 'InnoDB']; }
+            public function query(string $q) {
+                if ($q === 'START TRANSACTION') return false;
+                if ($q === 'ROLLBACK') $this->state->rollback_called = true;
+                return 1;
+            }
+        };
+
+        $GLOBALS['wpdb'] = $mock;
+        MCPAgentService::reset_engine_cache();
+
+        try {
+            $res = MCPAgentService::mutate_ledger_fenced('token_123', function ($list) { return $list; });
+            $this->assertFalse($res['success']);
+            $this->assertSame('Ledger mutation failed. Please retry.', $res['error']);
+            $this->assertFalse($state->rollback_called); // Zero rollback if start transaction failed
+        } finally {
+            $GLOBALS['wpdb'] = $original_wpdb;
+            MCPAgentService::reset_engine_cache();
+        }
+    }
+
+    public function test_db_failure_injection_select_lock_fails(): void {
+        global $wpdb;
+        $original_wpdb = $wpdb;
+
+        $state = new \stdClass();
+        $state->rollback_called = false;
+
+        $mock = new class($state) {
+            public string $options = 'wp_options';
+            public string $last_error = '';
+            public \stdClass $state;
+            public function __construct(\stdClass $state) { $this->state = $state; }
+            public function prepare(string $q, ...$args): string { return vsprintf(str_replace(['%s', '%d'], ["'%s'", '%d'], $q), $args); }
+            public function query(string $q) {
+                if ($q === 'ROLLBACK') $this->state->rollback_called = true;
+                return 1;
+            }
+            public function get_row(string $q) {
+                if (str_contains($q, 'SHOW TABLE STATUS')) return (object) ['Engine' => 'InnoDB'];
+                if (str_contains($q, 'webcareproscan_mcp_ledger_lock')) {
+                    $this->last_error = 'Deadlock found when trying to get lock';
+                    return null;
+                }
+                return null;
+            }
+        };
+
+        $GLOBALS['wpdb'] = $mock;
+        MCPAgentService::reset_engine_cache();
+
+        try {
+            $res = MCPAgentService::mutate_ledger_fenced('token_123', function ($list) { return $list; });
+            $this->assertFalse($res['success']);
+            $this->assertSame('Ledger mutation failed. Please retry.', $res['error']);
+            $this->assertStringNotContainsString('Deadlock', $res['error']); // Generic message only, no DB leak
+            $this->assertTrue($state->rollback_called);
+        } finally {
+            $GLOBALS['wpdb'] = $original_wpdb;
+            MCPAgentService::reset_engine_cache();
+        }
+    }
+
+    public function test_db_failure_injection_select_ledger_fails(): void {
+        global $wpdb;
+        $original_wpdb = $wpdb;
+
+        $state = new \stdClass();
+        $state->rollback_called = false;
+
+        $mock = new class($state) {
+            public string $options = 'wp_options';
+            public string $last_error = '';
+            public \stdClass $state;
+            public function __construct(\stdClass $state) { $this->state = $state; }
+            public function prepare(string $q, ...$args): string { return vsprintf(str_replace(['%s', '%d'], ["'%s'", '%d'], $q), $args); }
+            public function query(string $q) {
+                if ($q === 'ROLLBACK') $this->state->rollback_called = true;
+                return 1;
+            }
+            public function get_row(string $q) {
+                if (str_contains($q, 'SHOW TABLE STATUS')) return (object) ['Engine' => 'InnoDB'];
+                if (str_contains($q, 'webcareproscan_mcp_ledger_lock')) {
+                    $this->last_error = '';
+                    return (object) ['option_value' => serialize(['owner' => 'token_123', 'created' => time()])];
+                }
+                if (str_contains($q, 'webcareproscan_mcp_staged_actions')) {
+                    $this->last_error = 'Table corrupted';
+                    return null;
+                }
+                return null;
+            }
+        };
+
+        $GLOBALS['wpdb'] = $mock;
+        MCPAgentService::reset_engine_cache();
+
+        try {
+            $res = MCPAgentService::mutate_ledger_fenced('token_123', function ($list) { return $list; });
+            $this->assertFalse($res['success']);
+            $this->assertSame('Ledger mutation failed. Please retry.', $res['error']);
+            $this->assertStringNotContainsString('corrupted', $res['error']);
+            $this->assertTrue($state->rollback_called);
+        } finally {
+            $GLOBALS['wpdb'] = $original_wpdb;
+            MCPAgentService::reset_engine_cache();
+        }
+    }
+
+    public function test_db_failure_injection_update_returns_false(): void {
+        global $wpdb;
+        $original_wpdb = $wpdb;
+
+        $state = new \stdClass();
+        $state->rollback_called = false;
+
+        $mock = new class($state) {
+            public string $options = 'wp_options';
+            public string $last_error = '';
+            public \stdClass $state;
+            public function __construct(\stdClass $state) { $this->state = $state; }
+            public function prepare(string $q, ...$args): string { return vsprintf(str_replace(['%s', '%d'], ["'%s'", '%d'], $q), $args); }
+            public function query(string $q) {
+                if ($q === 'ROLLBACK') $this->state->rollback_called = true;
+                return 1;
+            }
+            public function get_row(string $q) {
+                if (str_contains($q, 'SHOW TABLE STATUS')) return (object) ['Engine' => 'InnoDB'];
+                if (str_contains($q, 'webcareproscan_mcp_ledger_lock')) {
+                    $this->last_error = '';
+                    return (object) ['option_value' => serialize(['owner' => 'token_123', 'created' => time()])];
+                }
+                if (str_contains($q, 'webcareproscan_mcp_staged_actions')) {
+                    $this->last_error = '';
+                    return (object) ['option_value' => serialize([])];
+                }
+                return null;
+            }
+            public function update(string $table, array $data, array $where) {
+                $this->last_error = 'Disk full';
+                return false;
+            }
+        };
+
+        $GLOBALS['wpdb'] = $mock;
+        MCPAgentService::reset_engine_cache();
+
+        try {
+            $res = MCPAgentService::mutate_ledger_fenced('token_123', function ($list) { return [['id' => '1']]; });
+            $this->assertFalse($res['success']);
+            $this->assertSame('Ledger mutation failed. Please retry.', $res['error']);
+            $this->assertStringNotContainsString('Disk full', $res['error']);
+            $this->assertTrue($state->rollback_called);
+        } finally {
+            $GLOBALS['wpdb'] = $original_wpdb;
+            MCPAgentService::reset_engine_cache();
+        }
+    }
+
+    public function test_db_failure_injection_commit_fails(): void {
+        global $wpdb;
+        $original_wpdb = $wpdb;
+
+        $state = new \stdClass();
+        $state->rollback_called = false;
+
+        $mock = new class($state) {
+            public string $options = 'wp_options';
+            public string $last_error = '';
+            public \stdClass $state;
+            public function __construct(\stdClass $state) { $this->state = $state; }
+            public function prepare(string $q, ...$args): string { return vsprintf(str_replace(['%s', '%d'], ["'%s'", '%d'], $q), $args); }
+            public function query(string $q) {
+                if ($q === 'COMMIT') return false;
+                if ($q === 'ROLLBACK') $this->state->rollback_called = true;
+                return 1;
+            }
+            public function get_row(string $q) {
+                if (str_contains($q, 'SHOW TABLE STATUS')) return (object) ['Engine' => 'InnoDB'];
+                if (str_contains($q, 'webcareproscan_mcp_ledger_lock')) {
+                    $this->last_error = '';
+                    return (object) ['option_value' => serialize(['owner' => 'token_123', 'created' => time()])];
+                }
+                if (str_contains($q, 'webcareproscan_mcp_staged_actions')) {
+                    $this->last_error = '';
+                    return (object) ['option_value' => serialize([])];
+                }
+                return null;
+            }
+            public function update(string $table, array $data, array $where) {
+                $this->last_error = '';
+                return 1;
+            }
+        };
+
+        $GLOBALS['wpdb'] = $mock;
+        MCPAgentService::reset_engine_cache();
+
+        try {
+            $res = MCPAgentService::mutate_ledger_fenced('token_123', function ($list) { return [['id' => '1']]; });
+            $this->assertFalse($res['success']);
+            $this->assertSame('Ledger mutation failed. Please retry.', $res['error']);
+            $this->assertTrue($state->rollback_called);
+        } finally {
+            $GLOBALS['wpdb'] = $original_wpdb;
+            MCPAgentService::reset_engine_cache();
+        }
+    }
+
+    public function test_post_commit_cache_failure_does_not_rollback_or_fail(): void {
+        global $wpdb;
+        $original_wpdb = $wpdb;
+
+        $state = new \stdClass();
+        $state->rollback_called = false;
+        $state->commit_called = false;
+
+        $mock = new class($state) {
+            public string $options = 'wp_options';
+            public string $last_error = '';
+            public \stdClass $state;
+            public function __construct(\stdClass $state) { $this->state = $state; }
+            public function prepare(string $q, ...$args): string { return vsprintf(str_replace(['%s', '%d'], ["'%s'", '%d'], $q), $args); }
+            public function query(string $q) {
+                if ($q === 'COMMIT') { $this->state->commit_called = true; return 1; }
+                if ($q === 'ROLLBACK') { $this->state->rollback_called = true; return 1; }
+                return 1;
+            }
+            public function get_row(string $q) {
+                if (str_contains($q, 'SHOW TABLE STATUS')) return (object) ['Engine' => 'InnoDB'];
+                if (str_contains($q, 'webcareproscan_mcp_ledger_lock')) {
+                    $this->last_error = '';
+                    return (object) ['option_value' => serialize(['owner' => 'token_123', 'created' => time()])];
+                }
+                if (str_contains($q, 'webcareproscan_mcp_staged_actions')) {
+                    $this->last_error = '';
+                    return (object) ['option_value' => serialize([])];
+                }
+                return null;
+            }
+            public function update(string $table, array $data, array $where) {
+                $this->last_error = '';
+                return 1;
+            }
+        };
+
+        $GLOBALS['wpdb'] = $mock;
+        MCPAgentService::reset_engine_cache();
+
+        try {
+            $res = MCPAgentService::mutate_ledger_fenced('token_123', function ($list) { return [['id' => 'saved_1']]; });
+            $this->assertTrue($res['success']);
+            $this->assertTrue($state->commit_called);
+            $this->assertFalse($state->rollback_called);
+        } finally {
+            $GLOBALS['wpdb'] = $original_wpdb;
+            MCPAgentService::reset_engine_cache();
+        }
+    }
 }
