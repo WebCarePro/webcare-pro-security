@@ -3,4 +3,5 @@
   * Clean v0.0.1 fresh-start baseline and release reset.
   * Calm, trust-building Overview Dashboard redesign featuring soothing breathing shield emblem, live peace-of-mind metrics, and 2-column protection layers grid.
   * Removal of legacy workspace mode frontend storage shims, standardizing strictly on webcare_mode ('simple' | 'developer') and webcare_mode_changed.
+  * Complete 3-level URL routing architecture: synchronized routes.json, useWebCareRoute client hook, canonical &tab= and &section= parameters across all 7 pillars, eliminating all legacy ?subtab= parameters.
   * Canonical 7-pillar architecture and modular React admin UI for WordPress 7.0+ and PHP 8.3+.

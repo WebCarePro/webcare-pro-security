@@ -21,12 +21,12 @@
       "description": "Block attacks, manage rules, bots, AI crawlers, and Cloudflare.",
       "bundle": "firewall",
       "icon": "firewall",
-      "default_tab": "waf-rules",
+      "default_tab": "rules",
       "mode": "all",
       "tabs": [
         {
-          "id": "waf-rules",
-          "label": "Rules & Presets",
+          "id": "rules",
+          "label": "Protection & Rules",
           "mode": "all",
           "description": "Core firewall rules, inspection modes, and attack defense."
         },
@@ -44,19 +44,33 @@
         },
         {
           "id": "bots",
-          "label": "Bots & AI Crawlers",
+          "label": "Bots & Rate Limits",
           "mode": "all",
-          "description": "Search engine bots, AI scrapers, bad bots, and crawler policies."
+          "description": "Search engine bots, AI scrapers, bad bots, and crawler policies.",
+          "default_section": "rate-limits",
+          "sections": [
+            { "id": "rate-limits", "label": "Rate Limits", "mode": "all" },
+            { "id": "learning", "label": "Auto-Learning", "mode": "all" },
+            { "id": "velocity", "label": "Attack Surge Shield", "mode": "all" },
+            { "id": "traps", "label": "Bot Traps", "mode": "all" }
+          ]
         },
         {
-          "id": "custom-waf-rules",
+          "id": "custom-rules",
           "label": "Custom Rules",
           "mode": "developer",
-          "description": "Author custom CIDR, header, path, query, and user-agent WAF rules."
+          "description": "Author custom CIDR, header, path, query, and user-agent WAF rules.",
+          "default_section": "list",
+          "sections": [
+            { "id": "list", "label": "My Rules", "mode": "developer" },
+            { "id": "builder", "label": "Visual Rule Builder", "mode": "developer" },
+            { "id": "packs", "label": "Protection Packs", "mode": "developer" },
+            { "id": "simulator", "label": "Rule Tester", "mode": "developer" }
+          ]
         },
         {
           "id": "adaptive",
-          "label": "Adaptive Protection",
+          "label": "Adaptive Shield",
           "mode": "developer",
           "description": "Context-adaptive stack profiling, WooCommerce safeguards, and auto-tuning."
         },
@@ -67,17 +81,46 @@
           "description": "0-day hotfixes, declarative CVE mitigations, and targeted shields."
         },
         {
-          "id": "advanced",
-          "label": "Advanced Tools",
+          "id": "ai-defense",
+          "label": "AI & Threat Defense",
           "mode": "developer",
-          "description": "Server rules, AI traps, supply chain defenses, and attack simulation.",
+          "description": "Honeypots, prompt injection defense, outbound egress, and AI scraper blocks.",
+          "default_section": "honeypots",
+          "sections": [
+            { "id": "honeypots", "label": "Honeypot Traps", "mode": "developer" },
+            { "id": "prompt-guard", "label": "AI Prompt Guard", "mode": "developer" },
+            { "id": "outbound", "label": "Outbound Traffic", "mode": "developer" },
+            { "id": "geo-blocking", "label": "Country Blocking", "mode": "developer" },
+            { "id": "credentials", "label": "Credential Guard", "mode": "developer" },
+            { "id": "code-taint", "label": "Code Taint Guard", "mode": "developer" },
+            { "id": "api-surface", "label": "API Attack Surface", "mode": "developer" },
+            { "id": "blocked-agents", "label": "Blocked AI Agents", "mode": "developer" }
+          ]
+        },
+        {
+          "id": "supply-chain",
+          "label": "Supply Chain",
+          "mode": "developer",
+          "description": "Software inventory, lockfiles, external scripts, and install gatekeeper.",
+          "default_section": "inventory",
+          "sections": [
+            { "id": "inventory", "label": "Software Inventory", "mode": "developer" },
+            { "id": "lockfiles", "label": "Dependency Check", "mode": "developer" },
+            { "id": "scripts", "label": "External Scripts", "mode": "developer" },
+            { "id": "install-guard", "label": "Install Advisor", "mode": "developer" },
+            { "id": "gatekeeper", "label": "Update Guard", "mode": "developer" }
+          ]
+        },
+        {
+          "id": "server",
+          "label": "Server & Testing",
+          "mode": "developer",
+          "description": "Server rules (.htaccess/Nginx), attack tests, and threat feeds.",
           "default_section": "server-rules",
           "sections": [
-            { "id": "server-rules", "label": "Server Rules (.htaccess/Nginx)", "mode": "developer" },
-            { "id": "ai-traps", "label": "AI Traps & Honeypots", "mode": "developer" },
-            { "id": "supply-chain", "label": "Supply Chain & Third-Party Guard", "mode": "developer" },
-            { "id": "attack-test", "label": "Firewall Simulator & Attack Test", "mode": "developer" },
-            { "id": "threat-feeds", "label": "Threat Intelligence Feeds", "mode": "developer" }
+            { "id": "server-rules", "label": "Server Rules (.htaccess / Nginx)", "mode": "developer" },
+            { "id": "attack-test", "label": "Firewall Self-Test", "mode": "developer" },
+            { "id": "threat-feeds", "label": "Public Threat Feeds", "mode": "developer" }
           ]
         }
       ]
@@ -131,22 +174,27 @@
           "description": "Full file scanner, heuristic analysis, webshell detection, and threat quarantine."
         },
         {
-          "id": "vulnerabilities",
+          "id": "risks",
           "label": "Plugin & Theme Risks",
           "mode": "all",
           "description": "Known CVE vulnerabilities in active plugins, themes, and WordPress core."
         },
         {
-          "id": "file-integrity",
+          "id": "file-changes",
           "label": "Core File Changes",
           "mode": "all",
-          "description": "File integrity monitoring (FIM), official checksum diffs, and unexpected modifications."
+          "description": "File integrity monitoring (FIM), official checksum diffs, and permissions.",
+          "default_section": "checksums",
+          "sections": [
+            { "id": "checksums", "label": "File Verification", "mode": "all" },
+            { "id": "permissions", "label": "File Permissions", "mode": "all" }
+          ]
         },
         {
           "id": "targeted",
           "label": "Targeted Checks",
           "mode": "developer",
-          "description": "Focused directory scans, database content inspection, and custom malware signatures."
+          "description": "Focused directory scans, database content inspection, and custom signatures."
         }
       ]
     },
@@ -180,7 +228,7 @@
           "description": "Brute-force lockout status, failed attempt telemetry, and instant unblock."
         },
         {
-          "id": "settings",
+          "id": "rules",
           "label": "Login Rules",
           "mode": "all",
           "description": "Brute-force thresholds, lockout durations, custom login URL, and reCAPTCHA/Turnstile."
@@ -189,7 +237,12 @@
           "id": "sessions",
           "label": "Active Sessions",
           "mode": "developer",
-          "description": "Inspect and revoke active user login sessions across devices and IP addresses."
+          "description": "Inspect and revoke active user login sessions across devices and IP addresses.",
+          "default_section": "live-sessions",
+          "sections": [
+            { "id": "live-sessions", "label": "Logged-In Users", "mode": "developer" },
+            { "id": "password-leaks", "label": "Breached Password Check", "mode": "developer" }
+          ]
         },
         {
           "id": "admins",
@@ -241,16 +294,29 @@
           "description": "PHP environment, OPcache status, file permissions, open ports, and memory telemetry."
         },
         {
-          "id": "forensics",
-          "label": "Deep Diagnostics",
-          "mode": "developer",
-          "description": "Persistence mechanisms, watchdog integrity, cron integrity, and attack chain inspection."
-        },
-        {
           "id": "secrets",
           "label": "Encryption Keys",
           "mode": "developer",
           "description": "SecretVault HMAC rotation, encryption keys, and cryptographic integrity tokens."
+        },
+        {
+          "id": "diagnostics",
+          "label": "Deep Diagnostics",
+          "mode": "developer",
+          "description": "Persistence mechanisms, watchdog integrity, cron integrity, and attack chain inspection.",
+          "default_section": "persistence",
+          "sections": [
+            { "id": "persistence", "label": "Hidden Backdoors", "mode": "developer" },
+            { "id": "watchdog", "label": "Startup Watchdog", "mode": "developer" },
+            { "id": "preloaders", "label": "MU-Plugins & Drop-ins", "mode": "developer" },
+            { "id": "snapshots", "label": "System Snapshots", "mode": "developer" },
+            { "id": "baseline", "label": "Behavior Baseline", "mode": "developer" },
+            { "id": "files", "label": "Suspicious Files", "mode": "developer" },
+            { "id": "attack-chains", "label": "Attack Chains", "mode": "developer" },
+            { "id": "correlation", "label": "Threat Correlation", "mode": "developer" },
+            { "id": "allowlist", "label": "Allowlist & Safe Files", "mode": "developer" },
+            { "id": "self-defense", "label": "Plugin Self-Defense", "mode": "developer" }
+          ]
         }
       ]
     },
@@ -262,18 +328,18 @@
       "description": "Health check, alerts, schedules, hardening, AI, and support.",
       "bundle": "settings",
       "icon": "settings",
-      "default_tab": "health",
+      "default_tab": "doctor",
       "mode": "all",
       "tabs": [
         {
-          "id": "health",
+          "id": "doctor",
           "label": "Site Doctor & Rescue",
           "mode": "all",
           "group": "Health & Rescue",
           "description": "System health diagnostics, configuration auditor, and 15-minute emergency safe mode."
         },
         {
-          "id": "emergency",
+          "id": "lockdown",
           "label": "Emergency Lockdown",
           "mode": "developer",
           "group": "Health & Rescue",

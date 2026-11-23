@@ -16,7 +16,7 @@ import {
 interface QuickJumpModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onNavigate: (slug: string, tab?: string, subtab?: string) => void;
+  onNavigate: (slug: string, tab?: string, section?: string) => void;
   onSwitchToAdvancedMode?: () => void;
 }
 
@@ -68,7 +68,7 @@ export const QuickJumpModal: React.FC<QuickJumpModalProps> = ({
     if (item.isAdvanced && onSwitchToAdvancedMode) {
       onSwitchToAdvancedMode();
     }
-    onNavigate(item.slug, item.tab, item.subtab);
+    onNavigate(item.slug, item.tab, item.section || item.subtab);
     onClose();
   };
 

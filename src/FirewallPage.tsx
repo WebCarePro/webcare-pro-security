@@ -311,10 +311,13 @@ export const FirewallPage = ({
       'virtual-patches': 'vpatch',
       vpatch: 'vpatch',
       drill: 'drill',
+      'supply-chain': 'supply_chain',
       supply_chain: 'supply_chain',
+      'ai-defense': 'ai_defense',
+      ai_defense: 'ai_defense',
+      server: 'server_sec',
       server_sec: 'server_sec',
       intel: 'intel',
-      ai_defense: 'ai_defense',
     };
     return tabMap[tab] || null;
   };
@@ -717,17 +720,23 @@ export const FirewallPage = ({
     doSwitchTab(tab);
   };
 
-  const doSwitchTab = (tab: 'stream' | 'rules' | 'caf' | 'drill' | 'supply_chain' | 'behavioral' | 'server_sec' | 'intel' | 'cloudflare' | 'vpatch' | 'ai_defense' | 'custom_rules') => {
+  const doSwitchTab = (tab: 'stream' | 'rules' | 'caf' | 'drill' | 'supply_chain' | 'behavioral' | 'server_sec' | 'intel' | 'cloudflare' | 'vpatch' | 'ai_defense' | 'custom_rules', sectionParam?: string) => {
     setActiveTab(tab);
     try {
       const url = new URL(window.location.href);
-      const urlTabParam = tab === 'rules' ? 'waf-rules' : tab === 'custom_rules' ? 'custom-waf-rules' : tab;
+      const urlTabParam = tab === 'rules' ? 'rules' : tab === 'custom_rules' ? 'custom-rules' : tab === 'behavioral' ? 'bots' : tab === 'caf' ? 'adaptive' : tab === 'vpatch' ? 'virtual-patches' : tab === 'ai_defense' ? 'ai-defense' : tab === 'supply_chain' ? 'supply-chain' : tab === 'server_sec' ? 'server' : tab === 'stream' ? 'traffic' : tab;
       url.searchParams.set('tab', urlTabParam);
-      window.history.pushState({ tab: urlTabParam }, '', url.toString());
+      if (sectionParam) {
+        url.searchParams.set('section', sectionParam);
+      } else {
+        url.searchParams.delete('section');
+      }
+      url.searchParams.delete('subtab');
+      window.history.pushState({ tab: urlTabParam, section: sectionParam }, '', url.toString());
     } catch (e) {}
     if (onSubTabChange) {
-      const canonicalTabParam = tab === 'rules' ? 'waf-rules' : tab === 'custom_rules' ? 'custom-waf-rules' : tab;
-      onSubTabChange(canonicalTabParam as any);
+      const canonicalTabParam = tab === 'rules' ? 'rules' : tab === 'custom_rules' ? 'custom-rules' : tab === 'behavioral' ? 'bots' : tab === 'caf' ? 'adaptive' : tab === 'vpatch' ? 'virtual-patches' : tab === 'ai_defense' ? 'ai-defense' : tab === 'supply_chain' ? 'supply-chain' : tab === 'server_sec' ? 'server' : tab === 'stream' ? 'traffic' : tab;
+      onSubTabChange(canonicalTabParam as any, sectionParam);
     }
   };
 

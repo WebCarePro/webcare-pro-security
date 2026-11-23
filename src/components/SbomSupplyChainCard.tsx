@@ -44,8 +44,10 @@ export const SbomSupplyChainCard = ({
   const getStartingTab = (): 'sbom' | 'gatekeeper' | 'advisor' | 'lockfiles' | 'scripts' => {
     try {
       const urlParams = new URLSearchParams(window.location.search);
-      const sub = urlParams.get('subtab');
-      if (sub && ['sbom', 'gatekeeper', 'advisor', 'lockfiles', 'scripts'].includes(sub)) {
+      const sub = urlParams.get('section') || urlParams.get('subtab');
+      if (sub === 'inventory' || sub === 'sbom') return 'sbom';
+      if (sub === 'install-guard' || sub === 'advisor') return 'advisor';
+      if (sub && ['gatekeeper', 'lockfiles', 'scripts'].includes(sub)) {
         return sub as any;
       }
     } catch (e) {}
@@ -61,13 +63,15 @@ export const SbomSupplyChainCard = ({
 
   const handleSubTabSwitch = (tab: 'sbom' | 'gatekeeper' | 'advisor' | 'lockfiles' | 'scripts') => {
     setActiveSubTab(tab);
+    const sectionName = tab === 'sbom' ? 'inventory' : tab === 'advisor' ? 'install-guard' : tab;
     if (onSubTabChange) {
       onSubTabChange(tab);
     } else {
       try {
         const url = new URL(window.location.href);
-        url.searchParams.set('subtab', tab);
-        window.history.pushState({ subtab: tab }, '', url.toString());
+        url.searchParams.set('section', sectionName);
+        url.searchParams.delete('subtab');
+        window.history.pushState({ section: sectionName }, '', url.toString());
       } catch (e) {}
     }
   };

@@ -44,10 +44,9 @@ export const IdentityForensicsCard = ({ apiRequest, initialSubTab = 'sessions', 
   const getStartingTab = (): 'sessions' | 'breach' => {
     try {
       const urlParams = new URLSearchParams(window.location.search);
-      const sub = urlParams.get('subtab');
-      if (sub && ['sessions', 'breach'].includes(sub)) {
-        return sub as any;
-      }
+      const sub = urlParams.get('section') || urlParams.get('subtab');
+      if (sub === 'live-sessions' || sub === 'sessions') return 'sessions';
+      if (sub === 'password-leaks' || sub === 'breach') return 'breach';
     } catch (e) {}
     return initialSubTab || 'sessions';
   };
@@ -62,13 +61,15 @@ export const IdentityForensicsCard = ({ apiRequest, initialSubTab = 'sessions', 
 
   const handleSubTabSwitch = (sub: 'sessions' | 'breach') => {
     setActiveSubTab(sub);
+    const sectionName = sub === 'sessions' ? 'live-sessions' : 'password-leaks';
     if (onSubTabChange) {
       onSubTabChange(sub);
     } else {
       try {
         const url = new URL(window.location.href);
-        url.searchParams.set('subtab', sub);
-        window.history.pushState({ subtab: sub }, '', url.toString());
+        url.searchParams.set('section', sectionName);
+        url.searchParams.delete('subtab');
+        window.history.pushState({ section: sectionName }, '', url.toString());
       } catch (e) {}
     }
   };

@@ -1840,20 +1840,20 @@ export const App = ({ initialTab }: { initialTab?: NavTab } = {}) => {
       scan: 'webcare-pro-scanner&tab=malware',
       targeted: 'webcare-pro-scanner&tab=targeted',
       logs: 'webcare-pro-logs&tab=scans',
-      fim: 'webcare-pro-scanner&tab=file-integrity',
-      vulnerabilities: 'webcare-pro-scanner&tab=vulnerabilities',
-      firewall: 'webcare-pro-firewall&tab=waf-rules',
-      custom_rules: 'webcare-pro-firewall&tab=custom-waf-rules',
-      modular_waf: 'webcare-pro-firewall&tab=custom-waf-rules',
+      fim: 'webcare-pro-scanner&tab=file-changes',
+      vulnerabilities: 'webcare-pro-scanner&tab=risks',
+      firewall: 'webcare-pro-firewall&tab=rules',
+      custom_rules: 'webcare-pro-firewall&tab=custom-rules',
+      modular_waf: 'webcare-pro-firewall&tab=custom-rules',
       waf_logs: 'webcare-pro-logs&tab=firewall',
       vpatch: 'webcare-pro-firewall&tab=virtual-patches',
       auth: 'webcare-pro-login&tab=2fa',
       vault: 'webcare-pro-backups&tab=database',
       quarantine: 'webcare-pro-backups&tab=quarantine',
       backup: 'webcare-pro-backups&tab=database',
-      forensics: 'webcare-pro-backups&tab=forensics',
+      forensics: 'webcare-pro-backups&tab=diagnostics',
       server: 'webcare-pro-backups&tab=server',
-      settings: 'webcare-pro-settings&tab=health',
+      settings: 'webcare-pro-settings&tab=doctor',
       notifications: 'webcare-pro-settings&tab=alerts',
       activity_logs: 'webcare-pro-logs&tab=activity',
       cron_manager: 'webcare-pro-settings&tab=cron',
@@ -1863,7 +1863,7 @@ export const App = ({ initialTab }: { initialTab?: NavTab } = {}) => {
 
     let target = pageMap[newTab] || TAB_TO_PAGE[newTab] || ('webcare-pro-security&tab=' + newTab);
     if (subTab) {
-      const canonicalSub = subTab === 'rules' ? 'waf-rules' : (subTab === 'custom_rules' || subTab === 'rule-builder' || subTab === 'custom-rules') ? 'custom-waf-rules' : subTab;
+      const canonicalSub = (subTab === 'rules' || subTab === 'waf-rules') ? 'rules' : (subTab === 'custom_rules' || subTab === 'rule-builder' || subTab === 'custom-rules' || subTab === 'custom-waf-rules') ? 'custom-rules' : (subTab === 'caf' || subTab === 'adaptive') ? 'adaptive' : (subTab === 'behavioral' || subTab === 'bots') ? 'bots' : (subTab === 'ai_defense' || subTab === 'ai-defense') ? 'ai-defense' : (subTab === 'supply_chain' || subTab === 'supply-chain') ? 'supply-chain' : (subTab === 'server_sec' || subTab === 'server') ? 'server' : (subTab === 'stream' || subTab === 'traffic') ? 'traffic' : subTab;
       if (target.includes('&tab=')) {
         target = target.replace(/&tab=[^&]*/, '&tab=' + canonicalSub);
       } else {
@@ -1871,10 +1871,10 @@ export const App = ({ initialTab }: { initialTab?: NavTab } = {}) => {
       }
     }
     if (nestedSubTab) {
-      if (target.includes('&subtab=')) {
-        target = target.replace(/&subtab=[^&]*/, '&subtab=' + nestedSubTab);
+      if (target.includes('&section=')) {
+        target = target.replace(/&section=[^&]*/, '&section=' + nestedSubTab);
       } else {
-        target += '&subtab=' + nestedSubTab;
+        target += '&section=' + nestedSubTab;
       }
     }
     window.location.href = 'admin.php?page=' + target;
@@ -6873,28 +6873,27 @@ Source Code,${escapeCsv(code)}
           onNavigateToSupport={() => handleNavTabChange('about')}
           scannedFiles={scannedFiles}
           initialSubTab={(() => {
-            const valid = ['persistence', 'watchdog', 'baseline', 'files', 'attack_chain', 'correlation', 'whitelist', 'transactions', 'self_defense'];
+            const valid = ['persistence', 'watchdog', 'baseline', 'files', 'attack_chain', 'attack-chains', 'correlation', 'whitelist', 'allowlist', 'transactions', 'self_defense', 'self-defense', 'preloaders', 'snapshots'];
             if (initialForensicsSubTab && valid.includes(initialForensicsSubTab as any)) return initialForensicsSubTab;
             const urlParams = new URLSearchParams(window.location.search);
+            const section = urlParams.get('section');
+            if (section && valid.includes(section as any)) return section as any;
             const tab = urlParams.get('tab');
             const subtab = urlParams.get('subtab');
             if (tab && valid.includes(tab as any)) return tab as any;
             if (subtab && valid.includes(subtab as any)) return subtab as any;
             return 'persistence';
           })()}
-          initialNestedSubTab={initialWatchdogSubTab || ((new URLSearchParams(window.location.search).get('subtab') as any) || 'watchdog')}
+          initialNestedSubTab={initialWatchdogSubTab || ((new URLSearchParams(window.location.search).get('section') as any) || (new URLSearchParams(window.location.search).get('subtab') as any) || 'watchdog')}
           onSubTabChange={(sub, nested) => {
             setInitialForensicsSubTab(sub);
             if (nested) setInitialWatchdogSubTab(nested);
             try {
               const url = new URL(window.location.href);
-              url.searchParams.set('tab', sub);
-              if (nested) {
-                url.searchParams.set('subtab', nested);
-              } else {
-                url.searchParams.delete('subtab');
-              }
-              window.history.pushState({ tab: sub, subtab: nested }, '', url.toString());
+              url.searchParams.set('tab', 'diagnostics');
+              url.searchParams.set('section', sub);
+              url.searchParams.delete('subtab');
+              window.history.pushState({ tab: 'diagnostics', section: sub }, '', url.toString());
             } catch (e) {}
           }}
           onOpenFileViewer={handleOpenFileViewer}

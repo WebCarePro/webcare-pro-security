@@ -617,6 +617,17 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
     } catch {}
   };
 
+  const toCanonicalTabSlug = (tab: SettingsSubTab): string => {
+    switch (tab) {
+      case 'troubleshooter': return 'doctor';
+      case 'containment': return 'lockdown';
+      case 'schedule': return 'schedules';
+      case 'import_export': return 'import-export';
+      case 'cleanup': return 'data';
+      default: return tab;
+    }
+  };
+
   const handleTabChange = (newTab: SettingsSubTab) => {
     if (isDirty) {
       requestSettingsConfirm({
@@ -629,9 +640,11 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
           setActiveSubTab(newTab);
           try {
             const url = new URL(window.location.href);
-            url.searchParams.set('tab', newTab);
+            const canonical = toCanonicalTabSlug(newTab);
+            url.searchParams.set('tab', canonical);
             url.searchParams.delete('subtab');
-            window.history.pushState({ tab: newTab }, '', url.toString());
+            url.searchParams.delete('section');
+            window.history.pushState({ tab: canonical }, '', url.toString());
           } catch (e) {}
         },
       });
@@ -641,9 +654,11 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
     setActiveSubTab(newTab);
     try {
       const url = new URL(window.location.href);
-      url.searchParams.set('tab', newTab);
+      const canonical = toCanonicalTabSlug(newTab);
+      url.searchParams.set('tab', canonical);
       url.searchParams.delete('subtab');
-      window.history.pushState({ tab: newTab }, '', url.toString());
+      url.searchParams.delete('section');
+      window.history.pushState({ tab: canonical }, '', url.toString());
     } catch (e) {}
   };
 

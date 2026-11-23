@@ -140,6 +140,12 @@ type ModularWafTab = 'rules' | 'dossier' | 'builder' | 'nextgen';
 const resolveModularWafTabFromUrl = (): ModularWafTab => {
   try {
     const qs = new URLSearchParams(window.location.search);
+    const sec = qs.get('section') || qs.get('subtab');
+    if (sec === 'builder' || sec === 'simulator') return 'builder';
+    if (sec === 'packs' || sec === 'nextgen') return 'nextgen';
+    if (sec === 'list' || sec === 'rules') return 'rules';
+    if (sec === 'dossier') return 'dossier';
+
     const t = qs.get('tab');
     if (t === 'builder' || t === 'custom') return 'builder';
     if (t === 'nextgen' || t === 'modules') return 'nextgen';
@@ -154,7 +160,20 @@ export const CustomRulesStudio: React.FC = () => {
   const syncTabUrl = (tab: ModularWafTab, replace = false) => {
     try {
       const url = new URL(window.location.href);
-      url.searchParams.set('tab', tab);
+      const currentPage = url.searchParams.get('page') || '';
+      if (currentPage === 'webcare-pro-firewall') {
+        url.searchParams.set('tab', 'custom-rules');
+        const sectionMap: Record<ModularWafTab, string> = {
+          rules: 'list',
+          builder: 'builder',
+          nextgen: 'packs',
+          dossier: 'list',
+        };
+        url.searchParams.set('section', sectionMap[tab]);
+        url.searchParams.delete('subtab');
+      } else {
+        url.searchParams.set('tab', tab);
+      }
       if (replace) {
         window.history.replaceState({ tab }, '', url.toString());
       } else {

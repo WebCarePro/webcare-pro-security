@@ -263,9 +263,9 @@ export const WebCareShell = ({ activeTab, activePillarId, children }: WebCareShe
     activeTab ? (PAGE_MAP[activeTab] || 'webcare-pro-security') : routeState.page
   );
 
-  const navigateTo = (slug: string, tabParam?: string) => {
+  const navigateTo = (slug: string, tabParam?: string, sectionParam?: string) => {
     const targetPillar = PAGE_MAP[slug] || (slug.startsWith('webcare-pro-') ? slug : `webcare-pro-${slug}`);
-    navigateToRoute(targetPillar, tabParam || '');
+    navigateToRoute(targetPillar, tabParam || '', sectionParam || '');
   };
 
   const handleMegaMenuNavigate = (tab: string, subTab?: string, nestedSubTab?: string) => {
@@ -791,13 +791,13 @@ export const WebCareShell = ({ activeTab, activePillarId, children }: WebCareShe
       <QuickJumpModal
         isOpen={quickJumpOpen}
         onClose={() => setQuickJumpOpen(false)}
-        onNavigate={(slug, tab, subtab) => {
+        onNavigate={(slug, tab, section) => {
           let target = PAGE_MAP[slug] || (slug.startsWith('webcare-pro-') ? slug : `webcare-pro-${slug}`);
           if (tab && !target.includes('&tab=')) {
             target += `&tab=${tab}`;
           }
-          if (subtab && !target.includes('&subtab=')) {
-            target += `&subtab=${subtab}`;
+          if (section && !target.includes('&section=')) {
+            target += `&section=${section}`;
           }
           window.location.href = `admin.php?page=${target}`;
         }}

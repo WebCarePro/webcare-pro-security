@@ -84,6 +84,9 @@ export const WebCareVaultPage = ({
       if (tabParam === ('backup' as any)) {
         return 'database';
       }
+      if (tabParam === ('diagnostics' as any)) {
+        return 'forensics';
+      }
       if (tabParam && ['quarantine', 'database', 'rollback', 'secrets', 'forensics', 'server'].includes(tabParam)) {
         return tabParam;
       }
@@ -91,7 +94,7 @@ export const WebCareVaultPage = ({
         return 'forensics';
       }
     } catch (e) {}
-    if (initialTab && (FORENSICS_TABS as readonly string[]).includes(initialTab as string)) {
+    if (initialTab && ((initialTab as string) === 'diagnostics' || (FORENSICS_TABS as readonly string[]).includes(initialTab as string))) {
       return 'forensics';
     }
     return initialTab;
@@ -100,9 +103,9 @@ export const WebCareVaultPage = ({
   const getStartingForensicsSubTab = (): ForensicsSubTab => {
     try {
       const urlParams = new URLSearchParams(window.location.search);
-      const subtabParam = urlParams.get('subtab') as ForensicsSubTab;
-      if (subtabParam && (FORENSICS_TABS as readonly string[]).includes(subtabParam)) {
-        return subtabParam;
+      const sectionParam = (urlParams.get('section') || urlParams.get('subtab')) as ForensicsSubTab;
+      if (sectionParam && (FORENSICS_TABS as readonly string[]).includes(sectionParam)) {
+        return sectionParam;
       }
       const tabParam = urlParams.get('tab') as ForensicsSubTab;
       if (tabParam && (FORENSICS_TABS as readonly string[]).includes(tabParam)) {
@@ -156,13 +159,15 @@ export const WebCareVaultPage = ({
     setActiveTab(newTab);
     try {
       const url = new URL(window.location.href);
-      url.searchParams.set('tab', newTab);
+      const canonicalTab = newTab === 'forensics' ? 'diagnostics' : newTab;
+      url.searchParams.set('tab', canonicalTab);
       if (newTab === 'forensics' && forensicsSubTab) {
-        url.searchParams.set('subtab', forensicsSubTab);
+        url.searchParams.set('section', forensicsSubTab);
       } else {
-        url.searchParams.delete('subtab');
+        url.searchParams.delete('section');
       }
-      window.history.pushState({ vaultTab: newTab }, '', url.toString());
+      url.searchParams.delete('subtab');
+      window.history.pushState({ vaultTab: canonicalTab, section: forensicsSubTab }, '', url.toString());
     } catch (e) {}
   };
 

@@ -303,7 +303,7 @@ export const MegaMenuModal: React.FC<MegaMenuModalProps> = ({
 
   const handleNavigateItem = (item: NavigationItem) => {
     recordRecentNav(item.id);
-    onNavigate(item.slug, item.tab, item.subtab || item.nestedSubTab);
+    onNavigate(item.slug, item.tab, item.section || item.subtab || item.nestedSubTab);
     onClose();
   };
 

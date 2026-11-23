@@ -238,7 +238,7 @@ class CronRegistry {
                 'setting_key'         => 'self_defense_watchdog_enabled',
                 'setting_type'        => 'settings_manager',
                 'setting_location'    => did_action('init') ? __('Forensics -> Plugin Self-Defense', 'webcare-pro-security') : 'Forensics -> Plugin Self-Defense',
-                'deep_link'           => 'admin.php?page=webcare-pro-backups&tab=forensics',
+                'deep_link'           => 'admin.php?page=webcare-pro-backups&tab=diagnostics&section=self-defense',
                 'default_delay'       => 300,
             ],
             'webcareproscan_reinfection_hourly_check' => [
@@ -254,7 +254,7 @@ class CronRegistry {
                 'setting_key'         => 'cron_reinfection_watchdog_enabled',
                 'setting_type'        => 'settings_manager',
                 'setting_location'    => did_action('init') ? __('Forensics -> 72h Watchdog', 'webcare-pro-security') : 'Forensics -> 72h Watchdog',
-                'deep_link'           => 'admin.php?page=webcare-pro-backups&tab=forensics',
+                'deep_link'           => 'admin.php?page=webcare-pro-backups&tab=diagnostics&section=watchdog',
                 'default_delay'       => HOUR_IN_SECONDS,
             ],
             'webcareproscan_domain_reputation_daily_check' => [
@@ -269,8 +269,8 @@ class CronRegistry {
                 'can_disable'         => true,
                 'setting_key'         => 'cron_domain_reputation_enabled',
                 'setting_type'        => 'settings_manager',
-                'setting_location'    => did_action('init') ? __('Forensics -> Domain Reputation', 'webcare-pro-security') : 'Forensics -> Domain Reputation',
-                'deep_link'           => 'admin.php?page=webcare-pro-backups&tab=forensics',
+                'setting_location'    => did_action('init') ? __('Forensics -> Baseline & Domain Reputation', 'webcare-pro-security') : 'Forensics -> Baseline & Domain Reputation',
+                'deep_link'           => 'admin.php?page=webcare-pro-backups&tab=diagnostics&section=baseline',
                 'default_delay'       => DAY_IN_SECONDS,
             ],
             'webcareproscan_waf_log_retention_prune' => [

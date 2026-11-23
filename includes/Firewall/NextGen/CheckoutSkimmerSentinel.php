@@ -124,7 +124,7 @@ class CheckoutSkimmerSentinel implements SecurityModuleInterface {
                 'setting_key'         => 'waf_nextgen_checkout_skimmer_enabled',
                 'setting_type'        => 'settings_manager',
                 'setting_location'    => __('Custom Rules -> Next-Gen Engines', 'webcare-pro-security'),
-                'deep_link'           => 'admin.php?page=webcare-pro-firewall&tab=custom_rules&subtab=nextgen',
+                'deep_link'           => 'admin.php?page=webcare-pro-firewall&tab=custom-rules',
                 'default_delay'       => 300,
             ],
         ];

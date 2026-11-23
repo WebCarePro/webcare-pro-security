@@ -188,9 +188,12 @@ export default function FileIntegrityPage({ apiRequest, initialFilePath, initial
   const getStartingTab = (): 'fim' | 'permissions' => {
     try {
       const urlParams = new URLSearchParams(window.location.search);
-      const tabParam = urlParams.get('tab') || urlParams.get('subtab');
-      if (tabParam === 'permissions' || tabParam === 'fim') {
-        return tabParam;
+      const section = urlParams.get('section') || urlParams.get('subtab');
+      if (section === 'permissions') return 'permissions';
+      if (section === 'checksums' || section === 'fim') return 'fim';
+      const tabParam = urlParams.get('tab');
+      if (tabParam === 'permissions' || tabParam === 'fim' || tabParam === 'file-changes') {
+        return tabParam === 'permissions' ? 'permissions' : 'fim';
       }
     } catch (e) {}
     return initialSubTab;
@@ -200,13 +203,21 @@ export default function FileIntegrityPage({ apiRequest, initialFilePath, initial
 
   const handleTabChange = (tab: 'fim' | 'permissions') => {
     setActiveTab(tab);
+    const sectionName = tab === 'fim' ? 'checksums' : 'permissions';
     if (onSubTabChange) {
       onSubTabChange(tab);
     } else {
       try {
         const url = new URL(window.location.href);
-        url.searchParams.set('tab', tab);
-        window.history.pushState({ tab }, '', url.toString());
+        const currentPage = url.searchParams.get('page') || '';
+        if (currentPage === 'webcare-pro-scanner') {
+          url.searchParams.set('tab', 'file-changes');
+          url.searchParams.set('section', sectionName);
+        } else {
+          url.searchParams.set('tab', tab);
+        }
+        url.searchParams.delete('subtab');
+        window.history.pushState({ tab, section: sectionName }, '', url.toString());
       } catch (e) {}
     }
   };

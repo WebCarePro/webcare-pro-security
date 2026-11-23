@@ -19,13 +19,19 @@ function mountFirewall() {
         onNavigateToWafLogs={() => { window.location.href = 'admin.php?page=webcare-pro-logs&tab=firewall'; }}
         onNavigateToVpatch={() => { window.location.href = 'admin.php?page=webcare-pro-firewall&tab=virtual-patches'; }}
         onNavigateToSettings={(sub) => { window.location.href = `admin.php?page=webcare-pro-settings&tab=${sub}`; }}
-        onNavigateToServerTelemetry={() => { window.location.href = 'admin.php?page=webcare-pro-firewall&tab=server_sec'; }}
-        onSubTabChange={(sub) => {
+        onNavigateToServerTelemetry={() => { window.location.href = 'admin.php?page=webcare-pro-firewall&tab=server'; }}
+        onSubTabChange={(sub, section) => {
           try {
             const url = new URL(window.location.href);
-            const canonicalSub = sub === 'rules' ? 'waf-rules' : sub === 'custom_rules' ? 'custom-waf-rules' : sub;
+            const canonicalSub = sub === 'rules' ? 'rules' : sub === 'custom_rules' ? 'custom-rules' : sub === 'behavioral' ? 'bots' : sub === 'caf' ? 'adaptive' : sub === 'vpatch' ? 'virtual-patches' : sub === 'ai_defense' ? 'ai-defense' : sub === 'supply_chain' ? 'supply-chain' : sub === 'server_sec' ? 'server' : sub === 'stream' ? 'traffic' : sub;
             url.searchParams.set('tab', canonicalSub);
-            window.history.pushState({ tab: canonicalSub }, '', url.toString());
+            if (section) {
+              url.searchParams.set('section', section);
+            } else {
+              url.searchParams.delete('section');
+            }
+            url.searchParams.delete('subtab');
+            window.history.pushState({ tab: canonicalSub, section }, '', url.toString());
           } catch (e) {}
         }}
       />

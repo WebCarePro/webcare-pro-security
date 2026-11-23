@@ -156,8 +156,9 @@ export function PersistenceWatchdogCard({ apiRequest, initialSubTab = 'watchdog'
   const getStartingTab = (): 'watchdog' | 'snapshots' | 'preloaders' | 'reputation' => {
     try {
       const urlParams = new URLSearchParams(window.location.search);
-      const sub = urlParams.get('subtab');
-      if (sub && ['watchdog', 'snapshots', 'preloaders', 'reputation'].includes(sub)) {
+      const sub = urlParams.get('section') || urlParams.get('subtab');
+      if (sub === 'baseline' || sub === 'reputation') return 'reputation';
+      if (sub && ['watchdog', 'snapshots', 'preloaders'].includes(sub)) {
         return sub as any;
       }
     } catch (e) {}
@@ -174,13 +175,15 @@ export function PersistenceWatchdogCard({ apiRequest, initialSubTab = 'watchdog'
 
   const handleSubTabSwitch = (tab: 'watchdog' | 'snapshots' | 'preloaders' | 'reputation') => {
     setActiveTab(tab);
+    const sectionName = tab === 'reputation' ? 'baseline' : tab;
     if (onSubTabChange) {
       onSubTabChange(tab);
     } else {
       try {
         const url = new URL(window.location.href);
-        url.searchParams.set('subtab', tab);
-        window.history.pushState({ subtab: tab }, '', url.toString());
+        url.searchParams.set('section', sectionName);
+        url.searchParams.delete('subtab');
+        window.history.pushState({ section: sectionName }, '', url.toString());
       } catch (e) {}
     }
   };

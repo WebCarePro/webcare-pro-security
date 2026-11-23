@@ -58,6 +58,7 @@ export interface NavigationItem {
   pillar: NavigationPillar;
   slug: string;
   tab?: string;
+  section?: string;
   subtab?: string;
   nestedSubTab?: string;
   badge?: string;
@@ -492,7 +493,7 @@ export const NAVIGATION_CATALOG: NavigationItem[] = [
     icon: Radar,
     pillar: 'Firewall & Edge',
     slug: 'webcare-pro-firewall',
-    tab: 'custom-waf-rules',
+    tab: 'custom-rules',
     badge: 'Custom Rules',
     badgeType: 'success',
     isAdvanced: true,
@@ -506,8 +507,8 @@ export const NAVIGATION_CATALOG: NavigationItem[] = [
     icon: Layers,
     pillar: 'Firewall & Edge',
     slug: 'webcare-pro-firewall',
-    tab: 'custom-waf-rules',
-    subtab: 'dossier',
+    tab: 'custom-rules',
+    section: 'list',
     badge: 'AST TRACE',
     badgeType: 'info',
     isAdvanced: true,
@@ -521,8 +522,8 @@ export const NAVIGATION_CATALOG: NavigationItem[] = [
     icon: Filter,
     pillar: 'Firewall & Edge',
     slug: 'webcare-pro-firewall',
-    tab: 'custom-waf-rules',
-    subtab: 'builder',
+    tab: 'custom-rules',
+    section: 'builder',
     badge: 'Custom Rules',
     badgeType: 'info',
     isAdvanced: true,
@@ -536,8 +537,8 @@ export const NAVIGATION_CATALOG: NavigationItem[] = [
     icon: Cpu,
     pillar: 'Firewall & Edge',
     slug: 'webcare-pro-firewall',
-    tab: 'custom-waf-rules',
-    subtab: 'nextgen',
+    tab: 'custom-rules',
+    section: 'packs',
     badge: '6 Engines',
     badgeType: 'success',
     isAdvanced: true,
@@ -605,8 +606,8 @@ export const NAVIGATION_CATALOG: NavigationItem[] = [
     icon: Activity,
     pillar: 'Login & Access',
     slug: 'webcare-pro-login',
-    tab: 'zero_trust',
-    subtab: 'sessions',
+    tab: 'sessions',
+    section: 'live-sessions',
     isAdvanced: true,
     keywords: ['session', 'forensics', 'travel', 'geo', 'concurrent', 'login session', 'ip directory', 'velocity'],
     intents: ['inspect active user sessions', 'view impossible travel alerts']
@@ -618,8 +619,8 @@ export const NAVIGATION_CATALOG: NavigationItem[] = [
     icon: Key,
     pillar: 'Login & Access',
     slug: 'webcare-pro-login',
-    tab: 'zero_trust',
-    subtab: 'breach',
+    tab: 'sessions',
+    section: 'password-leaks',
     badge: 'HIBP',
     badgeType: 'danger',
     keywords: ['hibp', 'haveibeenpwned', 'password', 'compromised', 'leaked', 'breached', 'credential leak'],

@@ -431,6 +431,13 @@ export const AuthSecurityPage = ({
   };
 
   // Tab switch handler with URL updating
+  const toCanonicalAuthTab = (tab: AuthSubTab): string => {
+    if (tab === 'zero_trust' || tab === 'sessions') return 'sessions';
+    if (tab === 'app_passwords') return 'app-passwords';
+    if (tab === 'settings') return 'rules';
+    return tab;
+  };
+
   const handleTabSwitch = (tab: AuthSubTab, nestedSubTab?: string) => {
     if (activeTab === 'settings' && isSettingsDirty && tab !== 'settings') {
       requestAuthConfirm({
@@ -441,18 +448,20 @@ export const AuthSecurityPage = ({
         onConfirm: () => {
           handleDiscardSettings();
           setActiveTab(tab);
+          const canonical = toCanonicalAuthTab(tab);
           if (onSubTabChange) {
-            onSubTabChange(tab, nestedSubTab);
+            onSubTabChange(canonical as any, nestedSubTab);
           } else {
             try {
               const url = new URL(window.location.href);
-              url.searchParams.set('tab', tab);
+              url.searchParams.set('tab', canonical);
               if (nestedSubTab) {
-                url.searchParams.set('subtab', nestedSubTab);
+                url.searchParams.set('section', nestedSubTab);
               } else {
-                url.searchParams.delete('subtab');
+                url.searchParams.delete('section');
               }
-              window.history.pushState({ tab, subtab: nestedSubTab }, '', url.toString());
+              url.searchParams.delete('subtab');
+              window.history.pushState({ tab: canonical, section: nestedSubTab }, '', url.toString());
             } catch (e) {}
           }
         },
@@ -461,18 +470,20 @@ export const AuthSecurityPage = ({
     }
 
     setActiveTab(tab);
+    const canonical = toCanonicalAuthTab(tab);
     if (onSubTabChange) {
-      onSubTabChange(tab, nestedSubTab);
+      onSubTabChange(canonical as any, nestedSubTab);
     } else {
       try {
         const url = new URL(window.location.href);
-        url.searchParams.set('tab', tab);
+        url.searchParams.set('tab', canonical);
         if (nestedSubTab) {
-          url.searchParams.set('subtab', nestedSubTab);
+          url.searchParams.set('section', nestedSubTab);
         } else {
-          url.searchParams.delete('subtab');
+          url.searchParams.delete('section');
         }
-        window.history.pushState({ tab, subtab: nestedSubTab }, '', url.toString());
+        url.searchParams.delete('subtab');
+        window.history.pushState({ tab: canonical, section: nestedSubTab }, '', url.toString());
       } catch (e) {}
     }
   };

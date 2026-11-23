@@ -61,8 +61,8 @@ export const ForensicsPage: React.FC<ForensicsPageProps> = ({
   const [activeTab, setActiveTab] = useState<ForensicsSubTab>(() => {
     try {
       const urlParams = new URLSearchParams(window.location.search);
-      const subtab = urlParams.get('subtab') as ForensicsSubTab;
-      if (subtab && FORENSICS_TABS.includes(subtab)) return subtab;
+      const section = (urlParams.get('section') || urlParams.get('subtab')) as ForensicsSubTab;
+      if (section && FORENSICS_TABS.includes(section)) return section;
       const tab = urlParams.get('tab') as ForensicsSubTab;
       if (tab && FORENSICS_TABS.includes(tab)) return tab;
     } catch (e) {}
@@ -86,10 +86,10 @@ export const ForensicsPage: React.FC<ForensicsPageProps> = ({
     const handlePopState = () => {
       try {
         const urlParams = new URLSearchParams(window.location.search);
-        const subtab = urlParams.get('subtab') as ForensicsSubTab;
-        if (subtab && FORENSICS_TABS.includes(subtab)) {
-          setActiveTab(subtab);
-          if (onSubTabChange) onSubTabChange(subtab);
+        const section = (urlParams.get('section') || urlParams.get('subtab')) as ForensicsSubTab;
+        if (section && FORENSICS_TABS.includes(section)) {
+          setActiveTab(section);
+          if (onSubTabChange) onSubTabChange(section);
           return;
         }
         const tab = urlParams.get('tab') as ForensicsSubTab;
@@ -134,18 +134,16 @@ export const ForensicsPage: React.FC<ForensicsPageProps> = ({
     try {
       const url = new URL(window.location.href);
       const currentPage = url.searchParams.get('page') || '';
-      if (currentPage === 'webcare-pro-vault') {
-        url.searchParams.set('tab', 'forensics');
-        url.searchParams.set('subtab', tab);
+      if (currentPage === 'webcare-pro-backups' || currentPage === 'webcare-pro-vault') {
+        url.searchParams.set('tab', 'diagnostics');
+        url.searchParams.set('section', tab);
+        url.searchParams.delete('subtab');
       } else {
-        url.searchParams.set('tab', tab);
-        if (nestedSubTab) {
-          url.searchParams.set('subtab', nestedSubTab);
-        } else {
-          url.searchParams.delete('subtab');
-        }
+        url.searchParams.set('tab', 'diagnostics');
+        url.searchParams.set('section', tab);
+        url.searchParams.delete('subtab');
       }
-      window.history.pushState({ tab, subtab: nestedSubTab }, '', url.toString());
+      window.history.pushState({ tab: 'diagnostics', section: tab }, '', url.toString());
     } catch (e) {
       // URL push state fallback
     }
