@@ -10,17 +10,13 @@ export interface UseWorkspaceModeResult {
 }
 
 /**
- * Read current workspace mode from localStorage ('webcare_mode' or 'webcare_workspace_mode').
+ * Read current workspace mode from localStorage ('webcare_mode').
  */
 const getInitialWorkspaceMode = (): WorkspaceMode => {
   try {
     const rawMode = localStorage.getItem('webcare_mode');
     if (rawMode === 'developer' || rawMode === 'simple') {
       return rawMode;
-    }
-    const legacyMode = localStorage.getItem('webcare_workspace_mode');
-    if (legacyMode === 'advanced') {
-      return 'developer';
     }
     return 'simple';
   } catch {
@@ -41,41 +37,29 @@ export const useWorkspaceMode = (): UseWorkspaceModeResult => {
       const detail = customEvent.detail;
       if (detail === 'developer' || detail === 'simple') {
         setModeState(detail);
-      } else if (detail === 'advanced') {
-        setModeState('developer');
-      } else if (detail === 'essential') {
-        setModeState('simple');
       }
     };
 
     const handleStorageChanged = (e: StorageEvent) => {
       if (e.key === 'webcare_mode' && (e.newValue === 'simple' || e.newValue === 'developer')) {
         setModeState(e.newValue);
-      } else if (e.key === 'webcare_workspace_mode') {
-        if (e.newValue === 'advanced') setModeState('developer');
-        if (e.newValue === 'essential') setModeState('simple');
       }
     };
 
     window.addEventListener('webcare_mode_changed', handleModeChanged);
-    window.addEventListener('webcare_workspace_mode_changed', handleModeChanged);
     window.addEventListener('storage', handleStorageChanged);
 
     return () => {
       window.removeEventListener('webcare_mode_changed', handleModeChanged);
-      window.removeEventListener('webcare_workspace_mode_changed', handleModeChanged);
       window.removeEventListener('storage', handleStorageChanged);
     };
   }, []);
 
   const setMode = useCallback((nextMode: WorkspaceMode) => {
     setModeState(nextMode);
-    const legacyMode = nextMode === 'developer' ? 'advanced' : 'essential';
     try {
       localStorage.setItem('webcare_mode', nextMode);
-      localStorage.setItem('webcare_workspace_mode', legacyMode);
       window.dispatchEvent(new CustomEvent('webcare_mode_changed', { detail: nextMode }));
-      window.dispatchEvent(new CustomEvent('webcare_workspace_mode_changed', { detail: legacyMode }));
     } catch {}
   }, []);
 

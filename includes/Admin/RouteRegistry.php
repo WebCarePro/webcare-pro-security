@@ -63,18 +63,21 @@ final class RouteRegistry {
 
         $json_file = __DIR__ . '/routes.json';
         if (!file_exists($json_file)) {
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
             error_log('WebCare Pro RouteRegistry: routes.json file not found at ' . $json_file);
             return self::$cached_schema = self::get_fallback_schema();
         }
 
         $raw_content = @file_get_contents($json_file);
         if ($raw_content === false || !json_validate($raw_content)) {
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
             error_log('WebCare Pro RouteRegistry: routes.json is empty or contains invalid JSON.');
             return self::$cached_schema = self::get_fallback_schema();
         }
 
         $decoded = json_decode($raw_content, true);
         if (!is_array($decoded) || empty($decoded['pillars']) || !is_array($decoded['pillars'])) {
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
             error_log('WebCare Pro RouteRegistry: routes.json missing required "pillars" array.');
             return self::$cached_schema = self::get_fallback_schema();
         }
@@ -90,6 +93,7 @@ final class RouteRegistry {
 
             $pillar_id = sanitize_key($pillar['id']);
             if (isset($seen_pillars[$pillar_id])) {
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
                 error_log("WebCare Pro RouteRegistry: Duplicate pillar ID rejected: {$pillar_id}");
                 continue;
             }
@@ -97,6 +101,7 @@ final class RouteRegistry {
 
             $bundle = isset($pillar['bundle']) && is_string($pillar['bundle']) ? $pillar['bundle'] : 'index';
             if (!in_array($bundle, self::ALLOWED_BUNDLES, true)) {
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
                 error_log("WebCare Pro RouteRegistry: Disallowed bundle '{$bundle}' for pillar '{$pillar_id}'. Defaulting to 'index'.");
                 $bundle = 'index';
             }
@@ -110,6 +115,7 @@ final class RouteRegistry {
                     }
                     $tab_id = sanitize_key($tab['id']);
                     if (isset($seen_tabs[$tab_id])) {
+                        // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
                         error_log("WebCare Pro RouteRegistry: Duplicate tab ID '{$tab_id}' in pillar '{$pillar_id}' rejected.");
                         continue;
                     }

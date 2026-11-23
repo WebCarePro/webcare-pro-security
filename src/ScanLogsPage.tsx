@@ -59,71 +59,155 @@ import { toast } from './utils/dialog';
 
 interface ScanLogsPageProps {
   apiRequest: (opts: any) => Promise<any>;
-  scanHistory: any[];
-  historyLoading: boolean;
-  loadScanHistory: () => Promise<void>;
-  handleClearAllScanHistory: () => Promise<void>;
-  selectedScanDetail: any;
-  setSelectedScanDetail: (d: any) => void;
-  loadScanLogDetail: (id: number, updateUrl?: boolean) => Promise<void>;
-  scanning: boolean;
-  targetedScanning: any;
-  handleNavTabChange: (tab: string, subTab?: string) => void;
-  setVisualDiffModal: (modal: any) => void;
-  handleOpenFileViewer: (issue: any) => void;
-  handleOpenChangelog: (issue: any) => void;
-  canQuarantineIssue: (issue: any) => boolean;
-  handleQuarantine: (issue: any) => Promise<void>;
-  handleRemediateUser: (issue: any, action: string, role?: string, targetAdminId?: number) => Promise<void>;
-  handleRemediateDbRow: (issue: any, action: string) => Promise<void>;
-  handleDeleteCronHook: (issue: any) => Promise<void>;
-  handleModerateComment: (issue: any, action: string) => Promise<void>;
-  handleFixPermissions: (issue: any) => Promise<void>;
+  scanHistory?: any[];
+  historyLoading?: boolean;
+  loadScanHistory?: () => Promise<void>;
+  handleClearAllScanHistory?: () => Promise<void>;
+  selectedScanDetail?: any;
+  setSelectedScanDetail?: (d: any) => void;
+  loadScanLogDetail?: (id: number, updateUrl?: boolean) => Promise<void>;
+  scanning?: boolean;
+  targetedScanning?: any;
+  handleNavTabChange?: (tab: string, subTab?: string) => void;
+  setVisualDiffModal?: (modal: any) => void;
+  handleOpenFileViewer?: (issue: any) => void;
+  handleOpenChangelog?: (issue: any) => void;
+  canQuarantineIssue?: (issue: any) => boolean;
+  handleQuarantine?: (issue: any) => Promise<void>;
+  handleRemediateUser?: (issue: any, action: string, role?: string, targetAdminId?: number) => Promise<void>;
+  handleRemediateDbRow?: (issue: any, action: string) => Promise<void>;
+  handleDeleteCronHook?: (issue: any) => Promise<void>;
+  handleModerateComment?: (issue: any, action: string) => Promise<void>;
+  handleFixPermissions?: (issue: any) => Promise<void>;
   handleDisableWpDebug?: (issue: any) => Promise<void>;
-  handleOpenDbInspector: (issue: any) => void;
-  handleOpenPostViewer: (issue: any) => void;
-  setWhitelistModal: (modal: any) => void;
-  setCveModal: (modal: any) => void;
-  handleUpdateIssue: (id: any, status: string) => Promise<void>;
-  dbRowCache: Record<number, any>;
-  loadDbRow: (issue: any) => void;
-  copiedIssuePath: string | null;
-  setCopiedIssuePath: (p: string | null) => void;
+  handleOpenDbInspector?: (issue: any) => void;
+  handleOpenPostViewer?: (issue: any) => void;
+  setWhitelistModal?: (modal: any) => void;
+  setCveModal?: (modal: any) => void;
+  handleUpdateIssue?: (id: any, status: string) => Promise<void>;
+  dbRowCache?: Record<number, any>;
+  loadDbRow?: (issue: any) => void;
+  copiedIssuePath?: string | null;
+  setCopiedIssuePath?: (p: string | null) => void;
+  onNavigateToScanner?: () => void;
 }
 
 export const ScanLogsPage: React.FC<ScanLogsPageProps> = ({
   apiRequest,
-  scanHistory,
-  historyLoading,
-  loadScanHistory,
-  handleClearAllScanHistory,
-  selectedScanDetail,
-  setSelectedScanDetail,
-  loadScanLogDetail,
-  scanning,
-  targetedScanning,
-  handleNavTabChange,
-  setVisualDiffModal,
-  handleOpenFileViewer,
-  handleOpenChangelog,
-  canQuarantineIssue,
-  handleQuarantine,
-  handleRemediateUser,
-  handleRemediateDbRow,
-  handleDeleteCronHook,
-  handleModerateComment,
-  handleFixPermissions,
+  scanHistory: propScanHistory,
+  historyLoading: propHistoryLoading,
+  loadScanHistory: propLoadScanHistory,
+  handleClearAllScanHistory: propHandleClearAllScanHistory,
+  selectedScanDetail: propSelectedScanDetail,
+  setSelectedScanDetail: propSetSelectedScanDetail,
+  loadScanLogDetail: propLoadScanLogDetail,
+  scanning = false,
+  targetedScanning = null,
+  handleNavTabChange: propHandleNavTabChange,
+  setVisualDiffModal: propSetVisualDiffModal,
+  handleOpenFileViewer = () => {},
+  handleOpenChangelog = () => {},
+  canQuarantineIssue = () => false,
+  handleQuarantine = async () => {},
+  handleRemediateUser = async () => {},
+  handleRemediateDbRow = async () => {},
+  handleDeleteCronHook = async () => {},
+  handleModerateComment = async () => {},
+  handleFixPermissions = async () => {},
   handleDisableWpDebug,
-  handleOpenDbInspector,
-  handleOpenPostViewer,
-  setWhitelistModal,
-  setCveModal,
-  handleUpdateIssue,
-  dbRowCache,
-  loadDbRow,
-  copiedIssuePath,
-  setCopiedIssuePath,
+  handleOpenDbInspector = () => {},
+  handleOpenPostViewer = () => {},
+  setWhitelistModal = () => {},
+  setCveModal = () => {},
+  handleUpdateIssue = async () => {},
+  dbRowCache = {},
+  loadDbRow = () => {},
+  copiedIssuePath: propCopiedIssuePath,
+  setCopiedIssuePath: propSetCopiedIssuePath,
+  onNavigateToScanner,
 }) => {
+  // Self-healing autonomous local state when invoked standalone (e.g. from Logs & Activity tab)
+  const [localScanHistory, setLocalScanHistory] = useState<any[]>([]);
+  const [localHistoryLoading, setLocalHistoryLoading] = useState<boolean>(true);
+  const [localSelectedScanDetail, setLocalSelectedScanDetail] = useState<any>(null);
+  const [localCopiedIssuePath, setLocalCopiedIssuePath] = useState<string | null>(null);
+
+  const scanHistory = propScanHistory !== undefined ? propScanHistory : localScanHistory;
+  const historyLoading = propHistoryLoading !== undefined ? propHistoryLoading : localHistoryLoading;
+  const selectedScanDetail = propSelectedScanDetail !== undefined ? propSelectedScanDetail : localSelectedScanDetail;
+  const setSelectedScanDetail = propSetSelectedScanDetail || setLocalSelectedScanDetail;
+  const copiedIssuePath = propCopiedIssuePath !== undefined ? propCopiedIssuePath : localCopiedIssuePath;
+  const setCopiedIssuePath = propSetCopiedIssuePath || setLocalCopiedIssuePath;
+
+  const handleNavTabChange = propHandleNavTabChange || ((tab: string, subTab?: string) => {
+    if (tab === 'quarantine' || tab === 'vault') {
+      window.location.href = 'admin.php?page=webcare-pro-backups&tab=quarantine';
+    } else if (tab === 'scan' || tab === 'scanner') {
+      window.location.href = 'admin.php?page=webcare-pro-scanner';
+    } else if (tab === 'settings') {
+      window.location.href = `admin.php?page=webcare-pro-settings${subTab ? `&tab=${subTab}` : ''}`;
+    } else {
+      window.location.href = `admin.php?page=webcare-pro-${tab}${subTab ? `&tab=${subTab}` : ''}`;
+    }
+  });
+
+  const loadLocalScanHistory = async () => {
+    try {
+      setLocalHistoryLoading(true);
+      const res: any = await apiRequest({ path: '/webcare-pro-security/v1/scan/history' });
+      if (res?.scans) {
+        setLocalScanHistory(res.scans);
+      }
+    } catch (e) {
+      console.error('Failed to load scan history in ScanLogsPage', e);
+    } finally {
+      setLocalHistoryLoading(false);
+    }
+  };
+
+  const loadScanHistory = propLoadScanHistory || loadLocalScanHistory;
+
+  const loadScanLogDetail = propLoadScanLogDetail || (async (id: number, updateUrl: boolean = true) => {
+    try {
+      const res: any = await apiRequest({ path: `/webcare-pro-security/v1/scan/history/${id}` });
+      if (res?.success) {
+        setSelectedScanDetail({
+          scan: res.scan,
+          summary: res.summary,
+          issues: res.issues || [],
+          files_count: res.files_count || 0,
+          diagnostics: res.diagnostics || res.scan?.diagnostics
+        });
+        if (updateUrl) {
+          try {
+            const url = new URL(window.location.href);
+            url.searchParams.set('scanresults', String(id));
+            window.history.pushState({ tab: 'scans', scanId: id }, '', url.toString());
+          } catch (e) {}
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load scan details in ScanLogsPage', e);
+    }
+  });
+
+  const handleClearAllScanHistory = propHandleClearAllScanHistory || (async () => {
+    if (!window.confirm('Are you sure you want to delete all historical scan logs? This cannot be undone.')) return;
+    try {
+      await apiRequest({ path: '/webcare-pro-security/v1/scan/history', method: 'DELETE' });
+      setSelectedScanDetail(null);
+      await loadScanHistory();
+    } catch (e) {
+      console.error('Failed to clear scan history', e);
+    }
+  });
+
+  // Autoload scan history on mount if not provided by parent
+  useEffect(() => {
+    if (propScanHistory === undefined) {
+      loadLocalScanHistory();
+    }
+  }, [propScanHistory]);
   const [expandedLogIssue, setExpandedLogIssue] = useState<number | null>(null);
   const [logIssueSearch, setLogIssueSearch] = useState<string>('');
   const [logSeverityFilter, setLogSeverityFilter] = useState<string>('all');

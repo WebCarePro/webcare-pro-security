@@ -113,6 +113,8 @@ import { ScanLogsPage } from './ScanLogsPage';
 import { ForensicsPage } from './ForensicsPage';
 import { ActivityLogsPage } from './ActivityLogs/ActivityLogsPage';
 import { SecurityScannerPage } from './SecurityScannerPage';
+import { DashboardOverview } from './components/DashboardOverview';
+import { useWorkspaceMode } from './hooks/useWorkspaceMode';
 import { parseWpDate, formatRelativeTime, formatTelemetryTime, formatTelemetryDateFull } from './timeUtils';
 import { ContextualSubNav } from './components/ContextualSubNav';
 import { WebCareAnimatedLogo } from './components/WebCareAnimatedLogo';
@@ -529,33 +531,35 @@ type NavTab =
 
 const TAB_TO_PAGE: Record<string, string> = {
   dashboard: 'webcare-pro-security',
-  scan: 'webcare-pro-scan',
-  targeted: 'webcare-pro-tools',
+  scan: 'webcare-pro-scanner',
+  targeted: 'webcare-pro-scanner',
   logs: 'webcare-pro-logs',
-  forensics: 'webcare-pro-forensics',
-  vault: 'webcare-pro-vault',
-  quarantine: 'webcare-pro-vault',
-  backup: 'webcare-pro-backup',
-  server: 'webcare-pro-server',
-  vulnerabilities: 'webcare-pro-vulnerabilities',
+  forensics: 'webcare-pro-backups',
+  vault: 'webcare-pro-backups',
+  quarantine: 'webcare-pro-backups',
+  backup: 'webcare-pro-backups',
+  server: 'webcare-pro-backups',
+  vulnerabilities: 'webcare-pro-scanner',
   firewall: 'webcare-pro-firewall',
-  vpatch: 'webcare-pro-vpatch',
-  waf_logs: 'webcare-pro-waf-logs',
-  fim: 'webcare-pro-fim',
-  auth: 'webcare-pro-auth',
-  notifications: 'webcare-pro-notifications',
-  activity_logs: 'webcare-pro-activity-logs',
-  cron_manager: 'webcare-pro-cron-manager',
+  vpatch: 'webcare-pro-firewall',
+  waf_logs: 'webcare-pro-logs',
+  fim: 'webcare-pro-scanner',
+  auth: 'webcare-pro-login',
+  notifications: 'webcare-pro-settings',
+  activity_logs: 'webcare-pro-logs',
+  cron_manager: 'webcare-pro-settings',
   settings: 'webcare-pro-settings',
-  about: 'webcare-pro-about',
+  about: 'webcare-pro-settings',
 };
 
 const PAGE_TO_TAB: Record<string, NavTab> = {
   'webcare-pro-security': 'dashboard',
+  'webcare-pro-scanner': 'scan',
   'webcare-pro-scan': 'scan',
   'webcare-pro-tools': 'targeted',
   'webcare-pro-logs': 'logs',
   'webcare-pro-forensics': 'forensics',
+  'webcare-pro-backups': 'vault',
   'webcare-pro-vault': 'vault',
   'webcare-pro-quarantine': 'vault',
   'webcare-pro-backup': 'backup',
@@ -565,6 +569,7 @@ const PAGE_TO_TAB: Record<string, NavTab> = {
   'webcare-pro-vpatch': 'firewall',
   'webcare-pro-waf-logs': 'waf_logs',
   'webcare-pro-fim': 'fim',
+  'webcare-pro-login': 'auth',
   'webcare-pro-auth': 'auth',
   'webcare-pro-notifications': 'notifications',
   'webcare-pro-activity-logs': 'activity_logs',
@@ -1548,16 +1553,12 @@ export const App = ({ initialTab }: { initialTab?: NavTab } = {}) => {
 
   const [themeMode, setThemeMode] = useState<'dark' | 'light'>(() => getWebCareTheme());
 
-  // Two-Mode UX Architecture: Essential (Default for Site Owners) vs. Advanced SOC Mode
-  const [workspaceMode, setWorkspaceMode] = useState<'essential' | 'advanced'>(() => {
-    try {
-      const saved = localStorage.getItem('webcare_workspace_mode');
-      if (saved === 'essential' || saved === 'advanced') return saved;
-      return 'essential';
-    } catch {
-      return 'essential';
-    }
-  });
+  // Two-Mode UX Architecture: Simple Mode (Default for Site Owners) vs. Developer Mode
+  const { mode: workspaceMode, isSimpleMode, isDeveloperMode, setMode: setWorkspaceMode } = useWorkspaceMode();
+
+  const toggleWorkspaceMode = () => {
+    setWorkspaceMode(isDeveloperMode ? 'simple' : 'developer');
+  };
 
   const [rescueModalOpen, setRescueModalOpen] = useState<boolean>(() => {
     try {
@@ -1582,14 +1583,6 @@ export const App = ({ initialTab }: { initialTab?: NavTab } = {}) => {
       active = false;
     };
   }, []);
-
-  const toggleWorkspaceMode = (mode: 'essential' | 'advanced') => {
-    setWorkspaceMode(mode);
-    try {
-      localStorage.setItem('webcare_workspace_mode', mode);
-      window.dispatchEvent(new CustomEvent('webcare_workspace_mode_changed', { detail: mode }));
-    } catch {}
-  };
 
   useEffect(() => {
     applyWebCareTheme(themeMode);
@@ -1836,29 +1829,29 @@ export const App = ({ initialTab }: { initialTab?: NavTab } = {}) => {
       return;
     }
 
-    // Direct decoupled page navigation map
+    // Direct decoupled page navigation map strictly targeting canonical pillars
     const pageMap: Record<string, string> = {
-      scan: 'webcare-pro-scan',
-      targeted: 'webcare-pro-scan&tab=targeted',
-      logs: 'webcare-pro-scan&tab=logs',
-      fim: 'webcare-pro-fim',
-      vulnerabilities: 'webcare-pro-scan&tab=vulnerabilities',
-      firewall: 'webcare-pro-firewall',
-      modular_waf: 'webcare-pro-modular-waf',
-      waf_logs: 'webcare-pro-waf-logs',
-      vpatch: 'webcare-pro-firewall&tab=vpatch',
-      auth: 'webcare-pro-auth',
-      vault: 'webcare-pro-vault',
-      quarantine: 'webcare-pro-vault&tab=quarantine',
-      backup: 'webcare-pro-vault&tab=backup',
-      forensics: 'webcare-pro-forensics',
-      server: 'webcare-pro-vault&tab=server',
-      settings: 'webcare-pro-settings',
-      notifications: 'webcare-pro-notifications',
-      activity_logs: 'webcare-pro-activity-logs',
-      cron_manager: 'webcare-pro-cron-manager',
-      about: 'webcare-pro-settings&tab=about',
-      wizard: 'webcare-pro-wizard',
+      scan: 'webcare-pro-scanner&tab=malware',
+      targeted: 'webcare-pro-scanner&tab=targeted',
+      logs: 'webcare-pro-logs&tab=scans',
+      fim: 'webcare-pro-scanner&tab=file-integrity',
+      vulnerabilities: 'webcare-pro-scanner&tab=vulnerabilities',
+      firewall: 'webcare-pro-firewall&tab=protection',
+      modular_waf: 'webcare-pro-firewall&tab=protection',
+      waf_logs: 'webcare-pro-logs&tab=firewall',
+      vpatch: 'webcare-pro-firewall&tab=virtual-patches',
+      auth: 'webcare-pro-login&tab=2fa',
+      vault: 'webcare-pro-backups&tab=database',
+      quarantine: 'webcare-pro-backups&tab=quarantine',
+      backup: 'webcare-pro-backups&tab=database',
+      forensics: 'webcare-pro-backups&tab=forensics',
+      server: 'webcare-pro-backups&tab=server',
+      settings: 'webcare-pro-settings&tab=health',
+      notifications: 'webcare-pro-settings&tab=alerts',
+      activity_logs: 'webcare-pro-logs&tab=activity',
+      cron_manager: 'webcare-pro-settings&tab=cron',
+      about: 'webcare-pro-settings&tab=support',
+      wizard: 'webcare-pro-setup',
     };
 
     let target = pageMap[newTab] || TAB_TO_PAGE[newTab] || ('webcare-pro-security&tab=' + newTab);
@@ -4505,7 +4498,7 @@ Source Code,${escapeCsv(code)}
   const renderContextualSubNav = () => {
     // 1. Scanner & Audits Cluster
     if (['scan', 'targeted', 'logs', 'fim', 'vulnerabilities'].includes(navTab)) {
-      const isEssential = workspaceMode === 'essential';
+      const isEssential = isSimpleMode;
       const scannerTabs = [
         {
           id: 'scan',
@@ -4576,7 +4569,7 @@ Source Code,${escapeCsv(code)}
 
     // 2. Firewall & WAF Cluster
     if (['firewall', 'waf_logs', 'vpatch'].includes(navTab)) {
-      const isEssential = workspaceMode === 'essential';
+      const isEssential = isSimpleMode;
       const firewallTabs = isEssential
         ? [
             {
@@ -4779,7 +4772,7 @@ Source Code,${escapeCsv(code)}
 
     // 4. Vault & Diagnostics Cluster
     if (['vault', 'quarantine', 'backup', 'forensics', 'server'].includes(navTab)) {
-      const isEssential = workspaceMode === 'essential';
+      const isEssential = isSimpleMode;
       const vaultTabs = isEssential
         ? [
             {
@@ -5035,16 +5028,16 @@ Source Code,${escapeCsv(code)}
             {/* Mode Switcher: Simple Owner View vs. Pro Engineer View */}
             <button
               type="button"
-              className={`webcare-mode-toggle-pill ${workspaceMode === 'advanced' ? 'is-advanced' : 'is-essential'}`}
-              onClick={() => toggleWorkspaceMode(workspaceMode === 'essential' ? 'advanced' : 'essential')}
-              title={workspaceMode === 'essential'
+              className={`webcare-mode-toggle-pill ${isDeveloperMode ? 'is-advanced' : 'is-essential'}`}
+              onClick={toggleWorkspaceMode}
+              title={isSimpleMode
                 ? "Switch to Pro Engineer Mode (Unlocks all 53 deep inspection engines, Hex dumps, AST analyzer & MCP controls)"
                 : "Switch to Simple Owner Mode (Plain-English protection outcomes for site owners & non-technical users)"
               }
               aria-label="Toggle Simple Owner or Pro Engineer View"
             >
               <div className="webcare-mode-toggle-thumb">
-                {workspaceMode === 'advanced' ? (
+                {isDeveloperMode ? (
                   <SlidersHorizontal size={13} className="webcare-mode-icon" />
                 ) : (
                   <ShieldCheck size={13} className="webcare-mode-icon" />
@@ -5052,10 +5045,10 @@ Source Code,${escapeCsv(code)}
               </div>
               <div className="webcare-mode-toggle-label">
                 <span className="webcare-mode-toggle-title">
-                  {workspaceMode === 'advanced' ? 'Pro Engineer' : 'Simple Owner'}
+                  {isDeveloperMode ? 'Pro Engineer' : 'Simple Owner'}
                 </span>
-                <span className={`webcare-mode-toggle-chip ${workspaceMode === 'advanced' ? 'chip-advanced' : 'chip-essential'}`}>
-                  {workspaceMode === 'advanced' ? '53 Engines' : 'Simple'}
+                <span className={`webcare-mode-toggle-chip ${isDeveloperMode ? 'chip-advanced' : 'chip-essential'}`}>
+                  {isDeveloperMode ? '53 Engines' : 'Simple'}
                 </span>
               </div>
             </button>
@@ -5317,859 +5310,54 @@ Source Code,${escapeCsv(code)}
       )}
 
       {/* =========================================================
-           PAGE 1: EXECUTIVE SECURITY DASHBOARD (100% IDENTICAL TO DEMO)
+           PAGE 1: CALM EXECUTIVE SECURITY DASHBOARD
            ========================================================= */}
       {navTab === 'dashboard' && (
         <main className="dashboard-view active" id="viewDashboard">
-          {(() => {
-            // Dynamically evaluate active OPEN threats (quarantined, repaired, or ignored files are neutralized)
-            const openIssues = uniqueIssues.filter(i => i.status === 'open');
-            let activeRaw = 0;
-            for (const issue of openIssues) {
-              const conf = (issue.confidence && issue.confidence > 1) ? issue.confidence / 100 : (issue.confidence || 1);
-              if (issue.severity === 'critical') activeRaw += 40 * conf;
-              else if (issue.severity === 'high') activeRaw += 15 * conf;
-              else if (issue.severity === 'medium') activeRaw += 5 * conf;
-              else if (issue.severity === 'low') activeRaw += 1 * conf;
+          <DashboardOverview
+            currentScan={currentScan}
+            uniqueIssues={uniqueIssues}
+            firewallStatus={firewallStatus}
+            firewallLogs={firewallLogs}
+            serverInfo={serverInfo}
+            vulnReport={vulnReport}
+            quarantinedFiles={quarantinedFiles}
+            backups={backups}
+            isScanning={scanning}
+            onStartScan={() => handleStartScan('quick')}
+            onOpenRescueModal={() => setRescueModalOpen(true)}
+            isRescuePaused={rescuePaused}
+            onNavigate={(targetTab, subTab, nestedSubTab) =>
+              handleNavTabChange(targetTab, subTab, nestedSubTab)
             }
-            const activeRiskScore = Math.min(100, Math.round(activeRaw));
-            const healthScore = Math.max(0, 100 - activeRiskScore);
-            const isCrit = healthScore < 50;
-            const isWarn = healthScore >= 50 && healthScore < 80;
-            const scoreColor = isCrit ? '#ef4444' : isWarn ? '#f59e0b' : '#10b981';
-            const grade = healthScore >= 95 ? 'A+' : healthScore >= 85 ? 'A' : healthScore >= 70 ? 'B' : healthScore >= 50 ? 'C' : 'F';
-            const postureStatus = isCrit ? 'Security Attention Needed' : isWarn ? 'Warnings Detected' : '100% Certified Protected';
+            formatRelativeTime={formatRelativeTime}
+          />
 
-            // SVG Gauge Geometry for circular health ring (Matches demo r=90)
-            const gaugeRadius = 90;
-            const gaugeCircumference = 2 * Math.PI * gaugeRadius;
-            const gaugeOffset = gaugeCircumference - (healthScore / 100) * gaugeCircumference;
-
-            // Threat & status evaluations
-            const activeCrit = uniqueIssues.filter(i => (i.severity === 'critical' || i.severity === 'high') && i.status === 'open').length;
-            const isMalwareClean = activeCrit === 0;
-
-            const fimCount = uniqueIssues.filter(i => (i.type.includes('modified') || i.type.includes('integrity') || i.engine?.includes('fim')) && i.status === 'open').length;
-            const isFimClean = fimCount === 0;
-
-            const cveCount = uniqueIssues.filter(i => ((i.cves && i.cves.length > 0) || i.is_software_update || i.engine === 'wordpress-updates') && i.status === 'open').length;
-            const medCount = uniqueIssues.filter(i => isCveOrWarningIssue(i) && !((i.cves && i.cves.length > 0) || i.is_software_update || i.engine === 'wordpress-updates') && i.status === 'open').length;
-            const totalWarnings = cveCount + medCount;
-            const isCveClean = totalWarnings === 0;
-
-            const scannedFilesCount = currentScan?.scanned_files ? currentScan.scanned_files.toLocaleString() : '2,439';
-
-            // Real System & Telemetry variables
-            const wpVersion = 
-              serverInfo?.wordpress?.version ||
-              (window as any).webcareScannerSettings?.serverInfo?.wordpress?.version ||
-              vulnReport?.core?.installed ||
-              '7.1.3';
-
-            const pluginCount = 
-              vulnReport?.plugins?.length ||
-              (serverInfo as any)?.plugins_count ||
-              6;
-
-            const firewallBlocks = (firewallStatus?.total_blocks ?? 0).toLocaleString();
-            const firewallActive = firewallStatus?.enabled !== false;
-            const firewallMode = firewallStatus?.active_mode || (firewallStatus?.mode === 'learning' ? 'learning' : 'active');
-            const quarantinedActiveCount = quarantinedFiles.filter(q => q.status === 'quarantined').length;
-
-            const envBadgeLabel = (() => {
-              const envObj = (serverInfo as any)?.environment;
-              if (envObj?.label) {
-                return envObj.label;
-              }
-              const host = typeof window !== 'undefined' ? window.location.hostname : '';
-              const isLocal = !host || host === 'localhost' || host === '127.0.0.1' || host.endsWith('.local') || host.endsWith('.test');
-              if (isLocal) {
-                return 'Local Development Site';
-              }
-              return 'Live Production Server';
-            })();
-
-            return (
-              <Fragment>
-                {/* 1. HERO TRUST CARD WITH CLEAN 3D LOGO ARTWORK */}
-                <section className="hero-trust-card webcare-card">
-                  <div className="hero-content">
-                    <div className="hero-badge-row">
-                      <span
-                        className={`badge-status ${isCrit ? 'is-critical' : isWarn ? 'is-warning' : 'is-clean'}`}
-                      >
-                        <ShieldCheck size={14} />
-                        {postureStatus}
-                        {currentScan?.completed_at ? ` · Last audit ${formatRelativeTime(currentScan.completed_at)}` : ''}
-                      </span>
-                      <span className="badge-env">
-                        <Server size={13} />
-                        {envBadgeLabel}
-                      </span>
-                      <span className="badge-env">
-                        <Lock size={13} />
-                        100% On-Premise Privacy
-                      </span>
-                    </div>
-
-                    <h1 className="hero-title">
-                      {isCrit ? (
-                        <>
-                          Action Required: <br />
-                          <span className="glow-text" style={{ background: 'linear-gradient(135deg, #ef4444 0%, #f97316 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-                            Items Flagged for Your Review
-                          </span>
-                        </>
-                      ) : isWarn ? (
-                        <>
-                          Website Protected with <br />
-                          <span className="glow-text" style={{ background: 'linear-gradient(135deg, #f59e0b 0%, #fbbf24 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-                            Advisory Items to Review
-                          </span>
-                        </>
-                      ) : (
-                        <>
-                          Your WordPress Website is <br />
-                          <span className="glow-text">Healthy, Secure &amp; Clean</span>
-                        </>
-                      )}
-                    </h1>
-
-                    <p className="hero-desc">
-                      {isCrit
-                        ? 'Suspicious code or unauthenticated files were detected. Use the safe 1-click quarantine with automated 14-day rollback backups to protect your site.'
-                        : isWarn
-                          ? 'Your website is actively defended. Minor file modifications or recommended updates are waiting for your review with 1-click safety rollback.'
-                          : 'All 4 defense perimeters are active. Zero malware, zero backdoors detected, and your real-time firewall is deflecting malicious botnets in the background. Designed so anyone can manage security with zero stress.'}
-                    </p>
-
-                    <div className="hero-actions">
-                      <button
-                        type="button"
-                        className="btn-primary-action"
-                        onClick={() => handleNavTabChange('scan')}
-                      >
-                        <Play size={16} fill="currentColor" />
-                        Launch 1-Click Health Audit
-                      </button>
-                      <button
-                        type="button"
-                        className="btn-secondary-action"
-                        onClick={() => handleNavTabChange('fim')}
-                      >
-                        <FileCode size={16} />
-                        Check Core Integrity
-                      </button>
-                      <button
-                        type="button"
-                        className="btn-secondary-action"
-                        onClick={() => setIsWelcomeModalOpen(true)}
-                      >
-                        <ShieldCheck size={16} />
-                        Pre-Flight Readiness
-                      </button>
-                      <button
-                        type="button"
-                        className="btn-secondary-action"
-                        onClick={() => handleNavTabChange('firewall')}
-                      >
-                        <Shield size={16} />
-                        Live Firewall View
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* RIGHT: CLEAN 3D LOGO ORIGINAL ARTWORK IN VOLUMETRIC ISOMETRIC STAGE */}
-                  <div className="hero-visual-3d" id="heroVisualStage">
-                    <div className="isometric-stage">
-                      {/* Pulsing Volumetric Energy Aura Behind 3D Logo */}
-                      <div className="emblem-aura-glow" />
-
-                      {/* Wireframe Floating 3D Cubes Accent */}
-                      <div style={{ position: 'absolute', top: '-14px', right: '-14px', opacity: 0.28, pointerEvents: 'none', transform: 'scale(0.85)', zIndex: 1 }}>
-                        <svg width="120" height="120" viewBox="0 0 120 120" fill="none">
-                          <polygon points="60,2 118,31 118,89 60,118 2,89 2,31" stroke="#38bdf8" strokeWidth="1.5" />
-                          <line x1="60" y1="60" x2="60" y2="118" stroke="#38bdf8" strokeWidth="1.5" />
-                          <line x1="60" y1="60" x2="2" y2="31" stroke="#38bdf8" strokeWidth="1.5" />
-                          <line x1="60" y1="60" x2="118" y2="31" stroke="#38bdf8" strokeWidth="1.5" />
-                        </svg>
-                      </div>
-
-                      {/* The Authentic WebCare Pro Original 3D Shield Artwork - CLEAN with NO overlay text */}
-                      <div className="emblem-frame-wrap" id="emblemFrame">
-                        {logo3dUrl ? (
-                          <img
-                            src={logo3dUrl}
-                            alt="WebCare Pro Original 3D Security Shield & Infrastructure"
-                            className="hero-3d-emblem-img hero-original-artwork"
-                            id="heroEmblemImg"
-                          />
-                        ) : (
-                          <div className="hero-original-artwork" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#090e17' }}>
-                            <WebCareBrandLogo size={180} />
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </section>
-
-                {/* DASHBOARD QUICK ACTIONS STRIP */}
-                <section
-                  className="webcare-card"
-                  style={{
-                    padding: '12px 18px',
-                    marginBottom: '18px',
-                    borderRadius: '12px',
-                    background: 'var(--webcare-bg-panel, #ffffff)',
-                    border: '1px solid var(--webcare-border, #e2e8f0)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    flexWrap: 'wrap',
-                    gap: '12px',
-                    boxShadow: '0 1px 3px rgba(0, 0, 0, 0.04)',
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--webcare-text-muted, #64748b)' }}>
-                      Quick Actions:
-                    </span>
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px', flex: 1 }}>
-                    <button
-                      type="button"
-                      onClick={() => handleNavTabChange('scan')}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '8px',
-                        padding: '9px 14px',
-                        borderRadius: '8px',
-                        fontSize: '12.5px',
-                        fontWeight: 700,
-                        cursor: 'pointer',
-                        background: 'var(--webcare-status-clean-soft, rgba(16, 185, 129, 0.08))',
-                        color: 'var(--webcare-status-clean, #059669)',
-                        border: '1px solid var(--webcare-status-clean-border, rgba(16, 185, 129, 0.3))',
-                        transition: 'all 0.15s ease',
-                      }}
-                    >
-                      <Radar size={15} />
-                      <span>Run Security Scan</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleNavTabChange('waf_logs')}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '8px',
-                        padding: '9px 14px',
-                        borderRadius: '8px',
-                        fontSize: '12.5px',
-                        fontWeight: 700,
-                        cursor: 'pointer',
-                        background: 'rgba(79, 70, 229, 0.08)',
-                        color: '#4f46e5',
-                        border: '1px solid rgba(79, 70, 229, 0.25)',
-                        transition: 'all 0.15s ease',
-                      }}
-                    >
-                      <History size={15} />
-                      <span>WAF Logs &amp; Unban IP</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setRescueModalOpen(true)}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '8px',
-                        padding: '9px 14px',
-                        borderRadius: '8px',
-                        fontSize: '12.5px',
-                        fontWeight: 700,
-                        cursor: 'pointer',
-                        background: 'rgba(245, 158, 11, 0.08)',
-                        color: '#d97706',
-                        border: '1px solid rgba(245, 158, 11, 0.3)',
-                        transition: 'all 0.15s ease',
-                      }}
-                    >
-                      <Wrench size={15} />
-                      <span>15-Min Safe Mode</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleNavTabChange('vault', 'database')}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '8px',
-                        padding: '9px 14px',
-                        borderRadius: '8px',
-                        fontSize: '12.5px',
-                        fontWeight: 700,
-                        cursor: 'pointer',
-                        background: 'rgba(6, 182, 212, 0.08)',
-                        color: '#0284c7',
-                        border: '1px solid rgba(6, 182, 212, 0.25)',
-                        transition: 'all 0.15s ease',
-                      }}
-                    >
-                      <Database size={15} />
-                      <span>Backup Database</span>
-                    </button>
-                  </div>
-                </section>
-
-                {/* 1B. PLAIN-ENGLISH DAILY SECURITY STORY BANNER */}
-                <section
-                  className="webcare-card"
-                  style={{
-                    padding: '18px 22px',
-                    marginBottom: '18px',
-                    background: 'var(--webcare-bg-panel, #ffffff)',
-                    border: '1px solid var(--webcare-border, #e2e8f0)',
-                    borderLeft: '4px solid var(--webcare-status-clean, #10b981)',
-                    borderRadius: '14px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    flexWrap: 'wrap',
-                    gap: '16px',
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '14px', flex: '1 1 420px' }}>
-                    <div
-                      style={{
-                        width: '40px',
-                        height: '40px',
-                        borderRadius: '10px',
-                        background: 'var(--webcare-status-clean-soft)',
-                        color: 'var(--webcare-status-clean)',
-                        border: '1px solid var(--webcare-status-clean-border)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        flexShrink: 0,
-                      }}
-                    >
-                      <ShieldCheck size={20} />
-                    </div>
-                    <div>
-                      <div style={{ fontSize: '14px', fontWeight: 800, color: 'var(--webcare-text-title, #0f172a)' }}>
-                        {dailyStory?.headline || 'Your website security status at a glance'}
-                      </div>
-                      <p style={{ margin: '4px 0 0 0', fontSize: '12.5px', lineHeight: 1.55, color: 'var(--webcare-text-secondary, #475569)' }}>
-                        {dailyStory?.summary ||
-                          `WebCare Pro is actively defending your storefront and login perimeter (${firewallBlocks} total hostile probes stopped). 0 real shoppers blocked.`}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                    {(dailyStory?.outdated_plugins_count ?? totalWarnings) > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => handleNavTabChange('vulnerabilities')}
-                        style={{
-                          padding: '7px 12px',
-                          borderRadius: '8px',
-                          fontSize: '12px',
-                          fontWeight: 700,
-                          cursor: 'pointer',
-                          background: 'var(--webcare-status-warn-soft)',
-                          color: 'var(--webcare-status-warn)',
-                          border: '1px solid var(--webcare-status-warn-border)',
-                        }}
-                      >
-                        {dailyStory?.outdated_plugins_count || totalWarnings} Update / Virtual Shield Available →
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => setRescueModalOpen(true)}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        padding: '7px 12px',
-                        borderRadius: '8px',
-                        fontSize: '12px',
-                        fontWeight: 700,
-                        cursor: 'pointer',
-                        background: 'var(--webcare-bg-surface, #f8fafc)',
-                        color: 'var(--webcare-text-primary, #1e293b)',
-                        border: '1px solid var(--webcare-border-form, #cbd5e1)',
-                      }}
-                    >
-                      <Wrench size={13} />
-                      <span>Troubleshoot Site</span>
-                    </button>
-                  </div>
-                </section>
-
-                {/* 1C. SIMPLE OWNER MODE PLAIN-ENGLISH OUTCOME CARDS */}
-                {workspaceMode === 'essential' && (
-                  <section
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))',
-                      gap: '14px',
-                      marginBottom: '20px',
-                    }}
-                  >
-                    <div
-                      onClick={() => handleNavTabChange('firewall')}
-                      style={{
-                        padding: '16px 18px',
-                        borderRadius: '12px',
-                        cursor: 'pointer',
-                        background: 'var(--webcare-bg-panel, #ffffff)',
-                        border: '1px solid var(--webcare-border, #e2e8f0)',
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-                        <span style={{ width: '9px', height: '9px', borderRadius: '50%', background: '#10b981' }} />
-                        <span style={{ fontSize: '13px', fontWeight: 800, color: 'var(--webcare-text-title, #0f172a)' }}>
-                          Customer Checkout &amp; Payments: Protected
-                        </span>
-                      </div>
-                      <div style={{ fontSize: '12px', color: 'var(--webcare-text-muted, #64748b)' }}>
-                        Card-testing &amp; fake coupon abuse bots blocked automatically.
-                      </div>
-                    </div>
-
-                    <div
-                      onClick={() => handleNavTabChange('auth')}
-                      style={{
-                        padding: '16px 18px',
-                        borderRadius: '12px',
-                        cursor: 'pointer',
-                        background: 'var(--webcare-bg-panel, #ffffff)',
-                        border: '1px solid var(--webcare-border, #e2e8f0)',
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-                        <span style={{ width: '9px', height: '9px', borderRadius: '50%', background: '#10b981' }} />
-                        <span style={{ fontSize: '13px', fontWeight: 800, color: 'var(--webcare-text-title, #0f172a)' }}>
-                          Admin Area &amp; Passwords: Protected
-                        </span>
-                      </div>
-                      <div style={{ fontSize: '12px', color: 'var(--webcare-text-muted, #64748b)' }}>
-                        Brute-force login shield &amp; Zero-Lockout IP protection active.
-                      </div>
-                    </div>
-
-                    <div
-                      onClick={() => handleNavTabChange('fim')}
-                      style={{
-                        padding: '16px 18px',
-                        borderRadius: '12px',
-                        cursor: 'pointer',
-                        background: 'var(--webcare-bg-panel, #ffffff)',
-                        border: '1px solid var(--webcare-border, #e2e8f0)',
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-                        <span style={{ width: '9px', height: '9px', borderRadius: '50%', background: isFimClean && isMalwareClean ? '#10b981' : '#f59e0b' }} />
-                        <span style={{ fontSize: '13px', fontWeight: 800, color: 'var(--webcare-text-title, #0f172a)' }}>
-                          Website Files &amp; Plugins: {isFimClean && isMalwareClean ? 'Verified Clean' : 'Review Items'}
-                        </span>
-                      </div>
-                      <div style={{ fontSize: '12px', color: 'var(--webcare-text-muted, #64748b)' }}>
-                        {scannedFilesCount} files checked against official WordPress signatures.
-                      </div>
-                    </div>
-
-                    <div
-                      onClick={() => handleNavTabChange('vulnerabilities')}
-                      style={{
-                        padding: '16px 18px',
-                        borderRadius: '12px',
-                        cursor: 'pointer',
-                        background: 'var(--webcare-bg-panel, #ffffff)',
-                        border: `1px solid ${(dailyStory?.outdated_plugins_count ?? totalWarnings) > 0 ? 'var(--webcare-status-warn-border)' : 'var(--webcare-border, #e2e8f0)'}`,
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-                        <span style={{ width: '9px', height: '9px', borderRadius: '50%', background: (dailyStory?.outdated_plugins_count ?? totalWarnings) > 0 ? '#f59e0b' : '#10b981' }} />
-                        <span style={{ fontSize: '13px', fontWeight: 800, color: 'var(--webcare-text-title, #0f172a)' }}>
-                          {(dailyStory?.outdated_plugins_count ?? totalWarnings) > 0
-                            ? `${dailyStory?.outdated_plugins_count || totalWarnings} Action Needed: Update / Virtual Shield`
-                            : 'All Plugins & Themes: Up to Date'}
-                        </span>
-                      </div>
-                      <div style={{ fontSize: '12px', color: 'var(--webcare-text-muted, #64748b)' }}>
-                        {(dailyStory?.outdated_plugins_count ?? totalWarnings) > 0
-                          ? 'Activate 1-Click Virtual Shield or Safe Update with automatic backup.'
-                          : 'No known plugin vulnerabilities require attention right now.'}
-                      </div>
-                    </div>
-                  </section>
-                )}
-
-                {/* 2. 4 EXECUTIVE PLAIN-ENGLISH HEALTH CARDS */}
-                <section className="health-cards-grid">
-                  {/* CARD 1: MALWARE & VIRUSES */}
-                  <div
-                    className="health-card webcare-card"
-                    onClick={() => handleNavTabChange('scan')}
-                  >
-                    <div className="health-card-header">
-                      <div
-                        className={`health-card-icon-wrap ${isMalwareClean ? 'is-clean' : 'is-critical'}`}
-                      >
-                        {isMalwareClean ? <ShieldCheck size={24} /> : <AlertTriangle size={24} />}
-                      </div>
-                      <span
-                        className={`health-card-badge ${isMalwareClean ? 'is-clean' : 'is-critical'}`}
-                      >
-                        {isMalwareClean ? 'Clean & Safe' : `${activeCrit} Threat${activeCrit > 1 ? 's' : ''}`}
-                      </span>
-                    </div>
-                    <div className="health-card-title">Viruses &amp; Malware</div>
-                    <div className="health-card-desc">
-                      {isMalwareClean
-                        ? 'No dangerous PHP webshells, hidden backdoors, or injected trojans detected across your entire website.'
-                        : `${activeCrit} potentially dangerous threat${activeCrit > 1 ? 's identified' : ' identified'}. Immediate attention recommended.`}
-                    </div>
-                    <div className="health-card-footer">
-                      <span>{scannedFilesCount} Files Verified</span>
-                      <span className={`health-card-footer-highlight ${isMalwareClean ? 'is-clean' : 'is-critical'}`}>
-                        {isMalwareClean ? '✓ 0 Threats' : 'Review Findings →'}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* CARD 2: WORDPRESS CORE INTEGRITY */}
-                  <div
-                    className="health-card webcare-card"
-                    onClick={() => handleNavTabChange('fim')}
-                  >
-                    <div className="health-card-header">
-                      <div
-                        className={`health-card-icon-wrap ${isFimClean ? 'is-cyan' : 'is-warning'}`}
-                      >
-                        <FileCode size={24} />
-                      </div>
-                      <span
-                        className={`health-card-badge ${isFimClean ? 'is-cyan' : 'is-warning'}`}
-                      >
-                        {isFimClean ? '100% Authentic' : `${fimCount} Modified`}
-                      </span>
-                    </div>
-                    <div className="health-card-title">WordPress File Health</div>
-                    <div className="health-card-desc">
-                      {isFimClean
-                        ? `Every core file matches official WordPress v${wpVersion} cryptographic signatures. No unauthorized modifications found.`
-                        : `${fimCount} core file${fimCount > 1 ? 's differ' : ' differs'} from official WordPress.org copies. You can review diffs or restore them safely.`}
-                    </div>
-                    <div className="health-card-footer">
-                      <span className={`health-card-footer-highlight ${isFimClean ? 'is-cyan' : 'is-warning'}`}>
-                        WP v{wpVersion} {isFimClean ? 'Clean' : 'Checked'}
-                      </span>
-                      <span className={`health-card-footer-highlight ${isFimClean ? 'is-cyan' : 'is-warning'}`}>
-                        {isFimClean ? '✓ Official' : 'Inspect Diffs →'}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* CARD 3: PLUGIN & THEME SAFETY */}
-                  <div
-                    className="health-card webcare-card"
-                    onClick={() => handleNavTabChange('vulnerabilities')}
-                  >
-                    <div className="health-card-header">
-                      <div
-                        className={`health-card-icon-wrap ${isCveClean ? 'is-purple' : 'is-warning'}`}
-                      >
-                        <Sparkles size={24} />
-                      </div>
-                      <span
-                        className={`health-card-badge ${isCveClean ? 'is-purple' : 'is-warning'}`}
-                      >
-                        {isCveClean ? 'Zero Flaws' : `${totalWarnings} Advisories`}
-                      </span>
-                    </div>
-                    <div className="health-card-title">Plugin &amp; Theme Safety</div>
-                    <div className="health-card-desc">
-                      {isCveClean
-                        ? 'All active extensions cross-referenced against the global CVE vulnerability database. No known security holes.'
-                        : 'Updates or security patches are recommended to protect against known CVE vulnerabilities.'}
-                    </div>
-                    <div className="health-card-footer">
-                      <span className={`health-card-footer-highlight ${isCveClean ? 'is-purple' : 'is-warning'}`}>
-                        {pluginCount} Plugins Checked
-                      </span>
-                      <span className={`health-card-footer-highlight ${isCveClean ? 'is-purple' : 'is-warning'}`}>
-                        {isCveClean ? '✓ Up-to-date' : 'View Advisories →'}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* CARD 4: FIREWALL & DEFENSES */}
-                  <div
-                    className="health-card webcare-card"
-                    onClick={() => handleNavTabChange('firewall')}
-                  >
-                    <div className="health-card-header">
-                      <div
-                        className={`health-card-icon-wrap ${firewallActive ? 'is-blue' : 'is-muted'}`}
-                      >
-                        <Shield size={24} />
-                      </div>
-                      <span
-                        className={`health-card-badge ${firewallActive ? 'is-blue' : 'is-muted'}`}
-                      >
-                        {firewallActive ? (firewallMode === 'learning' ? 'Learning Mode' : 'Active Filter') : 'Filter Paused'}
-                      </span>
-                    </div>
-                    <div className="health-card-title">Firewall &amp; Defenses</div>
-                    <div className="health-card-desc">
-                      Filtering incoming web requests in real-time. Automatically blocking brute force attacks and malicious crawlers.
-                    </div>
-                    <div className="health-card-footer">
-                      <span className={`health-card-footer-highlight ${firewallActive ? 'is-blue' : 'is-muted'}`}>
-                        {firewallBlocks} Attacks Blocked
-                      </span>
-                      <span className={`health-card-footer-highlight ${firewallActive ? 'is-blue' : 'is-muted'}`}>
-                        View Defenses &rarr;
-                      </span>
-                    </div>
-                  </div>
-                </section>
-
-                {/* 3. SECURITY SCORE GAUGE & REAL-TIME ACTIVITY FEED ROW */}
-                <section className="dashboard-details-row">
-                  {/* INTERACTIVE SCORE GAUGE CARD */}
-                  <div className="score-gauge-card webcare-card">
-                    <div className="card-title-row" style={{ width: '100%' }}>
-                      <div className="card-title">
-                        <ShieldCheck size={20} color="#10b981" />
-                        Security Health Grade
-                      </div>
-                      <span className="badge-status is-clean" style={{ padding: '4px 10px', fontSize: '11px' }}>
-                        Verified
-                      </span>
-                    </div>
-
-                    <div className="gauge-container">
-                      <svg className="gauge-svg" viewBox="0 0 200 200">
-                        <defs>
-                          <linearGradient id="execGaugeGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                            <stop offset="0%" stopColor="#10b981" />
-                            <stop offset="60%" stopColor="#06b6d4" />
-                            <stop offset="100%" stopColor="#3b82f6" />
-                          </linearGradient>
-                        </defs>
-                        <circle className="gauge-bg" cx="100" cy="100" r={gaugeRadius} />
-                        <circle
-                          className="gauge-progress"
-                          cx="100"
-                          cy="100"
-                          r={gaugeRadius}
-                          stroke="url(#execGaugeGradient)"
-                          strokeDasharray={gaugeCircumference}
-                          strokeDashoffset={gaugeOffset}
-                        />
-                      </svg>
-                      <div className="gauge-center-content">
-                        <div className="grade-badge-huge" style={{ color: scoreColor }}>
-                          {grade}
-                        </div>
-                        <div className="grade-score-label">
-                          {healthScore} / 100 Score
-                        </div>
-                      </div>
-                    </div>
-
-                    <p style={{ fontSize: '13px', color: '#94a3b8', marginTop: '6px' }}>
-                      {isCrit
-                        ? 'Security Attention Needed: High-risk vulnerabilities or modified core files detected on your site. All remediation actions are protected by automated 14-day rollback backups in WebCare Vault.'
-                        : isWarn
-                          ? 'Advisory Notice: Minor configuration or plugin update recommendations found. Review and safely resolve with 1-click protection.'
-                          : 'Your WordPress installation satisfies all enterprise security benchmarks. Core integrity intact, firewall active, and automated 14-day safety snapshots ready.'}
-                    </p>
-
-                    <div className="gauge-breakdown">
-                      <div className="breakdown-item">
-                        <div className="breakdown-item-title">Core Integrity</div>
-                        <div className={`breakdown-item-val ${isFimClean ? 'is-clean' : 'is-warning'}`}>
-                          {isFimClean ? '100% Verified' : `${fimCount} Mod`}
-                        </div>
-                      </div>
-                      <div className="breakdown-item">
-                        <div className="breakdown-item-title">Firewall WAF</div>
-                        <div className={`breakdown-item-val ${firewallActive ? 'is-clean' : 'is-muted'}`}>
-                          {firewallActive ? (firewallMode === 'learning' ? 'Learning' : '100% Active') : 'Disabled'}
-                        </div>
-                      </div>
-                      <div className="breakdown-item">
-                        <div className="breakdown-item-title">Plugin Safety</div>
-                        <div className={`breakdown-item-val ${isCveClean ? 'is-purple' : 'is-warning'}`}>
-                          {isCveClean ? '100% Clean' : `${totalWarnings} Advisory`}
-                        </div>
-                      </div>
-                      <div className="breakdown-item">
-                        <div className="breakdown-item-title">Admin Hardening</div>
-                        <div className="breakdown-item-val is-clean">
-                          100% Shielded
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* LIVE PROTECTION ACTIVITY FEED (FUNCTIONAL LIVE DEFENSE TIMELINE) */}
-                  <div className="activity-feed-card webcare-card">
-                    <div className="card-title-row">
-                      <div className="card-title">
-                        <Activity size={20} color="#06b6d4" />
-                        Live Defense Timeline
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span className="badge-env is-monitoring" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                          <span className="pulse-dot" /> Live Monitoring
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => loadDashboardData(false)}
-                          disabled={isLiveRefreshing}
-                          className="btn-secondary-action btn-sm"
-                          style={{ cursor: isLiveRefreshing ? 'wait' : 'pointer' }}
-                          title="Refresh live monitoring events & status"
-                        >
-                          <RefreshCw size={11} className={isLiveRefreshing ? 'webcare-spin-icon' : ''} />
-                          <span>{isLiveRefreshing ? 'Updating...' : 'Live Check'}</span>
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="feed-list" id="feedList">
-                      {/* Real Blocked Attacks from Firewall Logs */}
-                      {firewallLogs && firewallLogs.length > 0 ? (
-                        firewallLogs.slice(0, 3).map((log: any, idx: number) => (
-                          <div key={`fw-log-${log.id || idx}`} className="feed-item">
-                            <div className="feed-icon block">
-                              <XCircle size={16} />
-                            </div>
-                            <div className="feed-details">
-                              <div className="feed-heading">
-                                Blocked {log.rule_category ? (log.rule_category.replace(/_/g, ' ').toUpperCase()) : 'Malicious Probe'}
-                              </div>
-                              <div className="feed-subtext">
-                                Dropped unauthorized {log.request_method || 'GET'} request to {log.request_uri || '/'} from IP {log.ip_address || '127.0.0.1'}
-                              </div>
-                            </div>
-                            <div className="feed-time">{formatRelativeTime(log.created_at)}</div>
-                          </div>
-                        ))
-                      ) : null}
-
-                      {/* Real Latest WordPress Core Verification Event */}
-                      <div className="feed-item">
-                        <div className="feed-icon shield">
-                          <ShieldCheck size={16} />
-                        </div>
-                        <div className="feed-details">
-                          <div className="feed-heading">WordPress v{wpVersion} Core Files Authenticated</div>
-                          <div className="feed-subtext">
-                            {isFimClean
-                              ? 'Verified official cryptographic checksums against official WordPress API. 0 core tampering detected.'
-                              : `${fimCount} modified core file(s) identified during latest audit against official WordPress.org signatures.`}
-                          </div>
-                        </div>
-                        <div className="feed-time">
-                          {formatRelativeTime(currentScan?.finished_at || currentScan?.created_at || lastLiveCheck)}
-                        </div>
-                      </div>
-
-                      {/* Real Cloud Threat Intelligence Synchronized Event */}
-                      <div className="feed-item">
-                        <div className="feed-icon shield">
-                          <CheckCircle2 size={16} />
-                        </div>
-                        <div className="feed-details">
-                          <div className="feed-heading">Threat Intelligence Active</div>
-                          <div className="feed-subtext">
-                            {firewallStatus?.threat_intel?.total_blacklisted_ips
-                              ? `${firewallStatus.threat_intel.total_blacklisted_ips} botnet IPs & ${firewallStatus.threat_intel.total_cves || 8} zero-day CVE signatures enforced in memory.`
-                              : 'Perimeter threat intelligence synchronized. Real-time botnet IP filtering active.'}
-                          </div>
-                        </div>
-                        <div className="feed-time">{firewallStatus?.threat_intel?.last_sync_human || 'Active'}</div>
-                      </div>
-
-                      {/* Real Quarantine Vault Integrity Event */}
-                      <div className="feed-item">
-                        <div className="feed-icon info">
-                          <Lock size={16} />
-                        </div>
-                        <div className="feed-details">
-                          <div className="feed-heading">Quarantine Vault Integrity Verified</div>
-                          <div className="feed-subtext">
-                            {quarantinedActiveCount > 0
-                              ? `AES-256-GCM secure container verified. ${quarantinedActiveCount} suspicious isolated threat(s) held safely.`
-                              : 'AES-256-GCM secure container verified. 0 suspicious quarantined files.'}
-                          </div>
-                        </div>
-                        <div className="feed-time">1h ago</div>
-                      </div>
-
-                      {/* Real Client IP Resolution Event */}
-                      <div className="feed-item">
-                        <div className="feed-icon shield">
-                          <Server size={16} />
-                        </div>
-                        <div className="feed-details">
-                          <div className="feed-heading">Visitor IP Resolution Checked</div>
-                          <div className="feed-subtext">
-                            Client IP {firewallStatus?.client_ip || '127.0.0.1'} verified. Zero header spoofing detected.
-                          </div>
-                        </div>
-                        <div className="feed-time">3h ago</div>
-                      </div>
-                    </div>
-                  </div>
-                </section>
-
-                {/* 4. MANDATORY SOLO FREELANCER SENIOR EXPERT CARD */}
-                <section className="expert-support-card webcare-card-elevated">
-                  <div className="expert-info">
-                    <div className="expert-avatar-wrap">
-                      <User size={28} color="#ffffff" />
-                      <div className="expert-badge-online" />
-                    </div>
-                    <div className="expert-text">
-                      <h4>Connect directly with Mir Alamin (WebCare Pro)</h4>
-                      <p>
-                        Senior Linux SysAdmin &amp; WordPress Security Engineer &bull; Direct 1-on-1 assistance for custom server hardening &amp; malware recovery.
-                      </p>
-                    </div>
-                  </div>
-                  <div className="expert-actions">
-                    <button
-                      type="button"
-                      className="btn-expert"
-                      onClick={() => handleNavTabChange('settings', 'support')}
-                    >
-                      <MessageSquare size={15} />
-                      <span>Connect with me directly</span>
-                    </button>
-                  </div>
-                </section>
-              </Fragment>
-            );
-          })()}
+          {/* MANDATORY SOLO FREELANCER SENIOR EXPERT CARD */}
+          <section className="expert-support-card webcare-card-elevated" style={{ marginTop: '24px' }}>
+            <div className="expert-info">
+              <div className="expert-avatar-wrap">
+                <User size={28} color="#ffffff" />
+                <div className="expert-badge-online" />
+              </div>
+              <div className="expert-text">
+                <h4>Connect directly with Mir Alamin (WebCare Pro)</h4>
+                <p>
+                  Senior Linux SysAdmin &amp; WordPress Security Engineer &bull; Direct 1-on-1 assistance for custom server hardening &amp; malware recovery.
+                </p>
+              </div>
+            </div>
+            <div className="expert-actions">
+              <button
+                type="button"
+                className="btn-expert"
+                onClick={() => handleNavTabChange('settings', 'support')}
+              >
+                <MessageSquare size={15} />
+                <span>Connect with me directly</span>
+              </button>
+            </div>
+          </section>
         </main>
       )}
 

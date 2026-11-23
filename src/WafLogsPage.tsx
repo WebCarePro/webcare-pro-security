@@ -1558,7 +1558,7 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
           <span style={{ color: 'var(--webcare-border, #cbd5e1)' }}>|</span>
           <button
             type="button"
-            onClick={() => { window.location.href = 'admin.php?page=webcare-pro-modular-waf&tab=builder'; }}
+            onClick={() => { window.location.href = 'admin.php?page=webcare-pro-firewall&tab=rule-builder'; }}
             style={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -1580,7 +1580,7 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <button
             type="button"
-            onClick={() => { window.location.href = 'admin.php?page=webcare-pro-activity-logs'; }}
+            onClick={() => { window.location.href = 'admin.php?page=webcare-pro-logs&tab=activity'; }}
             style={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -3281,7 +3281,7 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
                                       })
                                     );
                                   } catch {}
-                                  window.location.href = 'admin.php?page=webcare-pro-modular-waf&tab=builder';
+                                  window.location.href = 'admin.php?page=webcare-pro-firewall&tab=rule-builder';
                                 }}
                                 title="Create Custom Firewall Rule from this request"
                                 style={{ color: 'var(--webcare-primary, #4f46e5)', fontWeight: 700 }}

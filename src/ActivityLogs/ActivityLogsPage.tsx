@@ -1253,7 +1253,7 @@ export function ActivityLogsPage({ apiRequest }: ActivityLogsPageProps) {
           <span style={{ color: 'var(--webcare-border, #cbd5e1)' }}>|</span>
           <button
             type="button"
-            onClick={() => { window.location.href = 'admin.php?page=webcare-pro-waf-logs'; }}
+            onClick={() => { window.location.href = 'admin.php?page=webcare-pro-logs&tab=firewall'; }}
             style={{
               display: 'inline-flex',
               alignItems: 'center',

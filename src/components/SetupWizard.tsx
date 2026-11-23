@@ -695,7 +695,7 @@ export const SetupWizard = () => {
       });
 
       if (launchAudit) {
-        window.location.href = 'admin.php?page=webcare-pro-scan&autorun=1';
+        window.location.href = 'admin.php?page=webcare-pro-scanner&autorun=1';
       } else {
         window.location.href = 'admin.php?page=webcare-pro-security';
       }

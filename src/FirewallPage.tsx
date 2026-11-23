@@ -281,17 +281,44 @@ export const FirewallPage = ({
   const [selectedRoleToAdd, setSelectedRoleToAdd] = useState<string>('');
   const [wooRulesExpanded, setWooRulesExpanded] = useState<boolean>(true);
 
+  // Normalize tab aliases to canonical FirewallPage tabs
+  const normalizeFirewallTab = (tab: string | null): ('stream' | 'rules' | 'caf' | 'drill' | 'supply_chain' | 'behavioral' | 'server_sec' | 'intel' | 'cloudflare' | 'vpatch' | 'ai_defense') | null => {
+    if (!tab) return null;
+    const tabMap: Record<string, 'stream' | 'rules' | 'caf' | 'drill' | 'supply_chain' | 'behavioral' | 'server_sec' | 'intel' | 'cloudflare' | 'vpatch' | 'ai_defense'> = {
+      protection: 'rules',
+      rules: 'rules',
+      traffic: 'stream',
+      stream: 'stream',
+      caf: 'caf',
+      adaptive: 'caf',
+      cloudflare: 'cloudflare',
+      behavioral: 'behavioral',
+      bots: 'behavioral',
+      'rule-builder': 'rules',
+      'virtual-patches': 'vpatch',
+      vpatch: 'vpatch',
+      drill: 'drill',
+      supply_chain: 'supply_chain',
+      server_sec: 'server_sec',
+      intel: 'intel',
+      ai_defense: 'ai_defense',
+    };
+    return tabMap[tab] || null;
+  };
+
   // Initialize active tab from URL query param ?tab= if valid, else fallback to initialSubTab
   const getStartingTab = (): 'stream' | 'rules' | 'caf' | 'drill' | 'supply_chain' | 'behavioral' | 'server_sec' | 'intel' | 'cloudflare' | 'vpatch' | 'ai_defense' => {
+    if (initialSubTab) {
+      const normalized = normalizeFirewallTab(initialSubTab);
+      if (normalized) return normalized;
+    }
     try {
       const urlParams = new URLSearchParams(window.location.search);
       const tabParam = urlParams.get('tab');
-      const validTabs = ['stream', 'rules', 'caf', 'drill', 'supply_chain', 'behavioral', 'server_sec', 'intel', 'cloudflare', 'vpatch', 'ai_defense'];
-      if (tabParam && validTabs.includes(tabParam)) {
-        return tabParam as any;
-      }
+      const normalized = normalizeFirewallTab(tabParam);
+      if (normalized) return normalized;
     } catch (e) {}
-    return (initialSubTab as any) || 'stream';
+    return 'stream';
   };
 
   const [activeTab, setActiveTab] = useState<'stream' | 'rules' | 'caf' | 'drill' | 'supply_chain' | 'behavioral' | 'server_sec' | 'intel' | 'cloudflare' | 'vpatch' | 'ai_defense'>(getStartingTab);
@@ -616,8 +643,11 @@ export const FirewallPage = ({
   };
 
   useEffect(() => {
-    if (initialSubTab && initialSubTab !== activeTab) {
-      setActiveTab(initialSubTab);
+    if (initialSubTab) {
+      const normalized = normalizeFirewallTab(initialSubTab);
+      if (normalized && normalized !== activeTab) {
+        setActiveTab(normalized);
+      }
     }
   }, [initialSubTab]);
 
@@ -627,9 +657,9 @@ export const FirewallPage = ({
       try {
         const urlParams = new URLSearchParams(window.location.search);
         const tabParam = urlParams.get('tab');
-        const validTabs = ['stream', 'rules', 'caf', 'drill', 'supply_chain', 'behavioral', 'server_sec', 'intel', 'cloudflare', 'vpatch', 'ai_defense'];
-        if (tabParam && validTabs.includes(tabParam)) {
-          setActiveTab(tabParam as any);
+        const normalized = normalizeFirewallTab(tabParam);
+        if (normalized) {
+          setActiveTab(normalized);
         } else if (!tabParam) {
           setActiveTab('stream');
         }
@@ -2743,7 +2773,7 @@ export const FirewallPage = ({
               if (onNavigateToServerTelemetry) {
                 onNavigateToServerTelemetry();
               } else {
-                window.location.href = 'admin.php?page=webcare-pro-server';
+                window.location.href = 'admin.php?page=webcare-pro-backups&tab=server';
               }
             }}
           >
@@ -2770,7 +2800,7 @@ export const FirewallPage = ({
               if (onNavigateToWafLogs) {
                 onNavigateToWafLogs();
               } else {
-                window.location.href = 'admin.php?page=webcare-pro-waf-logs';
+                window.location.href = 'admin.php?page=webcare-pro-logs&tab=firewall';
               }
             }}
           >
@@ -3498,7 +3528,7 @@ export const FirewallPage = ({
 
                     <button
                       type="button"
-                      onClick={() => { setIsMoreMenuOpen(false); window.location.href = 'admin.php?page=webcare-pro-modular-waf'; }}
+                      onClick={() => { setIsMoreMenuOpen(false); window.location.href = 'admin.php?page=webcare-pro-firewall&tab=protection'; }}
                       style={{
                         display: 'flex',
                         alignItems: 'center',
@@ -3557,7 +3587,7 @@ export const FirewallPage = ({
               type="button"
               className="webcare-btn-micro"
               onClick={() => {
-                window.location.href = 'admin.php?page=webcare-pro-modular-waf&tab=builder';
+                window.location.href = 'admin.php?page=webcare-pro-firewall&tab=rule-builder';
               }}
               style={{
                 fontSize: '11.5px',
@@ -3586,7 +3616,7 @@ export const FirewallPage = ({
                 if (onNavigateToWafLogs) {
                   onNavigateToWafLogs();
                 } else {
-                  window.location.href = 'admin.php?page=webcare-pro-waf-logs';
+                  window.location.href = 'admin.php?page=webcare-pro-logs&tab=firewall';
                 }
               }}
               title="Open Dedicated Full-Page WAF Incident Logs & Attack Forensics"
@@ -3631,7 +3661,7 @@ export const FirewallPage = ({
                   if (onNavigateToWafLogs) {
                     onNavigateToWafLogs();
                   } else {
-                    window.location.href = 'admin.php?page=webcare-pro-waf-logs';
+                    window.location.href = 'admin.php?page=webcare-pro-logs&tab=firewall';
                   }
                 }}
               >
@@ -6743,7 +6773,7 @@ export const FirewallPage = ({
                 </span>
               </div>
               <a
-                href="admin.php?page=webcare-pro-waf-logs&tab=rules"
+                href="admin.php?page=webcare-pro-logs&tab=firewall"
                 className="webcare-btn webcare-btn-secondary"
                 style={{
                   fontSize: '12px',

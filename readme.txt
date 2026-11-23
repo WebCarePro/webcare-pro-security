@@ -4,7 +4,7 @@ Tags: security, malware, ai-security, firewall, 2fa
 Requires at least: 7.0
 Tested up to: 7.1
 Requires PHP: 8.3
-Stable tag: 3.25.3
+Stable tag: 0.0.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -225,3 +225,7 @@ To compile the React admin application from source:
 4. Run `npm run package` to compile and package the release zip.
 
 == Changelog ==
+
+= 0.0.1 =
+* Initial Release: Clean architecture baseline, calm executive dashboard, 7-pillar navigation, and enterprise security suite.
+

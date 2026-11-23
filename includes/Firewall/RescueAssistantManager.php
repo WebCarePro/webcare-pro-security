@@ -926,25 +926,50 @@ class RescueAssistantManager {
             return;
         }
 
-        $paused = self::is_strict_paused();
-        $badge  = $paused
-            ? '<span style="background:#f59e0b;color:#111827;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700;margin-left:6px;">' . esc_html__('Test Mode', 'webcare-pro-security') . '</span>'
-            : '<span style="background:#10b981;color:#ffffff;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700;margin-left:6px;">' . esc_html__('Protected', 'webcare-pro-security') . '</span>';
+        $pause_status = self::get_pause_status();
+        $paused = !empty($pause_status['paused']);
+
+        if ($paused) {
+            $mins_left = (int) ceil(($pause_status['seconds_remaining'] ?? 0) / 60);
+            $badge_text = $mins_left > 0
+                ? sprintf(
+                    /* translators: %d: remaining minutes of safe mode */
+                    esc_html__('Safe Mode (%dm)', 'webcare-pro-security'),
+                    $mins_left
+                )
+                : esc_html__('Safe Mode', 'webcare-pro-security');
+
+            $badge = '<span class="webcare-ab-badge is-paused">'
+                . '<span class="webcare-ab-dot is-amber"></span>'
+                . $badge_text
+                . '</span>';
+        } else {
+            $badge = '<span class="webcare-ab-badge is-active">'
+                . '<span class="webcare-ab-dot is-emerald"></span>'
+                . esc_html__('Protected', 'webcare-pro-security')
+                . '</span>';
+        }
+
+        $dashboard_url = class_exists('\\WebCareProScanner\\Admin\\RouteRegistry')
+            ? \WebCareProScanner\Admin\RouteRegistry::url('webcare-pro-security')
+            : admin_url('admin.php?page=webcare-pro-security');
 
         $wp_admin_bar->add_node([
             'id'    => 'webcare-pro-bar',
-            'title' => '<span class="ab-icon dashicons dashicons-shield" style="margin-top:2px;"></span>WebCare Pro' . $badge,
-            'href'  => \WebCareProScanner\Admin\RouteRegistry::url('webcare-pro-security'),
+            'title' => '<span class="ab-icon dashicons dashicons-shield" style="margin-top:2px;"></span>'
+                . '<span class="webcare-ab-title">WebCare Pro</span>'
+                . $badge,
+            'href'  => esc_url($dashboard_url),
         ]);
 
-        // Quick Unblock Customer (#WEBCARE-XXXX) Popover Node
+        // 1. Quick Unblock Customer (#WEBCARE-XXXX or IP) Popover Node
         $unblock_form = '<div id="webcare-ab-unblock-box" class="webcare-ab-unblock-wrap">'
-            . '<div style="font-weight:700;font-size:12px;margin-bottom:6px;color:#f8fafc;">' . esc_html__('Quick Unblock Customer (#WEBCARE-XXXX or IP)', 'webcare-pro-security') . '</div>'
-            . '<div style="display:flex;gap:6px;align-items:center;">'
-            . '<input type="text" id="webcare-ab-code-input" autocomplete="off" placeholder="' . esc_attr__('#WEBCARE-492A or IP', 'webcare-pro-security') . '" style="width:170px;padding:4px 8px;border-radius:4px;border:1px solid #475569;background:#0f172a;color:#f8fafc;font-size:12px;height:28px;" />'
-            . '<button type="button" id="webcare-ab-lookup-btn" style="padding:4px 10px;border-radius:4px;border:none;background:#4f46e5;color:#fff;font-size:11px;font-weight:700;cursor:pointer;height:28px;">' . esc_html__('Find', 'webcare-pro-security') . '</button>'
+            . '<div class="webcare-ab-unblock-title">' . esc_html__('Quick Unblock Customer (#WEBCARE-XXXX or IP)', 'webcare-pro-security') . '</div>'
+            . '<div class="webcare-ab-unblock-row">'
+            . '<input type="text" id="webcare-ab-code-input" autocomplete="off" placeholder="' . esc_attr__('#WEBCARE-492A or IP', 'webcare-pro-security') . '" />'
+            . '<button type="button" id="webcare-ab-lookup-btn">' . esc_html__('Find', 'webcare-pro-security') . '</button>'
             . '</div>'
-            . '<div id="webcare-ab-result" style="margin-top:8px;font-size:11px;line-height:1.4;color:#cbd5e1;white-space:normal;"></div>'
+            . '<div id="webcare-ab-result"></div>'
             . '</div>';
 
         $wp_admin_bar->add_node([
@@ -953,18 +978,78 @@ class RescueAssistantManager {
             'title'  => $unblock_form,
         ]);
 
-        $wp_admin_bar->add_node([
-            'id'     => 'webcare-pro-bar-rescue',
-            'parent' => 'webcare-pro-bar',
-            'title'  => esc_html__('Something Not Working? Click to Troubleshoot', 'webcare-pro-security'),
-            'href'   => \WebCareProScanner\Admin\RouteRegistry::url('webcare-pro-security', '', '', ['rescue' => '1']),
-        ]);
+        // Helper to resolve canonical pillar URLs cleanly
+        $get_url = static function (string $pillar, string $tab = '', array $args = []): string {
+            if (class_exists('\\WebCareProScanner\\Admin\\RouteRegistry')) {
+                return \WebCareProScanner\Admin\RouteRegistry::url($pillar, $tab, '', $args);
+            }
+            $query = ['page' => $pillar];
+            if ($tab !== '') {
+                $query['tab'] = $tab;
+            }
+            if (!empty($args)) {
+                $query = array_merge($query, $args);
+            }
+            return add_query_arg($query, admin_url('admin.php'));
+        };
+
+        // 2. Six concise, plain-English quick links
+        $links = [
+            [
+                'id'    => 'webcare-pro-bar-dash',
+                'title' => esc_html__('Dashboard', 'webcare-pro-security'),
+                'href'  => $get_url('webcare-pro-security'),
+            ],
+            [
+                'id'    => 'webcare-pro-bar-firewall',
+                'title' => esc_html__('Firewall Rules', 'webcare-pro-security'),
+                'href'  => $get_url('webcare-pro-firewall'),
+            ],
+            [
+                'id'    => 'webcare-pro-bar-logs',
+                'title' => esc_html__('Logs & Unban IP', 'webcare-pro-security'),
+                'href'  => $get_url('webcare-pro-logs'),
+            ],
+            [
+                'id'    => 'webcare-pro-bar-scanner',
+                'title' => esc_html__('Malware & Scanner', 'webcare-pro-security'),
+                'href'  => $get_url('webcare-pro-scanner'),
+            ],
+            [
+                'id'    => 'webcare-pro-bar-backups',
+                'title' => esc_html__('Database Backups', 'webcare-pro-security'),
+                'href'  => $get_url('webcare-pro-backups'),
+            ],
+            [
+                'id'    => 'webcare-pro-bar-settings',
+                'title' => esc_html__('Settings & Doctor', 'webcare-pro-security'),
+                'href'  => $get_url('webcare-pro-settings'),
+            ],
+        ];
+
+        foreach ($links as $link) {
+            $wp_admin_bar->add_node([
+                'id'     => $link['id'],
+                'parent' => 'webcare-pro-bar',
+                'title'  => $link['title'],
+                'href'   => esc_url($link['href']),
+            ]);
+        }
+
+        // 3. Safe Mode Action at the bottom with divider
+        $safe_mode_url = $get_url('webcare-pro-security', '', ['rescue' => '1']);
+        $safe_mode_title = $paused
+            ? '<span class="webcare-ab-action-resume">' . esc_html__('Resume Full Protection', 'webcare-pro-security') . '</span>'
+            : '<span class="webcare-ab-action-pause">' . esc_html__('Pause Firewall (15-Min Safe Mode)', 'webcare-pro-security') . '</span>';
 
         $wp_admin_bar->add_node([
-            'id'     => 'webcare-pro-bar-modular',
+            'id'     => 'webcare-pro-bar-safemode',
             'parent' => 'webcare-pro-bar',
-            'title'  => esc_html__('Firewall Rules & Defense', 'webcare-pro-security'),
-            'href'   => \WebCareProScanner\Admin\RouteRegistry::url('webcare-pro-firewall'),
+            'title'  => $safe_mode_title,
+            'href'   => esc_url($safe_mode_url),
+            'meta'   => [
+                'class' => 'webcare-ab-safemode-node',
+            ],
         ]);
     }
 
@@ -976,13 +1061,33 @@ class RescueAssistantManager {
             return;
         }
 
-        wp_register_style('webcare-admin-bar-rescue', false, [], defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '2.11.0');
+        $ver = defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '0.0.1';
+        wp_register_style('webcare-admin-bar-rescue', false, [], $ver);
         wp_enqueue_style('webcare-admin-bar-rescue');
         wp_add_inline_style(
             'webcare-admin-bar-rescue',
-            '#wp-admin-bar-webcare-pro-bar-unblock .ab-item{height:auto!important;padding:10px 12px!important;min-width:275px!important;line-height:1.4!important;}'
+            '#wp-admin-bar-webcare-pro-bar .ab-sub-wrapper{min-width:265px!important;box-shadow:0 10px 25px -5px rgba(0,0,0,0.5)!important;border-radius:0 0 6px 6px!important;padding:4px 0!important;}'
             . '#wp-admin-bar-webcare-pro-bar.webcare-ab-keep-open .ab-sub-wrapper,'
             . '#wp-admin-bar-webcare-pro-bar:focus-within .ab-sub-wrapper{display:block!important;}'
+            . '#wp-admin-bar-webcare-pro-bar .webcare-ab-badge{display:inline-flex;align-items:center;gap:5px;padding:1px 7px;border-radius:10px;font-size:10px;font-weight:700;margin-left:6px;line-height:1.4;letter-spacing:0.02em;}'
+            . '#wp-admin-bar-webcare-pro-bar .webcare-ab-badge.is-active{background:rgba(16,185,129,0.2);color:#34d399;border:1px solid rgba(16,185,129,0.4);}'
+            . '#wp-admin-bar-webcare-pro-bar .webcare-ab-badge.is-paused{background:rgba(245,158,11,0.22);color:#fbbf24;border:1px solid rgba(245,158,11,0.45);}'
+            . '#wp-admin-bar-webcare-pro-bar .webcare-ab-dot{display:inline-block;width:6px;height:6px;border-radius:50%;flex-shrink:0;}'
+            . '#wp-admin-bar-webcare-pro-bar .webcare-ab-dot.is-emerald{background:#10b981;box-shadow:0 0 6px #10b981;}'
+            . '#wp-admin-bar-webcare-pro-bar .webcare-ab-dot.is-amber{background:#f59e0b;box-shadow:0 0 6px #f59e0b;}'
+            . '#wp-admin-bar-webcare-pro-bar-unblock .ab-item{height:auto!important;padding:10px 14px 12px!important;line-height:1.4!important;border-bottom:1px solid rgba(255,255,255,0.08)!important;margin-bottom:4px!important;}'
+            . '#webcare-ab-unblock-box .webcare-ab-unblock-title{font-weight:700;font-size:11px;letter-spacing:0.02em;text-transform:uppercase;margin-bottom:7px;color:#cbd5e1;}'
+            . '#webcare-ab-unblock-box .webcare-ab-unblock-row{display:flex;gap:6px;align-items:center;}'
+            . '#webcare-ab-unblock-box input#webcare-ab-code-input{flex:1;min-width:0;padding:4px 8px;border-radius:4px;border:1px solid rgba(255,255,255,0.18);background:#090d16;color:#f8fafc;font-size:12px;height:28px;outline:none;box-sizing:border-box;}'
+            . '#webcare-ab-unblock-box input#webcare-ab-code-input:focus{border-color:#6366f1;box-shadow:0 0 0 1px #6366f1;}'
+            . '#webcare-ab-unblock-box button#webcare-ab-lookup-btn{padding:0 10px;border-radius:4px;border:none;background:#4f46e5;color:#fff;font-size:11px;font-weight:700;cursor:pointer;height:28px;transition:background 0.15s;flex-shrink:0;}'
+            . '#webcare-ab-unblock-box button#webcare-ab-lookup-btn:hover{background:#4338ca;}'
+            . '#webcare-ab-unblock-box #webcare-ab-result{margin-top:8px;font-size:11px;line-height:1.4;color:#cbd5e1;white-space:normal;}'
+            . '#wp-admin-bar-webcare-pro-bar .ab-submenu .ab-item{padding:5px 14px!important;font-size:12px!important;transition:background 0.15s ease!important;}'
+            . '#wp-admin-bar-webcare-pro-bar .ab-submenu li:not(#wp-admin-bar-webcare-pro-bar-unblock):hover > .ab-item{background:rgba(255,255,255,0.08)!important;color:#fff!important;}'
+            . '#wp-admin-bar-webcare-pro-bar .webcare-ab-safemode-node{border-top:1px solid rgba(255,255,255,0.08)!important;margin-top:4px!important;padding-top:4px!important;}'
+            . '#wp-admin-bar-webcare-pro-bar .webcare-ab-action-resume{color:#34d399!important;font-weight:600;display:inline-flex;align-items:center;}'
+            . '#wp-admin-bar-webcare-pro-bar .webcare-ab-action-pause{color:#f59e0b!important;font-weight:500;display:inline-flex;align-items:center;}'
         );
 
         wp_register_script('webcare-admin-bar-rescue', false, [], defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '2.11.0', true);

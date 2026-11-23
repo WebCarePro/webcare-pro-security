@@ -495,7 +495,7 @@ export const WebCareShell = ({ activeTab, activePillarId, children }: WebCareShe
               aria-current={currentPillarId === 'webcare-pro-security' ? 'page' : undefined}
             >
               <LayoutDashboard size={15} />
-              <span>Overview</span>
+              <span>Dashboard</span>
             </button>
 
             <button
@@ -517,7 +517,7 @@ export const WebCareShell = ({ activeTab, activePillarId, children }: WebCareShe
               aria-current={currentPillarId === 'webcare-pro-logs' ? 'page' : undefined}
             >
               <FileText size={15} />
-              <span>Logs &amp; Activity</span>
+              <span>Logs &amp; Bans</span>
             </button>
 
             <button
@@ -539,7 +539,7 @@ export const WebCareShell = ({ activeTab, activePillarId, children }: WebCareShe
               aria-current={currentPillarId === 'webcare-pro-login' ? 'page' : undefined}
             >
               <Users size={15} />
-              <span>Login &amp; 2FA</span>
+              <span>Login &amp; Access</span>
             </button>
 
             <button
@@ -550,7 +550,7 @@ export const WebCareShell = ({ activeTab, activePillarId, children }: WebCareShe
               aria-current={currentPillarId === 'webcare-pro-backups' ? 'page' : undefined}
             >
               <Server size={15} />
-              <span>Backups &amp; Recovery</span>
+              <span>Backups &amp; Vault</span>
             </button>
 
             <button
@@ -561,7 +561,7 @@ export const WebCareShell = ({ activeTab, activePillarId, children }: WebCareShe
               aria-current={currentPillarId === 'webcare-pro-settings' ? 'page' : undefined}
             >
               <SettingsIcon size={15} />
-              <span>Settings</span>
+              <span>Settings &amp; Doctor</span>
             </button>
 
             {/* Quick-Jump Mega Menu Button */}
@@ -802,8 +802,8 @@ export const WebCareShell = ({ activeTab, activePillarId, children }: WebCareShe
           window.location.href = `admin.php?page=${target}`;
         }}
         onSwitchToAdvancedMode={() => {
-          if (workspaceMode === 'essential') {
-            setMode('advanced');
+          if (!isDeveloperMode) {
+            setMode('developer');
             toast.info('Switched to Developer Mode for advanced rule configuration.');
           }
         }}

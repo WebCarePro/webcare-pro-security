@@ -435,6 +435,17 @@ if (!function_exists('admin_url')) {
     }
 }
 
+if (!function_exists('add_query_arg')) {
+    function add_query_arg(...$args): string {
+        if (count($args) === 2 && is_array($args[0]) && is_string($args[1])) {
+            $query = http_build_query($args[0]);
+            $sep = str_contains($args[1], '?') ? '&' : '?';
+            return $query !== '' ? $args[1] . $sep . $query : $args[1];
+        }
+        return 'http://example.com/wp-admin/admin.php';
+    }
+}
+
 if (!function_exists('wp_remote_head')) {
     function wp_remote_head(string $url, array $args = []): array {
         return ['response' => ['code' => 404]];

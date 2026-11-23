@@ -478,30 +478,47 @@ const SETTINGS_CATEGORIES: SettingsCategoryGroup[] = [
 
 export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNotifications, onNavigateToActivityLogs, onNavigateToCronManager, initialSubTab }: SettingsPageProps) => {
   const { isSimpleMode, setMode } = useWorkspaceMode();
+  const normalizeSubTab = (tab: string | null): SettingsSubTab | null => {
+    if (!tab) return null;
+    const tabMap: Record<string, SettingsSubTab> = {
+      health: 'troubleshooter',
+      troubleshooter: 'troubleshooter',
+      emergency: 'containment',
+      containment: 'containment',
+      cron: 'schedule',
+      schedules: 'schedule',
+      schedule: 'schedule',
+      alerts: 'email',
+      notifications: 'email',
+      email: 'email',
+      webhooks: 'webhooks',
+      cloudflare: 'cloudflare',
+      headers: 'headers',
+      ai: 'ai',
+      mcp: 'mcp',
+      performance: 'performance',
+      'import-export': 'import_export',
+      import_export: 'import_export',
+      updates: 'updates',
+      data: 'cleanup',
+      cleanup: 'cleanup',
+      activity_logs: 'activity_logs',
+      about: 'support',
+      support: 'support',
+    };
+    return tabMap[tab] || null;
+  };
+
   const getStartingSubTab = (): SettingsSubTab => {
-    if (initialSubTab) return initialSubTab;
+    if (initialSubTab) {
+      const normalized = normalizeSubTab(initialSubTab);
+      if (normalized) return normalized;
+    }
     try {
       const urlParams = new URLSearchParams(window.location.search);
-      const sub = (urlParams.get('tab') || urlParams.get('subtab')) as SettingsSubTab | null;
-      const validTabs: SettingsSubTab[] = [
-        'troubleshooter',
-        'containment',
-        'schedule',
-        'email',
-        'webhooks',
-        'cloudflare',
-        'headers',
-        'ai',
-        'mcp',
-        'performance',
-        'import_export',
-        'updates',
-        'cleanup',
-        'support',
-      ];
-      if (sub && validTabs.includes(sub)) {
-        return sub;
-      }
+      const sub = urlParams.get('tab') || urlParams.get('subtab');
+      const normalized = normalizeSubTab(sub);
+      if (normalized) return normalized;
     } catch (e) {}
     return 'schedule';
   };
@@ -648,8 +665,11 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
   };
 
   useEffect(() => {
-    if (initialSubTab && initialSubTab !== activeSubTab) {
-      setActiveSubTab(initialSubTab);
+    if (initialSubTab) {
+      const normalized = normalizeSubTab(initialSubTab);
+      if (normalized && normalized !== activeSubTab) {
+        setActiveSubTab(normalized);
+      }
     }
   }, [initialSubTab]);
 
@@ -657,24 +677,10 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
     const handlePopState = () => {
       try {
         const urlParams = new URLSearchParams(window.location.search);
-        const sub = (urlParams.get('tab') || urlParams.get('subtab')) as SettingsSubTab | null;
-        const validTabs: SettingsSubTab[] = [
-          'containment',
-          'schedule',
-          'email',
-          'webhooks',
-          'cloudflare',
-          'headers',
-          'ai',
-          'mcp',
-          'performance',
-          'import_export',
-          'updates',
-          'cleanup',
-          'support',
-        ];
-        if (sub && validTabs.includes(sub)) {
-          setActiveSubTab(sub);
+        const sub = urlParams.get('tab') || urlParams.get('subtab');
+        const normalized = normalizeSubTab(sub);
+        if (normalized) {
+          setActiveSubTab(normalized);
         }
       } catch (e) {}
     };
@@ -1670,7 +1676,7 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
               if (onNavigateToActivityLogs) {
                 onNavigateToActivityLogs();
               } else {
-                window.location.href = 'admin.php?page=webcare-pro-activity-logs';
+                window.location.href = 'admin.php?page=webcare-pro-logs&tab=activity';
               }
             }}
             title="Open Cryptographic Activity & Audit Log Stream"
@@ -1703,7 +1709,7 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
               if (onNavigateToNotifications) {
                 onNavigateToNotifications();
               } else {
-                window.location.href = 'admin.php?page=webcare-pro-notifications';
+                window.location.href = 'admin.php?page=webcare-pro-settings&tab=alerts';
               }
             }}
             title="Open Dedicated 60+ Event Notification Center"
@@ -2048,7 +2054,7 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
                 if (onNavigateToCronManager) {
                   onNavigateToCronManager();
                 } else {
-                  window.location.href = 'admin.php?page=webcare-pro-cron-manager';
+                  window.location.href = 'admin.php?page=webcare-pro-settings&tab=cron';
                 }
               }}
               title="Open Centralized Cron & Scheduled Tasks Control Center"
@@ -2080,7 +2086,7 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
                 if (onNavigateToActivityLogs) {
                   onNavigateToActivityLogs();
                 } else {
-                  window.location.href = 'admin.php?page=webcare-pro-activity-logs';
+                  window.location.href = 'admin.php?page=webcare-pro-logs&tab=activity';
                 }
               }}
               title="Open Plugin Activity & Audit Logs"
@@ -2112,7 +2118,7 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
                 if (onNavigateToNotifications) {
                   onNavigateToNotifications();
                 } else {
-                  window.location.href = 'admin.php?page=webcare-pro-notifications';
+                  window.location.href = 'admin.php?page=webcare-pro-settings&tab=alerts';
                 }
               }}
               title="Open Dedicated 60+ Event Notification Center"
@@ -2536,7 +2542,7 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
                   if (onNavigateToNotifications) {
                     onNavigateToNotifications();
                   } else {
-                    window.location.href = 'admin.php?page=webcare-pro-notifications';
+                    window.location.href = 'admin.php?page=webcare-pro-settings&tab=alerts';
                   }
                 }}
                 className="webcare-btn-primary"
@@ -5609,7 +5615,7 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
                   if (onNavigateToActivityLogs) {
                     onNavigateToActivityLogs();
                   } else {
-                    window.location.href = 'admin.php?page=webcare-pro-activity-logs';
+                    window.location.href = 'admin.php?page=webcare-pro-logs&tab=activity';
                   }
                 }}
                 title="Launch Live Forensic Audit & Activity Log Viewer"
