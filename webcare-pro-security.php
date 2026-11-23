@@ -107,12 +107,11 @@ define('WEBCAREPROSCAN_URL', plugin_dir_url(__FILE__));
 
 // Custom Autoloader for WebCareProScanner
 spl_autoload_register(function ($class) {
-    $base_dir = WEBCAREPROSCAN_PATH . 'includes/';
-
     if (strncmp('WebCareProScanner\\', $class, 18) !== 0) {
         return;
     }
 
+    $base_dir = rtrim(wp_normalize_path(WEBCAREPROSCAN_PATH), '/') . '/includes/';
     $relative_class = substr($class, 18);
     $rel_path = str_replace('\\', '/', $relative_class);
     $file = $base_dir . $rel_path . '.php';

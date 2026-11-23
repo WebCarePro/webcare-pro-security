@@ -2,6 +2,7 @@
 - Initial Release (v0.0.1):
   * Clean v0.0.1 fresh-start baseline and release reset.
   * Calm, trust-building Overview Dashboard redesign featuring soothing breathing shield emblem, live peace-of-mind metrics, and 2-column protection layers grid.
+  * Hardened autoloader path normalization (`wp_normalize_path`) and defensive `class_exists` guards in `Plugin::init()` to prevent `PolicyManager` autoloading mismatches under FPM/FastCGI hosting environments.
   * Restored full inline Cloudflare API Bearer Token and Zone ID configuration form directly within Settings & Doctor (Hardening & AI tab) and Firewall & WAF (Cloudflare Edge tab).
   * Fixed scan history clearance by wiring up direct `/scan/history/clear` and `/scan/history` DELETE REST endpoints.
   * Replaced native browser `window.confirm` with an in-page modal confirmation dialog (`showConfirm`) for clearing scan history and audit logs.

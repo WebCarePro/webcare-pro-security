@@ -61,12 +61,24 @@ class Plugin {
         }, 10, 3);
 
         // 1. Always-On Lightweight Runtime Security & Compiled Stack Lifecycle
-        \WebCareProScanner\Core\PolicyManager::load_policy();
-        \WebCareProScanner\Core\CompiledStackManifest::register_lifecycle_hooks();
-        \WebCareProScanner\Firewall\WafFileLogger::init();
-        \WebCareProScanner\Firewall\FirewallEngine::init();
-        \WebCareProScanner\Hardening\SecurityHeadersEngine::init();
-        \WebCareProScanner\Notifications\WebhookService::init();
+        if (class_exists(\WebCareProScanner\Core\PolicyManager::class)) {
+            \WebCareProScanner\Core\PolicyManager::load_policy();
+        }
+        if (class_exists(\WebCareProScanner\Core\CompiledStackManifest::class)) {
+            \WebCareProScanner\Core\CompiledStackManifest::register_lifecycle_hooks();
+        }
+        if (class_exists(\WebCareProScanner\Firewall\WafFileLogger::class)) {
+            \WebCareProScanner\Firewall\WafFileLogger::init();
+        }
+        if (class_exists(\WebCareProScanner\Firewall\FirewallEngine::class)) {
+            \WebCareProScanner\Firewall\FirewallEngine::init();
+        }
+        if (class_exists(\WebCareProScanner\Hardening\SecurityHeadersEngine::class)) {
+            \WebCareProScanner\Hardening\SecurityHeadersEngine::init();
+        }
+        if (class_exists(\WebCareProScanner\Notifications\WebhookService::class)) {
+            \WebCareProScanner\Notifications\WebhookService::init();
+        }
 
         // Route-Gated Micro-Kernel Booting for zero-waste loading
         $route_class = \WebCareProScanner\Core\RouteClassifier::classify($_SERVER);
