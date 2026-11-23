@@ -140,6 +140,7 @@ class RequestContext {
             for ($i = 0; $i < 3; $i++) {
                 $prev = $raw_clean;
                 $raw_clean = rawurldecode($raw_clean);
+                $raw_clean = str_replace(["\0", "\r", "\n"], '', $raw_clean);
                 if ($raw_clean === $prev) {
                     break;
                 }
@@ -211,6 +212,7 @@ class RequestContext {
             for ($i = 0; $i < 3; $i++) {
                 $prev = $raw_clean;
                 $raw_clean = rawurldecode($raw_clean);
+                $raw_clean = str_replace(["\0", "\r", "\n"], '', $raw_clean);
                 if ($raw_clean === $prev) {
                     break;
                 }

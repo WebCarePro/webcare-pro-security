@@ -394,6 +394,18 @@ class RequestPipelineTest extends TestCase {
                 'class'      => \WebCareProScanner\Contracts\RouteClass::Commerce,
                 'evaluators' => ['WebCareProScanner\\Firewall\\Evaluators\\CommerceAndUploadEvaluator'],
             ],
+            '/%00wp-json/wp/v2/users' => [
+                'class'      => \WebCareProScanner\Contracts\RouteClass::RestApi,
+                'evaluators' => ['WebCareProScanner\\Firewall\\NextGen\\ResponseDlpSentinel'],
+            ],
+            '/wp-json/../checkout/' => [
+                'class'      => \WebCareProScanner\Contracts\RouteClass::Commerce,
+                'evaluators' => ['WebCareProScanner\\Firewall\\Evaluators\\CommerceAndUploadEvaluator'],
+            ],
+        ];
+
+        $settings = [
+            'waf_enabled' => true,
         ];
 
         foreach ($cases as $uri => $expected) {
@@ -418,6 +430,11 @@ class RequestPipelineTest extends TestCase {
                     "Route class {$expectedClass->value} for URI {$uri} must contain evaluator {$evaluatorClass}"
                 );
             }
+
+            // Exercise real RequestPipeline::evaluate_pipeline execution path
+            $pipelineVerdict = RequestPipeline::evaluate_pipeline($ctx, $settings);
+            // Benign request across classified route stack passes without terminal block
+            $this->assertTrue($pipelineVerdict === null || !$pipelineVerdict->is_terminal(), "Pipeline execution failed for URI: {$uri}");
         }
     }
 
@@ -441,6 +458,30 @@ class RequestPipelineTest extends TestCase {
         }
     }
 
+    public function testEncodedControlCharactersStrippedAfterDecoding(): void {
+        $cases = [
+            '/%00wp-json/wp/v2/users'        => ['path' => '/wp-json/wp/v2/users', 'class' => \WebCareProScanner\Contracts\RouteClass::RestApi],
+            '/%2500wp-json/wp/v2/users'      => ['path' => '/wp-json/wp/v2/users', 'class' => \WebCareProScanner\Contracts\RouteClass::RestApi],
+            '/wp-json/%0d%0a../checkout/'    => ['path' => '/checkout/', 'class' => \WebCareProScanner\Contracts\RouteClass::Commerce],
+        ];
+
+        foreach ($cases as $uri => $expected) {
+            $normalized = \WebCareProScanner\Core\CanonicalRouteParser::normalize_path($uri);
+            $this->assertSame($expected['path'], $normalized, "normalize_path failed for control-char URI: {$uri}");
+            $this->assertStringNotContainsString("\0", $normalized);
+            $this->assertStringNotContainsString("\r", $normalized);
+            $this->assertStringNotContainsString("\n", $normalized);
+
+            $routeClass = \WebCareProScanner\Core\RouteClassifier::classify(['REQUEST_URI' => $uri]);
+            $this->assertSame($expected['class'], $routeClass, "RouteClassifier failed for control-char URI: {$uri}");
+
+            $_SERVER['REQUEST_URI'] = $uri;
+            $_SERVER['REQUEST_METHOD'] = 'GET';
+            $ctx = RequestContext::from_globals();
+            $this->assertSame($expected['path'], $ctx->cleanUri);
+        }
+    }
+
     public function testRequestContextGlobalsAndConstructorParity(): void {
         $_SERVER['REQUEST_URI'] = '/%77p-json/wp/v2/users';
         $_SERVER['REQUEST_METHOD'] = 'GET';
@@ -454,9 +495,27 @@ class RequestPipelineTest extends TestCase {
     }
 
     public function testAdaptiveRateLimiterClassifiesEncodedAuthIntoBucketAuth(): void {
+        $this->assertSame(
+            \WebCareProScanner\Firewall\AdaptiveRateLimiter::BUCKET_AUTH,
+            \WebCareProScanner\Firewall\AdaptiveRateLimiter::classify_bucket('/?wc%2Dajax=login', 'POST')
+        );
+        $this->assertSame(
+            \WebCareProScanner\Firewall\AdaptiveRateLimiter::BUCKET_AUTH,
+            \WebCareProScanner\Firewall\AdaptiveRateLimiter::classify_bucket('/%77p-login.php', 'POST')
+        );
+        $this->assertSame(
+            \WebCareProScanner\Firewall\AdaptiveRateLimiter::BUCKET_AUTH,
+            \WebCareProScanner\Firewall\AdaptiveRateLimiter::classify_bucket('/%00wp-login.php', 'POST')
+        );
+        $this->assertSame(
+            \WebCareProScanner\Firewall\AdaptiveRateLimiter::BUCKET_GLOBAL,
+            \WebCareProScanner\Firewall\AdaptiveRateLimiter::classify_bucket('/about-us/', 'GET')
+        );
+
         $uris = [
             '/?wc%2Dajax=login',
             '/%77p-login.php',
+            '/%00wp-login.php',
         ];
 
         update_option('webcareproscan_settings', [

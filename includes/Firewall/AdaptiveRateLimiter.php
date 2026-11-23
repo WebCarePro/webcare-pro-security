@@ -275,6 +275,71 @@ class AdaptiveRateLimiter {
     }
 
     /**
+     * Deterministically classify a request into an isolated rate-limit bucket.
+     *
+     * @param string $raw_uri Raw URI string.
+     * @param string $method HTTP request method.
+     * @param string $post_action POST action parameter.
+     * @param string $search_query Search query parameter.
+     * @return string One of self::BUCKET_* constants.
+     */
+    public static function classify_bucket(string $raw_uri, string $method = 'GET', string $post_action = '', string $search_query = ''): string {
+        $decoded_uri = str_replace(["\0", "\r", "\n"], '', $raw_uri);
+        for ($i = 0; $i < 3; $i++) {
+            $prev = $decoded_uri;
+            $decoded_uri = rawurldecode($decoded_uri);
+            $decoded_uri = str_replace(["\0", "\r", "\n"], '', $decoded_uri);
+            if ($decoded_uri === $prev) {
+                break;
+            }
+        }
+
+        $method_upper = strtoupper($method);
+
+        if (
+            str_contains($decoded_uri, 'wp-login.php') ||
+            str_contains($decoded_uri, 'xmlrpc.php') ||
+            str_contains($decoded_uri, '/wp-json/jwt-auth/') ||
+            str_contains($decoded_uri, 'wc-ajax=login')
+        ) {
+            return self::BUCKET_AUTH;
+        }
+
+        if (
+            str_contains($decoded_uri, 'wc-ajax=checkout') ||
+            str_contains($decoded_uri, '/wp-json/wc/store/v1/checkout') ||
+            in_array($post_action, ['woocommerce_checkout'], true)
+        ) {
+            return self::BUCKET_CHECKOUT;
+        }
+
+        if (
+            str_contains($decoded_uri, 'wc-ajax=add_to_cart') ||
+            str_contains($decoded_uri, 'wc-ajax=update_order_review') ||
+            str_contains($decoded_uri, 'wc-ajax=get_refreshed_fragments') ||
+            in_array($post_action, ['woocommerce_add_to_cart', 'woocommerce_update_order_review', 'woocommerce_json_search_products', 'aws_action', 'dgwt_wcas_ajax_search', 'jet_ajax_search'], true)
+        ) {
+            return self::BUCKET_CART_AJAX;
+        }
+
+        if (
+            trim($search_query) !== '' ||
+            str_contains($decoded_uri, '/wp-json/wp/v2/search')
+        ) {
+            return self::BUCKET_SEARCH_PROBE;
+        }
+
+        if (
+            str_contains($decoded_uri, '/wp-json/') &&
+            in_array($method_upper, ['POST', 'PUT', 'PATCH', 'DELETE'], true)
+        ) {
+            return self::BUCKET_REST_WRITE;
+        }
+
+        return self::BUCKET_GLOBAL;
+    }
+
+    /**
      * Evaluate incoming request against context-aware 5-bucket velocity limiters.
      *
      * @param string $client_ip
@@ -302,15 +367,7 @@ class AdaptiveRateLimiter {
         }
 
         // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- WAF route canonicalization must retain percent-encoded octets prior to rawurldecode() / parse_str()
-        $raw_uri = isset($_SERVER['REQUEST_URI']) ? str_replace(["\0", "\r", "\n"], '', (string) wp_unslash($_SERVER['REQUEST_URI'])) : '/';
-        $decoded_uri = $raw_uri;
-        for ($i = 0; $i < 3; $i++) {
-            $prev = $decoded_uri;
-            $decoded_uri = rawurldecode($decoded_uri);
-            if ($decoded_uri === $prev) {
-                break;
-            }
-        }
+        $raw_uri = isset($_SERVER['REQUEST_URI']) ? (string) wp_unslash($_SERVER['REQUEST_URI']) : '/';
         $method = isset($_SERVER['REQUEST_METHOD']) ? strtoupper(sanitize_key(wp_unslash($_SERVER['REQUEST_METHOD']))) : 'GET';
 
         // phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.NonceVerification.Recommended -- Early passive packet rate-limiting
@@ -319,53 +376,28 @@ class AdaptiveRateLimiter {
         $search_query = isset($_GET['s']) ? sanitize_text_field(wp_unslash($_GET['s'])) : '';
 
         // Classify into one of 5 isolated velocity boundaries:
-        $bucket = self::BUCKET_GLOBAL;
+        $bucket = self::classify_bucket($raw_uri, $method, $post_action, $search_query);
         $limit = (int) ($settings['limit_global'] ?? self::LIMIT_GLOBAL);
         $window = (int) ($settings['window_global'] ?? self::WINDOW_GLOBAL);
 
-        if (
-            str_contains($decoded_uri, 'wp-login.php') ||
-            str_contains($decoded_uri, 'xmlrpc.php') ||
-            str_contains($decoded_uri, '/wp-json/jwt-auth/') ||
-            str_contains($decoded_uri, 'wc-ajax=login')
-        ) {
+        if ($bucket === self::BUCKET_AUTH) {
             // Bucket 1: Auth
-            $bucket = self::BUCKET_AUTH;
             $limit = (int) ($settings['limit_auth'] ?? self::LIMIT_AUTH);
             $window = (int) ($settings['window_auth'] ?? self::WINDOW_AUTH);
-        } elseif (
-            str_contains($decoded_uri, 'wc-ajax=checkout') ||
-            str_contains($decoded_uri, '/wp-json/wc/store/v1/checkout') ||
-            in_array($post_action, ['woocommerce_checkout'], true)
-        ) {
+        } elseif ($bucket === self::BUCKET_CHECKOUT) {
             // Bucket 2: Checkout (High priority e-commerce boundary)
-            $bucket = self::BUCKET_CHECKOUT;
             $limit = (int) ($settings['limit_checkout'] ?? self::LIMIT_CHECKOUT);
             $window = (int) ($settings['window_checkout'] ?? self::WINDOW_CHECKOUT);
-        } elseif (
-            str_contains($decoded_uri, 'wc-ajax=add_to_cart') ||
-            str_contains($decoded_uri, 'wc-ajax=update_order_review') ||
-            str_contains($decoded_uri, 'wc-ajax=get_refreshed_fragments') ||
-            in_array($post_action, ['woocommerce_add_to_cart', 'woocommerce_update_order_review', 'woocommerce_json_search_products', 'aws_action', 'dgwt_wcas_ajax_search', 'jet_ajax_search'], true)
-        ) {
+        } elseif ($bucket === self::BUCKET_CART_AJAX) {
             // Bucket 3: Cart AJAX (Frequent legit interactions & live product search queries)
-            $bucket = self::BUCKET_CART_AJAX;
             $limit = (int) ($settings['limit_cart_ajax'] ?? self::LIMIT_CART_AJAX);
             $window = (int) ($settings['window_cart_ajax'] ?? self::WINDOW_CART_AJAX);
-        } elseif (
-            trim($search_query) !== '' ||
-            str_contains($decoded_uri, '/wp-json/wp/v2/search')
-        ) {
+        } elseif ($bucket === self::BUCKET_SEARCH_PROBE) {
             // Bucket 5: Search Probe (Prevents expensive wildcard queries)
-            $bucket = self::BUCKET_SEARCH_PROBE;
             $limit = (int) ($settings['limit_search_probe'] ?? self::LIMIT_SEARCH_PROBE);
             $window = (int) ($settings['window_search_probe'] ?? self::WINDOW_SEARCH_PROBE);
-        } elseif (
-            str_contains($decoded_uri, '/wp-json/') &&
-            in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)
-        ) {
+        } elseif ($bucket === self::BUCKET_REST_WRITE) {
             // Bucket 4: REST Mutation/Write
-            $bucket = self::BUCKET_REST_WRITE;
             $limit = (int) ($settings['limit_rest_write'] ?? self::LIMIT_REST_WRITE);
             $window = (int) ($settings['window_rest_write'] ?? self::WINDOW_REST_WRITE);
         }

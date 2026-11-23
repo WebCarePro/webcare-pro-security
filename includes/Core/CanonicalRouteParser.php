@@ -41,6 +41,7 @@ final class CanonicalRouteParser {
         for ($i = 0; $i < 3; $i++) {
             $prev = $path;
             $path = rawurldecode($path);
+            $path = str_replace(["\0", "\r", "\n"], '', $path);
             if ($path === $prev) {
                 break;
             }

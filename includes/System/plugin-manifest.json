@@ -1,6 +1,6 @@
 {
   "version": "3.25.2",
-  "generated_at": "2026-11-23T01:29:54.161Z",
+  "generated_at": "2026-11-23T01:39:10.012Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -320,8 +320,8 @@
       "size": 664
     },
     "includes/Contracts/RequestContext.php": {
-      "sha256": "c7413785aff060e43e8f5fae174fb0c2781500ff335357263ef5370a5df4d3d9",
-      "size": 17093
+      "sha256": "98cb7b5fcf2bff99647e3ecebf890347b7862b4fe93133889f867213ee2dde0c",
+      "size": 17249
     },
     "includes/Contracts/RouteClass.php": {
       "sha256": "94f40358eeb842cdbf02a1ae6b57580114c5ca7c09921566d08ac442a4767a7b",
@@ -348,8 +348,8 @@
       "size": 5591
     },
     "includes/Core/CanonicalRouteParser.php": {
-      "sha256": "eb6416e309e273329834c419e265624b956f340fbc7e9f3e4ba62dc9e8530d72",
-      "size": 6791
+      "sha256": "3557c0c8bcda74632324188d13595419f43a45e15d009cef2df4c10774b3fbd5",
+      "size": 6855
     },
     "includes/Core/CompiledStackManifest.php": {
       "sha256": "d9f1a28227c3f13ba164b724b1dad4f1160ce788762044233253dd7bfa7803da",
@@ -468,8 +468,8 @@
       "size": 25393
     },
     "includes/Firewall/AdaptiveRateLimiter.php": {
-      "sha256": "3508a6440637f23fb769b3fe0aa6c74cdb2ad1619b41ae80391fa8440fe838ce",
-      "size": 37855
+      "sha256": "84a6aada508ba40b249f4d37e0c6f27f2f8ebe5c17aa8038176a6cd1b55438b7",
+      "size": 38884
     },
     "includes/Firewall/BotReconDefense.php": {
       "sha256": "60533cf6747671774b46d59a65fb53cabeb9fe49b97947617806a5700ffbc963",
