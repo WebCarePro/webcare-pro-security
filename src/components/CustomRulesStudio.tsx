@@ -148,7 +148,7 @@ const resolveModularWafTabFromUrl = (): ModularWafTab => {
   return 'rules';
 };
 
-export const ModularFirewallStudio: React.FC = () => {
+export const CustomRulesStudio: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ModularWafTab>(() => resolveModularWafTabFromUrl());
 
   const syncTabUrl = (tab: ModularWafTab, replace = false) => {
@@ -273,7 +273,7 @@ export const ModularFirewallStudio: React.FC = () => {
   const loadStudioData = async () => {
     try {
       setLoading(true);
-      const res = await apiRequest({ path: '/modular-waf/status' });
+      const res = await apiRequest({ path: '/custom-rules/status' });
       if (res && res.success) {
         const nextRules: ModularRule[] = Array.isArray(res.rules) ? res.rules : [];
         setRules(nextRules);
@@ -352,7 +352,7 @@ export const ModularFirewallStudio: React.FC = () => {
     setTogglingAutopilot(true);
     try {
       const res = await apiRequest({
-        path: '/modular-waf/autopilot',
+        path: '/custom-rules/autopilot',
         method: 'POST',
         data: { enabled: next },
       });
@@ -373,7 +373,7 @@ export const ModularFirewallStudio: React.FC = () => {
   const handleToggleRule = async (ruleId: string, newMode: 'enforce' | 'smart_learning' | 'monitor' | 'off') => {
     try {
       const res = await apiRequest({
-        path: '/modular-waf/rule/toggle',
+        path: '/custom-rules/rule/toggle',
         method: 'POST',
         data: { rule_id: ruleId, mode: newMode },
       });
@@ -391,7 +391,7 @@ export const ModularFirewallStudio: React.FC = () => {
   const handleBulkApply = async () => {
     try {
       const res = await apiRequest({
-        path: '/modular-waf/rule/bulk-apply',
+        path: '/custom-rules/rule/bulk-apply',
         method: 'POST',
       });
       if (res && res.success) {
@@ -409,15 +409,15 @@ export const ModularFirewallStudio: React.FC = () => {
     setExporting(true);
     const host = window.location.hostname.replace(/[^a-zA-Z0-9.-]/g, '_') || 'wordpress';
     const dateStr = new Date().toISOString().slice(0, 10);
-    const filename = `webcare-modular-waf-${host}-${dateStr}.json`;
+    const filename = `webcare-custom-rules-${host}-${dateStr}.json`;
 
     try {
-      const res = await apiRequest({ path: '/modular-waf/export' });
+      const res = await apiRequest({ path: '/custom-rules/export' });
       const exportPayload =
         res && res.webcare_export_type
           ? res
           : {
-              webcare_export_type: 'modular_waf_forensic_dossier',
+              webcare_export_type: 'custom_rules_forensic_dossier',
               format_version: ((window as any).webcareScannerSettings?.version) || '2.12.0',
               exported_at: new Date().toISOString(),
               exported_timestamp: Math.floor(Date.now() / 1000),
@@ -455,12 +455,12 @@ export const ModularFirewallStudio: React.FC = () => {
       const ruleCount = Array.isArray(exportPayload.rules) ? exportPayload.rules.length : rules.length;
       const compCount = Array.isArray(exportPayload.component_inventory) ? exportPayload.component_inventory.length : inventory.length;
       const hashedCount = exportPayload.summary?.unique_files_hashed ?? Object.keys(exportPayload.file_hash_index || {}).length;
-      const logCount = exportPayload.summary?.recent_modular_hits ?? 0;
+      const logCount = exportPayload.summary?.recent_custom_rule_hits ?? 0;
       showNotification(`Exported complete forensic JSON (${ruleCount} rules, ${compCount} components, ${hashedCount} hashed files, ${logCount} log events) to ${filename}`);
     } catch (err) {
       console.error('Failed to export forensic JSON via REST, using client snapshot:', err);
       const fallbackPayload = {
-        webcare_export_type: 'modular_waf_forensic_dossier_snapshot',
+        webcare_export_type: 'custom_rules_forensic_dossier_snapshot',
         format_version: ((window as any).webcareScannerSettings?.version) || '2.12.0',
         exported_at: new Date().toISOString(),
         exported_timestamp: Math.floor(Date.now() / 1000),
@@ -580,7 +580,7 @@ export const ModularFirewallStudio: React.FC = () => {
     try {
       setSavingOrder(true);
       const res = await apiRequest({
-        path: '/modular-waf/rule/custom/reorder',
+        path: '/custom-rules/rule/custom/reorder',
         method: 'POST',
         data: { ordered_ids: customOrderIds },
       });
@@ -1619,7 +1619,7 @@ export const ModularFirewallStudio: React.FC = () => {
                             onClick={async () => {
                               try {
                                 const res = await apiRequest({
-                                  path: '/modular-waf/rule/custom/delete',
+                                  path: '/custom-rules/rule/custom/delete',
                                   method: 'POST',
                                   data: { rule_id: rule.id },
                                 });
@@ -2047,7 +2047,7 @@ export const ModularFirewallStudio: React.FC = () => {
           <NextGenEcosystemPanel />
         )}
 
-        <WebCareSlot name="modular_waf.footer" context={{ activeTab, rulesCount: rules.length }} />
+        <WebCareSlot name="custom_rules.footer" context={{ activeTab, rulesCount: rules.length }} />
 
         {/* Code Snippet Modal */}
         {selectedSnippet && (

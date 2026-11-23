@@ -807,6 +807,30 @@ class ModularFirewallSynthesizer {
     }
 
     /**
+     * Check if at least one custom or baseline rule is currently active in 'enforce' mode
+     * with a blocking action (block, block_and_ban, challenge_pow, rate_limit).
+     */
+    public static function has_active_blocking_rules(): bool {
+        $rules = self::get_active_rules();
+        if (empty($rules)) {
+            return false;
+        }
+
+        foreach ($rules as $r) {
+            $mode = $r['current_mode'] ?? 'off';
+            if ($mode !== 'enforce') {
+                continue;
+            }
+            $act = self::normalize_rule_action($r);
+            if (in_array($act, ['block', 'block_and_ban', 'challenge_pow', 'rate_limit'], true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Allocate next unique monotonic numeric ID (#1, #2, #3...) for custom rules.
      */
     private static function allocate_custom_rule_number(array $existing_rules = []): int {

@@ -486,7 +486,7 @@ export const NAVIGATION_CATALOG: NavigationItem[] = [
     intents: ['manage blocked ip addresses', 'unban visitor', 'add whitelisted ip', 'allowlist url endpoint']
   },
   {
-    id: 'fw-modular-waf',
+    id: 'fw-custom-rules',
     title: 'Custom Rules & AST Studio',
     desc: 'Autonomous site-tailored custom rules synthesized from PHP AST & endpoint profiles',
     icon: Radar,
@@ -497,10 +497,10 @@ export const NAVIGATION_CATALOG: NavigationItem[] = [
     badgeType: 'success',
     isAdvanced: true,
     keywords: ['custom rules', 'modular waf', 'ast', 'synthesizer', 'guest ajax', 'permissive rest', 'direct script', 'cve shield', 'export json', 'autopilot'],
-    intents: ['open custom rules studio', 'open modular firewall studio']
+    intents: ['open custom rules studio', 'open custom rules studio']
   },
   {
-    id: 'fw-modular-dossier',
+    id: 'fw-custom-rules-dossier',
     title: 'Component Behavioral Dossier',
     desc: 'Deep component inventory, WordPress.org checksum forensics & taint endpoint tracebacks',
     icon: Layers,

@@ -392,6 +392,30 @@ final class RequestPipeline {
                         }
                     }
                 } catch (\Throwable $eval_err) {
+                    // Check if evaluator failure occurred with active enforced custom rules
+                    if (str_contains($evaluator_class, 'CustomRules') || str_contains($evaluator_class, 'AlwaysOnCoreGuard') || str_contains($evaluator_class, 'ModularFirewall')) {
+                        if (class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\ModularFirewallSynthesizer')
+                            && \WebCareProScanner\Firewall\CustomRules\ModularFirewallSynthesizer::has_active_blocking_rules()
+                        ) {
+                            try {
+                                if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                                    \WebCareProScanner\System\AuditLogger::log_operational('custom_rules_evaluator_degraded', [
+                                        'evaluator' => $evaluator_class,
+                                        'error'     => $eval_err->getMessage(),
+                                        'file'      => $eval_err->getFile() . ':' . $eval_err->getLine(),
+                                    ]);
+                                }
+                            } catch (\Throwable $ignore) {}
+                            if (function_exists('set_transient')) {
+                                set_transient('webcareproscan_custom_rules_degraded', [
+                                    'time'      => time(),
+                                    'evaluator' => $evaluator_class,
+                                    'error'     => $eval_err->getMessage(),
+                                ], 15 * 60);
+                            }
+                        }
+                    }
+
                     if ($is_req || $failure_policy === \WebCareProScanner\Contracts\EvaluatorFailurePolicy::FailClosedRoute->value) {
                         throw $eval_err;
                     }

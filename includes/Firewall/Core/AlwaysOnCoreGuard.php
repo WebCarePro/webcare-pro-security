@@ -247,7 +247,30 @@ final class AlwaysOnCoreGuard implements WafEvaluatorInterface {
         $custom_allow_matched = false;
         // 3. Custom / Visual Firewall Rules
         if (class_exists(ModularFirewallSynthesizer::class)) {
-            $modular_violation = ModularFirewallSynthesizer::evaluate_runtime_modular_rules();
+            try {
+                $modular_violation = ModularFirewallSynthesizer::evaluate_runtime_modular_rules();
+            } catch (\Throwable $synth_err) {
+                $modular_violation = null;
+                // If Custom Rules evaluator throws an exception while at least one active enforced blocking custom rule exists,
+                // record an explicit operational degradation signal.
+                if (ModularFirewallSynthesizer::has_active_blocking_rules()) {
+                    try {
+                        if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                            \WebCareProScanner\System\AuditLogger::log_operational('custom_rules_evaluator_degraded', [
+                                'error' => $synth_err->getMessage(),
+                                'file'  => $synth_err->getFile() . ':' . $synth_err->getLine(),
+                            ]);
+                        }
+                    } catch (\Throwable $ignore) {
+                    }
+                    if (function_exists('set_transient')) {
+                        set_transient('webcareproscan_custom_rules_degraded', [
+                            'time'  => time(),
+                            'error' => $synth_err->getMessage(),
+                        ], 15 * 60);
+                    }
+                }
+            }
             if ($modular_violation !== null) {
                 $mod_action = (string) ($modular_violation['action_type'] ?? '');
                 if ($mod_action === 'allow') {

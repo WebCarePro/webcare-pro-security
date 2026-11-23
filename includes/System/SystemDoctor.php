@@ -433,6 +433,34 @@ final class SystemDoctor {
             'required'    => __('All required evaluators operational', 'webcare-pro-security'),
         ];
 
+        // 17. Custom Rules Evaluator Status & Degradation Signal
+        $custom_rules_degraded = function_exists('get_transient') ? get_transient('webcareproscan_custom_rules_degraded') : false;
+        if (!empty($custom_rules_degraded) && is_array($custom_rules_degraded)) {
+            $err_text = (string) ($custom_rules_degraded['error'] ?? 'Unknown runtime exception');
+            $checks['custom_rules_status'] = [
+                'id'       => 'custom_rules_status',
+                'title'    => __('Custom Rules Evaluator Integrity', 'webcare-pro-security'),
+                'category' => 'waf',
+                'status'   => 'warn',
+                'severity' => 'high',
+                /* translators: %s: Error message from Custom Rules evaluator */
+                'message'  => sprintf(__('Custom Rules evaluator has entered degraded status due to an operational exception: %s. Active enforced blocking rules may be impaired.', 'webcare-pro-security'), $err_text),
+                'current'  => __('Degraded', 'webcare-pro-security'),
+                'required' => __('Operational without exceptions', 'webcare-pro-security'),
+            ];
+        } else {
+            $checks['custom_rules_status'] = [
+                'id'       => 'custom_rules_status',
+                'title'    => __('Custom Rules Evaluator Integrity', 'webcare-pro-security'),
+                'category' => 'waf',
+                'status'   => 'pass',
+                'severity' => 'info',
+                'message'  => __('Custom Rules and Behavioral Intelligence evaluators are operating normally with zero degraded signals.', 'webcare-pro-security'),
+                'current'  => __('Active & Operational', 'webcare-pro-security'),
+                'required' => __('Operational without exceptions', 'webcare-pro-security'),
+            ];
+        }
+
         // Compute overall score
         $total = count($checks);
         $passed = 0;

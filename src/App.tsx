@@ -1837,6 +1837,7 @@ export const App = ({ initialTab }: { initialTab?: NavTab } = {}) => {
       fim: 'webcare-pro-scanner&tab=file-integrity',
       vulnerabilities: 'webcare-pro-scanner&tab=vulnerabilities',
       firewall: 'webcare-pro-firewall&tab=protection',
+      custom_rules: 'webcare-pro-firewall&tab=protection',
       modular_waf: 'webcare-pro-firewall&tab=protection',
       waf_logs: 'webcare-pro-logs&tab=firewall',
       vpatch: 'webcare-pro-firewall&tab=virtual-patches',

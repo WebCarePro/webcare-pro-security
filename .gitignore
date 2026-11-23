@@ -36,12 +36,12 @@ roadmap plan.md
 *guidelines*.md
 *final_fix*.md
 
-# Frontend Source (compiled files in build/ are deployed)
-src/
-package.json
-package-lock.json
+# Development files
+compose.yaml
+uploads.ini
+AGENTS.md
 
-# IDE & Editor configs
+# Test scripts and temporary developer tools
 .vscode/
 .idea/
 .agents/

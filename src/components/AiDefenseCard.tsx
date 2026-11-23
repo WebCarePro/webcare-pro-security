@@ -2027,7 +2027,7 @@ export const AiDefenseCard = ({
                     Interactive REST API &amp; AJAX Attack Surface Matrix
                   </h4>
                   <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: 'var(--webcare-text-muted, #64748b)' }}>
-                    Live PHP Reflection handler attribution, per-method permission evaluation, and Modular WAF shielding across REST routes and nopriv AJAX hooks.
+                    Live PHP Reflection handler attribution, per-method permission evaluation, and Custom Rules shielding across REST routes and nopriv AJAX hooks.
                   </p>
                 </div>
 

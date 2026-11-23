@@ -153,6 +153,14 @@ final class RouteRegistry {
                 }
             }
 
+            $default_tab = sanitize_key($pillar['default_tab'] ?? '');
+            if ($default_tab !== '' && !empty($validated_tabs) && !in_array($default_tab, $seen_tabs, true)) {
+                // If declared default_tab does not exist in validated tabs, discard it or default to first tab
+                if (!isset($seen_tabs[$default_tab])) {
+                    $default_tab = $validated_tabs[0]['id'] ?? '';
+                }
+            }
+
             $clean_pillar = [
                 'id'          => $pillar_id,
                 'title'       => sanitize_text_field($pillar['title'] ?? $pillar_id),
@@ -161,7 +169,7 @@ final class RouteRegistry {
                 'description' => sanitize_text_field($pillar['description'] ?? ''),
                 'bundle'      => $bundle,
                 'icon'        => sanitize_key($pillar['icon'] ?? 'shield'),
-                'default_tab' => sanitize_key($pillar['default_tab'] ?? ''),
+                'default_tab' => $default_tab,
                 'mode'        => ($pillar['mode'] ?? 'all') === 'developer' ? 'developer' : 'all',
                 'hidden'      => !empty($pillar['hidden']),
                 'tabs'        => $validated_tabs,
@@ -210,6 +218,11 @@ final class RouteRegistry {
      * @return bool
      */
     public static function is_valid_route(string $pillar_id, string $tab_id = '', string $section_id = ''): bool {
+        // Strict Schema Rule: Cannot specify a section without a valid tab
+        if ($section_id !== '' && $tab_id === '') {
+            return false;
+        }
+
         $pillar = self::get_pillar($pillar_id);
         if ($pillar === null) {
             return false;
@@ -275,7 +288,37 @@ final class RouteRegistry {
 
         $query = ['page' => $canonical_page];
 
-        // Only include tab if non-empty and not the default tab
+        // Strict Schema Rule: &section= can only exist when a valid &tab= is present
+        if ($tab_id === '') {
+            $section_id = '';
+        } else {
+            // Validate section against declared tab sections if pillar is found
+            if ($section_id !== '' && $pillar !== null) {
+                $matched_tab = null;
+                foreach ($pillar['tabs'] as $t) {
+                    if ($t['id'] === $tab_id) {
+                        $matched_tab = $t;
+                        break;
+                    }
+                }
+                if ($matched_tab !== null) {
+                    $valid_sec = false;
+                    foreach ($matched_tab['sections'] as $s) {
+                        if ($s['id'] === $section_id) {
+                            $valid_sec = true;
+                            break;
+                        }
+                    }
+                    if (!$valid_sec) {
+                        $section_id = '';
+                    }
+                } else {
+                    $section_id = '';
+                }
+            }
+        }
+
+        // Only include tab if non-empty and not the default tab (unless section or extra_args is present)
         $default_tab = $pillar['default_tab'] ?? '';
         if ($tab_id !== '' && ($tab_id !== $default_tab || $section_id !== '' || !empty($extra_args))) {
             $query['tab'] = $tab_id;

@@ -1540,6 +1540,17 @@ class MCPAgentService {
             }
         }
 
+        // P1: Atomic Single-Use Database-Backed Claim
+        // Relies on MySQL's UNIQUE KEY option_name: add_option returns false if the option already exists.
+        $claim_key = 'webcareproscan_mcp_claim_' . sanitize_key($staged_id);
+        if (!add_option($claim_key, time(), '', false)) {
+            return [
+                'success' => false,
+                'status'  => 409,
+                'message' => __('Staged action already claimed or executed.', 'webcare-pro-security'),
+            ];
+        }
+
         // Single-Use Atomic Invalidation: Mark token as consumed immediately before executing the tool to prevent replay attacks
         $list[$target_index]['status']      = 'executing';
         $list[$target_index]['consumed_at'] = time();
@@ -1547,18 +1558,32 @@ class MCPAgentService {
         update_option(self::STAGED_OPTION_KEY, $list, false);
 
         // Execute the tool with gate bypass
-        $exec_result = self::execute_tool($target_action['tool'], $target_action['args'], true);
+        $tool_args = is_array($target_action['args'] ?? null) ? $target_action['args'] : (is_array($target_action['parameters'] ?? null) ? $target_action['parameters'] : []);
+        $exec_result = self::execute_tool($target_action['tool'], $tool_args, true);
 
         // Update staged action record
         $current_user = get_userdata($approver_id);
         $approver_name = ($current_user && $current_user->exists()) ? $current_user->user_login : 'administrator';
 
-        $list[$target_index]['status']      = 'approved';
+        $is_failed = !empty($exec_result['isError']) || (($exec_result['success'] ?? true) === false);
+        $final_status = $is_failed ? 'failed' : 'approved';
+
+        $list[$target_index]['status']      = $final_status;
         $list[$target_index]['approved_at'] = time();
         $list[$target_index]['approved_by'] = $approver_name;
         $list[$target_index]['exec_result'] = $exec_result;
 
         update_option(self::STAGED_OPTION_KEY, $list, false);
+
+        if ($is_failed) {
+            $err_msg = (string) ($exec_result['message'] ?? ($exec_result['error'] ?? __('Tool execution failed.', 'webcare-pro-security')));
+            return [
+                'success'     => false,
+                'staged_id'   => $staged_id,
+                'exec_result' => $exec_result,
+                'message'     => sanitize_text_field($err_msg),
+            ];
+        }
 
         return [
             'success'     => true,
@@ -2507,7 +2532,26 @@ class MCPAgentService {
                 $content_payload = $exec['content'] ?? [['type' => 'text', 'text' => (string) wp_json_encode($exec)]];
                 $has_leak = false;
                 $matched_pat = '';
-                $safe_result = \WebCareProScanner\Firewall\NextGen\ResponseDlpSentinel::redact_data_recursive($content_payload, $has_leak, $matched_pat);
+
+                try {
+                    $safe_result = \WebCareProScanner\Firewall\NextGen\ResponseDlpSentinel::redact_data_recursive($content_payload, $has_leak, $matched_pat);
+                } catch (\Throwable $dlp_err) {
+                    try {
+                        if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                            \WebCareProScanner\System\AuditLogger::log_operational('mcp_dlp_inspection_limit_exceeded', [
+                                'tool'   => $tool_name,
+                                'reason' => $dlp_err->getCode() ?: 'dlp_limit',
+                            ]);
+                        }
+                    } catch (\Throwable $ignore) {
+                    }
+
+                    return [
+                        'jsonrpc' => '2.0',
+                        'id'      => $id,
+                        'error'   => ['code' => -32603, 'message' => 'Tool output could not be safely inspected.'],
+                    ];
+                }
 
                 return [
                     'jsonrpc' => '2.0',
