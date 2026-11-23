@@ -487,18 +487,17 @@ export const NAVIGATION_CATALOG: NavigationItem[] = [
   },
   {
     id: 'fw-modular-waf',
-    title: 'Modular Firewall Rules & AST Studio',
-    desc: 'Autonomous site-tailored modular rules synthesized from PHP AST & endpoint profiles',
+    title: 'Custom Rules & AST Studio',
+    desc: 'Autonomous site-tailored custom rules synthesized from PHP AST & endpoint profiles',
     icon: Radar,
     pillar: 'Firewall & Edge',
     slug: 'webcare-pro-firewall',
     tab: 'rule-builder',
-    tab: 'rules',
-    badge: 'AST WAF',
+    badge: 'Custom Rules',
     badgeType: 'success',
     isAdvanced: true,
-    keywords: ['modular waf', 'ast', 'synthesizer', 'guest ajax', 'permissive rest', 'direct script', 'cve shield', 'export json', 'autopilot'],
-    intents: ['open modular firewall studio']
+    keywords: ['custom rules', 'modular waf', 'ast', 'synthesizer', 'guest ajax', 'permissive rest', 'direct script', 'cve shield', 'export json', 'autopilot'],
+    intents: ['open custom rules studio', 'open modular firewall studio']
   },
   {
     id: 'fw-modular-dossier',

@@ -3400,7 +3400,7 @@ export const FirewallPage = ({
                     {activeTab === 'server_sec' && 'Server Security'}
                     {activeTab === 'intel' && 'Cloud Threat Intel'}
                     {activeTab === 'vpatch' && 'Virtual Patching'}
-                    {activeTab === 'modular_waf' && 'Modular WAF Studio'}
+                    {activeTab === 'modular_waf' && 'Custom Rules'}
                     {!['drill', 'supply_chain', 'server_sec', 'intel', 'vpatch', 'modular_waf'].includes(activeTab) && 'More Tools'}
                   </span>
                   <ChevronDown size={14} style={{ transform: isMoreMenuOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s ease' }} />
@@ -3553,7 +3553,7 @@ export const FirewallPage = ({
                       }}
                     >
                       <Radar size={15} color="#7c3aed" />
-                      <span>Modular WAF &amp; Custom Rules</span>
+                      <span>Custom Rules &amp; WAF Studio</span>
                     </button>
                   </div>
                 )}
@@ -9728,7 +9728,7 @@ export const FirewallPage = ({
         />
       )}
 
-      {/* TAB: Modular Firewall & Rule Builder Studio */}
+      {/* TAB: Custom Rules & Rule Builder Studio */}
       {activeTab === 'modular_waf' && (
         <div style={{ marginTop: '10px' }}>
           <ModularFirewallStudio />
