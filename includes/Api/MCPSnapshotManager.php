@@ -3,7 +3,7 @@ namespace WebCareProScanner\Api;
 
 use WebCareProScanner\Firewall\FirewallEngine;
 use WebCareProScanner\Firewall\HtaccessVaultManager;
-use WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer;
+use WebCareProScanner\Firewall\CustomRules\ModularFirewallSynthesizer;
 use WebCareProScanner\Remediation\TransactionalRemediation;
 use WebCareProScanner\System\SettingsManager;
 use WebCareProScanner\System\WebCareActivityLogger;

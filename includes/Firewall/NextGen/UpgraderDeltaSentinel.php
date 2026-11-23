@@ -3,7 +3,7 @@ namespace WebCareProScanner\Firewall\NextGen;
 
 use WebCareProScanner\Contracts\SecurityModuleInterface;
 use WebCareProScanner\Firewall\MicroWafCompiler;
-use WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer;
+use WebCareProScanner\Firewall\CustomRules\ModularFirewallSynthesizer;
 use WebCareProScanner\Firewall\Modular\SiteBehavioralAnalyzer;
 use WebCareProScanner\Malware\TaintAnalysisEngine;
 

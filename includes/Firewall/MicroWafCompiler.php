@@ -730,7 +730,7 @@ class MicroWafCompiler {
 
         // 4. Visual Custom Rules & Modular Intelligence Pre-Boot Setup
         $mod_compiled = class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\ModularFirewallSynthesizer')
-            ? \WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer::get_compiled_preload_rules()
+            ? \WebCareProScanner\Firewall\CustomRules\ModularFirewallSynthesizer::get_compiled_preload_rules()
             : ['direct_scripts_blocked' => [], 'ajax_actions_enforced' => [], 'rest_routes_enforced' => [], 'custom_rules_enforced' => [], 'visual_rules_enforced' => []];
         $modular_json_escaped = addcslashes((string) wp_json_encode($mod_compiled), "\\'");
 

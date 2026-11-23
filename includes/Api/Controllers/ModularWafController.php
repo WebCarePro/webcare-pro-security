@@ -488,7 +488,7 @@ final class ModularWafController extends AbstractApiController {
         $ctx            = self::build_modular_dossier_context(false);
         $preload_active = defined('WEBCAREPRO_PRELOAD_WAF_ACTIVE') && WEBCAREPRO_PRELOAD_WAF_ACTIVE;
         $autopilot      = class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\ModularFirewallSynthesizer')
-            && \WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer::is_autopilot_enabled();
+            && \WebCareProScanner\Firewall\CustomRules\ModularFirewallSynthesizer::is_autopilot_enabled();
 
         return new \WP_REST_Response([
             'success'           => true,
@@ -513,7 +513,7 @@ final class ModularWafController extends AbstractApiController {
         }
         $params  = $request->get_json_params() ?: [];
         $enabled = !empty($params['enabled']);
-        $res     = \WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer::set_autopilot_enabled($enabled);
+        $res     = \WebCareProScanner\Firewall\CustomRules\ModularFirewallSynthesizer::set_autopilot_enabled($enabled);
         return new \WP_REST_Response($res, 200);
     }
 
@@ -542,7 +542,7 @@ final class ModularWafController extends AbstractApiController {
             ], 400);
         }
 
-        $result = \WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer::toggle_rule($rule_id, $mode, $params);
+        $result = \WebCareProScanner\Firewall\CustomRules\ModularFirewallSynthesizer::toggle_rule($rule_id, $mode, $params);
         return new \WP_REST_Response($result, 200);
     }
 
@@ -560,7 +560,7 @@ final class ModularWafController extends AbstractApiController {
             ], 500);
         }
 
-        $result = \WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer::bulk_apply_recommendations();
+        $result = \WebCareProScanner\Firewall\CustomRules\ModularFirewallSynthesizer::bulk_apply_recommendations();
         return new \WP_REST_Response($result, 200);
     }
 
@@ -579,7 +579,7 @@ final class ModularWafController extends AbstractApiController {
         }
 
         $params = $request->get_json_params() ?: [];
-        $result = \WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer::create_custom_rule($params);
+        $result = \WebCareProScanner\Firewall\CustomRules\ModularFirewallSynthesizer::create_custom_rule($params);
         return new \WP_REST_Response($result, 200);
     }
 
@@ -650,7 +650,7 @@ final class ModularWafController extends AbstractApiController {
         if ($rule_id === '') {
             return new \WP_REST_Response(['success' => false, 'message' => __('Rule ID is required.', 'webcare-pro-security')], 400);
         }
-        $res = \WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer::delete_custom_rule($rule_id);
+        $res = \WebCareProScanner\Firewall\CustomRules\ModularFirewallSynthesizer::delete_custom_rule($rule_id);
         return new \WP_REST_Response($res, 200);
     }
 
@@ -678,7 +678,7 @@ final class ModularWafController extends AbstractApiController {
         if (empty($ordered_ids)) {
             return new \WP_REST_Response(['success' => false, 'message' => __('ordered_ids array is required.', 'webcare-pro-security')], 400);
         }
-        $res = \WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer::reorder_custom_rules($ordered_ids);
+        $res = \WebCareProScanner\Firewall\CustomRules\ModularFirewallSynthesizer::reorder_custom_rules($ordered_ids);
         return new \WP_REST_Response($res, 200);
     }
 
@@ -779,7 +779,7 @@ final class ModularWafController extends AbstractApiController {
             ], 400);
         }
 
-        $result = \WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer::get_code_preview($file, $line);
+        $result = \WebCareProScanner\Firewall\CustomRules\ModularFirewallSynthesizer::get_code_preview($file, $line);
         return new \WP_REST_Response($result, 200);
     }
 
@@ -1676,7 +1676,7 @@ final class ModularWafController extends AbstractApiController {
         // 3. Gather active Modular WAF rules protecting REST / AJAX surfaces
         $active_surface_rules = [];
         if (class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\ModularFirewallSynthesizer')) {
-            $all_rules = \WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer::get_active_rules();
+            $all_rules = \WebCareProScanner\Firewall\CustomRules\ModularFirewallSynthesizer::get_active_rules();
             foreach ($all_rules as $rule) {
                 $cat = $rule['category'] ?? '';
                 if ($cat === 'rest_guard' || $cat === 'ajax_shield' || str_contains((string) ($rule['target_uri'] ?? ''), 'wp-json') || str_contains((string) ($rule['target_uri'] ?? ''), 'admin-ajax.php')) {

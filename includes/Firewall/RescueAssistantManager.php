@@ -63,7 +63,7 @@ class RescueAssistantManager {
      */
     public static function run_autopilot_cron(): void {
         if (class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\ModularFirewallSynthesizer')) {
-            \WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer::evaluate_autopilot_promotions();
+            \WebCareProScanner\Firewall\CustomRules\ModularFirewallSynthesizer::evaluate_autopilot_promotions();
         }
     }
 
@@ -557,7 +557,7 @@ class RescueAssistantManager {
 
         // If a Modular WAF rule was triggered, switch it to monitor mode cleanly
         if (str_starts_with($rule_id, 'MOD-') && class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\ModularFirewallSynthesizer')) {
-            \WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer::toggle_rule($rule_id, 'monitor');
+            \WebCareProScanner\Firewall\CustomRules\ModularFirewallSynthesizer::toggle_rule($rule_id, 'monitor');
         }
 
         // Unblock IP & grant 24h access pass if affected client IP is known

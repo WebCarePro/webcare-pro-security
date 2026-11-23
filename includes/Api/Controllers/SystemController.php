@@ -697,7 +697,7 @@ final class SystemController extends AbstractApiController {
             : null;
 
         $modular_rules = class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\ModularFirewallSynthesizer')
-            ? \WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer::get_active_rules()
+            ? \WebCareProScanner\Firewall\CustomRules\ModularFirewallSynthesizer::get_active_rules()
             : [];
 
         $modular_rules_summary = [

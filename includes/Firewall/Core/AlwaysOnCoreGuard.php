@@ -15,7 +15,7 @@ use WebCareProScanner\Contracts\WafEvaluatorInterface;
 use WebCareProScanner\Contracts\WafVerdict;
 use WebCareProScanner\Firewall\BotReconDefense;
 use WebCareProScanner\Firewall\FirewallEngine;
-use WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer;
+use WebCareProScanner\Firewall\CustomRules\ModularFirewallSynthesizer;
 use WebCareProScanner\Firewall\RescueAssistantManager;
 use WebCareProScanner\Firewall\ThreatIntelNetwork;
 use WebCareProScanner\Firewall\ThreatIntelService;

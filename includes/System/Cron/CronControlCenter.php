@@ -9,7 +9,7 @@ use WebCareProScanner\Backup\DatabaseBackup;
 use WebCareProScanner\Firewall\CAF\AdaptiveFirewallAdvisor;
 use WebCareProScanner\Firewall\CAF\CloudflareIpListSynchronizer;
 use WebCareProScanner\Firewall\DomainReputationMonitor;
-use WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer;
+use WebCareProScanner\Firewall\CustomRules\ModularFirewallSynthesizer;
 use WebCareProScanner\Firewall\Modular\SiteBehavioralAnalyzer;
 use WebCareProScanner\Firewall\RedirectCanaryEngine;
 use WebCareProScanner\Firewall\RescueAssistantManager;

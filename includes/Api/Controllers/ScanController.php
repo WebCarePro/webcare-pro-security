@@ -2140,7 +2140,7 @@ final class ScanController extends AbstractApiController {
 
         $shielded_slugs = [];
         if (class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\ModularFirewallSynthesizer')) {
-            foreach (\WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer::get_active_rules() as $mr) {
+            foreach (\WebCareProScanner\Firewall\CustomRules\ModularFirewallSynthesizer::get_active_rules() as $mr) {
                 if (($mr['category'] ?? '') === 'cve_patch' && ($mr['current_mode'] ?? '') === 'enforce' && !empty($mr['component_slug'])) {
                     $shielded_slugs[$mr['component_slug']] = $mr['id'];
                 }
@@ -2166,7 +2166,7 @@ final class ScanController extends AbstractApiController {
         $params = $request->get_json_params() ?: [];
         $slug   = sanitize_key($params['slug'] ?? '');
         $type   = sanitize_key($params['type'] ?? 'plugin');
-        $res    = \WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer::activate_cve_shield($slug, $type);
+        $res    = \WebCareProScanner\Firewall\CustomRules\ModularFirewallSynthesizer::activate_cve_shield($slug, $type);
         return new \WP_REST_Response($res, !empty($res['success']) ? 200 : 400);
     }
 

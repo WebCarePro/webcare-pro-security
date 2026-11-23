@@ -556,7 +556,7 @@ class RestApiInventory {
             return $map;
         }
 
-        $rules = \WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer::get_active_rules();
+        $rules = \WebCareProScanner\Firewall\CustomRules\ModularFirewallSynthesizer::get_active_rules();
         foreach ($rules as $r) {
             $mode = $r['current_mode'] ?? 'off';
             if ($mode === 'off') {

@@ -8,7 +8,7 @@ use WebCareProScanner\Contracts\RouteClass;
 use WebCareProScanner\Contracts\SecurityModuleInterface;
 use WebCareProScanner\Contracts\WafEvaluatorInterface;
 use WebCareProScanner\Contracts\WafVerdict;
-use WebCareProScanner\Firewall\Modular\ModularFirewallSynthesizer;
+use WebCareProScanner\Firewall\CustomRules\ModularFirewallSynthesizer;
 use WebCareProScanner\Firewall\Modular\VisualRuleExpressionEngine;
 use WebCareProScanner\Security\PromptInjectionGuard;
 
