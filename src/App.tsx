@@ -4706,7 +4706,7 @@ Source Code,${escapeCsv(code)}
     if (navTab === 'auth') {
       return (
         <ContextualSubNav
-          sectionTitle="Zero-Trust Identity & Access"
+          sectionTitle="Login & 2FA"
           sectionIcon={Users}
           tabs={[
             {
@@ -4869,7 +4869,7 @@ Source Code,${escapeCsv(code)}
     if (['settings', 'notifications', 'activity_logs', 'about'].includes(navTab)) {
       return (
         <ContextualSubNav
-          sectionTitle="Settings & Platform Governance"
+          sectionTitle="Settings & Doctor"
           sectionIcon={SettingsIcon}
           tabs={[
             {
@@ -4960,7 +4960,7 @@ Source Code,${escapeCsv(code)}
     if (navTab === 'dashboard') {
       return (
         <ContextualSubNav
-          sectionTitle="Executive SOC Dashboard"
+          sectionTitle="Dashboard"
           sectionIcon={LayoutDashboard}
           tabs={[
             {
@@ -5511,6 +5511,123 @@ Source Code,${escapeCsv(code)}
                         )}
                       </div>
                     </div>
+                  </div>
+                </section>
+
+                {/* DASHBOARD QUICK ACTIONS STRIP */}
+                <section
+                  className="webcare-card"
+                  style={{
+                    padding: '12px 18px',
+                    marginBottom: '18px',
+                    borderRadius: '12px',
+                    background: 'var(--webcare-bg-panel, #ffffff)',
+                    border: '1px solid var(--webcare-border, #e2e8f0)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    flexWrap: 'wrap',
+                    gap: '12px',
+                    boxShadow: '0 1px 3px rgba(0, 0, 0, 0.04)',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--webcare-text-muted, #64748b)' }}>
+                      Quick Actions:
+                    </span>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px', flex: 1 }}>
+                    <button
+                      type="button"
+                      onClick={() => handleNavTabChange('scan')}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '8px',
+                        padding: '9px 14px',
+                        borderRadius: '8px',
+                        fontSize: '12.5px',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        background: 'var(--webcare-status-clean-soft, rgba(16, 185, 129, 0.08))',
+                        color: 'var(--webcare-status-clean, #059669)',
+                        border: '1px solid var(--webcare-status-clean-border, rgba(16, 185, 129, 0.3))',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      <Radar size={15} />
+                      <span>Run Security Scan</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleNavTabChange('waf_logs')}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '8px',
+                        padding: '9px 14px',
+                        borderRadius: '8px',
+                        fontSize: '12.5px',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        background: 'rgba(79, 70, 229, 0.08)',
+                        color: '#4f46e5',
+                        border: '1px solid rgba(79, 70, 229, 0.25)',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      <History size={15} />
+                      <span>WAF Logs &amp; Unban IP</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setRescueModalOpen(true)}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '8px',
+                        padding: '9px 14px',
+                        borderRadius: '8px',
+                        fontSize: '12.5px',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        background: 'rgba(245, 158, 11, 0.08)',
+                        color: '#d97706',
+                        border: '1px solid rgba(245, 158, 11, 0.3)',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      <Wrench size={15} />
+                      <span>15-Min Safe Mode</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleNavTabChange('vault', 'database')}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '8px',
+                        padding: '9px 14px',
+                        borderRadius: '8px',
+                        fontSize: '12.5px',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        background: 'rgba(6, 182, 212, 0.08)',
+                        color: '#0284c7',
+                        border: '1px solid rgba(6, 182, 212, 0.25)',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      <Database size={15} />
+                      <span>Backup Database</span>
+                    </button>
                   </div>
                 </section>
 

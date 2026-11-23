@@ -19,7 +19,8 @@ import {
   Wrench,
   AlertTriangle,
   PlayCircle,
-  Search
+  Search,
+  ChevronRight
 } from 'lucide-react';
 import WebCareBrandLogo from './WebCareBrandLogo';
 import MegaMenuModal from './MegaMenuModal';
@@ -547,6 +548,148 @@ export const WebCareShell = ({ activeTab, children }: WebCareShellProps) => {
           </nav>
         </div>
       </header>
+
+      {/* Compact Breadcrumb Trail */}
+      {(() => {
+        let currentUrlTab = '';
+        try {
+          currentUrlTab = new URLSearchParams(window.location.search).get('tab') || '';
+        } catch {}
+
+        const pillarMeta: Record<string, { label: string; slug: string }> = {
+          dashboard: { label: 'Dashboard', slug: 'dashboard' },
+          scan: { label: 'Scanner & CVEs', slug: 'scan' },
+          targeted: { label: 'Scanner & CVEs', slug: 'scan' },
+          logs: { label: 'Scanner & CVEs', slug: 'scan' },
+          fim: { label: 'Scanner & CVEs', slug: 'fim' },
+          vulnerabilities: { label: 'Scanner & CVEs', slug: 'scan' },
+          firewall: { label: 'Firewall & Edge', slug: 'firewall' },
+          modular_waf: { label: 'Firewall & Edge', slug: 'modular_waf' },
+          waf_logs: { label: 'Firewall & Edge', slug: 'waf_logs' },
+          vpatch: { label: 'Firewall & Edge', slug: 'firewall' },
+          auth: { label: 'Login & 2FA', slug: 'auth' },
+          vault: { label: 'Vault & Forensics', slug: 'vault' },
+          quarantine: { label: 'Vault & Forensics', slug: 'vault' },
+          backup: { label: 'Vault & Forensics', slug: 'vault' },
+          forensics: { label: 'Vault & Forensics', slug: 'forensics' },
+          server: { label: 'Vault & Forensics', slug: 'vault' },
+          settings: { label: 'Settings & System', slug: 'settings' },
+          notifications: { label: 'Settings & System', slug: 'notifications' },
+          activity_logs: { label: 'Settings & System', slug: 'activity_logs' },
+          cron_manager: { label: 'Settings & System', slug: 'cron_manager' },
+          about: { label: 'Settings & System', slug: 'settings' },
+          wizard: { label: 'Settings & System', slug: 'wizard' },
+        };
+
+        const tabLabels: Record<string, string> = {
+          stream: 'Live Traffic',
+          rules: 'Rules & Presets',
+          caf: 'Adaptive (CAF)',
+          cloudflare: 'Cloudflare',
+          behavioral: 'Bot & Behavior',
+          ai_defense: 'AI Defense',
+          drill: 'Attack Drill',
+          supply_chain: 'Supply-Chain & SBOM',
+          server_sec: 'Server Security',
+          intel: 'Cloud Threat Intel',
+          vpatch: 'Virtual Patching',
+          builder: 'Visual Rule Builder',
+          dossier: 'Behavioral Dossier',
+          nextgen: 'Next-Gen Sentinels',
+          '2fa': 'Two-Factor Auth',
+          passkeys: 'Passkeys',
+          admins: 'Admin 2FA Policy',
+          zero_trust: 'Session Forensics',
+          sessions: 'Active Sessions',
+          lockouts: 'Brute-Force Lockouts',
+          app_passwords: 'App Passwords',
+          quarantine: 'Quarantine Vault',
+          database: 'Database Backup',
+          rollback: 'Safety Rollback',
+          secrets: 'Secrets Vault',
+          forensics: 'Forensics',
+          server: 'Host Telemetry',
+          containment: 'Panic Containment',
+          schedule: 'Schedule & General',
+          email: 'Email Alerts',
+          webhooks: 'Webhooks',
+          headers: 'Security Headers',
+          ai: 'AI Copilot',
+          mcp: 'Autonomous MCP',
+          performance: 'Scanner Tuning',
+          import_export: 'Import / Export',
+          cleanup: 'Maintenance Purge',
+        };
+
+        const activePillar = pillarMeta[activeTab] || { label: 'Security Center', slug: 'dashboard' };
+        const subLabel = currentUrlTab ? (tabLabels[currentUrlTab] || currentUrlTab.replace(/_/g, ' ')) : null;
+
+        return (
+          <nav
+            aria-label="Breadcrumb"
+            className="webcare-breadcrumbs-bar"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '6px 20px',
+              fontSize: '11.5px',
+              fontWeight: 500,
+              color: 'var(--webcare-text-muted, #64748b)',
+              background: 'var(--webcare-bg-surface, #f8fafc)',
+              borderBottom: '1px solid var(--webcare-border, #e2e8f0)',
+              lineHeight: 1,
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => navigateTo('dashboard')}
+              style={{
+                background: 'none',
+                border: 'none',
+                padding: 0,
+                color: 'var(--webcare-text-muted, #64748b)',
+                fontSize: '11.5px',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = '#4f46e5'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--webcare-text-muted, #64748b)'; }}
+            >
+              WebCare Pro
+            </button>
+
+            <span style={{ opacity: 0.5 }}>›</span>
+
+            <button
+              type="button"
+              onClick={() => navigateTo(activePillar.slug)}
+              style={{
+                background: 'none',
+                border: 'none',
+                padding: 0,
+                color: subLabel ? 'var(--webcare-text-muted, #64748b)' : 'var(--webcare-text-primary, #0f172a)',
+                fontSize: '11.5px',
+                fontWeight: subLabel ? 500 : 700,
+                cursor: 'pointer',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = '#4f46e5'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = subLabel ? 'var(--webcare-text-muted, #64748b)' : 'var(--webcare-text-primary, #0f172a)'; }}
+            >
+              {activePillar.label}
+            </button>
+
+            {subLabel && (
+              <>
+                <span style={{ opacity: 0.5 }}>›</span>
+                <span style={{ color: 'var(--webcare-text-primary, #0f172a)', fontWeight: 700 }}>
+                  {subLabel}
+                </span>
+              </>
+            )}
+          </nav>
+        );
+      })()}
 
       {/* Sticky Safe Mode Banner */}
       {rescuePaused && (

@@ -3240,7 +3240,7 @@ export const FirewallPage = ({
             className={`webcare-tab-link ${activeTab === 'stream' ? 'is-active' : ''}`}
             onClick={() => { setIsMoreMenuOpen(false); handleSwitchTab('stream'); }}
           >
-            <Activity size={16} /> Live Incident Stream ({logs.length})
+            <Activity size={16} /> Live Traffic ({logs.length})
           </button>
 
           <button
@@ -3248,7 +3248,7 @@ export const FirewallPage = ({
             className={`webcare-tab-link ${activeTab === 'rules' ? 'is-active' : ''}`}
             onClick={() => { setIsMoreMenuOpen(false); handleSwitchTab('rules'); }}
           >
-            <Sliders size={16} /> Firewall Rules &amp; Controls
+            <Sliders size={16} /> Rules &amp; Presets
           </button>
 
           {!isSimpleMode && (
@@ -3259,7 +3259,7 @@ export const FirewallPage = ({
                 onClick={() => { setIsMoreMenuOpen(false); handleSwitchTab('caf'); }}
               >
                 <Sparkles size={16} color="#0284c7" />
-                <span>Adaptive Firewall (CAF)</span>
+                <span>Adaptive (CAF)</span>
                 <span className="webcare-badge-pill webcare-badge-info" style={{ fontSize: '10px', padding: '1px 6px', marginLeft: '4px' }}>
                   StackGuard
                 </span>
@@ -3277,7 +3277,7 @@ export const FirewallPage = ({
                     strokeWidth: 2.5
                   }}
                 />
-                <span>Cloudflare Edge Defense</span>
+                <span>Cloudflare</span>
                 {cfStatus?.configured && (
                   <span style={{ color: '#10b981', fontSize: '11px', fontWeight: 700, marginLeft: '2px' }}>
                     ● Connected
@@ -3290,7 +3290,7 @@ export const FirewallPage = ({
                 className={`webcare-tab-link ${activeTab === 'behavioral' ? 'is-active' : ''}`}
                 onClick={() => { setIsMoreMenuOpen(false); handleSwitchTab('behavioral'); }}
               >
-                <Sliders size={16} /> Behavioral WAF &amp; Bot Traps
+                <Sliders size={16} /> Bot &amp; Behavior
               </button>
 
               <button
@@ -3298,10 +3298,10 @@ export const FirewallPage = ({
                 className={`webcare-tab-link ${activeTab === 'ai_defense' ? 'is-active' : ''}`}
                 onClick={() => { setIsMoreMenuOpen(false); handleSwitchTab('ai_defense'); }}
               >
-                <Sparkles size={16} /> 2026 AI Defense &amp; Decoy Traps
+                <Sparkles size={16} /> AI Defense
               </button>
 
-              {/* More Security Tools Dropdown */}
+              {/* More Tools Dropdown */}
               <div ref={moreMenuRef} style={{ position: 'relative', display: 'inline-block' }}>
                 <button
                   type="button"
@@ -3317,7 +3317,7 @@ export const FirewallPage = ({
                     {activeTab === 'server_sec' && 'Server Security'}
                     {activeTab === 'intel' && 'Cloud Threat Intel'}
                     {activeTab === 'vpatch' && 'Virtual Patching'}
-                    {!['drill', 'supply_chain', 'server_sec', 'intel', 'vpatch'].includes(activeTab) && 'Advanced Modules'}
+                    {!['drill', 'supply_chain', 'server_sec', 'intel', 'vpatch'].includes(activeTab) && 'More Tools'}
                   </span>
                   <ChevronDown size={14} style={{ transform: isMoreMenuOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s ease' }} />
                 </button>
@@ -3505,22 +3505,51 @@ export const FirewallPage = ({
             </button>
           )}
 
-          <button
-            type="button"
-            className="webcare-tab-link"
-            style={{ marginLeft: 'auto', color: 'var(--webcare-status-info, #4f46e5)', fontWeight: 600 }}
-            onClick={() => {
-            if (onNavigateToWafLogs) {
-              onNavigateToWafLogs();
-            } else {
-              window.location.href = 'admin.php?page=webcare-pro-waf-logs';
-            }
-          }}
-          title="Open Dedicated Full-Page WAF Incident Logs & Attack Forensics"
-        >
-          <FileText size={16} /> WAF Incident Logs &amp; Forensics →
-        </button>
-      </div>
+          {/* Right-aligned Quick-Links to WAF Logs & Rule Builder */}
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <button
+              type="button"
+              className="webcare-btn-micro"
+              onClick={() => {
+                window.location.href = 'admin.php?page=webcare-pro-modular-waf&tab=builder';
+              }}
+              style={{
+                fontSize: '11.5px',
+                fontWeight: 600,
+                padding: '5px 10px',
+                borderRadius: '6px',
+                background: 'rgba(99, 102, 241, 0.08)',
+                color: '#6366f1',
+                border: '1px solid rgba(99, 102, 241, 0.25)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                cursor: 'pointer'
+              }}
+              title="Open Visual WireFilter Rule Builder"
+            >
+              <Filter size={13} />
+              <span>Rule Builder</span>
+            </button>
+
+            <button
+              type="button"
+              className="webcare-tab-link"
+              style={{ color: 'var(--webcare-status-info, #4f46e5)', fontWeight: 600, padding: '6px 12px' }}
+              onClick={() => {
+                if (onNavigateToWafLogs) {
+                  onNavigateToWafLogs();
+                } else {
+                  window.location.href = 'admin.php?page=webcare-pro-waf-logs';
+                }
+              }}
+              title="Open Dedicated Full-Page WAF Incident Logs & Attack Forensics"
+            >
+              <FileText size={15} />
+              <span>WAF Logs &amp; Bans →</span>
+            </button>
+          </div>
+        </div>
 
       {/* TAB 1: Live Incident Stream */}
       {activeTab === 'stream' && (

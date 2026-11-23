@@ -1513,6 +1513,86 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
 
   return (
     <div className="webcare-page-container webcare-waf-logs-page" style={{ width: '100%', maxWidth: '100%', margin: '0' }}>
+      {/* Quick-Switch Cross-Link Bar */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '8px 16px',
+          marginBottom: '12px',
+          borderRadius: '8px',
+          background: 'var(--webcare-bg-surface, #f8fafc)',
+          border: '1px solid var(--webcare-border, #e2e8f0)',
+          fontSize: '12.5px',
+          color: 'var(--webcare-text-secondary, #475569)'
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <button
+            type="button"
+            onClick={() => handleFirewallNavigation('rules')}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '4px 10px',
+              borderRadius: '6px',
+              fontSize: '12px',
+              fontWeight: 600,
+              background: 'var(--webcare-bg-panel, #ffffff)',
+              border: '1px solid var(--webcare-border, #cbd5e1)',
+              color: 'var(--webcare-text-primary, #0f172a)',
+              cursor: 'pointer'
+            }}
+          >
+            <span>← Firewall Rules &amp; Presets</span>
+          </button>
+          <span style={{ color: 'var(--webcare-border, #cbd5e1)' }}>|</span>
+          <button
+            type="button"
+            onClick={() => { window.location.href = 'admin.php?page=webcare-pro-modular-waf&tab=builder'; }}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '5px',
+              padding: '4px 10px',
+              borderRadius: '6px',
+              fontSize: '12px',
+              fontWeight: 600,
+              background: 'transparent',
+              border: 'none',
+              color: '#6366f1',
+              cursor: 'pointer'
+            }}
+          >
+            <span>Visual Rule Builder</span>
+          </button>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <button
+            type="button"
+            onClick={() => { window.location.href = 'admin.php?page=webcare-pro-activity-logs'; }}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '5px',
+              padding: '4px 10px',
+              borderRadius: '6px',
+              fontSize: '12px',
+              fontWeight: 600,
+              background: 'transparent',
+              border: '1px solid var(--webcare-border, #cbd5e1)',
+              color: 'var(--webcare-text-primary, #0f172a)',
+              cursor: 'pointer'
+            }}
+          >
+            <span>Activity Logs →</span>
+          </button>
+        </div>
+      </div>
+
       {/* 1. Header Banner & Title */}
       <div className="webcare-waf-hero-header">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px' }}>
