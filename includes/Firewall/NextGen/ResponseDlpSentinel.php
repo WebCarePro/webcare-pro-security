@@ -42,7 +42,7 @@ class ResponseDlpSentinel implements SecurityModuleInterface {
             'version'     => defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '2.12.0',
             'author'      => 'Mir Alamin (WebCare Pro)',
             'enable_key'  => 'waf_nextgen_response_dlp_enabled',
-            'deep_link'   => 'admin.php?page=webcare-pro-firewall&tab=protection',
+            'deep_link'   => 'admin.php?page=webcare-pro-firewall&tab=waf-rules',
             'badge'       => 'Next-Gen DLP',
         ];
     }

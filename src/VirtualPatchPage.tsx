@@ -79,7 +79,7 @@ export const VirtualPatchPage: React.FC<VirtualPatchPageProps> = ({
             <button
               type="button"
               className="webcare-btn-secondary"
-              onClick={() => onNavigateToFirewall ? onNavigateToFirewall('rules') : (window.location.href = 'admin.php?page=webcare-pro-firewall&tab=rules')}
+              onClick={() => onNavigateToFirewall ? onNavigateToFirewall('rules') : (window.location.href = 'admin.php?page=webcare-pro-firewall&tab=waf-rules')}
               style={{ fontSize: '12.5px', padding: '8px 14px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
             >
               <Sliders size={14} />

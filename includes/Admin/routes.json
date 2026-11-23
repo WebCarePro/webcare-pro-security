@@ -21,12 +21,12 @@
       "description": "Block attacks, manage rules, bots, AI crawlers, and Cloudflare.",
       "bundle": "firewall",
       "icon": "firewall",
-      "default_tab": "protection",
+      "default_tab": "waf-rules",
       "mode": "all",
       "tabs": [
         {
-          "id": "protection",
-          "label": "Protection & Rules",
+          "id": "waf-rules",
+          "label": "Rules & Presets",
           "mode": "all",
           "description": "Core firewall rules, inspection modes, and attack defense."
         },
@@ -49,8 +49,8 @@
           "description": "Search engine bots, AI scrapers, bad bots, and crawler policies."
         },
         {
-          "id": "rule-builder",
-          "label": "Custom Rule Builder",
+          "id": "custom-waf-rules",
+          "label": "Custom Rules",
           "mode": "developer",
           "description": "Author custom CIDR, header, path, query, and user-agent WAF rules."
         },

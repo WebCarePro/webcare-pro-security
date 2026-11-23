@@ -196,7 +196,7 @@ class AdminMenu {
         elseif ($tab_param === 'forensics') $active_tab = 'forensics';
         elseif ($tab_param === 'vault') $active_tab = 'vault';
         elseif ($tab_param === 'waf_logs') $active_tab = 'waf_logs';
-        elseif (in_array($tab_param, ['firewall', 'vpatch', 'caf'], true)) $active_tab = 'firewall';
+        elseif (in_array($tab_param, ['firewall', 'waf-rules', 'rules', 'protection', 'vpatch', 'caf'], true)) $active_tab = 'firewall';
         elseif ($tab_param === 'auth') $active_tab = 'auth';
         elseif ($tab_param === 'notifications') $active_tab = 'notifications';
         elseif ($tab_param === 'activity_logs') $active_tab = 'activity_logs';
@@ -204,7 +204,7 @@ class AdminMenu {
         elseif ($tab_param === 'settings') $active_tab = 'settings';
         elseif ($tab_param === 'about') $active_tab = 'about';
         elseif ($tab_param === 'wizard') $active_tab = 'wizard';
-        elseif ($tab_param === 'custom_rules' || $tab_param === 'modular_waf') $active_tab = 'custom_rules';
+        elseif (in_array($tab_param, ['custom-waf-rules', 'custom_waf_rules', 'custom_rules', 'custom-rules', 'rule-builder', 'modular_waf'], true)) $active_tab = 'custom_rules';
         elseif ($tab_param === 'scan') $active_tab = 'scan';
 
         $global_css_file = WEBCAREPROSCAN_PATH . 'build/global.css';

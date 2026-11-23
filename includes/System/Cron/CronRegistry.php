@@ -126,7 +126,7 @@ class CronRegistry {
                 'setting_key'         => 'cron_custom_rules_ast_bg_enabled',
                 'setting_type'        => 'settings_manager',
                 'setting_location'    => did_action('init') ? __('Custom Rules -> Live AST Telemetry', 'webcare-pro-security') : 'Custom Rules -> Live AST Telemetry',
-                'deep_link'           => 'admin.php?page=webcare-pro-firewall&tab=rule-builder',
+                'deep_link'           => 'admin.php?page=webcare-pro-firewall&tab=custom-waf-rules',
                 'default_delay'       => 15,
             ],
             'webcareproscan_scan_step_worker' => [
@@ -190,7 +190,7 @@ class CronRegistry {
                 'setting_key'         => 'cron_custom_rules_autopilot_enabled',
                 'setting_type'        => 'settings_manager',
                 'setting_location'    => did_action('init') ? __('Custom Rules -> Smart Auto-Pilot', 'webcare-pro-security') : 'Custom Rules -> Smart Auto-Pilot',
-                'deep_link'           => 'admin.php?page=webcare-pro-firewall&tab=rule-builder',
+                'deep_link'           => 'admin.php?page=webcare-pro-firewall&tab=custom-waf-rules',
                 'default_delay'       => HOUR_IN_SECONDS,
             ],
             'webcare_cloudflare_ip_sync_cron' => [

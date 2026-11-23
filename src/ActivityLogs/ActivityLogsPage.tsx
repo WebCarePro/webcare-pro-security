@@ -1233,7 +1233,7 @@ export function ActivityLogsPage({ apiRequest }: ActivityLogsPageProps) {
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <button
             type="button"
-            onClick={() => { window.location.href = 'admin.php?page=webcare-pro-firewall&tab=rules'; }}
+            onClick={() => { window.location.href = 'admin.php?page=webcare-pro-firewall&tab=waf-rules'; }}
             style={{
               display: 'inline-flex',
               alignItems: 'center',

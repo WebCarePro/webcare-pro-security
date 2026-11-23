@@ -286,6 +286,8 @@ export const FirewallPage = ({
   const normalizeFirewallTab = (tab: string | null): ('stream' | 'rules' | 'caf' | 'drill' | 'supply_chain' | 'behavioral' | 'server_sec' | 'intel' | 'cloudflare' | 'vpatch' | 'ai_defense' | 'custom_rules') | null => {
     if (!tab) return null;
     const tabMap: Record<string, 'stream' | 'rules' | 'caf' | 'drill' | 'supply_chain' | 'behavioral' | 'server_sec' | 'intel' | 'cloudflare' | 'vpatch' | 'ai_defense' | 'custom_rules'> = {
+      'waf-rules': 'rules',
+      waf_rules: 'rules',
       protection: 'rules',
       rules: 'rules',
       traffic: 'stream',
@@ -295,6 +297,8 @@ export const FirewallPage = ({
       cloudflare: 'cloudflare',
       behavioral: 'behavioral',
       bots: 'behavioral',
+      'custom-waf-rules': 'custom_rules',
+      custom_waf_rules: 'custom_rules',
       'rule-builder': 'custom_rules',
       builder: 'custom_rules',
       custom: 'custom_rules',
@@ -717,11 +721,13 @@ export const FirewallPage = ({
     setActiveTab(tab);
     try {
       const url = new URL(window.location.href);
-      url.searchParams.set('tab', tab);
-      window.history.pushState({ tab }, '', url.toString());
+      const urlTabParam = tab === 'rules' ? 'waf-rules' : tab === 'custom_rules' ? 'custom-waf-rules' : tab;
+      url.searchParams.set('tab', urlTabParam);
+      window.history.pushState({ tab: urlTabParam }, '', url.toString());
     } catch (e) {}
     if (onSubTabChange) {
-      onSubTabChange(tab);
+      const canonicalTabParam = tab === 'rules' ? 'waf-rules' : tab === 'custom_rules' ? 'custom-waf-rules' : tab;
+      onSubTabChange(canonicalTabParam as any);
     }
   };
 

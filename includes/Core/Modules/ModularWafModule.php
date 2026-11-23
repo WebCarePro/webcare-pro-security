@@ -56,7 +56,7 @@ class ModularWafModule implements SecurityModuleInterface, WafEvaluatorInterface
             'category'    => 'waf',
             'version'     => defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '2.12.0',
             'author'      => 'Mir Alamin (WebCare Pro)',
-            'deep_link'   => 'admin.php?page=webcare-pro-firewall&tab=rule-builder',
+            'deep_link'   => 'admin.php?page=webcare-pro-firewall&tab=custom-waf-rules',
             'badge'       => 'Core WAF',
         ];
     }

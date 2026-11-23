@@ -23,8 +23,9 @@ function mountFirewall() {
         onSubTabChange={(sub) => {
           try {
             const url = new URL(window.location.href);
-            url.searchParams.set('tab', sub);
-            window.history.pushState({ tab: sub }, '', url.toString());
+            const canonicalSub = sub === 'rules' ? 'waf-rules' : sub === 'custom_rules' ? 'custom-waf-rules' : sub;
+            url.searchParams.set('tab', canonicalSub);
+            window.history.pushState({ tab: canonicalSub }, '', url.toString());
           } catch (e) {}
         }}
       />
