@@ -92,9 +92,10 @@ register_deactivation_hook(__FILE__, static function (): void {
 $webcareproscan_wp_version = $GLOBALS['wp_version'] ?? '';
 if (PHP_VERSION_ID < 80300 || empty($webcareproscan_wp_version) || version_compare($webcareproscan_wp_version, '7.0', '<')) {
     add_action('admin_notices', static function (): void {
-        echo '<div class="notice notice-error"><p>'
-            . esc_html__('WebCare Pro Security & Firewall requires PHP 8.3+ and WordPress 7.0+.', 'webcare-pro-security')
-            . '</p></div>';
+        $msg = (function_exists('did_action') && did_action('init'))
+            ? esc_html__('WebCare Pro Security & Firewall requires PHP 8.3+ and WordPress 7.0+.', 'webcare-pro-security')
+            : 'WebCare Pro Security & Firewall requires PHP 8.3+ and WordPress 7.0+.';
+        echo '<div class="notice notice-error"><p>' . esc_html($msg) . '</p></div>';
     });
     return;
 }

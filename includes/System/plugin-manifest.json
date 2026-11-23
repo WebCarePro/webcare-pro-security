@@ -1,6 +1,6 @@
 {
   "version": "3.25.2",
-  "generated_at": "2026-11-23T02:39:17.018Z",
+  "generated_at": "2026-11-23T02:58:09.929Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -832,8 +832,8 @@
       "size": 35591
     },
     "includes/Plugin.php": {
-      "sha256": "19b22d7c6a14891d5373588d8782a5460ee579cc5957bcfcecb3dac1f0c76cd4",
-      "size": 53401
+      "sha256": "c7fefc638f5a125d8e9e9bb5ca5c79408e11dd86b58742400326f69b6d03a50c",
+      "size": 54193
     },
     "includes/Quarantine/CoreRepairManager.php": {
       "sha256": "e4b6a6438e72eefdfcc59fe1b4db45caf4cf269c62a1143b0f61ba998a90e3b9",
@@ -848,8 +848,8 @@
       "size": 16006
     },
     "includes/Remediation/RemediationManager.php": {
-      "sha256": "d5e63d628556f8e2e778f22e8a23413a9dcc4e338f2acfe130d4879c0e89f4fd",
-      "size": 62357
+      "sha256": "92d5573430576b6851f1cbed6becec48d839329ee32b63ef3c46143ed6e6b6bd",
+      "size": 62594
     },
     "includes/Remediation/TransactionalRemediation.php": {
       "sha256": "164e1723ddeef712ddfcbd87c8f441e3e42113705133efe87c867065cc7e8006",
@@ -1104,8 +1104,8 @@
       "size": 15530
     },
     "webcare-pro-security.php": {
-      "sha256": "bb3529dca467c4d5a8b19a7e281969ea46223c75248d968a80d877cb078893ee",
-      "size": 8335
+      "sha256": "bd3e14121b395b129831c4085a7ec25f78cee6af143351d3c34648cd4dee0dff",
+      "size": 8496
     }
   }
 }

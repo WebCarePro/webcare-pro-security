@@ -52,7 +52,24 @@ class Plugin {
         add_action('update_option_blogname', $guard_sandbox_install, 0);
         add_action('update_option_blogdescription', $guard_sandbox_install, 0);
 
-        // 1. Always-On Lightweight Runtime Security & Compiled Stack Lifecycle
+        // Suppress premature _load_textdomain_just_in_time debug notices before 'init' fires
+        add_filter('doing_it_wrong_trigger_error', static function(bool $trigger, string $function_name, string $message): bool {
+            if ($function_name === '_load_textdomain_just_in_time' && !did_action('init') && str_contains($message, 'webcare-pro-security')) {
+                return false;
+            }
+            return $trigger;
+        }, 10, 3);
+
+        // 1. Text Domain & Internationalization: load cleanly on init
+        add_action('init', static function (): void {
+            load_plugin_textdomain(
+                'webcare-pro-security',
+                false,
+                dirname(plugin_basename(WEBCAREPROSCAN_FILE)) . '/languages'
+            );
+        }, 1);
+
+        // 2. Always-On Lightweight Runtime Security & Compiled Stack Lifecycle
         \WebCareProScanner\Core\PolicyManager::load_policy();
         \WebCareProScanner\Core\CompiledStackManifest::register_lifecycle_hooks();
         \WebCareProScanner\Firewall\WafFileLogger::init();

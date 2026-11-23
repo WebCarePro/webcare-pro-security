@@ -996,13 +996,13 @@ class RemediationManager {
 
         $reconstructed = implode("\n", $output);
 
-        // Standardized, high-security production debugging lockdown block
+        // Standardized, high-security production debugging lockdown block (wrapped with if (!defined) to guarantee zero Constant already defined warnings)
         $hardened_block = implode("\n", [
             "// [Hardened by WebCare Pro Security - Safe Production Debugging Lockdown]",
-            "define( 'WP_DEBUG', false );",
-            "define( 'WP_DEBUG_LOG', false );",
-            "define( 'WP_DEBUG_DISPLAY', false );",
-            "define( 'SCRIPT_DEBUG', false );",
+            "if ( ! defined( 'WP_DEBUG' ) ) { define( 'WP_DEBUG', false ); }",
+            "if ( ! defined( 'WP_DEBUG_LOG' ) ) { define( 'WP_DEBUG_LOG', false ); }",
+            "if ( ! defined( 'WP_DEBUG_DISPLAY' ) ) { define( 'WP_DEBUG_DISPLAY', false ); }",
+            "if ( ! defined( 'SCRIPT_DEBUG' ) ) { define( 'SCRIPT_DEBUG', false ); }",
             "@ini_set( 'display_errors', '0' );",
         ]);
 
