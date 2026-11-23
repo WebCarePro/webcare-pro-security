@@ -58,15 +58,25 @@ export const ForensicsPage: React.FC<ForensicsPageProps> = ({
   onOpenFileViewer,
   onRefreshScanData,
 }) => {
+  const normalizeForensicsSection = (raw: string | null): ForensicsSubTab | null => {
+    if (!raw) return null;
+    if (raw === 'self-defense' || raw === 'self_defense') return 'self_defense';
+    if (raw === 'attack-chains' || raw === 'attack_chain') return 'attack_chain';
+    if (raw === 'allowlist' || raw === 'whitelist') return 'whitelist';
+    if (FORENSICS_TABS.includes(raw as any)) return raw as ForensicsSubTab;
+    return null;
+  };
+
   const [activeTab, setActiveTab] = useState<ForensicsSubTab>(() => {
     try {
       const urlParams = new URLSearchParams(window.location.search);
-      const section = (urlParams.get('section') || urlParams.get('subtab')) as ForensicsSubTab;
-      if (section && FORENSICS_TABS.includes(section)) return section;
-      const tab = urlParams.get('tab') as ForensicsSubTab;
-      if (tab && FORENSICS_TABS.includes(tab)) return tab;
+      const section = normalizeForensicsSection(urlParams.get('section') || urlParams.get('subtab') || urlParams.get('tab'));
+      if (section) return section;
     } catch (e) {}
-    if (initialSubTab && FORENSICS_TABS.includes(initialSubTab)) return initialSubTab;
+    if (initialSubTab) {
+      const normalized = normalizeForensicsSection(initialSubTab);
+      if (normalized) return normalized;
+    }
     return 'persistence';
   });
   const [fileFilter, setFileFilter] = useState('');
@@ -86,16 +96,10 @@ export const ForensicsPage: React.FC<ForensicsPageProps> = ({
     const handlePopState = () => {
       try {
         const urlParams = new URLSearchParams(window.location.search);
-        const section = (urlParams.get('section') || urlParams.get('subtab')) as ForensicsSubTab;
-        if (section && FORENSICS_TABS.includes(section)) {
+        const section = normalizeForensicsSection(urlParams.get('section') || urlParams.get('subtab') || urlParams.get('tab'));
+        if (section) {
           setActiveTab(section);
           if (onSubTabChange) onSubTabChange(section);
-          return;
-        }
-        const tab = urlParams.get('tab') as ForensicsSubTab;
-        if (tab && FORENSICS_TABS.includes(tab)) {
-          setActiveTab(tab);
-          if (onSubTabChange) onSubTabChange(tab);
         }
       } catch (e) {}
     };

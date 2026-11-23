@@ -11,10 +11,10 @@ function mountVault() {
   const tabParam = urlParams.get('tab');
   const pageParam = urlParams.get('page');
 
-  const FORENSICS_TABS = ['persistence', 'watchdog', 'baseline', 'files', 'attack_chain', 'correlation', 'whitelist', 'transactions', 'self_defense'];
-  const resolvedTab = (tabParam && FORENSICS_TABS.includes(tabParam))
+  const FORENSICS_TABS = ['persistence', 'watchdog', 'baseline', 'files', 'attack_chain', 'attack-chains', 'correlation', 'whitelist', 'allowlist', 'transactions', 'self_defense', 'self-defense', 'preloaders', 'snapshots'];
+  const resolvedTab = (tabParam === 'diagnostics' || tabParam === 'forensics' || (tabParam && FORENSICS_TABS.includes(tabParam)))
     ? 'forensics'
-    : (tabParam || (pageParam === 'webcare-pro-server' ? 'server' : (pageParam === 'webcare-pro-forensics' ? 'forensics' : 'quarantine')));
+    : (tabParam || (pageParam === 'webcare-pro-server' ? 'server' : (pageParam === 'webcare-pro-forensics' ? 'forensics' : 'database')));
 
   const app = (
     <WebCareShell activeTab="vault">
