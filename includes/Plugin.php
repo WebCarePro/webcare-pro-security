@@ -162,6 +162,14 @@ class Plugin {
             \WP_CLI::add_command('webcare waf compile', static function (): void {
                 $res = \WebCareProScanner\Core\CompiledStackManifest::compile();
                 if (!empty($res['success'])) {
+                    // In CLI environments (e.g. root or CI/local runner), ensure the web server user can read the compiled manifest
+                    if (function_exists('posix_getpwnam')) {
+                        $web_user = posix_getpwnam('www-data');
+                        if (is_array($web_user) && isset($web_user['uid'], $web_user['gid'])) {
+                            @chown($res['path'], (int) $web_user['uid']);
+                            @chgrp($res['path'], (int) $web_user['gid']);
+                        }
+                    }
                     \WP_CLI::success('Compiled Stack Manifest generated: ' . $res['path']);
                 } else {
                     \WP_CLI::error($res['message'] ?? 'Failed compiling stack manifest.');

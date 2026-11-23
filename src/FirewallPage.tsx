@@ -3052,9 +3052,9 @@ export const FirewallPage = ({
                     fontWeight: 600,
                     borderRadius: '6px',
                     cursor: 'pointer',
-                    background: safeModePaused ? '#d97706' : 'var(--webcare-surface, #f8fafc)',
-                    color: safeModePaused ? '#ffffff' : 'var(--webcare-text, #0f172a)',
-                    border: `1px solid ${safeModePaused ? '#b45309' : 'var(--webcare-border, #cbd5e1)'}`,
+                    background: safeModePaused ? '#d97706' : 'var(--webcare-bg-panel, #ffffff)',
+                    color: safeModePaused ? '#ffffff' : 'var(--webcare-text-primary, #0f172a)',
+                    border: `1px solid ${safeModePaused ? '#b45309' : 'var(--webcare-border-default, #cbd5e1)'}`,
                   }}
                   title="Pause strict heuristic blocking for 15 minutes to test plugin compatibility or fix lockouts."
                 >
@@ -3083,9 +3083,9 @@ export const FirewallPage = ({
                     fontWeight: 600,
                     borderRadius: '6px',
                     cursor: 'pointer',
-                    background: 'var(--webcare-surface, #f8fafc)',
-                    color: 'var(--webcare-text, #0f172a)',
-                    border: '1px solid var(--webcare-border, #cbd5e1)',
+                    background: 'var(--webcare-bg-panel, #ffffff)',
+                    color: 'var(--webcare-text-primary, #0f172a)',
+                    border: '1px solid var(--webcare-border-default, #cbd5e1)',
                   }}
                 >
                   <Ban size={14} color="#dc2626" />
@@ -3098,11 +3098,10 @@ export const FirewallPage = ({
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '12px', marginBottom: '18px' }}>
               {/* Balanced Preset */}
               <div
+                className="webcare-firewall-rule-card"
                 style={{
                   padding: '14px',
                   borderRadius: '8px',
-                  background: 'var(--webcare-surface, #f8fafc)',
-                  border: '1px solid var(--webcare-border, #e2e8f0)',
                   display: 'flex',
                   flexDirection: 'column',
                   justifyContent: 'space-between',
@@ -3149,11 +3148,10 @@ export const FirewallPage = ({
 
               {/* E-Commerce Safe Preset */}
               <div
+                className="webcare-firewall-rule-card"
                 style={{
                   padding: '14px',
                   borderRadius: '8px',
-                  background: 'var(--webcare-surface, #f8fafc)',
-                  border: '1px solid var(--webcare-border, #e2e8f0)',
                   display: 'flex',
                   flexDirection: 'column',
                   justifyContent: 'space-between',
@@ -3200,11 +3198,10 @@ export const FirewallPage = ({
 
               {/* Strict Protection Preset */}
               <div
+                className="webcare-firewall-rule-card"
                 style={{
                   padding: '14px',
                   borderRadius: '8px',
-                  background: 'var(--webcare-surface, #f8fafc)',
-                  border: '1px solid var(--webcare-border, #e2e8f0)',
                   display: 'flex',
                   flexDirection: 'column',
                   justifyContent: 'space-between',
