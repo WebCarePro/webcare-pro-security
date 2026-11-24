@@ -1,4 +1,7 @@
 ﻿v:0.0.1 - 2026-11-25
+- RescueAssistantManager Cron Re-Arm & Option Persistence Hardening:
+  * Separated internal `cron_rearm_strict_firewall()` WP-Cron callback from `resume_strict_firewall()` so Multisite scheduled Safe Mode re-arm succeeds without an authenticated Network Admin session while protecting against stale cron events (`$until > time()`).
+  * Added explicit network-option persistence verification in `pause_strict_firewall_15m()` and `trust_and_allow_action()` before publishing or retaining shared preboot filesystem artifacts.
 - Multisite Preboot Authorization, Network State & Cached Form Compatibility:
   * `FormSpamProtectionEngine`: Restored full-page cache compatibility by removing single-use `AtomicNonceStore::consume()` and strict `token_ip` mismatch rejection on shared cached `webcare_time_gate` tokens.
   * `MicroWafCompiler::compile()`: Enforced Network Admin (`manage_network_options`) authorization across all Multisite blogs including the main site (preserving WP-CLI and Cron exceptions).

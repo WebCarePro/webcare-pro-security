@@ -45,7 +45,7 @@ class RescueAssistantManager {
                 \WebCareProScanner\System\Cron\CronControlCenter::ensure_scheduled(self::CRON_AUTOPILOT_HOOK, HOUR_IN_SECONDS, 'hourly');
             }, 20);
         } else {
-            add_action(self::CRON_REARM_HOOK, [__CLASS__, 'resume_strict_firewall']);
+            add_action(self::CRON_REARM_HOOK, [__CLASS__, 'cron_rearm_strict_firewall']);
             add_action(self::CRON_AUTOPILOT_HOOK, [__CLASS__, 'run_autopilot_cron']);
 
             if (!wp_next_scheduled(self::CRON_AUTOPILOT_HOOK)) {
@@ -210,7 +210,19 @@ class RescueAssistantManager {
             return new \WP_Error('waf_safe_mode_write_failed', __('Failed to write Safe Mode marker file to storage.', 'webcare-pro-security'));
         }
 
-        self::update_preboot_option(self::OPTION_PAUSED_UNTIL, $until);
+        $saved = self::update_preboot_option(self::OPTION_PAUSED_UNTIL, $until);
+        if (!$saved && (int) self::get_preboot_option(self::OPTION_PAUSED_UNTIL, 0) !== $until) {
+            if (file_exists($marker)) {
+                wp_delete_file($marker);
+            }
+            if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                \WebCareProScanner\System\AuditLogger::log_operational('waf_safe_mode_option_persist_failed', [
+                    'user_id' => get_current_user_id(),
+                    'until'   => $until,
+                ]);
+            }
+            return new \WP_Error('waf_safe_mode_option_failed', __('Failed to persist Safe Mode expiry option.', 'webcare-pro-security'));
+        }
 
         wp_clear_scheduled_hook(self::CRON_REARM_HOOK);
         wp_schedule_single_event($until, self::CRON_REARM_HOOK);
@@ -238,6 +250,33 @@ class RescueAssistantManager {
             ],
             self::get_pause_status()
         );
+    }
+
+    /**
+     * Internal WP-Cron callback to re-arm strict WAF enforcement when the 15-minute pause expires.
+     * Runs without an authenticated user on Multisite and protects against stale cron events.
+     */
+    public static function cron_rearm_strict_firewall(): void {
+        $is_cron = (function_exists('wp_doing_cron') && wp_doing_cron())
+            || (defined('DOING_CRON') && DOING_CRON)
+            || (function_exists('doing_action') && doing_action(self::CRON_REARM_HOOK));
+        if (!$is_cron) {
+            return;
+        }
+
+        $until = (int) self::get_preboot_option(self::OPTION_PAUSED_UNTIL, 0);
+        if ($until > time()) {
+            // A newer pause is still active; do not prematurely re-arm.
+            return;
+        }
+
+        self::delete_preboot_option(self::OPTION_PAUSED_UNTIL);
+        wp_clear_scheduled_hook(self::CRON_REARM_HOOK);
+
+        $marker = self::get_marker_path();
+        if (file_exists($marker)) {
+            wp_delete_file($marker);
+        }
     }
 
     /**
@@ -582,7 +621,20 @@ class RescueAssistantManager {
                 'label'      => $label ?: ($value ?: $rule_id),
                 'created_at' => gmdate('c'),
             ];
-            self::update_preboot_option(self::OPTION_TRUSTED_ACTIONS, $trusted);
+            $saved = self::update_preboot_option(self::OPTION_TRUSTED_ACTIONS, $trusted);
+            if (!$saved && self::get_preboot_option(self::OPTION_TRUSTED_ACTIONS, []) !== $trusted) {
+                if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                    \WebCareProScanner\System\AuditLogger::log_operational('waf_trust_option_persist_failed', [
+                        'user_id' => get_current_user_id(),
+                        'action'  => $sig_key,
+                    ]);
+                }
+                return [
+                    'success' => false,
+                    'code'    => 'option_persist_failed',
+                    'message' => __('Failed to persist trusted action to network options; preboot allowlist was not modified.', 'webcare-pro-security'),
+                ];
+            }
         }
 
         // Sync compact marker file for 0ms Preload Micro-WAF
