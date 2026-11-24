@@ -258,8 +258,7 @@ class RescueAssistantManager {
      */
     public static function cron_rearm_strict_firewall(): void {
         $is_cron = (function_exists('wp_doing_cron') && wp_doing_cron())
-            || (defined('DOING_CRON') && DOING_CRON)
-            || (function_exists('doing_action') && doing_action(self::CRON_REARM_HOOK));
+            || (defined('DOING_CRON') && DOING_CRON);
         if (!$is_cron) {
             return;
         }
@@ -270,13 +269,31 @@ class RescueAssistantManager {
             return;
         }
 
-        self::delete_preboot_option(self::OPTION_PAUSED_UNTIL);
-        wp_clear_scheduled_hook(self::CRON_REARM_HOOK);
-
         $marker = self::get_marker_path();
         if (file_exists($marker)) {
             wp_delete_file($marker);
         }
+
+        if (file_exists($marker)) {
+            if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                \WebCareProScanner\System\AuditLogger::log_operational('waf_safe_mode_cron_marker_delete_failed', [
+                    'marker' => $marker,
+                ]);
+            }
+            return;
+        }
+
+        $deleted = self::delete_preboot_option(self::OPTION_PAUSED_UNTIL);
+        if (!$deleted && (int) self::get_preboot_option(self::OPTION_PAUSED_UNTIL, 0) > 0) {
+            if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                \WebCareProScanner\System\AuditLogger::log_operational('waf_safe_mode_cron_option_delete_failed', [
+                    'option' => self::OPTION_PAUSED_UNTIL,
+                ]);
+            }
+            return;
+        }
+
+        wp_clear_scheduled_hook(self::CRON_REARM_HOOK);
     }
 
     /**
@@ -626,7 +643,7 @@ class RescueAssistantManager {
                 if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
                     \WebCareProScanner\System\AuditLogger::log_operational('waf_trust_option_persist_failed', [
                         'user_id' => get_current_user_id(),
-                        'action'  => $sig_key,
+                        'action'  => $key,
                     ]);
                 }
                 return [
@@ -651,7 +668,26 @@ class RescueAssistantManager {
         $preload_file = class_exists('\\WebCareProScanner\\Firewall\\Core\\WafVaultManager')
             ? \WebCareProScanner\Firewall\Core\WafVaultManager::get_preload_allow_path()
             : (defined('WP_CONTENT_DIR') ? WP_CONTENT_DIR : ABSPATH . 'wp-content') . '/webcare-waf/.rescue_allow.json';
-        self::write_marker_file($preload_file, (string) wp_json_encode($preload_allow));
+        if (!self::write_marker_file($preload_file, (string) wp_json_encode($preload_allow))) {
+            // Compensate network option so stored state and preboot allowlist remain consistent
+            $rolled_back = $trusted;
+            unset($rolled_back[$key]);
+            self::update_preboot_option(self::OPTION_TRUSTED_ACTIONS, $rolled_back);
+
+            if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                \WebCareProScanner\System\AuditLogger::log_operational('waf_trust_preload_write_failed', [
+                    'user_id' => get_current_user_id(),
+                    'action'  => $key,
+                    'file'    => $preload_file,
+                ]);
+            }
+
+            return [
+                'success' => false,
+                'code'    => 'preload_write_failed',
+                'message' => __('Failed to publish preboot allowlist file; trusted action was rolled back.', 'webcare-pro-security'),
+            ];
+        }
 
         // If a Modular WAF rule was triggered, switch it to monitor mode cleanly
         if (str_starts_with($rule_id, 'MOD-') && class_exists('\\WebCareProScanner\\Firewall\\CustomRules\\ModularFirewallSynthesizer')) {
