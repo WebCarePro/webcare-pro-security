@@ -1665,7 +1665,7 @@ export function exportScanAsPDF(
                   <span>MS Teams</span>
                 </a>
 
-                <a href="mailto:hello@webcarespro.com" class="btn-contact btn-email">
+                <a href="mailto:hello@webcarepro.dev" class="btn-contact btn-email">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
                   <span>Email</span>
                 </a>
@@ -1687,9 +1687,9 @@ export function exportScanAsPDF(
                 <span>Server &amp; Website Care</span>
               </div>
               <ul class="footer-link-list">
-                <li><a href="https://webcarespro.com/services/expert-web-maintenance" target="_blank" rel="noopener noreferrer">Expert Web Maintenance</a></li>
-                <li><a href="https://webcarespro.com/services/website-hosting-maintenance" target="_blank" rel="noopener noreferrer">Web Hosting Management</a></li>
-                <li><a href="https://webcarespro.com/services/managed-server-administration" target="_blank" rel="noopener noreferrer">Managed Server Admin</a></li>
+                <li><a href="https://webcarepro.dev/services/expert-web-maintenance" target="_blank" rel="noopener noreferrer">Expert Web Maintenance</a></li>
+                <li><a href="https://webcarepro.dev/services/website-hosting-maintenance" target="_blank" rel="noopener noreferrer">Web Hosting Management</a></li>
+                <li><a href="https://webcarepro.dev/services/managed-server-administration" target="_blank" rel="noopener noreferrer">Managed Server Admin</a></li>
               </ul>
             </div>
 
@@ -1700,9 +1700,9 @@ export function exportScanAsPDF(
                 <span>Speed, SEO &amp; Cloud</span>
               </div>
               <ul class="footer-link-list">
-                <li><a href="https://webcarespro.com/services/website-speed-optimization" target="_blank" rel="noopener noreferrer">Website Speed Optimization</a></li>
-                <li><a href="https://webcarespro.com/services/seo-website-development" target="_blank" rel="noopener noreferrer">AI Ready Web Dev</a></li>
-                <li><a href="https://webcarespro.com/services/domain-dns-setup" target="_blank" rel="noopener noreferrer">Domain &amp; Cloudflare DNS</a></li>
+                <li><a href="https://webcarepro.dev/services/website-speed-optimization" target="_blank" rel="noopener noreferrer">Website Speed Optimization</a></li>
+                <li><a href="https://webcarepro.dev/services/seo-website-development" target="_blank" rel="noopener noreferrer">AI Ready Web Dev</a></li>
+                <li><a href="https://webcarepro.dev/services/domain-dns-setup" target="_blank" rel="noopener noreferrer">Domain &amp; Cloudflare DNS</a></li>
               </ul>
             </div>
 
@@ -1713,9 +1713,9 @@ export function exportScanAsPDF(
                 <span>Security &amp; Critical Repairs</span>
               </div>
               <ul class="footer-link-list">
-                <li><a href="https://webcarespro.com/services/website-hack-recovery-security" target="_blank" rel="noopener noreferrer">Hack Recovery &amp; Security</a></li>
-                <li><a href="https://webcarespro.com/services/website-server-troubleshooting" target="_blank" rel="noopener noreferrer">Troubleshooting &amp; Fixes</a></li>
-                <li><a href="https://webcarespro.com/services/website-transfer" target="_blank" rel="noopener noreferrer">Zero-Downtime Transfer</a></li>
+                <li><a href="https://webcarepro.dev/services/website-hack-recovery-security" target="_blank" rel="noopener noreferrer">Hack Recovery &amp; Security</a></li>
+                <li><a href="https://webcarepro.dev/services/website-server-troubleshooting" target="_blank" rel="noopener noreferrer">Troubleshooting &amp; Fixes</a></li>
+                <li><a href="https://webcarepro.dev/services/website-transfer" target="_blank" rel="noopener noreferrer">Zero-Downtime Transfer</a></li>
               </ul>
             </div>
 
@@ -1726,10 +1726,10 @@ export function exportScanAsPDF(
                 <span>Agency &amp; Architecture</span>
               </div>
               <ul class="footer-link-list">
-                <li><a href="https://webcarespro.com/services/white-label-agency-support" target="_blank" rel="noopener noreferrer" style="font-weight:700;">White-Label Agency Support &nearr;</a></li>
-                <li><a href="https://webcarespro.com/services" target="_blank" rel="noopener noreferrer">Dedicated Sysadmin on Demand</a></li>
-                <li><a href="https://webcarespro.com/services" target="_blank" rel="noopener noreferrer">Browse Full Services Catalog &rarr;</a></li>
-                <li><a href="https://webcarespro.com/operations-hub" target="_blank" rel="noopener noreferrer" style="color:#a855f7;">Operations Knowledge Hub &rarr;</a></li>
+                <li><a href="https://webcarepro.dev/services/white-label-agency-support" target="_blank" rel="noopener noreferrer" style="font-weight:700;">White-Label Agency Support &nearr;</a></li>
+                <li><a href="https://webcarepro.dev/services" target="_blank" rel="noopener noreferrer">Dedicated Sysadmin on Demand</a></li>
+                <li><a href="https://webcarepro.dev/services" target="_blank" rel="noopener noreferrer">Browse Full Services Catalog &rarr;</a></li>
+                <li><a href="https://webcarepro.dev/operations-hub" target="_blank" rel="noopener noreferrer" style="color:#a855f7;">Operations Knowledge Hub &rarr;</a></li>
               </ul>
             </div>
           </div>
@@ -1773,7 +1773,7 @@ export function exportScanAsPDF(
                 <svg viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/></svg>
               </a>
               <!-- Email Direct -->
-              <a href="mailto:hello@webcarespro.com" class="social-icon-btn" title="Direct Email - hello@webcarespro.com">
+              <a href="mailto:hello@webcarepro.dev" class="social-icon-btn" title="Direct Email - hello@webcarepro.dev">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
               </a>
             </div>
@@ -1792,13 +1792,13 @@ export function exportScanAsPDF(
             </div>
 
             <div class="footer-legal-links">
-              <a href="https://webcarespro.com/privacy-policy" target="_blank" rel="noopener noreferrer">Privacy Policy</a>
+              <a href="https://webcarepro.dev/privacy-policy" target="_blank" rel="noopener noreferrer">Privacy Policy</a>
               <span>&bull;</span>
-              <a href="https://webcarespro.com/terms-of-service" target="_blank" rel="noopener noreferrer">Terms of Service</a>
+              <a href="https://webcarepro.dev/terms-of-service" target="_blank" rel="noopener noreferrer">Terms of Service</a>
               <span>&bull;</span>
-              <a href="https://webcarespro.com/sitemap.xml" target="_blank" rel="noopener noreferrer">Sitemap</a>
+              <a href="https://webcarepro.dev/sitemap.xml" target="_blank" rel="noopener noreferrer">Sitemap</a>
               <span>&bull;</span>
-              <a href="https://webcarespro.com/llms.txt" target="_blank" rel="noopener noreferrer" class="badge-llms">
+              <a href="https://webcarepro.dev/llms.txt" target="_blank" rel="noopener noreferrer" class="badge-llms">
                 <span>llms.txt</span>
                 <span style="font-size:8px;background:rgba(6,182,212,0.3);padding:1px 3px;border-radius:2px;">AI SPEC</span>
               </a>

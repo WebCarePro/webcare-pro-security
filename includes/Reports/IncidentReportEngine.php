@@ -229,7 +229,7 @@ class IncidentReportEngine {
                 'name'         => 'Mir Alamin (WebCare Pro)',
                 'title'        => 'Senior Linux SysAdmin & WordPress Security Engineer',
                 'service'      => 'WebCare Pro Dedicated 1-on-1 Security & Hardening',
-                'contact_url'  => 'https://webcarespro.com',
+                'contact_url'  => 'https://webcarepro.dev',
                 'notes'        => !empty($options['auditor_notes']) ? sanitize_textarea_field($options['auditor_notes']) : '',
             ],
             'posture'      => [

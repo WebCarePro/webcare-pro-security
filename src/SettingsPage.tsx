@@ -3746,7 +3746,7 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
                           Security Note: Native Connectors Store Keys in Plaintext
                         </span>
                         <a
-                          href="https://webcarespro.com/blog/post/how-aes-256-gcm-vault-protects-wordpress-secrets"
+                          href="https://webcarepro.dev/blog/post/how-aes-256-gcm-vault-protects-wordpress-secrets"
                           target="_blank"
                           rel="noopener noreferrer"
                           style={{
@@ -3866,7 +3866,7 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
                           Security Advisory: Native Connectors Store Plaintext in Database
                         </span>
                         <a
-                          href="https://webcarespro.com/blog/post/how-aes-256-gcm-vault-protects-wordpress-secrets"
+                          href="https://webcarepro.dev/blog/post/how-aes-256-gcm-vault-protects-wordpress-secrets"
                           target="_blank"
                           rel="noopener noreferrer"
                           style={{
@@ -4034,7 +4034,7 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
                       </p>
                       <div style={{ paddingTop: '4px' }}>
                         <a
-                          href="https://webcarespro.com/blog/post/how-aes-256-gcm-vault-protects-wordpress-secrets"
+                          href="https://webcarepro.dev/blog/post/how-aes-256-gcm-vault-protects-wordpress-secrets"
                           target="_blank"
                           rel="noopener noreferrer"
                           style={{
@@ -5734,7 +5734,7 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
           `Hello WebCare Pro, I need technical assistance with my website "${siteName}" (${domain || rawSiteUrl}).`
         )}`;
 
-        const prebuiltEmailUrl = `mailto:hello@webcarespro.com?subject=${encodeURIComponent(
+        const prebuiltEmailUrl = `mailto:hello@webcarepro.dev?subject=${encodeURIComponent(
           `Inquiry regarding ${siteName} (${domain || rawSiteUrl}) - WebCare Pro Security & Firewall Support`
         )}&body=${encodeURIComponent(
           `Hello Mir Alamin (WebCare Pro),\n\nI need technical assistance regarding WebCare Pro Security & Firewall on my WordPress site.\n\nWebsite Title: ${siteName}\nDomain / URL: ${domain || rawSiteUrl}\nIssue / Question:\n\nThank you!`
@@ -5759,7 +5759,7 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
           },
           {
             title: 'Direct Support Email',
-            handle: 'hello@webcarespro.com',
+            handle: 'hello@webcarepro.dev',
             description: 'Direct email support with automated diagnostic context pre-filled.',
             badge: 'Official Desk',
             badgeBg: '#fee2e2',
@@ -5811,14 +5811,14 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
           },
           {
             title: 'WebCare Pro Official Website',
-            handle: 'webcarespro.com',
+            handle: 'webcarepro.dev',
             description: 'Discover enterprise speed tuning, hack recovery, and dedicated cloud server management.',
             badge: 'Enterprise Firm',
             badgeBg: '#e0f2fe',
             badgeColor: '#0369a1',
             icon: Globe,
-            href: 'https://webcarespro.com',
-            btnText: 'Visit webcarespro.com',
+            href: 'https://webcarepro.dev',
+            btnText: 'Visit webcarepro.dev',
             btnBg: '#0284c7',
             btnColor: '#ffffff'
           }
@@ -6052,7 +6052,7 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
                 </span>
               </div>
               <a
-                href="https://webcarespro.com/contact"
+                href="https://webcarepro.dev/contact"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="webcare-settings-guarantee-link"

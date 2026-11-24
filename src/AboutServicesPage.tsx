@@ -56,7 +56,7 @@ const SERVICES: ServiceItem[] = [
       'Root credentials overhaul & database credential security',
     ],
     icon: ShieldAlert,
-    href: 'https://webcarespro.com/services/website-hack-recovery-security',
+    href: 'https://webcarepro.dev/services/website-hack-recovery-security',
     badgeColor: '#e11d48',
     badgeBg: '#ffe4e6'
   },
@@ -73,7 +73,7 @@ const SERVICES: ServiceItem[] = [
       'WooCommerce cart & checkout speed tuning',
     ],
     icon: Zap,
-    href: 'https://webcarespro.com/services/website-speed-optimization',
+    href: 'https://webcarepro.dev/services/website-speed-optimization',
     badgeColor: '#059669',
     badgeBg: '#d1fae5'
   },
@@ -90,7 +90,7 @@ const SERVICES: ServiceItem[] = [
       'Linux kernel patches, swap allocation & load monitoring',
     ],
     icon: Server,
-    href: 'https://webcarespro.com/services/managed-server-administration',
+    href: 'https://webcarepro.dev/services/managed-server-administration',
     badgeColor: '#4f46e5',
     badgeBg: '#e0e7ff'
   },
@@ -107,7 +107,7 @@ const SERVICES: ServiceItem[] = [
       'Regular database defragmentation & transient cleanup',
     ],
     icon: Wrench,
-    href: 'https://webcarespro.com/services/expert-web-maintenance',
+    href: 'https://webcarepro.dev/services/expert-web-maintenance',
     badgeColor: '#2563eb',
     badgeBg: '#dbeafe'
   },
@@ -124,7 +124,7 @@ const SERVICES: ServiceItem[] = [
       'Business email, mailboxes & SSL certificate preservation',
     ],
     icon: ArrowRightLeft,
-    href: 'https://webcarespro.com/services/website-transfer',
+    href: 'https://webcarepro.dev/services/website-transfer',
     badgeColor: '#0891b2',
     badgeBg: '#cffafe'
   },
@@ -141,7 +141,7 @@ const SERVICES: ServiceItem[] = [
       'Backed by our transparent "No Fix, No Fee" guarantee',
     ],
     icon: Activity,
-    href: 'https://webcarespro.com/services/website-server-troubleshooting',
+    href: 'https://webcarepro.dev/services/website-server-troubleshooting',
     badgeColor: '#d97706',
     badgeBg: '#fef3c7'
   },
@@ -158,7 +158,7 @@ const SERVICES: ServiceItem[] = [
       'SEO-preserving 301 redirection & safe DNS propagation',
     ],
     icon: Network,
-    href: 'https://webcarespro.com/services/domain-dns-setup',
+    href: 'https://webcarepro.dev/services/domain-dns-setup',
     badgeColor: '#7c3aed',
     badgeBg: '#ede9fe'
   },
@@ -175,7 +175,7 @@ const SERVICES: ServiceItem[] = [
       'Business email mailboxes, disk quotas & spam filters',
     ],
     icon: HardDrive,
-    href: 'https://webcarespro.com/services/website-hosting-maintenance',
+    href: 'https://webcarepro.dev/services/website-hosting-maintenance',
     badgeColor: '#0d9488',
     badgeBg: '#ccfbf1'
   },
@@ -192,7 +192,7 @@ const SERVICES: ServiceItem[] = [
       'Direct Slack/Teams integration or branded agency email',
     ],
     icon: Building2,
-    href: 'https://webcarespro.com/services/white-label-agency-support',
+    href: 'https://webcarepro.dev/services/white-label-agency-support',
     badgeColor: '#059669',
     badgeBg: '#d1fae5'
   },
@@ -209,7 +209,7 @@ const SERVICES: ServiceItem[] = [
       'Mobile-first, accessible (a11y) & conversion-focused UX',
     ],
     icon: Sparkles,
-    href: 'https://webcarespro.com/services/seo-website-development',
+    href: 'https://webcarepro.dev/services/seo-website-development',
     badgeColor: '#4f46e5',
     badgeBg: '#e0e7ff'
   }
@@ -235,7 +235,7 @@ export const AboutServicesPage = () => {
   )}`;
 
   // Prebuilt Email message containing site title and domain name
-  const prebuiltEmailUrl = `mailto:hello@webcarespro.com?subject=${encodeURIComponent(
+  const prebuiltEmailUrl = `mailto:hello@webcarepro.dev?subject=${encodeURIComponent(
     `Inquiry regarding ${siteName} (${domain || rawSiteUrl}) - WebCare Pro Services`
   )}&body=${encodeURIComponent(
     `Hello Mir Alamin (WebCare Pro),\n\nI need technical assistance and would like to inquire about your services for my website.\n\nWebsite Title: ${siteName}\nDomain / URL: ${domain || rawSiteUrl}\nServices / Issues: \nPreferred Contact Method: \n\nThank you!`
@@ -271,7 +271,7 @@ export const AboutServicesPage = () => {
 
           <div className="webcare-about-hero-actions">
             <a 
-              href="https://webcarespro.com/" 
+              href="https://webcarepro.dev/" 
               target="_blank" 
               rel="noopener noreferrer" 
               className="webcare-btn webcare-btn-primary"
@@ -281,7 +281,7 @@ export const AboutServicesPage = () => {
               <ExternalLink size={15} />
             </a>
             <a 
-              href="https://webcarespro.com/contact" 
+              href="https://webcarepro.dev/contact" 
               target="_blank" 
               rel="noopener noreferrer" 
               className="webcare-btn webcare-btn-emergency"
@@ -415,7 +415,7 @@ export const AboutServicesPage = () => {
             >
               <Mail size={16} color="#2563eb" />
               <div>
-                <strong>Direct Email:</strong> hello@webcarespro.com
+                <strong>Direct Email:</strong> hello@webcarepro.dev
                 <span className="webcare-chat-tag">Send Inquiry</span>
               </div>
             </a>
@@ -563,7 +563,7 @@ export const AboutServicesPage = () => {
               title={`Click to send email with prebuilt message for ${siteName} (${domain || rawSiteUrl})`}
             >
               <Mail size={16} />
-              <span>hello@webcarespro.com</span>
+              <span>hello@webcarepro.dev</span>
             </a>
             <a 
               href={prebuiltWhatsappUrl}
@@ -596,13 +596,13 @@ export const AboutServicesPage = () => {
               <span>Upwork Profile</span>
             </a>
             <a 
-              href="https://webcarespro.com"
+              href="https://webcarepro.dev"
               target="_blank"
               rel="noopener noreferrer"
               className="webcare-contact-item webcare-contact-item-link"
             >
               <Globe size={16} />
-              <span>https://webcarespro.com</span>
+              <span>https://webcarepro.dev</span>
             </a>
           </div>
         </div>
@@ -629,7 +629,7 @@ export const AboutServicesPage = () => {
             <span>Join on Microsoft Teams</span>
           </a>
           <a
-            href="https://webcarespro.com/contact"
+            href="https://webcarepro.dev/contact"
             target="_blank"
             rel="noopener noreferrer"
             className="webcare-btn webcare-btn-cta-primary"

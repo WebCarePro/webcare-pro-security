@@ -318,7 +318,7 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({
                     Any secret API keys, AI API keys (Google Gemini, OpenAI, Claude), Discord or Slack webhooks, sensitive settings, or passwords you save are sealed with bank-level encryption (AES-256-GCM). Even if someone downloads a raw copy of your database, they cannot read your secrets.
                   </p>
                   <a
-                    href="https://webcarespro.com/blog/post/how-aes-256-gcm-vault-protects-wordpress-secrets"
+                    href="https://webcarepro.dev/blog/post/how-aes-256-gcm-vault-protects-wordpress-secrets"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="webcare-welcome-link"
@@ -440,7 +440,7 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({
                     All virus scans, malware quarantines, and database backups are kept strictly on your own web hosting space in a password-guarded folder. You own everything.
                   </p>
                   <a
-                    href="https://webcarespro.com/blog/post/webcare-wordpress-security-scanner"
+                    href="https://webcarepro.dev/blog/post/webcare-wordpress-security-scanner"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="webcare-welcome-link"
@@ -1061,7 +1061,7 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({
               <HeartHandshake size={15} color="#10b581" />
               <span style={{ color: '#94a3b8' }}>Have questions?</span>
               <a
-                href="https://webcarespro.com"
+                href="https://webcarepro.dev"
                 target="_blank"
                 rel="noopener noreferrer"
                 style={{ color: '#38bdf8', textDecoration: 'none', fontWeight: 600 }}
@@ -1071,7 +1071,7 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({
             </div>
             <span style={{ color: 'rgba(255, 255, 255, 0.2)' }}>•</span>
             <a
-              href="https://webcarespro.com/blog/post/webcare-wordpress-security-scanner"
+              href="https://webcarepro.dev/blog/post/webcare-wordpress-security-scanner"
               target="_blank"
               rel="noopener noreferrer"
               style={{

@@ -120,7 +120,7 @@ class AttackSimulationEngine {
                 'redirection' => 0,
                 // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- Standard WordPress core filter for local loopback requests
                 'sslverify'   => apply_filters('https_local_ssl_verify', false),
-                'user-agent'  => 'WEBCARE-Security-Drill/1.0 (+https://webcarespro.com)',
+                'user-agent'  => 'WEBCARE-Security-Drill/1.0 (+https://webcarepro.dev)',
                 'headers'     => [
                     'X-WebCare-Drill-Token' => $drill_token,
                     'X-WebCare-Drill-Probe' => $vector['id'],

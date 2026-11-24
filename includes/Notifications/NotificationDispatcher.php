@@ -767,7 +767,7 @@ class NotificationDispatcher {
             'publisher'        => [
                 '@type' => 'Organization',
                 'name'  => 'WebCare Pro',
-                'url'   => 'https://webcarespro.com',
+                'url'   => 'https://webcarepro.dev',
             ],
             'diagnosticDetails' => $details,
             'potentialAction'  => [
@@ -902,7 +902,7 @@ class NotificationDispatcher {
         $html .= '<div style="margin-bottom: 12px;">';
         $html .= '<strong style="color: #ffffff; font-size: 14px; letter-spacing: 0.2px;">About WebCare Pro</strong>';
         $html .= '<span style="color: #475569; margin: 0 8px;">•</span>';
-        $html .= '<a href="https://webcarespro.com" target="_blank" style="color: #38bdf8; text-decoration: none; font-weight: 600;">https://webcarespro.com</a>';
+        $html .= '<a href="https://webcarepro.dev" target="_blank" style="color: #38bdf8; text-decoration: none; font-weight: 600;">https://webcarepro.dev</a>';
         $html .= '</div>';
         $html .= '<p style="margin: 0 0 16px 0; color: #cbd5e1; font-size: 12.5px; line-height: 1.6;">';
         $html .= 'Mir Alamin (WebCare Pro) helps businesses build, secure, optimize, and manage high-performance websites and servers. From Linux &amp; cloud infrastructure to blazing-fast performance, website security, migrations, Cloudflare, DNS, managed hosting, and modern web development—keeping your online presence fast, secure, and always available.';

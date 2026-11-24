@@ -1,7 +1,7 @@
 # WebCare Pro Security & Firewall
 
 <p align="center">
-  <img src="https://webcarespro.com/icon-192.png" alt="WebCare Pro Logo" width="180" onerror="this.style.display='none'"/>
+  <img src="https://webcarepro.dev/icon-192.png" alt="WebCare Pro Logo" width="180" onerror="this.style.display='none'"/>
 </p>
 
 <p align="center">
@@ -27,7 +27,7 @@
 
 ## 🛡️ Overview
 
-**WebCare Pro Security & Firewall** is a modern, high-performance WordPress security, malware detection, and forensic auditing plugin engineered by **[Mir Alamin](https://www.upwork.com/freelancers/~0162afa9a578170c67)** ([WebCare Pro](https://webcarespro.com)). 
+**WebCare Pro Security & Firewall** is a modern, high-performance WordPress security, malware detection, and forensic auditing plugin engineered by **[Mir Alamin](https://www.upwork.com/freelancers/~0162afa9a578170c67)** ([WebCare Pro](https://webcarepro.dev)). 
 
 > [!NOTE]
 > **Active Engineering & Senior Architecture (v2.17.0)**  
@@ -171,13 +171,13 @@ Security plugins solve overlapping problems through different architectures. Thi
 > **Honest Architectural Positioning**: WebCare Pro Security & Firewall is not designed to replace globally distributed Anycast DDoS scrubbing networks (like Cloudflare Enterprise) or 24/7 human research SOCs. It is purpose-built for SysAdmins, developers, and store operators who demand deep on-server control, strict zero-telemetry privacy, and non-destructive surgical remediation.
 >
 > 📖 **Read the comprehensive, balanced ecosystem comparison and technical breakdown:**  
-> [https://webcarespro.com/blog/post/webcare-wordpress-security-scanner](https://webcarespro.com/blog/post/webcare-wordpress-security-scanner)
+> [https://webcarepro.dev/blog/post/webcare-wordpress-security-scanner](https://webcarepro.dev/blog/post/webcare-wordpress-security-scanner)
 
 ---
 
 ## 🏢 About WebCare Pro & Mir Alamin
 
-**[WebCare Pro](https://webcarespro.com)** is an enterprise web and Linux server engineering practice founded in 2013 by **Mir Alamin**. I help businesses worldwide build, secure, optimize, and manage high-performance websites and servers.
+**[WebCare Pro](https://webcarepro.dev)** is an enterprise web and Linux server engineering practice founded in 2013 by **Mir Alamin**. I help businesses worldwide build, secure, optimize, and manage high-performance websites and servers.
 
 - **12+ Years Enterprise Experience**: Senior Linux SysAdmin and Web Architecture background across high-traffic digital infrastructures.
 - **Direct Senior Engineering**: Every architecture, server migration, malware cleanup, and speed optimization is personally designed and handled—**zero junior contractor outsourcing**.
@@ -185,10 +185,10 @@ Security plugins solve overlapping problems through different architectures. Thi
 - **15-Minute Emergency SLA**: Rapid diagnostic triage when servers crash, gateways timeout, or websites suffer critical malware attacks.
 
 ### Specialized Professional Services:
-1. **[Website Hack Recovery & Security](https://webcarespro.com/services/website-hack-recovery-security)** — Rapid malware eradication, backdoor cleanup, Google blacklist delisting, and WAF configuration.
-2. **[Website Speed Optimization](https://webcarespro.com/services/website-speed-optimization)** — Sub-100ms TTFB tuning, Redis object caching, asset deferral, and 100/100 Core Web Vitals.
-3. **[Linux Server Administration](https://webcarespro.com/services/server-administration-management)** — Nginx, Apache, LiteSpeed, PHP-FPM, Docker, MySQL replication, security hardening, and Cloudflare enterprise routing.
-4. **[WordPress Maintenance & Core Care](https://webcarespro.com/services/wordpress-maintenance-service)** — 24/7 uptime monitoring, offsite encrypted backups, vulnerability patching, and staging testing.
+1. **[Website Hack Recovery & Security](https://webcarepro.dev/services/website-hack-recovery-security)** — Rapid malware eradication, backdoor cleanup, Google blacklist delisting, and WAF configuration.
+2. **[Website Speed Optimization](https://webcarepro.dev/services/website-speed-optimization)** — Sub-100ms TTFB tuning, Redis object caching, asset deferral, and 100/100 Core Web Vitals.
+3. **[Linux Server Administration](https://webcarepro.dev/services/server-administration-management)** — Nginx, Apache, LiteSpeed, PHP-FPM, Docker, MySQL replication, security hardening, and Cloudflare enterprise routing.
+4. **[WordPress Maintenance & Core Care](https://webcarepro.dev/services/wordpress-maintenance-service)** — 24/7 uptime monitoring, offsite encrypted backups, vulnerability patching, and staging testing.
 
 ---
 
@@ -278,8 +278,8 @@ Have questions, need an emergency malware cleanup, or want to hire a certified S
   <a href="https://www.upwork.com/freelancers/~0162afa9a578170c67">
     <img src="https://img.shields.io/badge/Upwork-Hire%20on%20Upwork%20(Top%20Rated%20Plus)-14A800?style=for-the-badge&logo=upwork&logoColor=white" alt="Hire Mir Alamin on Upwork"/>
   </a>
-  <a href="https://webcarespro.com/">
-    <img src="https://img.shields.io/badge/Website-webcarespro.com-0284C7?style=for-the-badge&logo=googlechrome&logoColor=white" alt="WebCare Pro Website"/>
+  <a href="https://webcarepro.dev/">
+    <img src="https://img.shields.io/badge/Website-webcarepro.dev-0284C7?style=for-the-badge&logo=googlechrome&logoColor=white" alt="WebCare Pro Website"/>
   </a>
   <a href="https://wa.me/8801322691090">
     <img src="https://img.shields.io/badge/WhatsApp-Chat%20Now-25D366?style=for-the-badge&logo=whatsapp&logoColor=white" alt="WhatsApp Direct Chat"/>
@@ -287,18 +287,18 @@ Have questions, need an emergency malware cleanup, or want to hire a certified S
   <a href="https://teams.live.com/l/invite/FEAI60zv48mwbIKhA?v=g1">
     <img src="https://img.shields.io/badge/Microsoft%20Teams-Live%20Meeting-6264A7?style=for-the-badge&logo=microsoftteams&logoColor=white" alt="Microsoft Teams Meeting"/>
   </a>
-  <a href="mailto:hello@webcarespro.com">
-    <img src="https://img.shields.io/badge/Email-hello%40webcarespro.com-EA4335?style=for-the-badge&logo=gmail&logoColor=white" alt="Direct Email"/>
+  <a href="mailto:hello@webcarepro.dev">
+    <img src="https://img.shields.io/badge/Email-hello%40webcarepro.dev-EA4335?style=for-the-badge&logo=gmail&logoColor=white" alt="Direct Email"/>
   </a>
 </p>
 
 ### Direct Contact Channels:
 - 🌟 **Upwork Profile:** [Mir Alamin — Top Rated Plus Freelancer (100% Job Success Score)](https://www.upwork.com/freelancers/~0162afa9a578170c67)
-- 🌐 **Official Website:** [https://webcarespro.com](https://webcarespro.com)
-- 🚨 **Emergency Triage & Consultations:** [https://webcarespro.com/contact](https://webcarespro.com/contact)
+- 🌐 **Official Website:** [https://webcarepro.dev](https://webcarepro.dev)
+- 🚨 **Emergency Triage & Consultations:** [https://webcarepro.dev/contact](https://webcarepro.dev/contact)
 - 💬 **WhatsApp / Direct Line:** [+880 1322 691090](https://wa.me/8801322691090)
 - 👥 **Microsoft Teams:** [Connect on MS Teams](https://teams.live.com/l/invite/FEAI60zv48mwbIKhA?v=g1)
-- 📧 **Direct Email:** [hello@webcarespro.com](mailto:hello@webcarespro.com)
+- 📧 **Direct Email:** [hello@webcarepro.dev](mailto:hello@webcarepro.dev)
 - 🐙 **GitHub Organization:** [https://github.com/WebCarePro](https://github.com/WebCarePro)
 - 📦 **Repository:** [https://github.com/WebCarePro/webcare-pro-security](https://github.com/WebCarePro/webcare-pro-security)
 
@@ -316,4 +316,4 @@ Have questions, need an emergency malware cleanup, or want to hire a certified S
 ## 📄 License & Attribution
 
 - **License:** Open source under the terms of the [GNU General Public License v2.0 or later (GPL-2.0-or-later)](https://www.gnu.org/licenses/gpl-2.0.html).
-- **Author & Copyright:** © 2013–2026 **Mir Alamin** / **[WebCare Pro](https://webcarespro.com)**. All rights reserved.
+- **Author & Copyright:** © 2013–2026 **Mir Alamin** / **[WebCare Pro](https://webcarepro.dev)**. All rights reserved.

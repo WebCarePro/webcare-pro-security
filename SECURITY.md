@@ -1,6 +1,6 @@
 # Security Policy & Vulnerability Disclosure
 
-**WebCare Pro Security & Firewall** is designed, engineered, and maintained by **Mir Alamin** ([WebCare Pro](https://webcarespro.com)), an individual solo Linux SysAdmin and Senior WordPress Security Engineer. 
+**WebCare Pro Security & Firewall** is designed, engineered, and maintained by **Mir Alamin** ([WebCare Pro](https://webcarepro.dev)), an individual solo Linux SysAdmin and Senior WordPress Security Engineer. 
 
 Security integrity and responsible disclosure are paramount. If you discover a security vulnerability or potential risk within this plugin or its runtime engines, please follow this policy to report it responsibly.
 
@@ -25,7 +25,7 @@ WebCare Pro Security & Firewall is maintained through active continuous delivery
 
 To report a vulnerability directly and privately to Mir Alamin:
 
-1. **Email:** Send full technical details to **`hello@webcarespro.com`**.
+1. **Email:** Send full technical details to **`hello@webcarepro.dev`**.
 2. **Direct WhatsApp Channel:** For direct 1-on-1 security coordination, connect via WhatsApp:  
    👉 [**+880 1322-691090** (Click to start chat with prebuilt message)](https://wa.me/8801322691090?text=Hello%20Mir%20Alamin,%20I%20am%20reporting%20a%20security%20vulnerability%20regarding%20WebCare%20Pro%20Security)
 3. **Microsoft Teams:** Connect directly via MS Teams:  

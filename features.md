@@ -1,6 +1,6 @@
 # WebCare Pro Security & Firewall — Extended Features & Architecture Catalog
 
-**WebCare Pro Security & Firewall** is an enterprise-grade, memory-efficient WordPress security, malware detection, forensic auditing, and edge defense plugin engineered by **[Mir Alamin](https://www.upwork.com/freelancers/~0162afa9a578170c67)** ([WebCare Pro](https://webcarespro.com)).
+**WebCare Pro Security & Firewall** is an enterprise-grade, memory-efficient WordPress security, malware detection, forensic auditing, and edge defense plugin engineered by **[Mir Alamin](https://www.upwork.com/freelancers/~0162afa9a578170c67)** ([WebCare Pro](https://webcarepro.dev)).
 
 Built with a high-performance **React 18 + TypeScript** administrative single-page dashboard and memory-safe **PHP 8.3+ streaming engines**, the plugin provides comprehensive threat prevention, runtime defense, cryptographic isolation, and forensic remediation without degrading server performance.
 
@@ -921,7 +921,7 @@ Getting started with enterprise website security shouldn't require reading hundr
 
 ### ⚙️ Deep Technical Details & Architecture (For Developers & Engineers)
 - **In-Console Welcome Wizard (`WelcomeModal.tsx`):** Modern setup modal guiding administrators through on-premise storage verifications, zero-telemetry architecture, and recommended baseline hardening toggles.
-- **Direct Educational Hyperlinks:** Features prominent links to the comprehensive feature breakdown on [webcarespro.com](https://webcarespro.com/blog/post/webcare-wordpress-security-scanner) and direct 1-on-1 contact channels with senior engineer Mir Alamin.
+- **Direct Educational Hyperlinks:** Features prominent links to the comprehensive feature breakdown on [webcarepro.dev](https://webcarepro.dev/blog/post/webcare-wordpress-security-scanner) and direct 1-on-1 contact channels with senior engineer Mir Alamin.
 
 ---
 
@@ -1502,8 +1502,8 @@ When a massive bot swarm or hacker probe hits your website, processing thousands
 
 ## 👨‍💻 Author & Engineering
 
-**WebCare Pro Security** is designed and engineered by **Mir Alamin** ([WebCare Pro](https://webcarespro.com)):
+**WebCare Pro Security** is designed and engineered by **Mir Alamin** ([WebCare Pro](https://webcarepro.dev)):
 - **Upwork:** [Mir Alamin on Upwork](https://www.upwork.com/freelancers/~0162afa9a578170c67) — Top Rated Plus Freelancer, 100% Job Success Score
-- **Website:** [https://webcarespro.com](https://webcarespro.com)
-- **Direct Email:** [hello@webcarespro.com](mailto:hello@webcarespro.com)
+- **Website:** [https://webcarepro.dev](https://webcarepro.dev)
+- **Direct Email:** [hello@webcarepro.dev](mailto:hello@webcarepro.dev)
 - **WhatsApp:** [+880 1322 691090](https://wa.me/8801322691090)

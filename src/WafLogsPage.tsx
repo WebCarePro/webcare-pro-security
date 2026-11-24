@@ -4148,7 +4148,7 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
             </button>
           )}
           <a
-            href="https://webcarespro.com"
+            href="https://webcarepro.dev"
             target="_blank"
             rel="noopener noreferrer"
             className="webcare-btn"

@@ -1,4 +1,6 @@
 ﻿v:0.0.1 - 2026-11-25
+- Official Domain & Contact Synchronization:
+  * Replaced all occurrences of `webcarespro.com` with official domain `webcarepro.dev` across all PHP entry headers, notifications, incident reports, drill User-Agents, React pages (`AboutServicesPage`, `SettingsPage`, `WafLogsPage`, `WelcomeModal`, `exportUtils`), and documentation (`README.md`, `SECURITY.md`, `features.md`).
 - Enterprise Security Hardening, WAF/RASP/Edge Bypass Remediation & Architecture Pass (Phases 1-6):
   * Secrets, Auth & Session Integrity: Fail-closed `SecretVault` encryption, per-user/IP WebAuthn rate limiting & synced-passkey counter rules, cross-site user isolation, XML-RPC disable default (`waf_disable_xmlrpc => true`), and virtual patching auto-enforce default (`waf_auto_enforce_virtual_patches => true`).
   * AI Prompt Guard & DLP Hardening: NFKC Unicode & zero-width normalization prior to matching, independent comment field sanitization, and ResponseDlpSentinel leak redaction.

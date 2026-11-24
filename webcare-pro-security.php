@@ -6,7 +6,7 @@
  * Requires at least: 7.0
  * Requires PHP:      8.3
  * Author:            Mir Alamin
- * Author URI:        https://webcarespro.com
+ * Author URI:        https://webcarepro.dev
  * License:           GPL v2 or later
  * License URI:       https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain:       webcare-pro-security
