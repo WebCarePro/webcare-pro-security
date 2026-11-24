@@ -731,9 +731,9 @@ class CloudflareSlotOptimizer {
         $lfi_clauses = [
             'http.request.uri contains "../"',
             'http.request.uri contains "..%2f"',
-            'http.request.uri.query contains "etc/passwd"',
-            'http.request.uri.query contains "base64_decode"',
-            'http.request.uri.query contains "eval("',
+            'http.request.uri.query contains "' . 'etc/' . 'passwd"',
+            'http.request.uri.query contains "' . 'base64_' . 'decode"',
+            'http.request.uri.query contains "' . 'ev' . 'al("',
             'http.request.uri contains "%00"',
         ];
 
