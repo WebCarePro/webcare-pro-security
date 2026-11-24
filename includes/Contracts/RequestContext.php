@@ -164,16 +164,24 @@ class RequestContext {
         $this->query = $q_pos === false ? '' : substr($uri, $q_pos + 1);
         $this->userAgent = $userAgent;
         $this->cookies = !empty($cookies) ? $cookies : (isset($_COOKIE) && is_array($_COOKIE) ? $_COOKIE : []);
-        $this->headers = $headers;
+        $normalized_headers = [];
+        foreach ($headers as $h_key => $h_val) {
+            $h_key_str = (string) $h_key;
+            $normalized_headers[str_starts_with($h_key_str, ':') ? $h_key_str : strtolower($h_key_str)] = $h_val;
+        }
+        $this->headers = $normalized_headers;
         $this->files = $files;
         $this->server = !empty($server) ? $server : (isset($_SERVER) && is_array($_SERVER) ? $_SERVER : []);
 
         $this->queryParams = $queryParams;
         if (empty($this->queryParams) && $this->query !== '') {
-            $parsed_q = [];
-            parse_str($this->query, $parsed_q);
-            if (is_array($parsed_q)) {
-                $this->queryParams = $parsed_q;
+            $max_input_vars = max(1, (int) (ini_get('max_input_vars') ?: 1000));
+            if ((substr_count($this->query, '&') + 1) <= $max_input_vars) {
+                $parsed_q = [];
+                parse_str($this->query, $parsed_q);
+                if (is_array($parsed_q)) {
+                    $this->queryParams = $parsed_q;
+                }
             }
         }
 

@@ -1470,6 +1470,13 @@ final class FirewallController extends AbstractApiController {
 
         $val = $params['value'] ?? null;
         $saved = \WebCareProScanner\System\SettingsManager::save_settings([$key => $val]);
+        if ($saved === false || !is_array($saved)) {
+            return new \WP_Error(
+                'firewall_rule_save_failed',
+                __('Failed to save firewall rule or persist webhook secret in SecretVault.', 'webcare-pro-security'),
+                ['status' => 500]
+            );
+        }
         return rest_ensure_response([
             'success'  => true,
             'message'  => sprintf('Rule "%s" successfully saved.', $key),

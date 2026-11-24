@@ -13,9 +13,17 @@ use WebCareProScanner\System\SettingsManager;
 final class ContextPureAiAndBotVerificationTest extends TestCase {
 
     private AiAgentBehaviorEvaluator $evaluator;
+    private array $origServer = [];
+    private array $origGet = [];
+    private array $origPost = [];
+    private array $origCookie = [];
 
     protected function setUp(): void {
         parent::setUp();
+        $this->origServer = $_SERVER;
+        $this->origGet = $_GET;
+        $this->origPost = $_POST;
+        $this->origCookie = $_COOKIE;
         $this->evaluator = new AiAgentBehaviorEvaluator();
         SettingsManager::update_setting('waf_ai_challenge_stealth_agents', true);
         SettingsManager::update_setting('waf_ai_allow_search_citations', true);
@@ -31,6 +39,10 @@ final class ContextPureAiAndBotVerificationTest extends TestCase {
     }
 
     protected function tearDown(): void {
+        $_SERVER = $this->origServer;
+        $_GET = $this->origGet;
+        $_POST = $this->origPost;
+        $_COOKIE = $this->origCookie;
         if (function_exists('webcare_purge_test_storage')) {
             webcare_purge_test_storage();
         }

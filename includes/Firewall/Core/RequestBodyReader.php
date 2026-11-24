@@ -251,6 +251,7 @@ final class RequestBodyReader {
         self::$configured_max_bytes = null;
         self::$bytes_read = 0;
         self::$is_truncated = false;
+        self::$read_failed = false;
         self::$sha256 = '';
         self::$mock_raw_body = null;
     }

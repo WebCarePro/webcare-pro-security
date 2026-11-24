@@ -18,6 +18,8 @@ if (!defined('ABSPATH')) {
  */
 final class AuthController extends AbstractApiController {
 
+    private const WEBAUTH_ACCOUNT_RATE_WINDOW = 300;
+
     /**
      * Register endpoints for this domain.
      *
@@ -1202,22 +1204,31 @@ final class AuthController extends AbstractApiController {
      * @return true|\WP_Error
      */
     public static function check_webauthn_public_rate_limit(\WP_REST_Request $request) {
-        $client_ip = class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine')
-            ? \WebCareProScanner\Firewall\FirewallEngine::get_client_ip()
-            : (isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '127.0.0.1');
+        $window = self::WEBAUTH_ACCOUNT_RATE_WINDOW;
 
-        $route = (string) $request->get_route();
-        $is_verify = strpos($route, 'login-verify') !== false;
-        // In verify requests and options requests, WebAuthnManager enforces the authoritative attempt rate limit.
+        // In verify requests and options requests, WebAuthnManager enforces the authoritative IP attempt rate limit
+        // (login-options: 25 / 300s, login-verify: 10 / 300s).
         // We do not increment or check IP rate limits here to eliminate double rate-limiting.
 
         // Per-account + IP composite rate limiting to prevent remote admin lockout DoS
         $params = $request->get_json_params() ?: [];
-        $username = !empty($params['username']) ? sanitize_text_field(wp_unslash($params['username'])) : '';
-        if (!empty($username)) {
+        $raw_username = $params['username'] ?? $request->get_param('username') ?? '';
+        if ((!is_string($raw_username) || trim($raw_username) === '') && !empty($params['session_id'])) {
+            $session_id = sanitize_key((string) $params['session_id']);
+            if ($session_id !== '' && class_exists(\WebCareProScanner\Auth\WebAuthnManager::class)) {
+                $stored_session = get_transient(\WebCareProScanner\Auth\WebAuthnManager::TRANSIENT_AUTH_PREFIX . $session_id);
+                if (is_array($stored_session) && !empty($stored_session['login_hint'])) {
+                    $raw_username = (string) $stored_session['login_hint'];
+                }
+            }
+        }
+        $username = is_string($raw_username) && $raw_username !== ''
+            ? sanitize_text_field(wp_unslash($raw_username))
+            : '';
+        if ($username !== '') {
             $client_ip = class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine')
                 ? \WebCareProScanner\Firewall\FirewallEngine::get_client_ip()
-                : (isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '127.0.0.1');
+                : (isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash((string) $_SERVER['REMOTE_ADDR'])) : '127.0.0.1');
             $acc_key = 'webcareproscan_wa_acc_' . md5(strtolower($username) . '|' . $client_ip);
             $acc_attempts = (int) get_transient($acc_key);
             if ($acc_attempts >= 15) {

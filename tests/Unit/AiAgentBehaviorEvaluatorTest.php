@@ -12,13 +12,23 @@ use WebCareProScanner\System\SettingsManager;
 final class AiAgentBehaviorEvaluatorTest extends TestCase {
 
     private AiAgentBehaviorEvaluator $evaluator;
+    private array $origServer = [];
+    private array $origPost = [];
 
     protected function setUp(): void {
         parent::setUp();
+        $this->origServer = $_SERVER;
+        $this->origPost = $_POST;
         $this->evaluator = new AiAgentBehaviorEvaluator();
         SettingsManager::update_setting('waf_ai_challenge_stealth_agents', true);
         SettingsManager::update_setting('waf_ai_allow_search_citations', true);
-        $_SERVER = [];
+        $_SERVER = ['HTTP_HOST' => 'example.com'];
+    }
+
+    protected function tearDown(): void {
+        $_SERVER = $this->origServer;
+        $_POST = $this->origPost;
+        parent::tearDown();
     }
 
     public function test_flags_missing_sec_fetch_on_desktop_https(): void {

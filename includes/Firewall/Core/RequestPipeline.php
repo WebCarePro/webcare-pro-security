@@ -38,6 +38,26 @@ final class RequestPipeline {
     private static bool $is_processing = false;
 
     /**
+     * Optional test hook: captures terminal HTTP status code and throws RuntimeException instead of exit().
+     */
+    public static bool $throw_on_exit_in_tests = false;
+    public static ?int $last_terminated_status = null;
+
+    private const ALLOWED_RESCUE_PAGES = [
+        'webcare-pro-security',
+        'webcare-pro-firewall',
+        'webcare-pro-settings',
+    ];
+
+    private const ALLOWED_RESCUE_QUERY_KEYS = [
+        'page',
+        'tab',
+        'subtab',
+        'view',
+        'section',
+    ];
+
+    /**
      * Inspect incoming request through the firewall pipeline.
      * Evaluates Always-On Mandatory Core, conditional manifest evaluators,
      * and pluggable module SDK. Short-circuits on terminal verdicts and profiles
@@ -67,9 +87,10 @@ final class RequestPipeline {
 
         // Skip CLI execution (unless running in synthetic test runner)
         if (php_sapi_name() === 'cli' || (defined('WP_CLI') && WP_CLI)) {
-            if (!class_exists('\\WebCareProScanner\\Firewall\\DeclarativePatchVerifier')
-                || !\WebCareProScanner\Firewall\DeclarativePatchVerifier::is_test_context()
-            ) {
+            $in_synthetic_test = self::$throw_on_exit_in_tests
+                || (class_exists('\\WebCareProScanner\\Firewall\\DeclarativePatchVerifier')
+                    && \WebCareProScanner\Firewall\DeclarativePatchVerifier::is_test_context());
+            if (!$in_synthetic_test) {
                 return;
             }
         }
@@ -199,14 +220,19 @@ final class RequestPipeline {
             // Tier 4: Outer exception boundary - strictly permit read-only admin console rescue to prevent permanent admin lockout
             $ctx_for_rescue = isset($ctx) && $ctx instanceof RequestContext ? $ctx : RequestContext::from_globals();
             if (self::is_read_only_rescue_request($ctx_for_rescue)) {
+                self::$last_terminated_status = 200;
                 @error_log('[WebCare RequestPipeline] Permitting read-only rescue admin console access after pipeline exception: ' . $e->getMessage());
                 return;
             }
 
+            self::$last_terminated_status = 503;
             if (function_exists('status_header')) {
                 status_header(503);
             } elseif (!headers_sent()) {
                 header('HTTP/1.1 503 Service Unavailable');
+            }
+            if (self::$throw_on_exit_in_tests && defined('WEBCAREPROSCAN_TESTING') && WEBCAREPROSCAN_TESTING) {
+                throw new \RuntimeException('RequestPipeline terminated fail-closed with HTTP 503.', 503, $e);
             }
             exit;
         } finally {
@@ -216,8 +242,8 @@ final class RequestPipeline {
 
     /**
      * Strict read-only rescue validation.
-     * Never permits POST, PUT, PATCH, DELETE, or mutating/login endpoints like
-     * admin-ajax.php, admin-post.php, options.php, or wp-login.php.
+     * Never permits POST, PUT, PATCH, DELETE, mutating/login endpoints (admin-ajax.php,
+     * admin-post.php, options.php, wp-login.php), or unapproved query parameters on admin.php.
      *
      * @param RequestContext $ctx
      * @return bool
@@ -260,18 +286,71 @@ final class RequestPipeline {
         }
 
         // 4. Allowed rescue endpoints:
-        // A. Canonical admin console: /wp-admin/admin.php with page in allowed rescue pages
-        if (str_ends_with($path, '/wp-admin/admin.php') || str_ends_with($path, '/wp-admin/')) {
-            $page = $_GET['page'] ?? '';
-            if (is_string($page) && in_array($page, ['webcare-pro-security', 'webcare-pro-firewall', 'webcare-pro-settings'], true)) {
-                return true;
+        // A. Canonical admin console: /wp-admin/admin.php with strict query-parameter allowlist
+        if (str_ends_with($path, '/wp-admin/admin.php')) {
+            $raw_query = (string) (wp_parse_url($uri, PHP_URL_QUERY) ?? '');
+            if (
+                str_contains($raw_query, ';')
+                || str_contains($raw_query, "\0")
+                || stripos($raw_query, '%00') !== false
+                || str_contains($raw_query, '[')
+                || str_contains($raw_query, ']')
+                || stripos($raw_query, '%5b') !== false
+                || stripos($raw_query, '%5d') !== false
+            ) {
+                return false;
             }
+
+            $uri_params = [];
+            if ($raw_query !== '') {
+                foreach (explode('&', $raw_query) as $pair) {
+                    if ($pair === '') {
+                        continue;
+                    }
+                    $parts = explode('=', $pair, 2);
+                    $raw_key = rawurldecode($parts[0]);
+                    if (!in_array($raw_key, self::ALLOWED_RESCUE_QUERY_KEYS, true)) {
+                        return false;
+                    }
+                }
+                parse_str($raw_query, $uri_params);
+            }
+
+            // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Strict read-only rescue boundary parameter inspection
+            $get_superglobal = is_array($_GET) ? $_GET : [];
+            $combined_params = [];
+            foreach ([$uri_params, $get_superglobal] as $source) {
+                foreach ($source as $q_key => $q_val) {
+                    if (!is_string($q_key) || !in_array($q_key, self::ALLOWED_RESCUE_QUERY_KEYS, true)) {
+                        return false;
+                    }
+                    if (!is_string($q_val) || preg_match('/^[a-zA-Z0-9_-]{1,64}$/', $q_val) !== 1) {
+                        return false;
+                    }
+                    if (isset($combined_params[$q_key]) && $combined_params[$q_key] !== $q_val) {
+                        return false;
+                    }
+                    $combined_params[$q_key] = $q_val;
+                }
+            }
+
+            $page = $combined_params['page'] ?? '';
+            return in_array($page, self::ALLOWED_RESCUE_PAGES, true);
         }
 
         // B. Canonical read-only REST rescue routes
-        if (str_contains($path, '/wp-json/webcare-pro-security/v1/rescue/status')
-            || str_contains($path, '/wp-json/webcare-pro-security/v1/system/doctor')
+        if (str_ends_with($path, '/wp-json/webcare-pro-security/v1/rescue/status')
+            || str_ends_with($path, '/wp-json/webcare-pro-security/v1/system/doctor')
         ) {
+            $raw_query = (string) (wp_parse_url($uri, PHP_URL_QUERY) ?? '');
+            if ($raw_query !== '') {
+                parse_str($raw_query, $rest_params);
+                foreach ($rest_params as $rk => $rv) {
+                    if (!is_string($rk) || !in_array($rk, ['_locale'], true) || !is_string($rv)) {
+                        return false;
+                    }
+                }
+            }
             return true;
         }
 

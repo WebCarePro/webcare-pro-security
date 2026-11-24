@@ -13,9 +13,17 @@ use WebCareProScanner\System\SettingsManager;
 final class ShopperAndAiDefenseTest extends TestCase {
 
     private AiAgentBehaviorEvaluator $evaluator;
+    private array $origServer = [];
+    private array $origGet = [];
+    private array $origPost = [];
+    private array $origCookie = [];
 
     protected function setUp(): void {
         parent::setUp();
+        $this->origServer = $_SERVER;
+        $this->origGet = $_GET;
+        $this->origPost = $_POST;
+        $this->origCookie = $_COOKIE;
         $this->evaluator = new AiAgentBehaviorEvaluator();
         SettingsManager::update_setting('waf_ai_challenge_stealth_agents', true);
         @unlink(\WebCareProScanner\Firewall\Core\WafVaultManager::get_safe_mode_marker_path());
@@ -23,6 +31,14 @@ final class ShopperAndAiDefenseTest extends TestCase {
         $_GET = [];
         $_POST = [];
         $_SERVER = [];
+    }
+
+    protected function tearDown(): void {
+        $_SERVER = $this->origServer;
+        $_GET = $this->origGet;
+        $_POST = $this->origPost;
+        $_COOKIE = $this->origCookie;
+        parent::tearDown();
     }
 
     public function test_forged_logged_in_cookie_does_not_bypass_ai_shield(): void {

@@ -12,9 +12,19 @@ use WebCareProScanner\Firewall\NextGen\ModernApiShield;
 class RequestContextIsolationTest extends TestCase {
 
     private string $temp_dir;
+    private array $origServer = [];
+    private array $origGet = [];
+    private array $origPost = [];
+    private array $origCookie = [];
+    private array $origFiles = [];
 
     protected function setUp(): void {
         parent::setUp();
+        $this->origServer = $_SERVER;
+        $this->origGet = $_GET;
+        $this->origPost = $_POST;
+        $this->origCookie = $_COOKIE;
+        $this->origFiles = $_FILES;
         RequestBodyReader::reset();
         $_GET = [];
         $_POST = [];
@@ -26,6 +36,11 @@ class RequestContextIsolationTest extends TestCase {
     }
 
     protected function tearDown(): void {
+        $_SERVER = $this->origServer;
+        $_GET = $this->origGet;
+        $_POST = $this->origPost;
+        $_COOKIE = $this->origCookie;
+        $_FILES = $this->origFiles;
         RequestBodyReader::reset();
         RequestBodyReader::$mock_raw_body = null; $this->clean_dir($this->temp_dir);
         parent::tearDown();

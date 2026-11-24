@@ -102,11 +102,11 @@ class CloudflareIpListSynchronizer {
     public static function get_ip_generation(string $ip): int {
         $ip = trim($ip);
         if ($ip === '') {
-            return 1;
+            return 0;
         }
         $generations = get_option(self::OPTION_IP_GENERATIONS, []);
         if (!is_array($generations) || !isset($generations[$ip])) {
-            return 1;
+            return 0;
         }
         return (int) $generations[$ip];
     }

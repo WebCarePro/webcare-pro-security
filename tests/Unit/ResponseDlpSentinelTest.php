@@ -35,6 +35,8 @@ final class ResponseDlpSentinelTest extends TestCase {
 
     protected function tearDown(): void {
         ResponseDlpSentinel::$throw_mock_exception = false;
+        $GLOBALS['wp_mock_current_user'] = null;
+        $GLOBALS['wp_mock_current_user_can'] = false;
         AuditLogger::$custom_log_dir = null;
         AuditLogger::$operational_log_hook = null;
         if (is_dir($this->tempLogDir)) {

@@ -60,7 +60,10 @@ if (!is_dir(ABSPATH)) {
 
 // Global mock storage for WordPress functions, transients, and $wpdb
 $GLOBALS['wp_mock_options'] = [];
+$_SERVER['HTTP_HOST'] = $_SERVER['HTTP_HOST'] ?? 'example.com';
 $GLOBALS['wp_mock_transients'] = [];
+$GLOBALS['wp_mock_transient_ttls'] = [];
+$GLOBALS['wp_mock_transient_expires'] = [];
 $GLOBALS['wp_mock_object_cache'] = [];
 $GLOBALS['wp_mock_ext_object_cache'] = false;
 $GLOBALS['wp_mock_upload_dir'] = sys_get_temp_dir() . '/wp-uploads-mock';
@@ -75,6 +78,8 @@ if (!defined('WEBCARE_TESTING')) {
 if (!function_exists('webcare_purge_test_storage')) {
     function webcare_purge_test_storage(): void {
         $GLOBALS['wp_mock_transients'] = [];
+        $GLOBALS['wp_mock_transient_ttls'] = [];
+        $GLOBALS['wp_mock_transient_expires'] = [];
         $rl_dir = ($GLOBALS['wp_mock_upload_dir'] ?? sys_get_temp_dir() . '/wp-uploads-mock') . '/webcare-pro-security/rate-limits';
         if (is_dir($rl_dir)) {
             $files = glob($rl_dir . '/rl_*.php');
@@ -141,6 +146,17 @@ if (!function_exists('delete_option')) {
 
 if (!function_exists('get_transient')) {
     function get_transient(string $transient) {
+        if (isset($GLOBALS['wp_mock_transient_expires'][$transient])) {
+            $exp = (int) $GLOBALS['wp_mock_transient_expires'][$transient];
+            if ($exp > 0 && $exp <= time()) {
+                unset(
+                    $GLOBALS['wp_mock_transients'][$transient],
+                    $GLOBALS['wp_mock_transient_ttls'][$transient],
+                    $GLOBALS['wp_mock_transient_expires'][$transient]
+                );
+                return false;
+            }
+        }
         return $GLOBALS['wp_mock_transients'][$transient] ?? false;
     }
 }
@@ -148,13 +164,19 @@ if (!function_exists('get_transient')) {
 if (!function_exists('set_transient')) {
     function set_transient(string $transient, $value, int $expiration = 0): bool {
         $GLOBALS['wp_mock_transients'][$transient] = $value;
+        $GLOBALS['wp_mock_transient_ttls'][$transient] = $expiration;
+        $GLOBALS['wp_mock_transient_expires'][$transient] = $expiration > 0 ? (time() + $expiration) : 0;
         return true;
     }
 }
 
 if (!function_exists('delete_transient')) {
     function delete_transient(string $transient): bool {
-        unset($GLOBALS['wp_mock_transients'][$transient]);
+        unset(
+            $GLOBALS['wp_mock_transients'][$transient],
+            $GLOBALS['wp_mock_transient_ttls'][$transient],
+            $GLOBALS['wp_mock_transient_expires'][$transient]
+        );
         return true;
     }
 }
@@ -237,6 +259,12 @@ if (!function_exists('home_url')) {
 if (!function_exists('site_url')) {
     function site_url(string $path = '', ?string $scheme = null): string {
         return 'http://example.com' . ($path ? '/' . ltrim($path, '/') : '');
+    }
+}
+
+if (!function_exists('get_site_url')) {
+    function get_site_url(?int $blog_id = null, string $path = '', ?string $scheme = null): string {
+        return site_url($path, $scheme);
     }
 }
 
@@ -410,7 +438,7 @@ if (!function_exists('wp_mkdir_p')) {
         if (is_dir($target)) {
             return true;
         }
-        return mkdir($target, 0755, true);
+        return @mkdir($target, 0755, true);
     }
 }
 
@@ -510,9 +538,23 @@ if (!function_exists('wp_salt')) {
 
 if (!function_exists('wp_delete_file')) {
     function wp_delete_file(string $file): void {
-        if (file_exists($file)) {
-            @unlink($file);
+        $filtered = function_exists('apply_filters') ? (string) apply_filters('wp_delete_file', $file) : $file;
+        if ($filtered !== '' && file_exists($filtered)) {
+            @unlink($filtered);
         }
+    }
+}
+
+if (!function_exists('wp_specialchars_decode')) {
+    function wp_specialchars_decode(string $string, int|string $quote_style = ENT_NOQUOTES): string {
+        $flags = is_int($quote_style) ? $quote_style : ENT_QUOTES;
+        return html_entity_decode($string, $flags, 'UTF-8');
+    }
+}
+
+if (!function_exists('status_header')) {
+    function status_header(int $code, string $description = ''): void {
+        $GLOBALS['wp_mock_last_status_header'] = $code;
     }
 }
 
@@ -855,6 +897,20 @@ if (!function_exists('wp_schedule_single_event')) {
 if (!function_exists('rest_ensure_response')) {
     function rest_ensure_response(mixed $response): mixed {
         return $response;
+    }
+}
+
+if (!function_exists('remove_filter')) {
+    function remove_filter(string $hook_name, callable $callback, int $priority = 10): bool {
+        if (!empty($GLOBALS['wp_mock_filters'][$hook_name])) {
+            foreach ($GLOBALS['wp_mock_filters'][$hook_name] as $idx => $cb) {
+                if ($cb === $callback) {
+                    unset($GLOBALS['wp_mock_filters'][$hook_name][$idx]);
+                }
+            }
+            $GLOBALS['wp_mock_filters'][$hook_name] = array_values($GLOBALS['wp_mock_filters'][$hook_name]);
+        }
+        return true;
     }
 }
 

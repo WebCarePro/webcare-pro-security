@@ -16,7 +16,10 @@ class MCPAntiLockoutValidatorTest extends TestCase {
     public function testVerifyMcpBearerRequestRejectsDisabledAndUnauthenticatedRequests(): void {
         $req = new \WP_REST_Request(['Authorization' => 'Bearer valid-token']);
 
-        // Disabled by default
+        // Explicitly disabled
+        $GLOBALS['wp_mock_options']['webcareproscan_settings'] = [
+            'mcp_enabled' => false,
+        ];
         $resDisabled = MCPAntiLockoutValidator::verify_mcp_bearer_request($req, '192.168.1.10');
         $this->assertFalse($resDisabled['allowed']);
         $this->assertSame('disabled', $resDisabled['reason']);

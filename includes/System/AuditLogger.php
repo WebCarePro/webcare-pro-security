@@ -316,6 +316,10 @@ class AuditLogger {
      * @return bool True if log was successfully written to disk
      */
     public static function log_event($event_type, $message): bool {
+        if (is_callable(self::$operational_log_hook)) {
+            call_user_func(self::$operational_log_hook, (string) $event_type, $message);
+        }
+
         $instance = new self();
         $instance->ensure_log_directory();
         return $instance->write_log($event_type, $message);

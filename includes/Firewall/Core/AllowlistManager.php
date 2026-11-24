@@ -20,6 +20,34 @@ if (!defined('ABSPATH')) {
  */
 final class AllowlistManager {
 
+    private const SUPPORTED_HMAC_PROVIDERS = ['stripe', 'shopify', 'github', 'generic_sha256'];
+
+    /**
+     * Return canonical supported cryptographic webhook HMAC providers.
+     *
+     * @return list<string>
+     */
+    public static function get_supported_hmac_providers(): array {
+        return self::SUPPORTED_HMAC_PROVIDERS;
+    }
+
+    /**
+     * Return per-provider replay defense posture metadata.
+     * - stripe: signed t= timestamp window + AtomicNonceStore v1 signature consumption
+     * - github: X-Hub-Signature-256 + mandatory X-GitHub-Delivery UUID consumption
+     * - shopify: X-Shopify-Hmac-Sha256 + X-Shopify-Webhook-Id consumption when header is present (signature_only if absent)
+     * - generic_sha256: payload HMAC integrity only (no built-in timestamp/replay header unless paired with IP/CIDR pinning)
+     */
+    public static function get_provider_replay_capability(string $provider): string {
+        return match (strtolower(trim($provider))) {
+            'stripe'         => 'signed_timestamp_and_nonce',
+            'github'         => 'delivery_id_nonce',
+            'shopify'        => 'optional_event_id_nonce',
+            'generic_sha256' => 'signature_only',
+            default          => 'none',
+        };
+    }
+
     public static function is_ip_whitelisted(string $ip, ?string $whitelist_str = null): bool {
         $ip = trim($ip);
         if (empty($ip)) {
@@ -319,34 +347,50 @@ final class AllowlistManager {
                 }
             }
 
-            // Cryptographic Webhook HMAC Signature Verification
-            $webhook_provider = strtolower(trim((string) ($rule['webhook_hmac_provider'] ?? $rule['webhook_provider'] ?? 'none')));
-            $secret_ref = trim((string) ($rule['webhook_secret_ref'] ?? ''));
-            $legacy_secret = trim((string) ($rule['webhook_secret'] ?? ''));
+            // Cryptographic Webhook HMAC Signature Verification (Strictly Fail-Closed)
+            $raw_provider  = strtolower(trim((string) ($rule['webhook_hmac_provider'] ?? 'none')));
+            $hmac_provider = $raw_provider === '' ? 'none' : $raw_provider;
+            $secret_ref    = trim((string) ($rule['webhook_secret_ref'] ?? ''));
 
-            $webhook_secret = '';
-            if ($secret_ref !== '') {
-                $webhook_secret = (string) self::get_webhook_secret_by_ref($secret_ref);
-            } elseif ($legacy_secret !== '') {
-                $webhook_secret = $legacy_secret;
-            }
-
-            if ($webhook_secret !== '' && $webhook_provider !== 'none') {
-                // Read bounded body stream via RequestBodyReader (enforce fail-closed if truncated)
-                if (class_exists(RequestBodyReader::class) && RequestBodyReader::is_truncated()) {
-                    continue; // Truncated body cannot validly verify cryptographic HMAC
+            // Fail closed whenever HMAC protection is declared OR a secret reference is attached
+            if ($hmac_provider !== 'none' || $secret_ref !== '') {
+                if (!in_array($hmac_provider, self::SUPPORTED_HMAC_PROVIDERS, true)) {
+                    continue; // Unsupported or 'none' provider with secret_ref -> fail closed
+                }
+                if ($secret_ref === '') {
+                    continue; // Provider declared without secret_ref -> fail closed
+                }
+                $decrypted_secret = self::get_webhook_secret_by_ref($secret_ref);
+                if ($decrypted_secret === '') {
+                    continue; // Missing, unreadable, or undecryptable SecretVault entry -> fail closed
                 }
 
-                $raw_body = class_exists(RequestBodyReader::class)
-                    ? RequestBodyReader::get_bounded_body()
-                    : (string) file_get_contents('php://input');
+                // Read bounded body stream via RequestBodyReader (enforce fail-closed if truncated or unreadable)
+                if (class_exists(RequestBodyReader::class)) {
+                    if (RequestBodyReader::is_truncated() || RequestBodyReader::has_read_failed()) {
+                        continue; // Truncated or failed body stream cannot validly verify cryptographic HMAC
+                    }
+                    $raw_body = RequestBodyReader::get_bounded_body();
+                } else {
+                    // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
+                    $raw_body = (string) file_get_contents('php://input');
+                }
 
                 $tolerance = isset($rule['webhook_replay_window_sec'])
                     ? max(30, min(900, (int) $rule['webhook_replay_window_sec']))
                     : 300;
 
-                if (!self::verify_webhook_hmac($webhook_provider, $webhook_secret, $raw_body, $tolerance)) {
-                    continue; // Cryptographic HMAC verification failed
+                if (!self::verify_webhook_hmac($hmac_provider, $decrypted_secret, $raw_body, $tolerance)) {
+                    continue; // Invalid signature, missing delivery ID, or replayed delivery -> fail closed
+                }
+
+                if ($hmac_provider === 'shopify') {
+                    $shopify_wh_id = isset($_SERVER['HTTP_X_SHOPIFY_WEBHOOK_ID'])
+                        ? trim(sanitize_text_field(wp_unslash((string) $_SERVER['HTTP_X_SHOPIFY_WEBHOOK_ID'])))
+                        : '';
+                    $rule['replay_protection'] = $shopify_wh_id !== '' ? 'event_id_nonce' : 'signature_only';
+                } else {
+                    $rule['replay_protection'] = self::get_provider_replay_capability($hmac_provider);
                 }
             }
 
@@ -590,45 +634,68 @@ final class AllowlistManager {
 
     /**
      * Resolve and decrypt webhook secret by vault reference.
+     * Strictly fails closed (returns '') if SecretVault is unavailable, entry is missing,
+     * entry is unencrypted plaintext, or AEAD decryption/authentication fails.
      */
     public static function get_webhook_secret_by_ref(string $secret_ref): string {
-        if ($secret_ref === '') {
+        $secret_ref = trim($secret_ref);
+        if ($secret_ref === '' || !class_exists(\WebCareProScanner\Security\SecretVault::class)) {
             return '';
         }
         $vault = get_option('webcareproscan_vault_webhook_secrets', []);
-        if (!is_array($vault) || empty($vault[$secret_ref])) {
+        if (!is_array($vault) || empty($vault[$secret_ref]) || !is_string($vault[$secret_ref])) {
             return '';
         }
 
-        $encrypted = (string) $vault[$secret_ref];
-        if (class_exists(\WebCareProScanner\Security\SecretVault::class)) {
-            return (string) \WebCareProScanner\Security\SecretVault::decrypt($encrypted);
+        $encrypted = $vault[$secret_ref];
+        if (!\WebCareProScanner\Security\SecretVault::is_encrypted($encrypted)) {
+            return ''; // Never trust or return unencrypted vault strings
         }
-        return $encrypted;
+
+        $decrypted = \WebCareProScanner\Security\SecretVault::decrypt($encrypted);
+        return is_string($decrypted) && $decrypted !== '' ? $decrypted : '';
     }
 
     /**
      * Store and encrypt a webhook secret in dedicated SecretVault storage under an opaque ref.
+     * Never falls back to plaintext storage and verifies option persistence.
      */
-    public static function store_webhook_secret(string $secret_ref, string $plaintext_secret): void {
-        if ($secret_ref === '') {
-            return;
+    public static function store_webhook_secret(string $secret_ref, string $plaintext_secret): bool {
+        $secret_ref = trim($secret_ref);
+        if ($secret_ref === '' || $plaintext_secret === '') {
+            return false;
         }
+
+        if (!class_exists(\WebCareProScanner\Security\SecretVault::class)) {
+            return false;
+        }
+
+        try {
+            $encrypted = \WebCareProScanner\Security\SecretVault::encrypt($plaintext_secret);
+        } catch (\Throwable) {
+            return false;
+        }
+
+        if (!is_string($encrypted) || $encrypted === '' || !\WebCareProScanner\Security\SecretVault::is_encrypted($encrypted)) {
+            return false;
+        }
+
         $vault = get_option('webcareproscan_vault_webhook_secrets', []);
         if (!is_array($vault)) {
             $vault = [];
         }
 
-        if ($plaintext_secret === '') {
-            unset($vault[$secret_ref]);
-        } else {
-            $encrypted = class_exists(\WebCareProScanner\Security\SecretVault::class)
-                ? \WebCareProScanner\Security\SecretVault::encrypt($plaintext_secret)
-                : $plaintext_secret;
-            $vault[$secret_ref] = $encrypted;
+        $vault[$secret_ref] = $encrypted;
+        $updated = update_option('webcareproscan_vault_webhook_secrets', $vault, false);
+        if (!$updated) {
+            return false;
         }
 
-        update_option('webcareproscan_vault_webhook_secrets', $vault, false);
+        if (function_exists('wp_cache_delete')) {
+            wp_cache_delete('webcareproscan_vault_webhook_secrets', 'options');
+        }
+        $persisted = get_option('webcareproscan_vault_webhook_secrets', []);
+        return is_array($persisted) && ($persisted[$secret_ref] ?? null) === $encrypted;
     }
 
     /**
@@ -646,13 +713,13 @@ final class AllowlistManager {
     }
 
     /**
-     * Verify cryptographic HMAC signature on incoming webhooks with replay protection.
+     * Verify cryptographic HMAC signature on incoming webhooks with honest per-provider replay protection.
      *
      * Supported providers:
-     * - 'stripe': Stripe-Signature header with timestamp t= and signature v1=, tolerance <= 300s
-     * - 'shopify': X-Shopify-Hmac-Sha256 base64 header
-     * - 'github': X-Hub-Signature-256 header (sha256=hex)
-     * - 'generic': sha256 HMAC header or raw hex
+     * - 'stripe': Stripe-Signature header with signed timestamp t= within tolerance + single-use v1 signature consumption via AtomicNonceStore
+     * - 'shopify': X-Shopify-Hmac-Sha256 base64 header + X-Shopify-Webhook-Id single-use consumption via AtomicNonceStore (when header is present; signature_only if absent)
+     * - 'github': X-Hub-Signature-256 header (sha256=hex) + mandatory X-GitHub-Delivery UUID single-use consumption via AtomicNonceStore
+     * - 'generic_sha256': X-Signature-Sha256 / X-Webhook-Signature hex HMAC-SHA256 payload integrity verification ONLY (no built-in timestamp/replay header unless paired with IP/CIDR pinning)
      *
      * @param string $provider
      * @param string $secret
@@ -665,11 +732,15 @@ final class AllowlistManager {
             return false;
         }
 
-        return match ($provider) {
-            'stripe' => self::verify_stripe_hmac($secret, $raw_body, $tolerance_seconds),
-            'shopify' => self::verify_shopify_hmac($secret, $raw_body),
-            'github' => self::verify_github_hmac($secret, $raw_body),
-            default => self::verify_generic_hmac($secret, $raw_body),
+        $replay_window = max(30, min(900, $tolerance_seconds));
+        $normalized_provider = strtolower(trim($provider));
+
+        return match ($normalized_provider) {
+            'stripe'         => self::verify_stripe_hmac($secret, $raw_body, $replay_window),
+            'shopify'        => self::verify_shopify_hmac($secret, $raw_body, $replay_window),
+            'github'         => self::verify_github_hmac($secret, $raw_body, $replay_window),
+            'generic_sha256' => self::verify_generic_hmac($secret, $raw_body),
+            default          => false,
         };
     }
 
@@ -686,7 +757,7 @@ final class AllowlistManager {
             if (count($kv) === 2) {
                 if ($kv[0] === 't') {
                     $timestamp = (int) $kv[1];
-                } elseif ($kv[0] === 'v1') {
+                } elseif ($kv[0] === 'v1' && $kv[1] !== '') {
                     $signatures[] = $kv[1];
                 }
             }
@@ -703,26 +774,49 @@ final class AllowlistManager {
         $signed_payload = $timestamp . '.' . $raw_body;
         $expected = hash_hmac('sha256', $signed_payload, $secret);
 
+        $matched_sig = '';
         foreach ($signatures as $sig) {
             if (hash_equals($expected, $sig)) {
-                return true;
+                $matched_sig = $sig;
+                break;
             }
         }
 
-        return false;
+        if ($matched_sig === '') {
+            return false;
+        }
+
+        // Bounded replay defense: consume verified v1 signature within replay window
+        $sig_hash = hash('sha256', $timestamp . '|' . $matched_sig);
+        return \WebCareProScanner\Security\AtomicNonceStore::consume('wh_stripe', $sig_hash, $tolerance_seconds);
     }
 
-    private static function verify_shopify_hmac(string $secret, string $raw_body): bool {
+    private static function verify_shopify_hmac(string $secret, string $raw_body, int $tolerance_seconds): bool {
         $header = (string) ($_SERVER['HTTP_X_SHOPIFY_HMAC_SHA256'] ?? '');
         if ($header === '') {
             return false;
         }
 
         $calculated = base64_encode(hash_hmac('sha256', $raw_body, $secret, true));
-        return hash_equals($calculated, $header);
+        if (!hash_equals($calculated, $header)) {
+            return false;
+        }
+
+        // Consume X-Shopify-Webhook-Id when present; if absent, caller marks replay_protection = 'signature_only'
+        $webhook_id = isset($_SERVER['HTTP_X_SHOPIFY_WEBHOOK_ID'])
+            ? trim(sanitize_text_field(wp_unslash((string) $_SERVER['HTTP_X_SHOPIFY_WEBHOOK_ID'])))
+            : '';
+        if ($webhook_id !== '') {
+            if (strlen($webhook_id) > 128) {
+                return false;
+            }
+            return \WebCareProScanner\Security\AtomicNonceStore::consume('wh_shopify', $webhook_id, $tolerance_seconds);
+        }
+
+        return true;
     }
 
-    private static function verify_github_hmac(string $secret, string $raw_body): bool {
+    private static function verify_github_hmac(string $secret, string $raw_body, int $tolerance_seconds): bool {
         $header = (string) ($_SERVER['HTTP_X_HUB_SIGNATURE_256'] ?? '');
         if ($header === '' || !str_starts_with($header, 'sha256=')) {
             return false;
@@ -730,16 +824,34 @@ final class AllowlistManager {
 
         $sig = substr($header, 7);
         $calculated = hash_hmac('sha256', $raw_body, $secret);
-        return hash_equals($calculated, $sig);
+        if (!hash_equals($calculated, $sig)) {
+            return false;
+        }
+
+        // Require and consume unique X-GitHub-Delivery UUID for bounded replay protection
+        $delivery_id = isset($_SERVER['HTTP_X_GITHUB_DELIVERY'])
+            ? trim(sanitize_text_field(wp_unslash((string) $_SERVER['HTTP_X_GITHUB_DELIVERY'])))
+            : '';
+        if ($delivery_id === '' || strlen($delivery_id) > 128) {
+            return false;
+        }
+
+        return \WebCareProScanner\Security\AtomicNonceStore::consume('wh_github', $delivery_id, $tolerance_seconds);
     }
 
+    /**
+     * Verify generic SHA-256 HMAC signature (X-Signature-Sha256 or X-Webhook-Signature).
+     * Note: generic_sha256 verifies payload integrity ONLY. It provides no built-in signed
+     * timestamp or delivery-ID replay header unless paired with static IP/CIDR pinning.
+     */
     private static function verify_generic_hmac(string $secret, string $raw_body): bool {
-        $header = (string) ($_SERVER['HTTP_X_SIGNATURE_SHA256'] ?? $_SERVER['HTTP_X_WEBHOOK_SIGNATURE'] ?? '');
+        $header = trim((string) ($_SERVER['HTTP_X_SIGNATURE_SHA256'] ?? $_SERVER['HTTP_X_WEBHOOK_SIGNATURE'] ?? ''));
         if ($header === '') {
             return false;
         }
 
+        $sig = str_starts_with(strtolower($header), 'sha256=') ? substr($header, 7) : $header;
         $calculated = hash_hmac('sha256', $raw_body, $secret);
-        return hash_equals($calculated, $header);
+        return hash_equals($calculated, strtolower($sig));
     }
 }

@@ -40,6 +40,8 @@ class WafReplayHarnessTest extends TestCase {
         $this->origPost = $_POST;
         $GLOBALS['wp_mock_options'] = [];
         $GLOBALS['wp_mock_transients'] = [];
+        $GLOBALS['wp_mock_current_user'] = null;
+        $GLOBALS['wp_mock_current_user_can'] = false;
         $GLOBALS['wpdb'] = new \wpdb();
         $GLOBALS['wp_query'] = null; // Enforce early lifecycle null $wp_query invariant
         CloudflareService::$mock_request_handler = null;
@@ -49,6 +51,8 @@ class WafReplayHarnessTest extends TestCase {
         $_SERVER = $this->origServer;
         $_GET = $this->origGet;
         $_POST = $this->origPost;
+        $GLOBALS['wp_mock_current_user'] = null;
+        $GLOBALS['wp_mock_current_user_can'] = false;
         CloudflareService::$mock_request_handler = null;
         parent::tearDown();
     }
@@ -485,6 +489,8 @@ class WafReplayHarnessTest extends TestCase {
      */
     public function testGroup9ForensicIntegrityAndCampaignSummaries(): void {
         $ip = '198.51.100.220';
+        $_SERVER['REMOTE_ADDR'] = $ip;
+        FirewallEngine::reset_client_ip_cache();
         $rule = [
             'id'          => 'WAF-SQLI-PROBE',
             'category'    => 'SQL Injection',
@@ -925,7 +931,8 @@ class WafReplayHarnessTest extends TestCase {
         $this->assertContains('waf_logs_purged', $audited_events, 'Must record waf_logs_purged after successful deletion');
 
         // Test that clear_all_logs() refuses to purge and preserves all WAF log files byte-for-byte when audit write fails
-        // First log a fresh incident to ensure at least one physical log file exists on disk
+        // Reset short-lived dedup transients and log a fresh incident to ensure at least one physical log file exists on disk
+        $GLOBALS['wp_mock_transients'] = [];
         WafFileLogger::log_incident($rule, 'blocked');
         $storage_dir = WafFileLogger::get_storage_dir();
         
@@ -942,7 +949,9 @@ class WafReplayHarnessTest extends TestCase {
         $this->assertNotEmpty($hashes_before, 'At least one WAF log file with valid hash must exist before testing purge refusal');
 
         $orig_custom_log_dir = \WebCareProScanner\System\AuditLogger::$custom_log_dir;
-        \WebCareProScanner\System\AuditLogger::$custom_log_dir = '/proc/nonexistent_webcare_readonly_path';
+        $blocker_file = sys_get_temp_dir() . '/wcp_audit_ro_' . bin2hex(random_bytes(4));
+        file_put_contents($blocker_file, 'readonly-file-blocking-mkdir');
+        \WebCareProScanner\System\AuditLogger::$custom_log_dir = $blocker_file . '/nonexistent_subdir';
         try {
             $refused = WafFileLogger::clear_all_logs();
             $this->assertFalse($refused, 'clear_all_logs must return false and refuse to purge if audit intent write cannot be confirmed');
@@ -962,6 +971,7 @@ class WafReplayHarnessTest extends TestCase {
             $this->assertSame($hashes_before, $hashes_after, 'All WAF log files must remain 100% byte-for-byte identical (SHA-256 match) on audit intent write refusal');
         } finally {
             \WebCareProScanner\System\AuditLogger::$custom_log_dir = $orig_custom_log_dir;
+            @unlink($blocker_file);
         }
     }
 }

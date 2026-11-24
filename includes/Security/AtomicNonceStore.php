@@ -22,16 +22,25 @@ if (!defined('ABSPATH')) {
 final class AtomicNonceStore {
 
     private const TABLE_NAME = 'webcareproscan_atomic_nonces';
+    public const MIN_TTL = 5;
+    public const MAX_TTL = 86400;
 
     /**
      * Atomically consume a nonce.
      *
      * @param string $namespace Logical grouping for the nonce (e.g. 'scan_tick', 'cf_flush').
      * @param string $nonce     The raw nonce string.
-     * @param int    $ttl       Time to live in seconds (default: 300).
-     * @return bool True if nonce was successfully consumed (first time seen), false if already consumed or expired.
+     * @param int    $ttl       Time to live in seconds (default: 300, clamped to 5..86400).
+     * @return bool True if nonce was successfully consumed (first time seen), false if already consumed or empty.
+     * @throws \InvalidArgumentException When $ttl <= 0.
      */
     public static function consume(string $namespace, string $nonce, int $ttl = 300): bool {
+        if ($ttl <= 0) {
+            throw new \InvalidArgumentException('AtomicNonceStore TTL must be a positive integer.');
+        }
+
+        $ttl = min(max($ttl, self::MIN_TTL), self::MAX_TTL);
+
         if ($nonce === '') {
             return false;
         }

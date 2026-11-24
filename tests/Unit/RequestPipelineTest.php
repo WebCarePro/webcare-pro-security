@@ -14,11 +14,16 @@ class RequestPipelineTest extends TestCase {
 
     private array $origServer;
     private array $origGet;
+    private array $origPost;
 
     protected function setUp(): void {
         parent::setUp();
         $this->origServer = $_SERVER;
         $this->origGet = $_GET;
+        $this->origPost = $_POST;
+        $GLOBALS['wp_mock_options'] = [];
+        $GLOBALS['wp_mock_transients'] = [];
+        $GLOBALS['wp_mock_current_user'] = null;
         $GLOBALS['wp_mock_current_user_can'] = false;
         if (function_exists('webcare_purge_test_storage')) {
             webcare_purge_test_storage();
@@ -29,6 +34,8 @@ class RequestPipelineTest extends TestCase {
     protected function tearDown(): void {
         $_SERVER = $this->origServer;
         $_GET = $this->origGet;
+        $_POST = $this->origPost;
+        $GLOBALS['wp_mock_current_user'] = null;
         $GLOBALS['wp_mock_current_user_can'] = false;
         RescueAssistantManager::resume_strict_firewall();
         if (function_exists('webcare_purge_test_storage')) {
@@ -324,6 +331,7 @@ class RequestPipelineTest extends TestCase {
             'waf_enabled' => false,
             'waf_mode'    => 'disabled',
         ];
+        update_option('webcareproscan_settings', $disabledSettings);
 
         // Should return cleanly without throwing or blocking
         RequestPipeline::process_incoming_request();
@@ -405,8 +413,13 @@ class RequestPipelineTest extends TestCase {
         ];
 
         $settings = [
-            'waf_enabled' => true,
+            'waf_enabled'                     => true,
+            'waf_block_traversal'             => false,
+            'waf_block_sensitive_file_probes' => false,
+            'waf_block_null_byte_attacks'     => false,
+            'waf_block_rest_user_enum'        => false,
         ];
+        update_option('webcareproscan_settings', $settings);
 
         foreach ($cases as $uri => $expected) {
             $expectedClass = $expected['class'];
@@ -592,6 +605,8 @@ class RequestPipelineTest extends TestCase {
         if (!class_exists('WebCareProScanner\\Tests\\Unit\\SpyCommerceEvaluator')) {
             eval('
                 namespace WebCareProScanner\\Tests\\Unit;
+                use WebCareProScanner\\Contracts\\EvaluatorFailurePolicy;
+                use WebCareProScanner\\Contracts\\RouteClass;
                 use WebCareProScanner\\Contracts\\WafEvaluatorInterface;
                 use WebCareProScanner\\Contracts\\RequestContext;
                 use WebCareProScanner\\Contracts\\WafVerdict;
@@ -601,9 +616,10 @@ class RequestPipelineTest extends TestCase {
                     public static function reset(): void { self::$invocations = []; }
                     public function get_module_id(): string { return "spy-commerce-evaluator"; }
                     public function is_required(): bool { return false; }
-                    public function get_failure_policy(): string { return "degraded_log"; }
+                    public function get_failure_policy(): EvaluatorFailurePolicy { return EvaluatorFailurePolicy::DegradedLog; }
                     public function get_required_capabilities(): array { return []; }
-                    public function get_target_route_classes(): array { return []; }
+                    public function get_route_classes(): array { return [RouteClass::Commerce]; }
+                    public function compile_preload_ast(): array { return []; }
                     public function evaluate_runtime_request(RequestContext $ctx): ?WafVerdict {
                         self::$invocations[] = [
                             "uri" => $ctx->uri,
@@ -618,6 +634,8 @@ class RequestPipelineTest extends TestCase {
         if (!class_exists('WebCareProScanner\\Tests\\Unit\\SpyRestApiEvaluator')) {
             eval('
                 namespace WebCareProScanner\\Tests\\Unit;
+                use WebCareProScanner\\Contracts\\EvaluatorFailurePolicy;
+                use WebCareProScanner\\Contracts\\RouteClass;
                 use WebCareProScanner\\Contracts\\WafEvaluatorInterface;
                 use WebCareProScanner\\Contracts\\RequestContext;
                 use WebCareProScanner\\Contracts\\WafVerdict;
@@ -627,9 +645,10 @@ class RequestPipelineTest extends TestCase {
                     public static function reset(): void { self::$invocations = []; }
                     public function get_module_id(): string { return "spy-restapi-evaluator"; }
                     public function is_required(): bool { return false; }
-                    public function get_failure_policy(): string { return "degraded_log"; }
+                    public function get_failure_policy(): EvaluatorFailurePolicy { return EvaluatorFailurePolicy::DegradedLog; }
                     public function get_required_capabilities(): array { return []; }
-                    public function get_target_route_classes(): array { return []; }
+                    public function get_route_classes(): array { return [RouteClass::RestApi]; }
+                    public function compile_preload_ast(): array { return []; }
                     public function evaluate_runtime_request(RequestContext $ctx): ?WafVerdict {
                         self::$invocations[] = [
                             "uri" => $ctx->uri,
@@ -667,7 +686,14 @@ class RequestPipelineTest extends TestCase {
                 '/%00wp-json/wp/v2/users',
             ];
 
-            $settings = ['waf_enabled' => true];
+            $settings = [
+                'waf_enabled'                     => true,
+                'waf_block_traversal'             => false,
+                'waf_block_sensitive_file_probes' => false,
+                'waf_block_null_byte_attacks'     => false,
+                'waf_block_rest_user_enum'        => false,
+            ];
+            update_option('webcareproscan_settings', $settings);
 
             // Verify Commerce URIs invoke only the Commerce spy evaluator
             foreach ($commerceUris as $testUri) {

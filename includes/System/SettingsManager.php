@@ -7,9 +7,30 @@ if (!defined('ABSPATH')) {
 
 class SettingsManager {
     const OPTION_KEY = 'webcareproscan_settings';
+    const OPTION_NAME = self::OPTION_KEY;
     const OPTION_SNAPSHOTS_KEY = 'webcareproscan_settings_snapshots';
+    const OPTION_SNAPSHOTS = self::OPTION_SNAPSHOTS_KEY;
     const CRON_HOOK = 'webcareproscan_scheduled_scan_event';
     const MAX_SNAPSHOTS = 10;
+
+    /**
+     * Tracks whether SecretVault persistence failed while sanitizing targeted allowlist rules.
+     */
+    private static bool $last_webhook_secret_store_failed = false;
+
+    /**
+     * Non-secret boolean/policy setting keys whose names include words like 'password' or 'secrets'
+     * and must NEVER be stripped from settings snapshots.
+     */
+    private const NON_SECRET_POLICY_KEYS = [
+        'waf_enforce_strong_passwords',
+        'waf_strong_passwords_roles',
+        'waf_check_pwned_passwords',
+        'scan_password_strength',
+        'auth_admin_password_reset',
+        'auth_application_password_created',
+        'vault_secrets_rotated',
+    ];
 
     /**
      * Secret keys that MUST NEVER be included in settings snapshots, export files, or undo history.
@@ -538,6 +559,18 @@ class SettingsManager {
             }
             $clean_endpoints = array_values(array_unique($clean_endpoints));
 
+            $raw_wh_provider = sanitize_key((string) ($rule['webhook_hmac_provider'] ?? $rule['webhook_provider'] ?? 'none'));
+            if ($raw_wh_provider === '' || $raw_wh_provider === 'none') {
+                $wh_provider = 'none';
+            } elseif (
+                class_exists(\WebCareProScanner\Firewall\Core\AllowlistManager::class)
+                && in_array($raw_wh_provider, \WebCareProScanner\Firewall\Core\AllowlistManager::get_supported_hmac_providers(), true)
+            ) {
+                $wh_provider = $raw_wh_provider;
+            } else {
+                continue; // Reject unsupported webhook HMAC provider
+            }
+
             $clean_rule = [
                 'id'           => $rule_id,
                 'name'         => sanitize_text_field($rule['name'] ?? 'Custom Allowlist Rule'),
@@ -558,9 +591,12 @@ class SettingsManager {
                 'required_headers' => is_array($rule['required_headers'] ?? null)
                     ? array_values(array_filter(array_map('sanitize_text_field', $rule['required_headers'])))
                     : array_values(array_filter(array_map('sanitize_text_field', explode("\n", str_replace("\r", "", (string) ($rule['required_headers'] ?? '')))))),
-                'webhook_hmac_provider' => sanitize_key($rule['webhook_hmac_provider'] ?? $rule['webhook_provider'] ?? 'none'),
+                'webhook_hmac_provider' => $wh_provider,
                 'webhook_replay_window_sec' => max(30, min(900, (int) ($rule['webhook_replay_window_sec'] ?? 300))),
-                'webhook_secret_ref' => sanitize_key($rule['webhook_secret_ref'] ?? ''),
+                'webhook_secret_ref' => sanitize_key((string) ($rule['webhook_secret_ref'] ?? '')),
+                'replay_protection'  => class_exists(\WebCareProScanner\Firewall\Core\AllowlistManager::class)
+                    ? \WebCareProScanner\Firewall\Core\AllowlistManager::get_provider_replay_capability($wh_provider)
+                    : 'none',
                 'allow_unpinned_headers' => !empty($rule['allow_unpinned_headers']),
                 'methods'          => is_array($rule['methods'] ?? null)
                     ? array_values(array_filter(array_map('sanitize_text_field', $rule['methods'])))
@@ -580,12 +616,23 @@ class SettingsManager {
                 continue; // Skip invalid, match-all empty allowlist rule
             }
 
-            // If plaintext secret is supplied, store in SecretVault and link via webhook_secret_ref
+            // If plaintext secret is supplied, store encrypted in SecretVault and link via webhook_secret_ref.
+            // Abort persisting the allowlist rule if SecretVault encryption or option write fails!
             $raw_secret = trim((string) ($rule['webhook_secret'] ?? ''));
             if ($raw_secret !== '') {
                 $ref = $clean_rule['webhook_secret_ref'] !== '' ? $clean_rule['webhook_secret_ref'] : 'wcp_wh_sec_' . $clean_rule['id'];
-                \WebCareProScanner\Firewall\Core\AllowlistManager::store_webhook_secret($ref, $raw_secret);
+                if (!\WebCareProScanner\Firewall\Core\AllowlistManager::store_webhook_secret($ref, $raw_secret)) {
+                    self::$last_webhook_secret_store_failed = true;
+                    continue;
+                }
                 $clean_rule['webhook_secret_ref'] = $ref;
+            }
+
+            // Fail closed at configuration save time: HMAC provider without secret_ref or secret_ref with 'none' provider is rejected
+            if (($clean_rule['webhook_hmac_provider'] !== 'none' && $clean_rule['webhook_secret_ref'] === '')
+                || ($clean_rule['webhook_hmac_provider'] === 'none' && $clean_rule['webhook_secret_ref'] !== '')
+            ) {
+                continue;
             }
 
             // Security Hardening: Header-only rules without endpoint/IP/host pinning or cryptographic secret require explicit acknowledgment
@@ -782,13 +829,29 @@ class SettingsManager {
     }
 
     /**
-     * Save settings with sanitization and hook updates
+     * Update a single setting key cleanly via save_settings().
      */
-    public static function save_settings(array $input): array {
-        $current = get_option(self::OPTION_KEY, []);
-        if (!is_array($current)) {
-            $current = [];
-        }
+    public static function update_setting(string $key, mixed $value): bool {
+        $res = self::save_settings([$key => $value]);
+        return is_array($res);
+    }
+
+    /**
+     * Save settings with sanitization and hook updates.
+     * Returns false if option persistence or SecretVault storage fails.
+     *
+     * @param array<string, mixed> $input
+     * @param bool                 $record_snapshot
+     * @param array<string, mixed>|null $out_clean
+     * @return array<string, mixed>|false
+     */
+    public static function save_settings(array $input, bool $record_snapshot = true, ?array &$out_clean = null): array|false {
+        self::$last_webhook_secret_store_failed = false;
+
+        $sentinel = '__webcare_option_unset__';
+        $raw_existing = get_option(self::OPTION_KEY, $sentinel);
+        $option_existed = ($raw_existing !== $sentinel);
+        $current = is_array($raw_existing) ? $raw_existing : [];
 
         $defaults = self::get_defaults();
         // Merge defaults, current options, and input so partial saves (from individual rule toggles,
@@ -1356,15 +1419,26 @@ class SettingsManager {
             $clean = array_merge($clean, \WebCareProScanner\Core\ModuleRegistry::sanitize_module_settings($merged, $current, $input));
         }
 
+        if (self::$last_webhook_secret_store_failed) {
+            self::$last_webhook_secret_store_failed = false;
+            return false;
+        }
+
+        $out_clean = $clean;
+
         // Compute settings diff before persisting
         $diff = self::compute_settings_diff($current, $clean);
 
-        // Record a secret-stripped snapshot of the current settings if there are meaningful changes
-        if (!empty($diff)) {
-            self::record_settings_snapshot($current);
+        $is_identical = $option_existed && ($current === $clean);
+        $persisted = update_option(self::OPTION_KEY, $clean, false);
+        if (!$persisted && !$is_identical) {
+            return false;
         }
 
-        update_option(self::OPTION_KEY, $clean, false);
+        // Record a secret-stripped snapshot of the prior settings ONLY AFTER persistence succeeds
+        if ($record_snapshot && !empty($diff)) {
+            self::record_settings_snapshot($current);
+        }
 
         // Synchronize Cron Schedule
         self::sync_cron_schedule($clean);
@@ -1752,7 +1826,7 @@ class SettingsManager {
      */
     private static function recursively_strip_secrets(array $data): array {
         $secret_regex = '/(?:secret|token|password|api_key|private_key|passphrase)/i';
-        $safe_meta_regex = '/(?:_ref|_enabled|_mode|_window|_ttl|_created_at)$/i';
+        $safe_meta_regex = '/(?:_ref|_enabled|_mode|_window|_ttl|_created_at|_roles|_strength)$/i';
 
         $clean = [];
         foreach ($data as $key => $val) {
@@ -1763,9 +1837,12 @@ class SettingsManager {
                 continue;
             }
 
-            // Heuristic match for credential names, excluding safe metadata keys
-            if (preg_match($secret_regex, $key_str) === 1 && preg_match($safe_meta_regex, $key_str) === 0) {
-                continue;
+            // Preserve non-secret boolean/policy configuration keys
+            if (!in_array($key_str, self::NON_SECRET_POLICY_KEYS, true) && !is_bool($val)) {
+                // Heuristic match for credential names, excluding safe metadata keys
+                if (preg_match($secret_regex, $key_str) === 1 && preg_match($safe_meta_regex, $key_str) === 0) {
+                    continue;
+                }
             }
 
             if (is_array($val)) {
@@ -1830,10 +1907,81 @@ class SettingsManager {
     }
 
     /**
+     * Recursively compare two arrays for canonical equality, normalizing key order on associative arrays.
+     *
+     * @param array<mixed> $a
+     * @param array<mixed> $b
+     * @return bool
+     */
+    public static function arrays_canonical_equal(array $a, array $b): bool {
+        if (count($a) !== count($b)) {
+            return false;
+        }
+
+        $a_is_list = array_is_list($a);
+        $b_is_list = array_is_list($b);
+        if ($a_is_list !== $b_is_list) {
+            return false;
+        }
+
+        if (!$a_is_list) {
+            ksort($a);
+            ksort($b);
+            if (array_keys($a) !== array_keys($b)) {
+                return false;
+            }
+        }
+
+        foreach ($a as $k => $va) {
+            if (!array_key_exists($k, $b)) {
+                return false;
+            }
+            if (!self::values_canonical_equal($va, $b[$k])) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Compare scalar, nested array, or JSON-encoded array values canonically.
+     */
+    private static function values_canonical_equal(mixed $va, mixed $vb): bool {
+        if (is_array($va) || is_array($vb)) {
+            if (!is_array($va) || !is_array($vb)) {
+                return false;
+            }
+            return self::arrays_canonical_equal($va, $vb);
+        }
+
+        if (is_string($va) && is_string($vb) && $va !== '' && $vb !== '' && json_validate($va) && json_validate($vb)) {
+            $da = json_decode($va, true);
+            $db = json_decode($vb, true);
+            if (is_array($da) && is_array($db)) {
+                return self::arrays_canonical_equal($da, $db);
+            }
+        }
+
+        if (is_bool($va) || is_bool($vb)) {
+            return is_bool($va) && is_bool($vb) && $va === $vb;
+        }
+
+        if ((is_int($va) || is_float($va)) && (is_int($vb) || is_float($vb))) {
+            if (is_int($va) && is_int($vb)) {
+                return $va === $vb;
+            }
+            return abs((float) $va - (float) $vb) < 1e-9;
+        }
+
+        return $va === $vb;
+    }
+
+    /**
      * Undo the last settings change by popping the most recent snapshot and applying it.
      * Preserves all active secrets currently in the database so credentials are never lost.
      *
-     * @return array{'success': bool, 'message': string, 'settings': array, 'snapshots_remaining': int}
+     * @return array<string, mixed>
      */
     public static function undo_last_settings(): array {
         $snapshots = self::get_settings_snapshots();
@@ -1877,52 +2025,101 @@ class SettingsManager {
         // Merge restored non-secret settings with active secrets
         $merged_restoration = array_merge($restored_subset, $active_secrets);
 
-        // Apply restoration via save_settings()
-        $saved = self::save_settings($merged_restoration);
-
-        // Phase 2: Read-back verification. Ensure update succeeded and DB reflects restored values
-        $verification_read = get_option(self::OPTION_KEY, []);
-        if (!is_array($verification_read) || empty($verification_read)) {
+        // Phase 1: Apply restoration via save_settings() without mutating snapshot history yet
+        $expected_clean = null;
+        $saved = self::save_settings($merged_restoration, false, $expected_clean);
+        if ($saved === false || (function_exists('is_wp_error') && is_wp_error($saved)) || !is_array($saved) || !is_array($expected_clean)) {
             return [
                 'success'             => false,
-                'message'             => __('Settings undo verification failed: unable to read back restored state.', 'webcare-pro-security'),
+                'message'             => __('Settings undo failed: unable to persist restored settings.', 'webcare-pro-security'),
                 'settings'            => self::get_settings(),
                 'snapshots_remaining' => count($snapshots),
             ];
         }
 
-        // Verify non-secret restored scalar and core setting keys match
-        $core_mismatch = false;
-        foreach ($restored_subset as $rk => $rv) {
-            if (in_array($rk, self::SECRET_KEYS, true) || is_array($rv)) {
+        // Phase 2: Clear options cache and read back persisted state via get_option() and get_settings()
+        if (function_exists('wp_cache_delete')) {
+            wp_cache_delete(self::OPTION_KEY, 'options');
+        }
+
+        $raw_persisted = get_option(self::OPTION_KEY, []);
+        $read_back = self::get_settings();
+        if (!is_array($raw_persisted) || empty($raw_persisted) || !is_array($read_back) || empty($read_back)) {
+            return [
+                'success'             => false,
+                'message'             => __('Settings undo verification failed: unable to read back restored state.', 'webcare-pro-security'),
+                'settings'            => is_array($read_back) ? $read_back : [],
+                'snapshots_remaining' => count($snapshots),
+            ];
+        }
+
+        // Verify EVERY non-secret key in the expected sanitized restored payload (including nested arrays & missing keys)
+        // and confirm live secrets remain intact in raw storage.
+        $verification_failed = false;
+        foreach ($expected_clean as $ek => $ev) {
+            if (in_array($ek, self::SECRET_KEYS, true)) {
+                $expected_secret = $active_secrets[$ek] ?? $ev;
+                if (!array_key_exists($ek, $raw_persisted) || $raw_persisted[$ek] !== $expected_secret) {
+                    $verification_failed = true;
+                    break;
+                }
                 continue;
             }
-            if (isset($verification_read[$rk])) {
-                $actual = $verification_read[$rk];
-                if (is_bool($rv)) {
-                    if ((bool) $actual !== $rv) {
-                        $core_mismatch = true;
+
+            if (!array_key_exists($ek, $raw_persisted) || !array_key_exists($ek, $read_back)) {
+                $verification_failed = true;
+                break;
+            }
+
+            if (!self::values_canonical_equal($ev, $raw_persisted[$ek]) || !self::values_canonical_equal($ev, $read_back[$ek])) {
+                $verification_failed = true;
+                break;
+            }
+        }
+
+        // Also ensure no non-secret key present in the snapshot's restored_subset is missing or mismatched
+        if (!$verification_failed) {
+            foreach ($restored_subset as $rk => $rv) {
+                $rk_str = (string) $rk;
+                if (in_array($rk_str, self::SECRET_KEYS, true) || str_starts_with($rk_str, 'has_') || $rk_str === 'activity_log_settings') {
+                    continue;
+                }
+                if (!array_key_exists($rk_str, $raw_persisted) || !array_key_exists($rk_str, $read_back)) {
+                    $verification_failed = true;
+                    break;
+                }
+                if (!array_key_exists($rk_str, $expected_clean)) {
+                    if (!self::values_canonical_equal($rv, $raw_persisted[$rk_str]) || !self::values_canonical_equal($rv, $read_back[$rk_str])) {
+                        $verification_failed = true;
                         break;
                     }
-                } elseif ((string) $actual !== (string) $rv) {
-                    $core_mismatch = true;
-                    break;
                 }
             }
         }
 
-        if ($core_mismatch) {
+        if ($verification_failed) {
             return [
                 'success'             => false,
                 'message'             => __('Settings undo verification failed: restored settings mismatch.', 'webcare-pro-security'),
-                'settings'            => self::get_settings(),
+                'settings'            => $read_back,
                 'snapshots_remaining' => count($snapshots),
             ];
         }
 
-        // Verification succeeded! Now safely pop the snapshot from stack and persist
-        array_shift($snapshots);
-        update_option(self::OPTION_SNAPSHOTS_KEY, $snapshots, false);
+        // Phase 3: Verification passed! Pop the snapshot from stack and explicitly check update_option() result
+        $remaining_snapshots = $snapshots;
+        array_shift($remaining_snapshots);
+        $snapshot_updated = update_option(self::OPTION_SNAPSHOTS_KEY, $remaining_snapshots, false);
+        if (!$snapshot_updated) {
+            $warn_msg = __('Settings restored, but snapshot history could not be updated.', 'webcare-pro-security');
+            return [
+                'success'             => false,
+                'warning'             => $warn_msg,
+                'message'             => $warn_msg,
+                'settings'            => $read_back,
+                'snapshots_remaining' => count($snapshots),
+            ];
+        }
 
         if (class_exists('\\WebCareProScanner\\System\\WebCareActivityLogger')) {
             $formatted_time = function_exists('date_i18n')
@@ -1934,7 +2131,7 @@ class SettingsManager {
                 [
                     'description'         => sprintf('Reverted settings to snapshot from %s.', $formatted_time),
                     'snapshot_time'       => $target_snapshot['timestamp'] ?? time(),
-                    'snapshots_remaining' => count($snapshots),
+                    'snapshots_remaining' => count($remaining_snapshots),
                 ]
             );
         }
@@ -1942,8 +2139,8 @@ class SettingsManager {
         return [
             'success'             => true,
             'message'             => __('Settings successfully reverted to the previous snapshot.', 'webcare-pro-security'),
-            'settings'            => $saved,
-            'snapshots_remaining' => count($snapshots),
+            'settings'            => $read_back,
+            'snapshots_remaining' => count($remaining_snapshots),
         ];
     }
 

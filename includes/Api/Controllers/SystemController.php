@@ -1469,6 +1469,13 @@ final class SystemController extends AbstractApiController {
 
         $old_settings = \WebCareProScanner\System\SettingsManager::get_settings();
         $saved = \WebCareProScanner\System\SettingsManager::save_settings((array) $params);
+        if ($saved === false || !is_array($saved)) {
+            return new \WP_Error(
+                'settings_save_failed',
+                __('Failed to persist settings or encrypt webhook secret in SecretVault.', 'webcare-pro-security'),
+                ['status' => 500]
+            );
+        }
         $time_info = self::build_schedule_time_info();
 
         // Check toggles for Webhooks, AI Forensics, and MCP Service

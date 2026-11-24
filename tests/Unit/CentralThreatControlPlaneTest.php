@@ -19,6 +19,10 @@ final class CentralThreatControlPlaneTest extends TestCase {
         delete_option(CentralThreatControlPlane::OPTION_FEED_META);
         delete_option(CentralThreatControlPlane::OPTION_CVE_FINDINGS);
 
+        if (!function_exists('sodium_crypto_sign_keypair')) {
+            $this->markTestSkipped('ext-sodium is required for Ed25519 signature tests.');
+        }
+
         $kp = sodium_crypto_sign_keypair();
         $this->test_secret_key = bin2hex(sodium_crypto_sign_secretkey($kp));
         $this->test_public_key = bin2hex(sodium_crypto_sign_publickey($kp));

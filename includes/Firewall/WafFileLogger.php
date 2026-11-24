@@ -1397,6 +1397,7 @@ class WafFileLogger {
                     // Start new burst segment with deterministic campaign_id
                     $current_burst = [
                         'campaign_id'      => 'camp_' . substr(hash('xxh128', $ip . '|' . $ts), 0, 12),
+                        'ip'               => $ip,
                         'ip_address'       => $ip,
                         'burst_count'      => 1,
                         'distinct_targets' => [$uri],

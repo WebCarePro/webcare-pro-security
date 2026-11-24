@@ -48,6 +48,11 @@ final class ProxyPeerAndDegradationTest extends TestCase {
         $cf_edge_ip = '173.245.48.50'; // Official Cloudflare IPv4 CIDR
         $visitor_ip = '198.51.100.123';
 
+        $GLOBALS['wp_mock_options']['webcareproscan_settings'] = [
+            'waf_cloudflare_proxy_trust_mode' => 'enabled',
+            'waf_rewrite_server_remote_addr'  => true,
+        ];
+
         $_SERVER['REMOTE_ADDR'] = $cf_edge_ip;
         $_SERVER['HTTP_CF_CONNECTING_IP'] = $visitor_ip;
         $_SERVER['HTTP_CF_IPCOUNTRY'] = 'US';

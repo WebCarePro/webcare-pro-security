@@ -15,6 +15,8 @@ import {
   AlertCircle
 } from 'lucide-react';
 
+export type WebhookHmacProvider = 'none' | 'stripe' | 'shopify' | 'github' | 'generic_sha256';
+
 export interface TargetedAllowlistRule {
   id: string;
   name: string;
@@ -25,6 +27,12 @@ export interface TargetedAllowlistRule {
   hostnames?: string[];
   asns?: string[];
   required_headers?: string[];
+  webhook_hmac_provider?: WebhookHmacProvider;
+  webhook_secret?: string;
+  webhook_secret_ref?: string;
+  webhook_replay_window_sec?: number;
+  replay_protection?: string;
+  allow_unpinned_headers?: boolean;
   methods: string[];
   log_payload?: boolean;
   description?: string;
@@ -736,25 +744,31 @@ export const getRuleTrustTier = (rule: {
   hostnames?: string[];
   asns?: string[];
   required_headers?: string[];
+  webhook_hmac_provider?: string;
+  webhook_secret_ref?: string;
+  webhook_secret?: string;
 }): { label: string; level: 'high' | 'medium' | 'low'; desc: string } => {
   const hasIps = (rule.ip_addresses || []).filter(s => s.trim().length > 0).length > 0;
   const hasHostnames = (rule.hostnames || []).filter(s => s.trim().length > 0).length > 0;
   const hasHeaders = (rule.required_headers || []).filter(s => s.trim().length > 0).length > 0;
   const hasAsns = (rule.asns || []).filter(s => s.trim().length > 0).length > 0;
+  const hasCryptographicHmac =
+    Boolean(rule.webhook_hmac_provider && rule.webhook_hmac_provider !== 'none') &&
+    Boolean((rule.webhook_secret_ref && rule.webhook_secret_ref.trim()) || (rule.webhook_secret && rule.webhook_secret.trim()));
 
-  if (hasHeaders || hasIps || hasHostnames) {
+  if (hasCryptographicHmac || hasIps || hasHostnames) {
     return {
       label: 'High Trust',
       level: 'high',
-      desc: 'Verified via cryptographic signature header, static IP subnet, or two-way reverse DNS.'
+      desc: 'Verified via cryptographic HMAC signature, static IP subnet, or two-way reverse DNS.'
     };
   }
 
-  if (hasAsns) {
+  if (hasAsns || hasHeaders) {
     return {
       label: 'Medium Trust',
       level: 'medium',
-      desc: 'Scoped to authorized Autonomous System Number (ASN) cloud network.'
+      desc: 'Scoped to authorized Autonomous System Number (ASN) or required header presence.'
     };
   }
 
@@ -798,6 +812,11 @@ export const TargetedAllowlistManagerCard: React.FC<TargetedAllowlistManagerCard
   const [formHostnames, setFormHostnames] = useState<string>('');
   const [formAsns, setFormAsns] = useState<string>('');
   const [formHeaders, setFormHeaders] = useState<string>('');
+  const [formHmacProvider, setFormHmacProvider] = useState<WebhookHmacProvider>('none');
+  const [formWebhookSecret, setFormWebhookSecret] = useState<string>('');
+  const [formSecretRef, setFormSecretRef] = useState<string>('');
+  const [formReplayWindow, setFormReplayWindow] = useState<number>(300);
+  const [formAllowUnpinnedHeaders, setFormAllowUnpinnedHeaders] = useState<boolean>(false);
   const [formMethods, setFormMethods] = useState<string[]>(['ALL']);
   const [formDesc, setFormDesc] = useState<string>('');
   const [formLogPayload, setFormLogPayload] = useState<boolean>(true);
@@ -812,6 +831,11 @@ export const TargetedAllowlistManagerCard: React.FC<TargetedAllowlistManagerCard
     setFormHostnames('');
     setFormAsns('');
     setFormHeaders('');
+    setFormHmacProvider('none');
+    setFormWebhookSecret('');
+    setFormSecretRef('');
+    setFormReplayWindow(300);
+    setFormAllowUnpinnedHeaders(false);
     setFormMethods(['ALL']);
     setFormDesc('');
     setFormLogPayload(true);
@@ -828,6 +852,11 @@ export const TargetedAllowlistManagerCard: React.FC<TargetedAllowlistManagerCard
     setFormHostnames((rule.hostnames || []).join('\n'));
     setFormAsns((rule.asns || []).join('\n'));
     setFormHeaders((rule.required_headers || []).join('\n'));
+    setFormHmacProvider((rule.webhook_hmac_provider as WebhookHmacProvider) || 'none');
+    setFormWebhookSecret('');
+    setFormSecretRef(rule.webhook_secret_ref || '');
+    setFormReplayWindow(rule.webhook_replay_window_sec || 300);
+    setFormAllowUnpinnedHeaders(Boolean(rule.allow_unpinned_headers));
     setFormMethods(rule.methods || ['ALL']);
     setFormDesc(rule.description || '');
     setFormLogPayload(rule.log_payload !== false);
@@ -844,6 +873,11 @@ export const TargetedAllowlistManagerCard: React.FC<TargetedAllowlistManagerCard
     setFormHostnames((preset.rule.hostnames || []).join('\n'));
     setFormAsns((preset.rule.asns || []).join('\n'));
     setFormHeaders((preset.rule.required_headers || []).join('\n'));
+    setFormHmacProvider((preset.rule.webhook_hmac_provider as WebhookHmacProvider) || 'none');
+    setFormWebhookSecret('');
+    setFormSecretRef('');
+    setFormReplayWindow(preset.rule.webhook_replay_window_sec || 300);
+    setFormAllowUnpinnedHeaders(Boolean(preset.rule.allow_unpinned_headers));
     setFormMethods(preset.rule.methods || ['ALL']);
     setFormDesc(preset.rule.description || '');
     setFormLogPayload(preset.rule.log_payload !== false);
@@ -892,6 +926,11 @@ export const TargetedAllowlistManagerCard: React.FC<TargetedAllowlistManagerCard
       .map(s => s.trim())
       .filter(Boolean);
 
+    if (formHmacProvider !== 'none' && !formWebhookSecret.trim() && !formSecretRef.trim()) {
+      setFormError('A Webhook Signing Secret is required when Cryptographic HMAC Verification is enabled.');
+      return;
+    }
+
     const updatedRule: TargetedAllowlistRule = {
       id: editingRuleId || `rule_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`,
       name: formName.trim(),
@@ -902,6 +941,13 @@ export const TargetedAllowlistManagerCard: React.FC<TargetedAllowlistManagerCard
       hostnames: hostnames,
       asns: asns,
       required_headers: headers,
+      webhook_hmac_provider: formHmacProvider,
+      webhook_replay_window_sec: Math.max(30, Math.min(900, Number(formReplayWindow) || 300)),
+      webhook_secret_ref: formHmacProvider === 'none' ? '' : formSecretRef,
+      ...(formHmacProvider !== 'none' && formWebhookSecret.trim()
+        ? { webhook_secret: formWebhookSecret.trim() }
+        : {}),
+      allow_unpinned_headers: formAllowUnpinnedHeaders,
       methods: formMethods.length > 0 ? formMethods : ['ALL'],
       log_payload: formLogPayload,
       description: formDesc.trim()
@@ -1119,7 +1165,7 @@ export const TargetedAllowlistManagerCard: React.FC<TargetedAllowlistManagerCard
                 </span>
               </div>
               <p style={{ margin: '0 0 10px 0', fontSize: '12px', color: 'var(--webcare-text-secondary, #475569)', lineHeight: 1.45 }}>
-                We detected plugins installed on this WordPress site that communicate with external APIs and webhooks. You can enable pre-configured zero-trust firewall bypass rules with one click:
+                WebCare Pro detected plugins installed on this WordPress site that communicate with external APIs and webhooks. Enable pre-configured zero-trust firewall bypass rules with one click:
               </p>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
                 {unaddedPresets.map((preset, idx) => (
@@ -1582,7 +1628,10 @@ export const TargetedAllowlistManagerCard: React.FC<TargetedAllowlistManagerCard
                 ip_addresses: formIps.split('\n').filter(Boolean),
                 hostnames: formHostnames.split('\n').filter(Boolean),
                 asns: formAsns.split('\n').filter(Boolean),
-                required_headers: formHeaders.split('\n').filter(Boolean)
+                required_headers: formHeaders.split('\n').filter(Boolean),
+                webhook_hmac_provider: formHmacProvider,
+                webhook_secret_ref: formSecretRef,
+                webhook_secret: formWebhookSecret
               });
 
               return (
@@ -1764,6 +1813,87 @@ export const TargetedAllowlistManagerCard: React.FC<TargetedAllowlistManagerCard
               <span style={{ fontSize: '11px', color: 'var(--webcare-text-muted, #64748b)' }}>
                 Requires incoming request to present this HTTP header (e.g. webhook HMAC signature) to prevent forged calls.
               </span>
+            </div>
+
+            {/* Cryptographic Webhook HMAC & Replay Verification */}
+            <div
+              style={{
+                marginBottom: '14px',
+                padding: '12px 14px',
+                borderRadius: '8px',
+                background: 'var(--webcare-bg-surface, #f8fafc)',
+                border: '1px solid var(--webcare-border-subtle, #e2e8f0)'
+              }}
+            >
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '6px', color: 'var(--webcare-text-primary, #0f172a)' }}>
+                Cryptographic Webhook HMAC Provider (Stored in SecretVault)
+              </label>
+              <select
+                value={formHmacProvider}
+                onChange={e => setFormHmacProvider(e.target.value as WebhookHmacProvider)}
+                className="webcare-input"
+                style={{ width: '100%', fontSize: '12.5px', marginBottom: formHmacProvider !== 'none' ? '10px' : '4px' }}
+              >
+                <option value="none">None (Standard Network / Endpoint Scoping)</option>
+                <option value="stripe">Stripe (Stripe-Signature t=,v1= + Replay Nonce)</option>
+                <option value="github">GitHub (X-Hub-Signature-256 + X-GitHub-Delivery Nonce)</option>
+                <option value="shopify">Shopify (X-Shopify-Hmac-Sha256 + X-Shopify-Webhook-Id Nonce)</option>
+                <option value="generic_sha256">Generic SHA-256 (X-Signature-Sha256 — Payload Integrity Only)</option>
+              </select>
+
+              {formHmacProvider !== 'none' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '11.5px', fontWeight: 700, marginBottom: '4px', color: 'var(--webcare-text-primary, #0f172a)' }}>
+                      Webhook Signing Secret {formSecretRef ? '(Encrypted in SecretVault — enter new value to rotate)' : '*'}
+                    </label>
+                    <input
+                      type="password"
+                      value={formWebhookSecret}
+                      onChange={e => setFormWebhookSecret(e.target.value)}
+                      placeholder={formSecretRef ? '•••••••••••••••• (Vault ref: ' + formSecretRef + ')' : 'whsec_...'}
+                      className="webcare-input"
+                      style={{ width: '100%', fontFamily: 'monospace', fontSize: '12px' }}
+                      autoComplete="new-password"
+                    />
+                  </div>
+
+                  {formHmacProvider !== 'generic_sha256' ? (
+                    <div>
+                      <label style={{ display: 'block', fontSize: '11.5px', fontWeight: 700, marginBottom: '4px', color: 'var(--webcare-text-primary, #0f172a)' }}>
+                        Replay Protection Window (Seconds, 30–900s)
+                      </label>
+                      <input
+                        type="number"
+                        min={30}
+                        max={900}
+                        value={formReplayWindow}
+                        onChange={e => setFormReplayWindow(Number(e.target.value) || 300)}
+                        className="webcare-input"
+                        style={{ width: '140px', fontSize: '12px' }}
+                      />
+                      <span style={{ display: 'block', marginTop: '4px', fontSize: '11px', color: 'var(--webcare-text-muted, #64748b)' }}>
+                        {formHmacProvider === 'stripe' && 'Enforces signed Stripe timestamp drift and single-use signature nonce.'}
+                        {formHmacProvider === 'github' && 'Requires and consumes unique X-GitHub-Delivery UUID within this window.'}
+                        {formHmacProvider === 'shopify' && 'Consumes X-Shopify-Webhook-Id for replay defense when present (falls back to signature_only if omitted).'}
+                      </span>
+                    </div>
+                  ) : (
+                    <div
+                      className="webcare-badge-warning"
+                      style={{
+                        padding: '8px 10px',
+                        borderRadius: '6px',
+                        fontSize: '11px',
+                        lineHeight: 1.45,
+                        border: '1px solid var(--webcare-status-warn-border, #fde68a)'
+                      }}
+                    >
+                      <strong>Replay Protection Notice:</strong> <code>generic_sha256</code> verifies payload HMAC-SHA256 integrity only (<code>X-Signature-Sha256</code> or <code>X-Webhook-Signature</code>). It provides <strong>no built-in signed timestamp or delivery-ID replay header</strong> unless paired with Authorized Client IP / CIDR subnet pinning above.
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* HTTP Methods */}

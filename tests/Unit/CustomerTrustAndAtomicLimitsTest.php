@@ -652,17 +652,17 @@ final class CustomerTrustAndAtomicLimitsTest extends TestCase {
             $this->assertSame(200, $trustRes->get_status());
             $this->assertTrue($trustRes->get_data()['success']);
 
-            // 4. Verify delete_log removes an incident directly from a rotated segment (.2)
+            // 4. Verify delete_log enforces raw WAF log immutability (returns false and preserves incident)
             $deleted = \WebCareProScanner\Firewall\WafFileLogger::delete_log($uniqueRotIncidentId2);
-            $this->assertTrue($deleted, 'delete_log() must successfully delete an incident from a rotated segment');
+            $this->assertFalse($deleted, 'delete_log() must return false to preserve raw forensic WAF log immutability');
 
-            // Confirm it is no longer found
+            // Confirm immutable incident remains intact in rotated segment
             $queryAfterDelete = \WebCareProScanner\Firewall\WafFileLogger::query_logs([
                 'search' => $uniqueRotIncidentId2,
                 'action' => 'all',
                 'range'  => 'all',
             ], 1);
-            $this->assertEmpty($queryAfterDelete['logs'], 'Deleted incident in rotated segment must no longer be discoverable');
+            $this->assertNotEmpty($queryAfterDelete['logs'], 'Immutable incident in rotated segment must remain intact');
 
         } finally {
             // Restore trust option state exactly

@@ -14,6 +14,10 @@ final class DeclarativePatchVerifierTest extends TestCase {
 
     protected function setUp(): void {
         parent::setUp();
+        if (!function_exists('sodium_crypto_sign_keypair')) {
+            $this->markTestSkipped('ext-sodium is required for Ed25519 signature tests.');
+        }
+
         // Generate an Ed25519 keypair using native sodium
         $kp = sodium_crypto_sign_keypair();
         $this->secret_key_hex = bin2hex(sodium_crypto_sign_secretkey($kp));

@@ -446,12 +446,6 @@ final class ViolationResponder {
             header('Content-Type: text/html; charset=utf-8');
         }
 
-        // Test seam for unit test environments
-        if (defined('WEBCAREPROSCAN_TESTING') && WEBCAREPROSCAN_TESTING) {
-            echo $message;
-            return;
-        }
-
         echo '<!DOCTYPE html>' . "\n";
         echo '<html lang="en">' . "\n";
         echo '<head>' . "\n";
@@ -468,6 +462,11 @@ final class ViolationResponder {
         echo $message;
         echo "\n</body>" . "\n";
         echo '</html>';
+
+        // Test seam strictly for PHPUnit test capture (WEBCAREPROSCAN_TESTING is verified absent in release builds)
+        if (defined('WEBCAREPROSCAN_TESTING') && WEBCAREPROSCAN_TESTING) {
+            return;
+        }
         exit;
     }
 
@@ -1119,11 +1118,13 @@ final class ViolationResponder {
             }
         }
 
-        if ($status_code !== 403) {
+        if ($status_code !== 403 && function_exists('status_header')) {
             status_header($status_code);
         }
 
         self::render_block_page($rule, $client_ip, $incident_id);
-        exit;
+        if (!defined('WEBCAREPROSCAN_TESTING') || !WEBCAREPROSCAN_TESTING) {
+            exit;
+        }
     }
 }

@@ -26,6 +26,8 @@ class SafeModeAndDoctorTest extends TestCase {
     }
 
     protected function tearDown(): void {
+        $GLOBALS['wp_mock_current_user_can'] = false;
+        $GLOBALS['wp_mock_current_user'] = null;
         $this->clean_dir($this->test_dir);
         parent::tearDown();
     }
@@ -171,24 +173,20 @@ class SafeModeAndDoctorTest extends TestCase {
         RescueAssistantManager::pause_strict_firewall_15m();
         $this->assertFileExists($marker_path);
 
-        // Make directory read-only so unlink fails or use unwritable file in mock
-        $parent_dir = dirname($marker_path);
-        @chmod($parent_dir, 0555);
-
-        // In test environments where running as root or permissions allow unlink,
-        // test the verify condition logic
-        if (!is_writable($parent_dir)) {
+        // Simulate marker deletion failure via wp_delete_file filter (cross-platform Linux & Windows)
+        add_filter('wp_delete_file', static fn(string $f): string => '');
+        try {
             $res = RescueAssistantManager::resume_strict_firewall();
-            @chmod($parent_dir, 0755);
             $this->assertFalse($res['success']);
             $this->assertStringContainsString('could not delete', $res['message']);
             $this->assertFileExists($marker_path);
-        } else {
-            // Restore write permissions
-            @chmod($parent_dir, 0755);
-            $res = RescueAssistantManager::resume_strict_firewall();
-            $this->assertTrue($res['success']);
-            $this->assertFileDoesNotExist($marker_path);
+        } finally {
+            remove_all_filters('wp_delete_file');
         }
+
+        // Now allow deletion and confirm clean resume
+        $resOk = RescueAssistantManager::resume_strict_firewall();
+        $this->assertTrue($resOk['success']);
+        $this->assertFileDoesNotExist($marker_path);
     }
 }
