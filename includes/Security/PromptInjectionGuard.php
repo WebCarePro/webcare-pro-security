@@ -77,7 +77,7 @@ class PromptInjectionGuard {
     const SECRET_LEAK_PATTERNS = [
         'wp_config_leak'   => '/(?:wp-config\.php|DB_PASSWORD|DB_USER|AUTH_KEY|SECURE_AUTH_KEY|LOGGED_IN_KEY|NONCE_KEY)/i',
         'printenv'         => '/(?:printenv|getenv\(|get_defined_vars|phpinfo\(\))/i',
-        'etc_passwd'       => '/(?:\/etc\/passwd|\/etc\/shadow|\.env\.local|\.env)/i',
+        'etc_passwd'       => '/(?:\/etc\/passwd|\/etc\/shadow|(?<![a-z0-9_])\.env(?:\.(?:local|production|staging|dev))?(?![a-z0-9_]))/i',
     ];
 
     /**
@@ -196,8 +196,10 @@ class PromptInjectionGuard {
 
         // Step 0: Unicode NFKC normalization & zero-width cleaning for probe inspection
         $normalized_probe = $text;
-        if (class_exists('Normalizer') && \Normalizer::isNormalized($text, \Normalizer::FORM_C) === false) {
-            $normalized_probe = \Normalizer::normalize($text, \Normalizer::FORM_C) ?: $text;
+        if (class_exists('Normalizer')) {
+            if (\Normalizer::isNormalized($text, \Normalizer::FORM_KC) === false) {
+                $normalized_probe = \Normalizer::normalize($text, \Normalizer::FORM_KC) ?: $text;
+            }
         }
 
         // 1. Invisible Unicode Tag Characters & Bidi Control Smuggling

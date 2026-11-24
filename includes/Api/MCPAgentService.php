@@ -821,6 +821,15 @@ class MCPAgentService {
             $effective_scope = 'safe_operator';
         }
 
+        // Session Taint Invariant: If session is tainted by external/untrusted data reads, force all mutating tools into staging for human admin approval
+        if (self::is_session_tainted() && ($is_mut || $dynamic_tier > 1)) {
+            return [
+                'allowed'     => true,
+                'force_stage' => true,
+                'reason'      => __('Provenance Policy: Session is tainted by external data input; mutating tool forced into staged approval.', 'webcare-pro-security'),
+            ];
+        }
+
         // Scope 1: read_only - Tier 1 tools only (zero mutating actions)
         if ($effective_scope === 'read_only') {
             if ($is_mut || $dynamic_tier > 1) {

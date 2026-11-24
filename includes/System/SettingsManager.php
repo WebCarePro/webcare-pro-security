@@ -204,6 +204,9 @@ class SettingsManager {
             'waf_admin_ajax_limit_per_min'      => 60,   // Max unauthenticated admin-ajax requests per minute per IP
             'waf_block_oversized_requests'      => true, // Rule #34: Oversized request URI, query string, & parameter count guard
             'waf_block_ai_prompt_injection'     => true, // Rule #35: AI Prompt Injection & Agent Poisoning Shield
+            'waf_cloudflare_proxy_trust_mode'   => 'disabled', // 'disabled' | 'auto_detected' | 'enabled'
+            'waf_cloudflare_origin_secret'      => '', // Optional origin pull secret for strict CF proxy validation
+            'waf_rewrite_server_remote_addr'    => false, // Opt-in rewrite of $_SERVER['REMOTE_ADDR']
             'waf_max_inspected_body_bytes'      => 4194304, // Deep request body inspection ceiling in bytes (default 4 MB, min 1 MB, max 64 MB)
             'waf_guest_ajax_policy'             => 'monitor', // Rule #36: Guest admin-ajax.php & admin-post.php Action Matrix ('monitor' | 'block' | 'off')
             'waf_guest_ajax_custom_allowlist'   => '',        // Newline-separated custom allowed action names
@@ -1010,6 +1013,10 @@ class SettingsManager {
         $clean['waf_admin_ajax_limit_per_min'] = max(10, min(300, (int) ($merged['waf_admin_ajax_limit_per_min'] ?? 60)));
         $clean['waf_block_oversized_requests'] = !empty($merged['waf_block_oversized_requests']);
         $clean['waf_block_ai_prompt_injection'] = !empty($merged['waf_block_ai_prompt_injection']);
+        $cf_mode_in = sanitize_key($merged['waf_cloudflare_proxy_trust_mode'] ?? 'disabled');
+        $clean['waf_cloudflare_proxy_trust_mode'] = in_array($cf_mode_in, ['disabled', 'auto_detected', 'enabled'], true) ? $cf_mode_in : 'disabled';
+        $clean['waf_cloudflare_origin_secret'] = sanitize_text_field($merged['waf_cloudflare_origin_secret'] ?? '');
+        $clean['waf_rewrite_server_remote_addr'] = !empty($merged['waf_rewrite_server_remote_addr']);
         $clean['waf_max_inspected_body_bytes']  = max(1048576, min(67108864, (int) ($merged['waf_max_inspected_body_bytes'] ?? 4194304)));
 
         // Rule #36 & #37: Guest admin-ajax.php / admin-post.php and REST Security Matrix

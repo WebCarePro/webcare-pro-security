@@ -388,6 +388,20 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
     }
 
     /**
+     * Request-scoped cache of normalized query shape verdicts to accelerate repeated SELECTs.
+     *
+     * @var array<string, string|null>
+     */
+    private static array $query_shape_cache = [];
+
+    /**
+     * Reset query shape cache.
+     */
+    public static function reset_query_shape_cache(): void {
+        self::$query_shape_cache = [];
+    }
+
+    /**
      * Pure testable SQL AST anomaly analyzer (strips quoted literals before structural checks).
      *
      * @param string $sql
@@ -399,6 +413,16 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
         $trimmed = trim($sql);
         if ($trimmed === '') {
             return null;
+        }
+
+        // Fast-path caching: Check parameterized query shape fingerprint for idempotent SELECTs
+        $is_select = str_starts_with(strtoupper($trimmed), 'SELECT');
+        $cache_key = '';
+        if ($is_select && strlen($trimmed) < 2048) {
+            $cache_key = md5(preg_replace('/\d+|(?<=\')([^\']*)(?=\')/', '?', $trimmed));
+            if (array_key_exists($cache_key, self::$query_shape_cache)) {
+                return self::$query_shape_cache[$cache_key];
+            }
         }
 
         $users_tbl    = isset($wpdb->users) ? preg_quote($wpdb->users, '/') : 'wp_users';
@@ -477,6 +501,10 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
         }
         if (preg_match('/^\s*DELETE\s+FROM\s+`?' . $posts_tbl . '`?\b/i', $skeleton) && stripos($skeleton, 'WHERE') === false) {
             return 'UNAUTH_MASS_POST_DELETE';
+        }
+
+        if ($cache_key !== '') {
+            self::$query_shape_cache[$cache_key] = null;
         }
 
         return null;

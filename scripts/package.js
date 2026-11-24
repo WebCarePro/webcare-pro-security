@@ -27,9 +27,6 @@ if (fs.existsSync(ZIP_FILE)) {
 const includeFiles = [
   'webcare-pro-security.php',
   'readme.txt',
-  'composer.json',
-  'package.json',
-  'README.md',
   'uninstall.php',
 ];
 
@@ -278,6 +275,31 @@ for (const entry of zip.getEntries()) {
 
 zip.writeZip(ZIP_FILE);
 console.log(`✓ Created: ${ZIP_FILE} (Strict Unix permissions: 0755 dirs, 0644 files)`);
+
+// 6B. Automated post-package verification check: Ensure no forbidden dev/test paths exist in the zip
+console.log('\n--- Running Automated Post-Package Zip Inspection ---');
+const verifyZip = new AdmZip(ZIP_FILE);
+const forbiddenPatterns = [
+  /\/tests\//i,
+  /\/src\//i,
+  /\.map$/i,
+  /phpunit\.xml/i,
+  /compose\.yaml/i,
+  /AGENTS\.md/i,
+  /\/\.agents\//i,
+  /composer\.json/i,
+  /package\.json/i,
+];
+
+for (const entry of verifyZip.getEntries()) {
+  const entryName = entry.entryName;
+  for (const pattern of forbiddenPatterns) {
+    if (pattern.test(entryName)) {
+      throw new Error(`Forbidden file or directory detected in release archive: ${entryName}`);
+    }
+  }
+}
+console.log('✓ Release archive verified 100% clean of tests, source files, sourcemaps, and dev files.');
 
 // Clean up staging folder
 fs.rmSync(DIST_DIR, { recursive: true, force: true });

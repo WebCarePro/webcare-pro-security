@@ -61,8 +61,8 @@ class ClientIpResolver {
     /**
      * Synchronize and normalize $_SERVER['REMOTE_ADDR'] to the resolved real visitor IP.
      *
-     * Ensures downstream WordPress core, plugins, audit loggers, and WooCommerce observe
-     * the real visitor IP instead of Cloudflare internal proxy node IPs on origin servers lacking mod_remoteip.
+     * Gated behind opt-in setting 'waf_rewrite_server_remote_addr' (default false)
+     * so $_SERVER['REMOTE_ADDR'] is not mutated globally unless explicitly enabled by admin.
      *
      * @return void
      */
@@ -74,6 +74,12 @@ class ClientIpResolver {
         // Capture immutable direct connecting peer IP before $_SERVER['REMOTE_ADDR'] is mutated
         if (self::$connecting_peer_ip === null) {
             self::get_connecting_peer_ip();
+        }
+
+        // Opt-in check: only rewrite $_SERVER['REMOTE_ADDR'] if explicitly enabled in settings
+        $settings = class_exists(SettingsManager::class) ? SettingsManager::get_settings() : [];
+        if (empty($settings['waf_rewrite_server_remote_addr'])) {
+            return;
         }
 
         $real_ip = self::get_client_ip();
@@ -116,8 +122,28 @@ class ClientIpResolver {
 
         $resolved_ip = '';
 
-        // Priority 1: Cloudflare CF-Connecting-IP (ONLY if connecting peer is a verified Cloudflare proxy IP)
-        if (!empty($_SERVER['HTTP_CF_CONNECTING_IP']) && self::is_cloudflare_ip($remote_addr)) {
+        // Check Cloudflare Proxy Trust Mode & Origin Secret
+        $settings = class_exists(SettingsManager::class) ? SettingsManager::get_settings() : [];
+        $cf_trust_mode = (string) ($settings['waf_cloudflare_proxy_trust_mode'] ?? 'disabled');
+        $cf_origin_secret = (string) ($settings['waf_cloudflare_origin_secret'] ?? '');
+
+        $cf_trusted = false;
+        if ($cf_trust_mode === 'enabled') {
+            $cf_trusted = true;
+        } elseif ($cf_trust_mode === 'auto_detected') {
+            $cf_trusted = !empty($_SERVER['HTTP_CF_RAY']) || !empty($_SERVER['HTTP_CF_CONNECTING_IP']);
+        }
+
+        // If origin secret is configured, require matching header via timing-attack safe comparison
+        if ($cf_trusted && $cf_origin_secret !== '') {
+            $incoming_secret = (string) ($_SERVER['HTTP_X_ORIGIN_SECRET'] ?? $_SERVER['HTTP_CF_ORIGIN_SECRET'] ?? '');
+            if ($incoming_secret === '' || !hash_equals($cf_origin_secret, $incoming_secret)) {
+                $cf_trusted = false;
+            }
+        }
+
+        // Priority 1: Cloudflare CF-Connecting-IP (ONLY if trust mode allows AND connecting peer is a verified Cloudflare proxy IP)
+        if ($cf_trusted && !empty($_SERVER['HTTP_CF_CONNECTING_IP']) && self::is_cloudflare_ip($remote_addr)) {
             $cf_ip = trim(sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_CONNECTING_IP'])));
             if (stripos($cf_ip, '::ffff:') === 0) {
                 $mapped_cf = substr($cf_ip, 7);
@@ -170,12 +196,21 @@ class ClientIpResolver {
         self::$real_ip = null;
     }
 
+    public const CRON_HOOK_REFRESH_CIDRS = 'webcareproscan_refresh_cf_cidrs';
+    public const OPTION_CF_CIDR_CACHE     = 'webcareproscan_cf_cidr_cache';
+
     /**
      * Official Cloudflare IPv4 and IPv6 CIDR ranges for Anycast edge proxy verification.
+     * Checks persistent cache first; falls back to embedded defaults.
      *
      * @return array<int, string>
      */
     public static function get_cloudflare_ip_ranges(): array {
+        $cached = get_option(self::OPTION_CF_CIDR_CACHE, []);
+        if (is_array($cached) && !empty($cached)) {
+            return $cached;
+        }
+
         return [
             // Cloudflare IPv4 CIDRs
             '103.21.244.0/22',
@@ -203,6 +238,46 @@ class ClientIpResolver {
             '2a06:98c0::/29',
             '2c0f:f248::/32',
         ];
+    }
+
+    /**
+     * Asynchronously refresh official Cloudflare IPv4 and IPv6 CIDR lists from cloudflare.com.
+     *
+     * @return bool True if CIDRs were refreshed, false otherwise.
+     */
+    public static function refresh_cloudflare_cidrs(): bool {
+        $v4_res = wp_safe_remote_get('https://www.cloudflare.com/ips-v4', ['timeout' => 5]);
+        $v6_res = wp_safe_remote_get('https://www.cloudflare.com/ips-v6', ['timeout' => 5]);
+
+        if (is_wp_error($v4_res) || is_wp_error($v6_res)) {
+            return false;
+        }
+
+        $v4_body = wp_remote_retrieve_body($v4_res);
+        $v6_body = wp_remote_retrieve_body($v6_res);
+
+        $v4_lines = array_filter(array_map('trim', explode("\n", $v4_body)));
+        $v6_lines = array_filter(array_map('trim', explode("\n", $v6_body)));
+
+        $valid_cidrs = [];
+        foreach (array_merge($v4_lines, $v6_lines) as $cidr) {
+            if ($cidr === '') {
+                continue;
+            }
+            if (str_contains($cidr, '/')) {
+                [$sub, $bits] = explode('/', $cidr, 2);
+                if (filter_var($sub, FILTER_VALIDATE_IP) && ctype_digit($bits)) {
+                    $valid_cidrs[] = $cidr;
+                }
+            }
+        }
+
+        if (count($valid_cidrs) >= 15) {
+            update_option(self::OPTION_CF_CIDR_CACHE, $valid_cidrs, false);
+            return true;
+        }
+
+        return false;
     }
 
     /**

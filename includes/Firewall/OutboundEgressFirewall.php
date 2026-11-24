@@ -308,6 +308,7 @@ class OutboundEgressFirewall {
             'block_exfil_webhooks' => true,
             'block_suspicious_tld' => false,
             'allowed_hosts'        => [],
+            'approved_third_party_webhooks' => [],
         ];
         $saved = get_option(self::OPTION_SETTINGS, []);
         return is_array($saved) ? array_merge($defaults, $saved) : $defaults;
@@ -681,7 +682,23 @@ class OutboundEgressFirewall {
             return true;
         }
 
-        // 4. Extensibility filter: allow other plugins to register approved webhook destinations
+        // 4. Approved third-party webhooks allowlist (scoped by exact webhook URL prefix + originating plugin slug)
+        $approved_third_party = is_array($settings['approved_third_party_webhooks'] ?? null) ? $settings['approved_third_party_webhooks'] : [];
+        $caller_slug = strtolower(trim((string) ($caller['slug'] ?? '')));
+        foreach ($approved_third_party as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            $prefix = strtolower(trim((string) ($entry['url_prefix'] ?? '')));
+            $entry_slug = strtolower(trim((string) ($entry['plugin_slug'] ?? '')));
+            if ($prefix !== '' && (str_starts_with($clean_target_url, $prefix) || $clean_target_url === $prefix)) {
+                if ($entry_slug === '' || $entry_slug === $caller_slug) {
+                    return true;
+                }
+            }
+        }
+
+        // 5. Extensibility filter: allow other plugins to register approved webhook destinations
         $approved_webhooks = apply_filters('webcare_approved_outbound_webhooks', []);
         if (is_array($approved_webhooks)) {
             foreach ($approved_webhooks as $approved_url) {
