@@ -330,10 +330,6 @@ class FirewallEngine {
         }
 
         // Layer 2: Independent Cryptographic Auth Cookie Validation & Session Token Extraction
-        if (!function_exists('wp_validate_auth_cookie') && defined('ABSPATH') && file_exists(ABSPATH . 'wp-includes/pluggable.php')) {
-            require_once ABSPATH . 'wp-includes/pluggable.php';
-        }
-
         if (function_exists('wp_validate_auth_cookie')) {
             $auth_cookie    = '';
             $cookie_schemes = ['logged_in', 'secure_auth', 'auth'];
@@ -740,9 +736,6 @@ class FirewallEngine {
         }
 
         if ($verified_user_id <= 0) {
-            if (!function_exists('wp_validate_auth_cookie') && defined('ABSPATH') && file_exists(ABSPATH . 'wp-includes/pluggable.php')) {
-                require_once ABSPATH . 'wp-includes/pluggable.php';
-            }
             if (function_exists('wp_validate_auth_cookie') && !empty($_COOKIE)) {
                 foreach ($_COOKIE as $c_name => $c_val) {
                     if (strpos($c_name, 'wordpress_logged_in_') === 0 || strpos($c_name, 'wordpress_sec_') === 0) {
@@ -786,10 +779,6 @@ class FirewallEngine {
         } elseif (!empty($_REQUEST['editor_post_nonce'])) {
             // phpcs:ignore WordPress.Security.NonceVerification.Recommended
             $nonce = sanitize_text_field(wp_unslash($_REQUEST['editor_post_nonce']));
-        }
-
-        if (!function_exists('wp_verify_nonce') && defined('ABSPATH') && file_exists(ABSPATH . 'wp-includes/pluggable.php')) {
-            require_once ABSPATH . 'wp-includes/pluggable.php';
         }
 
         $nonce_valid = false;

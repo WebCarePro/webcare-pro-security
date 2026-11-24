@@ -252,7 +252,7 @@ class WebAuthnManager {
             ];
         }
 
-        if (($client_data['challenge'] ?? '') !== $stored['challenge']) {
+        if (!hash_equals((string) $stored['challenge'], (string) ($client_data['challenge'] ?? ''))) {
             return [
                 'success' => false,
                 'message' => __('Registration challenge verification mismatch.', 'webcare-pro-security'),
@@ -285,46 +285,114 @@ class WebAuthnManager {
             ];
         }
 
-        // Parse Attestation Object to extract public key PEM
+        // Parse Attestation Object using StrictCborDecoder
         $attestation_bin = self::base64url_decode($attestation_obj_b64);
+        if ($attestation_bin === '') {
+            return [
+                'success' => false,
+                'message' => __('Invalid or empty attestation object.', 'webcare-pro-security'),
+            ];
+        }
 
-        // Verify rpIdHash and UP/UV flags in authenticatorData inside attestation object
+        try {
+            $attestation_map = StrictCborDecoder::decode($attestation_bin);
+        } catch (\Throwable $e) {
+            return [
+                'success' => false,
+                'message' => __('Attestation CBOR decode failed: ', 'webcare-pro-security') . $e->getMessage(),
+            ];
+        }
+
+        if (!is_array($attestation_map) || !isset($attestation_map['authData']) || !is_string($attestation_map['authData'])) {
+            return [
+                'success' => false,
+                'message' => __('Malformed attestation object: missing authData.', 'webcare-pro-security'),
+            ];
+        }
+
+        $auth_data = $attestation_map['authData'];
+        if (strlen($auth_data) < 55) {
+            return [
+                'success' => false,
+                'message' => __('Attestation authData buffer underflow.', 'webcare-pro-security'),
+            ];
+        }
+
         $expected_rp_id   = self::get_rp_id();
         $expected_rp_hash = hash('sha256', $expected_rp_id, true);
-        $auth_data_pos    = strpos($attestation_bin, 'authData');
-        if ($auth_data_pos !== false) {
-            $after_tag = $auth_data_pos + 8;
-            if ($after_tag < strlen($attestation_bin)) {
-                $lead        = ord($attestation_bin[$after_tag]);
-                $auth_offset = $after_tag + 1;
-                if ($lead === 0x58) {
-                    $auth_offset = $after_tag + 2;
-                } elseif ($lead === 0x59) {
-                    $auth_offset = $after_tag + 3;
-                }
-                $auth_data = substr($attestation_bin, $auth_offset);
-                if (strlen($auth_data) >= 37) {
-                    $incoming_rp_hash = substr($auth_data, 0, 32);
-                    if (!hash_equals($expected_rp_hash, $incoming_rp_hash)) {
-                        return [
-                            'success' => false,
-                            'message' => __('WebAuthn registration RP ID verification failed.', 'webcare-pro-security'),
-                        ];
+        $incoming_rp_hash = substr($auth_data, 0, 32);
+        if (!hash_equals($expected_rp_hash, $incoming_rp_hash)) {
+            return [
+                'success' => false,
+                'message' => __('WebAuthn registration RP ID verification failed.', 'webcare-pro-security'),
+            ];
+        }
+
+        $reg_flags         = ord($auth_data[32]);
+        $reg_user_present  = ($reg_flags & 0x01) !== 0;
+        $reg_user_verified = ($reg_flags & 0x04) !== 0;
+        $has_attested_cred = ($reg_flags & 0x40) !== 0;
+
+        if (!$reg_user_present || !$reg_user_verified) {
+            return [
+                'success' => false,
+                'message' => __('Registration failed: Biometric or PIN user verification (UV flag) was not asserted by the authenticator.', 'webcare-pro-security'),
+            ];
+        }
+
+        if (!$has_attested_cred) {
+            return [
+                'success' => false,
+                'message' => __('Registration failed: Authenticator did not assert attested credential data (AT flag).', 'webcare-pro-security'),
+            ];
+        }
+
+        // Extract credId from attested credential data: AAGUID (16 bytes) at 37, credIdLen (2 bytes) at 53
+        $cred_id_len = (ord($auth_data[53]) << 8) | ord($auth_data[54]);
+        if (strlen($auth_data) < 55 + $cred_id_len) {
+            return [
+                'success' => false,
+                'message' => __('Attested credential data underflow reading credential ID.', 'webcare-pro-security'),
+            ];
+        }
+
+        $auth_cred_id_raw = substr($auth_data, 55, $cred_id_len);
+        $client_cred_id_raw = self::base64url_decode($credential_id);
+        if ($client_cred_id_raw !== '' && !hash_equals($auth_cred_id_raw, $client_cred_id_raw)) {
+            return [
+                'success' => false,
+                'message' => __('Credential ID mismatch between authData and client payload.', 'webcare-pro-security'),
+            ];
+        }
+
+        $cose_offset = 55 + $cred_id_len;
+        $cose_bytes = substr($auth_data, $cose_offset);
+        $public_key_pem = '';
+
+        if ($cose_bytes !== '') {
+            try {
+                $cose_key = StrictCborDecoder::decode($cose_bytes);
+                if (is_array($cose_key)) {
+                    $kty = $cose_key[1] ?? null;
+                    $crv = $cose_key[-1] ?? null;
+                    $x   = $cose_key[-2] ?? null;
+                    $y   = $cose_key[-3] ?? null;
+                    // COSE Key EC2 (kty=2) and P-256 (crv=1)
+                    if ($kty === 2 && $crv === 1 && is_string($x) && is_string($y) && strlen($x) === 32 && strlen($y) === 32) {
+                        $raw_point = "\x04" . $x . $y;
+                        $spki_prefix = hex2bin('3059301306072a8648ce3d020106082a8648ce3d030107034200');
+                        $spki = $spki_prefix . $raw_point;
+                        $public_key_pem = "-----BEGIN PUBLIC KEY-----\n" . chunk_split(base64_encode($spki), 64, "\n") . "-----END PUBLIC KEY-----\n";
                     }
-                    $reg_flags         = ord($auth_data[32]);
-                    $reg_user_present  = ($reg_flags & 0x01) !== 0;
-                    $reg_user_verified = ($reg_flags & 0x04) !== 0;
-                    if (!$reg_user_present || !$reg_user_verified) {
-                        return [
-                            'success' => false,
-                            'message' => __('Registration failed: Biometric or PIN user verification (UV flag) was not asserted by the authenticator.', 'webcare-pro-security'),
-                        ];
-                    }
                 }
+            } catch (\Throwable) {
+                // Defer to fallback
             }
         }
 
-        $public_key_pem = self::extract_public_key_pem_from_attestation($attestation_bin);
+        if (empty($public_key_pem)) {
+            $public_key_pem = self::extract_public_key_pem_from_attestation($attestation_bin);
+        }
 
         // Fallback: check if client provided direct DER public key via getPublicKey()
         $client_pk_b64 = $payload['response']['publicKey'] ?? '';
@@ -667,7 +735,7 @@ class WebAuthnManager {
             ];
         }
 
-        wp_set_auth_cookie($matched_user_id, true);
+        wp_set_auth_cookie($matched_user_id, (bool) apply_filters('webauthn_remember_session', true, $matched_user_id));
 
         // Notify plugins and hooks
         // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- Standard WordPress core login hook invocation

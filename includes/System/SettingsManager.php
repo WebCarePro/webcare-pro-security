@@ -529,6 +529,9 @@ class SettingsManager {
                 'required_headers' => is_array($rule['required_headers'] ?? null)
                     ? array_values(array_filter(array_map('sanitize_text_field', $rule['required_headers'])))
                     : array_values(array_filter(array_map('sanitize_text_field', explode("\n", str_replace("\r", "", (string) ($rule['required_headers'] ?? '')))))),
+                'webhook_provider' => sanitize_key($rule['webhook_provider'] ?? ''),
+                'webhook_secret'   => sanitize_text_field($rule['webhook_secret'] ?? ''),
+                'allow_unpinned_headers' => !empty($rule['allow_unpinned_headers']),
                 'methods'          => is_array($rule['methods'] ?? null)
                     ? array_values(array_filter(array_map('sanitize_text_field', $rule['methods'])))
                     : ['ALL'],
@@ -545,6 +548,13 @@ class SettingsManager {
 
             if (!$has_ips && !$has_endpoints && !$has_hosts && !$has_asns) {
                 continue; // Skip invalid, match-all empty allowlist rule
+            }
+
+            // Security Hardening: Header-only rules without endpoint/IP/host pinning or cryptographic secret require explicit acknowledgment
+            $is_unpinned = empty($clean_rule['ip_addresses']) && empty($clean_rule['hostnames']) && empty($clean_rule['asns']);
+            $has_headers_only = !empty($clean_rule['required_headers']) && $is_unpinned && empty($clean_rule['webhook_secret']);
+            if ($has_headers_only && empty($clean_rule['allow_unpinned_headers'])) {
+                continue; // Reject unpinned header-only rule without explicit user acknowledgment
             }
 
             $clean_targeted[] = $clean_rule;

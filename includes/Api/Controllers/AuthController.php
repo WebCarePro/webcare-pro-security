@@ -1208,12 +1208,11 @@ final class AuthController extends AbstractApiController {
 
         $route = (string) $request->get_route();
         $is_verify = strpos($route, 'login-verify') !== false;
-        $action = $is_verify ? 'verify' : 'options';
-        $max_ip_attempts = $is_verify ? 10 : 25; // 10 verifications / 5 min, 25 options / 5 min
-        $window = 300;
-
-        if (class_exists('\\WebCareProScanner\\Auth\\WebAuthnManager')) {
-            if (!\WebCareProScanner\Auth\WebAuthnManager::check_ip_rate_limit($action, $max_ip_attempts, $window)) {
+        // In verify requests, WebAuthnManager::verify_login() enforces the authoritative attempt rate limit
+        if (!$is_verify && class_exists('\\WebCareProScanner\\Auth\\WebAuthnManager')) {
+            $max_ip_attempts = 25; // 25 options requests / 5 min
+            $window = 300;
+            if (!\WebCareProScanner\Auth\WebAuthnManager::check_ip_rate_limit('options', $max_ip_attempts, $window)) {
                 return new \WP_Error(
                     'rest_rate_limited',
                     __('Too many authentication requests from this IP. Please wait a few minutes.', 'webcare-pro-security'),

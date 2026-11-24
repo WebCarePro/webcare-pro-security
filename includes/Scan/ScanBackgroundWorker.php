@@ -128,12 +128,16 @@ final class ScanBackgroundWorker {
             wp_send_json_error(['message' => 'Invalid loopback signature.'], 403);
         }
 
-        // Prevent token replay attacks
-        $replay_transient = 'webcare_scan_lb_nonce_' . md5($rand_nonce);
-        if (get_transient($replay_transient)) {
-            wp_send_json_error(['message' => 'Replayed loopback token.'], 403);
+        // Prevent token replay attacks via AtomicNonceStore
+        if (!class_exists(\WebCareProScanner\Security\AtomicNonceStore::class) || !\WebCareProScanner\Security\AtomicNonceStore::consume('scan_tick', $rand_nonce, 300)) {
+            wp_send_json_error(['message' => 'Replayed or invalid loopback token.'], 403);
         }
-        set_transient($replay_transient, 1, 300);
+
+        // Verify that target scan is still active and locked
+        $locked_id = ScanLock::get_locked_scan_id();
+        if ($locked_id === null || $locked_id !== $scan_id) {
+            wp_send_json_error(['message' => 'Target scan is no longer active or locked.'], 409);
+        }
 
         // Advance scan by running background step
         $result = self::run_background_step(false);

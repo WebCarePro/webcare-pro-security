@@ -337,6 +337,24 @@ class ResponseDlpSentinel implements SecurityModuleInterface {
      * Inlines redaction without serving 403s or banning visitors.
      */
     public static function filter_guest_output_buffer(string $buffer): string {
+        // Fast-path bypass for binary, attachment, SSE, or compressed streams
+        if (function_exists('headers_list')) {
+            foreach (headers_list() as $header_line) {
+                $hl = strtolower($header_line);
+                if (
+                    str_contains($hl, 'content-disposition:') && str_contains($hl, 'attachment')
+                    || str_contains($hl, 'content-type: text/event-stream')
+                    || str_contains($hl, 'content-type: application/octet-stream')
+                    || str_contains($hl, 'content-type: video/')
+                    || str_contains($hl, 'content-type: audio/')
+                    || str_contains($hl, 'content-encoding: gzip')
+                    || str_contains($hl, 'content-encoding: br')
+                ) {
+                    return $buffer;
+                }
+            }
+        }
+
         $result = self::inspect_and_redact($buffer, true);
         if (empty($result['leaked'])) {
             return $buffer;

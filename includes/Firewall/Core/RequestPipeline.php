@@ -178,18 +178,32 @@ final class RequestPipeline {
                 }
             }
         } catch (\Throwable $e) {
-            // Fail-closed invariant: Log critical failure
-            if (class_exists(FirewallEngine::class)) {
-                FirewallEngine::log_incident([
-                    'id'          => 'WAF-PIPELINE-EXCEPTION',
-                    'name'        => 'Pipeline Exception Fail-Closed',
-                    'category'    => 'System Integrity',
-                    'description' => 'Firewall pipeline caught unhandled exception; failing closed: ' . $e->getMessage(),
-                    'match_type'  => 'Exception Guard',
-                    'match_value' => $e->getCode(),
-                    'payload'     => $e->getFile() . ':' . $e->getLine(),
-                ], 'blocked');
+            // Fail-closed invariant with 4-tier exception classification:
+            // Log critical failure
+            try {
+                if (class_exists(FirewallEngine::class)) {
+                    FirewallEngine::log_incident([
+                        'id'          => 'WAF-PIPELINE-EXCEPTION',
+                        'name'        => 'Pipeline Exception Fail-Closed',
+                        'category'    => 'System Integrity',
+                        'description' => 'Firewall pipeline caught unhandled exception: ' . $e->getMessage(),
+                        'match_type'  => 'Exception Guard',
+                        'match_value' => $e->getCode(),
+                        'payload'     => $e->getFile() . ':' . $e->getLine(),
+                    ], 'blocked');
+                }
+            } catch (\Throwable) {
+                // Tier 3: Telemetry/logging failures must never abort request execution
             }
+
+            // Tier 4: Outer exception boundary - allow /wp-admin/ rescue to prevent permanent admin lockout
+            $req_uri = isset($_SERVER['REQUEST_URI']) ? (string) $_SERVER['REQUEST_URI'] : '';
+            $is_admin_rescue = str_contains($req_uri, '/wp-admin/') || str_contains($req_uri, 'wp-login.php');
+            if ($is_admin_rescue) {
+                @error_log('[WebCare RequestPipeline] Permitting rescue admin access after pipeline exception: ' . $e->getMessage());
+                return;
+            }
+
             if (function_exists('status_header')) {
                 status_header(503);
             } elseif (!headers_sent()) {

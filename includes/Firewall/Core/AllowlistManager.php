@@ -297,9 +297,8 @@ final class AllowlistManager {
                 }
             }
 
-            // 7. Required HTTP Headers Presence (required_header_presence)
-            // Note: This checks the presence of headers (e.g. X-Shopify-Hmac-Sha256, Stripe-Signature, X-Square-Hmacsha256-Signature).
-            // This is header-presence verification, not cryptographic signature authentication.
+            // 7. Required HTTP Headers Presence (required_header_presence) & Cryptographic HMAC Verification
+            // Note: This checks the presence of headers and verifies HMAC signature if a webhook secret is configured.
             $rule_headers = !empty($rule['required_headers']) && is_array($rule['required_headers']) ? $rule['required_headers'] : [];
             if (!empty($rule_headers)) {
                 $headers_matched = true;
@@ -317,6 +316,16 @@ final class AllowlistManager {
                 }
                 if (!$headers_matched) {
                     continue; // Required header missing
+                }
+            }
+
+            // Cryptographic Webhook HMAC Signature Verification
+            $webhook_secret = trim((string) ($rule['webhook_secret'] ?? ''));
+            if ($webhook_secret !== '') {
+                $raw_body = (string) file_get_contents('php://input');
+                $provider = strtolower(trim((string) ($rule['webhook_provider'] ?? 'generic')));
+                if (!self::verify_webhook_hmac($provider, $webhook_secret, $raw_body)) {
+                    continue; // Cryptographic HMAC verification failed
                 }
             }
 
@@ -556,5 +565,103 @@ final class AllowlistManager {
 
         // Pre-authenticated / unauthenticated traffic: strictly prohibited from bypassing critical exploits or confirmed exploit signatures
         return !$is_critical_exploit && ($full_bypass || $rule_bypass);
+    }
+
+    /**
+     * Verify cryptographic HMAC signature on incoming webhooks with replay protection.
+     *
+     * Supported providers:
+     * - 'stripe': Stripe-Signature header with timestamp t= and signature v1=, tolerance <= 300s
+     * - 'shopify': X-Shopify-Hmac-Sha256 base64 header
+     * - 'github': X-Hub-Signature-256 header (sha256=hex)
+     * - 'generic': sha256 HMAC header or raw hex
+     *
+     * @param string $provider
+     * @param string $secret
+     * @param string $raw_body
+     * @param int    $tolerance_seconds
+     * @return bool
+     */
+    public static function verify_webhook_hmac(string $provider, string $secret, string $raw_body, int $tolerance_seconds = 300): bool {
+        if ($secret === '') {
+            return false;
+        }
+
+        return match ($provider) {
+            'stripe' => self::verify_stripe_hmac($secret, $raw_body, $tolerance_seconds),
+            'shopify' => self::verify_shopify_hmac($secret, $raw_body),
+            'github' => self::verify_github_hmac($secret, $raw_body),
+            default => self::verify_generic_hmac($secret, $raw_body),
+        };
+    }
+
+    private static function verify_stripe_hmac(string $secret, string $raw_body, int $tolerance_seconds): bool {
+        $sig_header = (string) ($_SERVER['HTTP_STRIPE_SIGNATURE'] ?? '');
+        if ($sig_header === '') {
+            return false;
+        }
+
+        $timestamp = 0;
+        $signatures = [];
+        foreach (explode(',', $sig_header) as $part) {
+            $kv = explode('=', trim($part), 2);
+            if (count($kv) === 2) {
+                if ($kv[0] === 't') {
+                    $timestamp = (int) $kv[1];
+                } elseif ($kv[0] === 'v1') {
+                    $signatures[] = $kv[1];
+                }
+            }
+        }
+
+        if ($timestamp <= 0 || empty($signatures)) {
+            return false;
+        }
+
+        if (abs(time() - $timestamp) > $tolerance_seconds) {
+            return false;
+        }
+
+        $signed_payload = $timestamp . '.' . $raw_body;
+        $expected = hash_hmac('sha256', $signed_payload, $secret);
+
+        foreach ($signatures as $sig) {
+            if (hash_equals($expected, $sig)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static function verify_shopify_hmac(string $secret, string $raw_body): bool {
+        $header = (string) ($_SERVER['HTTP_X_SHOPIFY_HMAC_SHA256'] ?? '');
+        if ($header === '') {
+            return false;
+        }
+
+        $calculated = base64_encode(hash_hmac('sha256', $raw_body, $secret, true));
+        return hash_equals($calculated, $header);
+    }
+
+    private static function verify_github_hmac(string $secret, string $raw_body): bool {
+        $header = (string) ($_SERVER['HTTP_X_HUB_SIGNATURE_256'] ?? '');
+        if ($header === '' || !str_starts_with($header, 'sha256=')) {
+            return false;
+        }
+
+        $sig = substr($header, 7);
+        $calculated = hash_hmac('sha256', $raw_body, $secret);
+        return hash_equals($calculated, $sig);
+    }
+
+    private static function verify_generic_hmac(string $secret, string $raw_body): bool {
+        $header = (string) ($_SERVER['HTTP_X_SIGNATURE_SHA256'] ?? $_SERVER['HTTP_X_WEBHOOK_SIGNATURE'] ?? '');
+        if ($header === '') {
+            return false;
+        }
+
+        $calculated = hash_hmac('sha256', $raw_body, $secret);
+        return hash_equals($calculated, $header);
     }
 }

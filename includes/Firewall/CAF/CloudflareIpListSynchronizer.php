@@ -1876,12 +1876,10 @@ class CloudflareIpListSynchronizer {
             \wp_send_json_error(['message' => 'Invalid loopback signature.'], 403);
         }
 
-        // Prevent replay attacks by tracking nonce transient
-        $replay_transient = 'webcare_cf_lb_nonce_' . md5($rand_nonce);
-        if (get_transient($replay_transient)) {
-            \wp_send_json_error(['message' => 'Replayed loopback token.'], 403);
+        // Prevent replay attacks by consuming nonce atomically
+        if (!class_exists(\WebCareProScanner\Security\AtomicNonceStore::class) || !\WebCareProScanner\Security\AtomicNonceStore::consume('cf_flush', $rand_nonce, 300)) {
+            \wp_send_json_error(['message' => 'Replayed or invalid loopback token.'], 403);
         }
-        set_transient($replay_transient, 1, 300);
 
         $sync = new self();
         $sync->process_sync_queue();
