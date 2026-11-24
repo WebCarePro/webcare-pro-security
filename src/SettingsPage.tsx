@@ -190,7 +190,6 @@ export type SettingsSubTab =
   | 'mcp'
   | 'performance'
   | 'import_export'
-  | 'updates'
   | 'cleanup'
   | 'activity_logs'
   | 'support';
@@ -447,7 +446,7 @@ const SETTINGS_CATEGORIES: SettingsCategoryGroup[] = [
   },
   {
     id: 'system_updates',
-    name: 'System & Updates',
+    name: 'System & Maintenance',
     tagline: 'Resource limits, configuration backup, cleanup & direct support',
     badge: 'System',
     accent: '#0f766e',
@@ -467,14 +466,6 @@ const SETTINGS_CATEGORIES: SettingsCategoryGroup[] = [
         shortDesc: 'Portable JSON config backup',
         icon: Download,
         getBadge: () => ({ text: 'Backup/Sync', bg: '#f1f5f9', color: '#475569' })
-      },
-      {
-        id: 'updates',
-        label: 'Plugin Updates & Rollback',
-        shortDesc: 'GitHub releases, 1-click update & rollback',
-        icon: RefreshCw,
-        isNew: true,
-        getBadge: () => ({ text: 'GitHub Sync', bg: '#ecfdf5', color: '#047857' })
       },
       {
         id: 'cleanup',
@@ -519,7 +510,6 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
       performance: 'performance',
       'import-export': 'import_export',
       import_export: 'import_export',
-      updates: 'updates',
       data: 'cleanup',
       cleanup: 'cleanup',
       activity_logs: 'activity_logs',
@@ -1096,154 +1086,6 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
     });
   };
 
-  // ==========================================
-  // GitHub Plugin Updater & Rollback State
-  // ==========================================
-  const [updaterStatus, setUpdaterStatus] = useState<any>(null);
-  const [updaterBackups, setUpdaterBackups] = useState<any[]>([]);
-  const [loadingUpdater, setLoadingUpdater] = useState<boolean>(false);
-  const [checkingUpdate, setCheckingUpdate] = useState<boolean>(false);
-  const [executingUpdate, setExecutingUpdate] = useState<boolean>(false);
-  const [creatingBackup, setCreatingBackup] = useState<boolean>(false);
-  const [rollingBackId, setRollingBackId] = useState<string | null>(null);
-  const [updaterMessage, setUpdaterMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
-
-  const loadUpdaterData = async () => {
-    try {
-      setLoadingUpdater(true);
-      const res = await apiRequest({ path: '/updater/status', method: 'GET' });
-      if (res && res.success) {
-        setUpdaterStatus(res.status);
-        setUpdaterBackups(res.backups || []);
-      }
-    } catch (err: any) {
-      console.warn('Failed to load updater status', err);
-    } finally {
-      setLoadingUpdater(false);
-    }
-  };
-
-  const handleCheckUpdates = async () => {
-    try {
-      setCheckingUpdate(true);
-      setUpdaterMessage(null);
-      const res = await apiRequest({ path: '/updater/check', method: 'POST' });
-      if (res && res.success) {
-        setUpdaterStatus(res.status);
-        setUpdaterBackups(res.backups || []);
-        setUpdaterMessage({
-          type: res.status?.has_update ? 'info' : 'success',
-          text: res.message || 'Check complete.'
-        });
-      } else {
-        setUpdaterMessage({ type: 'error', text: res?.message || 'Could not reach GitHub.' });
-      }
-    } catch (err: any) {
-      setUpdaterMessage({ type: 'error', text: err?.message || 'Failed to check for updates.' });
-    } finally {
-      setCheckingUpdate(false);
-    }
-  };
-
-  const handleExecuteUpdate = async (customDownloadUrl?: string) => {
-    const versionTarget = updaterStatus?.latest_version || 'latest';
-    requestSettingsConfirm({
-      title: 'Update WebCare Pro Security & Firewall',
-      message: `Are you sure you want to update to version ${versionTarget} directly from GitHub? A safety backup of your current installation will be automatically created first.`,
-      targetItem: `Version ${versionTarget}`,
-      confirmLabel: 'Update Now',
-      variant: 'primary',
-      onConfirm: async () => {
-        try {
-          setExecutingUpdate(true);
-          setUpdaterMessage({ type: 'info', text: 'Creating pre-update backup and downloading release package from GitHub...' });
-          const res = await apiRequest({
-            path: '/updater/update-now',
-            method: 'POST',
-            data: { download_url: customDownloadUrl || undefined }
-          });
-          if (res && res.success) {
-            setUpdaterMessage({
-              type: 'success',
-              text: `✓ ${res.message} Reloading interface in 3 seconds...`
-            });
-            loadUpdaterData();
-            setTimeout(() => {
-              window.location.reload();
-            }, 3000);
-          } else {
-            setUpdaterMessage({ type: 'error', text: res?.message || 'Update failed.' });
-          }
-        } catch (err: any) {
-          setUpdaterMessage({ type: 'error', text: err?.message || 'Update failed. Check folder write permissions.' });
-        } finally {
-          setExecutingUpdate(false);
-        }
-      },
-    });
-  };
-
-  const handleCreateBackup = async () => {
-    try {
-      setCreatingBackup(true);
-      setUpdaterMessage(null);
-      const res = await apiRequest({ path: '/updater/create-backup', method: 'POST' });
-      if (res && res.success) {
-        setUpdaterBackups(res.backups || []);
-        setUpdaterMessage({ type: 'success', text: res.message || 'Safety backup created successfully.' });
-      } else {
-        setUpdaterMessage({ type: 'error', text: res?.message || 'Backup failed.' });
-      }
-    } catch (err: any) {
-      setUpdaterMessage({ type: 'error', text: err?.message || 'Failed to create backup.' });
-    } finally {
-      setCreatingBackup(false);
-    }
-  };
-
-  const handleRollback = async (backupId: string, downloadUrl?: string, targetVersion?: string) => {
-    const label = targetVersion ? `version ${targetVersion}` : 'this version';
-    requestSettingsConfirm({
-      title: 'Rollback Plugin Release',
-      message: `Are you sure you want to rollback to ${label}? Your current installation files will be replaced with this version.`,
-      targetItem: label,
-      confirmLabel: 'Rollback Release',
-      variant: 'warning',
-      onConfirm: async () => {
-        try {
-          setRollingBackId(backupId);
-          setUpdaterMessage({ type: 'info', text: `Restoring ${label}...` });
-          const res = await apiRequest({
-            path: '/updater/rollback',
-            method: 'POST',
-            data: {
-              backup_id: backupId,
-              download_url: downloadUrl || undefined,
-            }
-          });
-          if (res && res.success) {
-            setUpdaterMessage({
-              type: 'success',
-              text: `✓ ${res.message} Reloading interface in 3 seconds...`
-            });
-            loadUpdaterData();
-            setTimeout(() => {
-              window.location.reload();
-            }, 3000);
-          } else {
-            setUpdaterMessage({ type: 'error', text: res?.message || 'Rollback failed.' });
-          }
-        } catch (err: any) {
-          setUpdaterMessage({ type: 'error', text: err?.message || 'Rollback failed.' });
-        } finally {
-          setRollingBackId(null);
-        }
-      },
-    });
-  };
-
-  // Load models catalog
-
   // Load models catalog
   const loadModelsCatalog = async () => {
     try {
@@ -1329,14 +1171,10 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
     loadSettings();
     loadModelsCatalog();
     loadHardeningAudit();
-    loadUpdaterData();
     loadCloudflareData();
   }, []);
 
   useEffect(() => {
-    if (activeSubTab === 'updates') {
-      loadUpdaterData();
-    }
     if (activeSubTab === 'cloudflare') {
       loadCloudflareData();
     }
@@ -1469,6 +1307,12 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
       } else if (provider === 'claude') {
         apiKey = settings.claude_api_key || '';
         model = settings.claude_model || 'claude-sonnet-5-5';
+      } else if (provider === 'deepseek') {
+        apiKey = settings.deepseek_api_key || '';
+        model = settings.deepseek_model || 'deepseek-chat';
+      } else if (provider === 'openrouter') {
+        apiKey = settings.openrouter_api_key || '';
+        model = settings.openrouter_model || 'auto';
       } else if (provider === 'wp_ai_connect') {
         apiKey = '';
         model = settings.ai_connect_status?.engine_slug || 'wp_native_ai';
@@ -1848,7 +1692,6 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
               'schedule',
               'cron',
               'cloudflare',
-              'updates',
               'cleanup',
               'support',
             ];
@@ -5870,298 +5713,6 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
                 <span>Open Stream →</span>
               </button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* =========================================================================
-          TAB: GITHUB PLUGIN UPDATES & 1-CLICK ROLLBACK ENGINE
-          ========================================================================= */}
-      {activeSubTab === 'updates' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          {/* Main Version & Status Hero Card */}
-          <div className="webcare-card" style={{ padding: '24px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px', marginBottom: '20px' }}>
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px', flexWrap: 'wrap' }}>
-                  <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <RefreshCw size={20} color="#4f46e5" /> GitHub Continuous Updates &amp; Rollback
-                  </h3>
-                  <span style={{
-                    fontSize: '11px',
-                    fontWeight: 700,
-                    textTransform: 'uppercase',
-                    padding: '3px 10px',
-                    borderRadius: '999px',
-                    background: updaterStatus?.has_update ? '#fff7ed' : '#ecfdf5',
-                    color: updaterStatus?.has_update ? '#c2410c' : '#15803d',
-                    border: updaterStatus?.has_update ? '1px solid #fed7aa' : '1px solid #a7f3d0',
-                  }}>
-                    {updaterStatus?.has_update ? 'Update Available' : 'Up to Date'}
-                  </span>
-                </div>
-                <p style={{ margin: 0, fontSize: '13px', color: 'var(--webcare-text-muted, #64748b)', maxWidth: '750px', lineHeight: 1.5 }}>
-                  Because WebCare Pro Security & Firewall is hosted directly via GitHub, you can receive instant continuous release updates, preview release notes, and safely rollback to previous stable versions with 1 click. Automated pre-update safety backups ensure your site never breaks.
-                </p>
-              </div>
-
-              {/* Action Buttons */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                <button
-                  type="button"
-                  className="webcare-btn"
-                  onClick={handleCheckUpdates}
-                  disabled={checkingUpdate || executingUpdate}
-                  style={{
-                    background: 'var(--webcare-bg-surface-elevated, var(--webcare-bg-elevated))',
-                    color: 'var(--webcare-text-primary, #0f172a)',
-                    border: '1px solid var(--webcare-border-strong, var(--webcare-border))',
-                    padding: '8px 16px',
-                    borderRadius: '8px',
-                    fontSize: '13px',
-                    fontWeight: 600,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    cursor: checkingUpdate ? 'not-allowed' : 'pointer'
-                  }}
-                >
-                  <RefreshCw size={14} className={checkingUpdate ? 'webcare-spin' : ''} />
-                  <span>{checkingUpdate ? 'Checking GitHub...' : 'Check for Updates'}</span>
-                </button>
-
-                <button
-                  type="button"
-                  className="webcare-btn"
-                  onClick={handleCreateBackup}
-                  disabled={creatingBackup || executingUpdate}
-                  style={{
-                    background: 'var(--webcare-bg-surface-elevated, var(--webcare-bg-elevated))',
-                    color: 'var(--webcare-text-primary, #0f172a)',
-                    border: '1px solid var(--webcare-border-strong, var(--webcare-border))',
-                    padding: '8px 16px',
-                    borderRadius: '8px',
-                    fontSize: '13px',
-                    fontWeight: 600,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    cursor: creatingBackup ? 'not-allowed' : 'pointer'
-                  }}
-                >
-                  <Download size={14} className={creatingBackup ? 'webcare-spin' : ''} />
-                  <span>{creatingBackup ? 'Creating...' : 'Create Backup Snapshot'}</span>
-                </button>
-
-                {updaterStatus?.has_update && (
-                  <button
-                    type="button"
-                    className="webcare-btn"
-                    onClick={() => handleExecuteUpdate()}
-                    disabled={executingUpdate}
-                    style={{
-                      background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
-                      color: '#ffffff',
-                      border: 'none',
-                      padding: '8px 18px',
-                      borderRadius: '8px',
-                      fontSize: '13px',
-                      fontWeight: 700,
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)',
-                      cursor: executingUpdate ? 'not-allowed' : 'pointer'
-                    }}
-                  >
-                    <Download size={15} className={executingUpdate ? 'webcare-spin' : ''} />
-                    <span>{executingUpdate ? 'Updating Plugin...' : `1-Click Update to v${updaterStatus.latest_version}`}</span>
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {updaterMessage && (
-              <div style={{
-                background: updaterMessage.type === 'success' ? '#ecfdf5' : updaterMessage.type === 'info' ? '#eff6ff' : '#fef2f2',
-                border: updaterMessage.type === 'success' ? '1px solid #a7f3d0' : updaterMessage.type === 'info' ? '1px solid #bfdbfe' : '1px solid #fecaca',
-                color: updaterMessage.type === 'success' ? '#065f46' : updaterMessage.type === 'info' ? '#1e40af' : '#991b1b',
-                padding: '12px 16px',
-                borderRadius: '8px',
-                fontSize: '13px',
-                marginBottom: '18px'
-              }}>
-                {updaterMessage.text}
-              </div>
-            )}
-
-            {/* Version Comparison Grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px', marginBottom: '20px' }}>
-              <div style={{
-                background: 'var(--webcare-bg-surface-elevated, var(--webcare-bg-elevated))',
-                border: '1px solid var(--webcare-border-strong, var(--webcare-border))',
-                borderRadius: '10px',
-                padding: '16px'
-              }}>
-                <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--webcare-text-muted, #64748b)', textTransform: 'uppercase', marginBottom: '4px' }}>
-                  Current Installed Version
-                </div>
-                <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--webcare-text-primary, #0f172a)', fontFamily: 'var(--font-mono, monospace)' }}>
-                  v{updaterStatus?.current_version || '1.22.0'}
-                </div>
-                <div style={{ fontSize: '11.5px', color: 'var(--webcare-status-clean, #10b981)', marginTop: '4px', fontWeight: 600 }}>
-                  Active on this WordPress site
-                </div>
-              </div>
-
-              <div style={{
-                background: 'var(--webcare-bg-surface-elevated, var(--webcare-bg-elevated))',
-                border: '1px solid var(--webcare-border-strong, var(--webcare-border))',
-                borderRadius: '10px',
-                padding: '16px'
-              }}>
-                <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--webcare-text-muted, #64748b)', textTransform: 'uppercase', marginBottom: '4px' }}>
-                  Latest GitHub Release
-                </div>
-                <div style={{ fontSize: '20px', fontWeight: 800, color: updaterStatus?.has_update ? 'var(--webcare-status-high, #ea580c)' : 'var(--webcare-status-clean, #10b981)', fontFamily: 'var(--font-mono, monospace)' }}>
-                  v{updaterStatus?.latest_version || '1.22.0'}
-                </div>
-                <div style={{ fontSize: '11.5px', color: 'var(--webcare-text-muted, #64748b)', marginTop: '4px' }}>
-                  {updaterStatus?.released_at ? `Released: ${updaterStatus.released_at}` : 'Official GitHub Main Branch'}
-                </div>
-              </div>
-
-              <div style={{
-                background: 'var(--webcare-bg-surface-elevated, var(--webcare-bg-elevated))',
-                border: '1px solid var(--webcare-border-strong, var(--webcare-border))',
-                borderRadius: '10px',
-                padding: '16px'
-              }}>
-                <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--webcare-text-muted, #64748b)', textTransform: 'uppercase', marginBottom: '4px' }}>
-                  Remote Distribution Source
-                </div>
-                <a
-                  href="https://github.com/WebCarePro/webcare-pro-security"
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{ fontSize: '14px', fontWeight: 700, color: 'var(--webcare-primary, #6366f1)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px' }}
-                >
-                  WebCarePro/webcare-pro-security <ExternalLink size={13} />
-                </a>
-                <div style={{ fontSize: '11.5px', color: 'var(--webcare-text-muted, #64748b)', marginTop: '4px' }}>
-                  Public Open Repository
-                </div>
-              </div>
-            </div>
-
-            {/* Changelog Snippet */}
-            {updaterStatus?.changelog && (
-              <div style={{
-                background: 'var(--webcare-bg-code, #090d16)',
-                border: '1px solid var(--webcare-border-code, #1e293b)',
-                borderRadius: '8px',
-                padding: '16px',
-                color: '#f8fafc',
-                fontSize: '12.5px',
-                lineHeight: 1.6,
-                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-                whiteSpace: 'pre-wrap',
-                maxHeight: '180px',
-                overflowY: 'auto'
-              }}>
-                <div style={{ color: '#38bdf8', fontWeight: 700, marginBottom: '6px', fontFamily: 'sans-serif', fontSize: '11.5px', textTransform: 'uppercase' }}>
-                  Official Release Notes (v{updaterStatus.latest_version}):
-                </div>
-                {updaterStatus.changelog}
-              </div>
-            )}
-          </div>
-
-          {/* Rollback & Local Backup Vault Card */}
-          <div className="webcare-card" style={{ padding: '24px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px', marginBottom: '16px' }}>
-              <div>
-                <h4 style={{ margin: '0 0 6px 0', fontSize: '16px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <ShieldCheck size={18} color="#10b981" /> 1-Click Rollback Vault (Safety Snapshots)
-                </h4>
-                <p style={{ margin: 0, fontSize: '13px', color: 'var(--webcare-text-muted, #64748b)' }}>
-                  Prior to every upgrade, WebCare Pro Security & Firewall creates a full local ZIP snapshot of your plugin files in <code>wp-content/uploads/webcare-pro-security/rollback-snapshots/</code>. If an update ever conflicts with another plugin, you can immediately rollback with one click.
-                </p>
-              </div>
-            </div>
-
-            {updaterBackups.length === 0 ? (
-              <div style={{
-                padding: '28px',
-                textAlign: 'center',
-                background: 'var(--webcare-bg-surface-elevated, var(--webcare-bg-elevated))',
-                borderRadius: '8px',
-                border: '1px dashed var(--webcare-border-strong, var(--webcare-border))',
-                color: 'var(--webcare-text-muted, #64748b)',
-                fontSize: '13px'
-              }}>
-                No local rollback snapshots found yet. Click <strong>"Create Backup Snapshot"</strong> above to generate your first backup.
-              </div>
-            ) : (
-              <div style={{ border: '1px solid var(--webcare-border, #e2e8f0)', borderRadius: '8px', overflow: 'hidden' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-                  <thead>
-                    <tr style={{ background: 'var(--webcare-bg-surface-elevated, var(--webcare-bg-elevated))', borderBottom: '1px solid var(--webcare-border, #e2e8f0)', textAlign: 'left' }}>
-                      <th style={{ padding: '10px 14px', fontWeight: 700, fontSize: '11px', textTransform: 'uppercase', color: 'var(--webcare-text-muted, #64748b)' }}>VERSION</th>
-                      <th style={{ padding: '10px 14px', fontWeight: 700, fontSize: '11px', textTransform: 'uppercase', color: 'var(--webcare-text-muted, #64748b)' }}>SNAPSHOT FILENAME</th>
-                      <th style={{ padding: '10px 14px', fontWeight: 700, fontSize: '11px', textTransform: 'uppercase', color: 'var(--webcare-text-muted, #64748b)' }}>CREATED DATE</th>
-                      <th style={{ padding: '10px 14px', fontWeight: 700, fontSize: '11px', textTransform: 'uppercase', color: 'var(--webcare-text-muted, #64748b)' }}>SIZE</th>
-                      <th style={{ padding: '10px 14px', fontWeight: 700, fontSize: '11px', textTransform: 'uppercase', color: 'var(--webcare-text-muted, #64748b)', textAlign: 'right' }}>ACTION</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {updaterBackups.map((bak: any, idx: number) => {
-                      const isRollingBack = rollingBackId === bak.id;
-                      return (
-                        <tr key={bak.id || idx} style={{ borderBottom: idx < updaterBackups.length - 1 ? '1px solid var(--webcare-border, #f1f5f9)' : 'none' }}>
-                          <td style={{ padding: '12px 14px', fontWeight: 700, color: '#4f46e5', fontFamily: 'monospace' }}>
-                            v{bak.version}
-                          </td>
-                          <td style={{ padding: '12px 14px', color: 'var(--webcare-text-secondary, #475569)', fontFamily: 'monospace', fontSize: '12px' }}>
-                            {bak.file_name}
-                          </td>
-                          <td style={{ padding: '12px 14px', color: 'var(--webcare-text-muted, #64748b)', fontSize: '12px' }}>
-                            {bak.created_at}
-                          </td>
-                          <td style={{ padding: '12px 14px', color: 'var(--webcare-text-muted, #64748b)', fontSize: '12px' }}>
-                            {bak.size_formatted}
-                          </td>
-                          <td style={{ padding: '12px 14px', textAlign: 'right' }}>
-                            <button
-                              type="button"
-                              onClick={() => handleRollback(bak.id, undefined, bak.version)}
-                              disabled={isRollingBack || executingUpdate}
-                              className="webcare-btn"
-                              style={{
-                                background: '#dc2626',
-                                color: '#ffffff',
-                                border: 'none',
-                                padding: '6px 14px',
-                                borderRadius: '6px',
-                                fontSize: '12px',
-                                fontWeight: 700,
-                                cursor: isRollingBack ? 'not-allowed' : 'pointer',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '6px'
-                              }}
-                            >
-                              <RefreshCw size={12} className={isRollingBack ? 'webcare-spin' : ''} />
-                              {isRollingBack ? 'Rolling Back...' : `Rollback to v${bak.version}`}
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
           </div>
         </div>
       )}

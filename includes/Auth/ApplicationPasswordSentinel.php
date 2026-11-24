@@ -51,6 +51,50 @@ class ApplicationPasswordSentinel {
 
         // 5. Hook password creation for forensic logging and telemetry
         add_action('wp_create_application_password', [__CLASS__, 'on_application_password_created'], 20, 4);
+
+        // 6. Enforce Application Password policy consistently on WordPress core REST routes
+        add_filter('rest_pre_dispatch', [__CLASS__, 'enforce_rest_policy'], 10, 3);
+    }
+
+    /**
+     * Gate REST /wp/v2/users/{id}/application-passwords creation/listing under sentinel policy.
+     */
+    public static function enforce_rest_policy($result, $server, $request) {
+        if ($result !== null || !($request instanceof \WP_REST_Request)) {
+            return $result;
+        }
+
+        $route = (string) $request->get_route();
+        if (!str_contains($route, '/application-passwords')) {
+            return $result;
+        }
+
+        if (!empty(get_option(self::OPTION_DISABLED, 0))) {
+            return new \WP_Error(
+                'webcareproscan_app_pass_disabled',
+                __('WebCare Pro Security Sentinel: Application Passwords have been disabled site-wide by your administrator.', 'webcare-pro-security'),
+                ['status' => 403]
+            );
+        }
+
+        $admin_only = get_option(self::OPTION_ADMIN_ONLY, 1);
+        if (!empty($admin_only) && !current_user_can('manage_options')) {
+            return new \WP_Error(
+                'webcareproscan_app_pass_admin_only',
+                __('WebCare Pro Security Sentinel: Application Passwords on this site are restricted strictly to Administrators.', 'webcare-pro-security'),
+                ['status' => 403]
+            );
+        }
+
+        if (strtoupper((string) $request->get_method()) === 'POST' && !empty(get_option(self::OPTION_REQUIRE_STEP_UP, 1))) {
+            return new \WP_Error(
+                'webcareproscan_app_pass_step_up_required',
+                __('WebCare Pro Security Sentinel: Minting Application Passwords via unverified REST self-minting is disabled when Step-Up verification is enabled. Use the step-up approval screen instead.', 'webcare-pro-security'),
+                ['status' => 403]
+            );
+        }
+
+        return $result;
     }
 
     /**
@@ -223,8 +267,21 @@ class ApplicationPasswordSentinel {
         );
 
         if ($require_step_up && $is_approval_attempt && $user instanceof \WP_User) {
-            $user_id = (int) $user->ID;
-            $has_2fa = class_exists(TwoFactorAuth::class) && TwoFactorAuth::is_user_enabled($user_id);
+            $user_id   = (int) $user->ID;
+            $has_2fa   = class_exists(TwoFactorAuth::class) && TwoFactorAuth::is_user_enabled($user_id);
+            $client_ip = class_exists(FirewallEngine::class)
+                ? FirewallEngine::get_client_ip()
+                : (isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '127.0.0.1');
+            $stepup_rl_key      = 'webcareproscan_app_stepup_rl_' . md5($user_id . '|' . $client_ip);
+            $stepup_failed_cnt  = (int) get_transient($stepup_rl_key);
+
+            if ($stepup_failed_cnt >= 5) {
+                $error->add(
+                    'webcareproscan_step_up_rate_limited',
+                    __('WebCare Pro Security Sentinel: Too many failed step-up verification attempts. Please wait 5 minutes and try again.', 'webcare-pro-security')
+                );
+                return $error;
+            }
 
             if ($has_2fa) {
                 $step_up_code = isset($_POST['webcareproscan_step_up_totp']) ? sanitize_text_field(wp_unslash($_POST['webcareproscan_step_up_totp'])) : '';
@@ -236,23 +293,25 @@ class ApplicationPasswordSentinel {
                     return $error;
                 }
 
-                $secret      = TwoFactorAuth::get_user_secret($user_id);
-                $user_algo   = (string) (get_user_meta($user_id, TwoFactorAuth::META_ALGORITHM, true) ?: 'sha1');
-                $user_digits = (int) (get_user_meta($user_id, TwoFactorAuth::META_DIGITS, true) ?: 6);
+                $totp_res   = TwoFactorAuth::verify_totp_attempt($user_id, $step_up_code);
+                $totp_valid = !empty($totp_res['valid']);
 
-                $totp_valid = $secret && TwoFactorAuth::verify_code($secret, $step_up_code, 1, $user_algo, $user_digits);
-
-                if (!$totp_valid && method_exists(TwoFactorAuth::class, 'verify_and_consume_backup_code')) {
+                if (!$totp_valid && empty($totp_res['error']) && method_exists(TwoFactorAuth::class, 'verify_and_consume_backup_code')) {
+                    $totp_valid = TwoFactorAuth::verify_and_consume_backup_code($user_id, $step_up_code);
+                } elseif (!$totp_valid && str_contains((string) ($totp_res['error'] ?? ''), 'Invalid') && method_exists(TwoFactorAuth::class, 'verify_and_consume_backup_code')) {
                     $totp_valid = TwoFactorAuth::verify_and_consume_backup_code($user_id, $step_up_code);
                 }
 
                 if (!$totp_valid) {
-                    $error->add(
-                        'webcareproscan_step_up_totp_invalid',
-                        __('WebCare Pro Security Sentinel: Invalid Two-Factor Authentication code. Please verify the code in your authenticator app and try again.', 'webcare-pro-security')
-                    );
+                    set_transient($stepup_rl_key, $stepup_failed_cnt + 1, 300);
+                    $err_detail = !empty($totp_res['error']) && str_contains((string) $totp_res['error'], 'already been used')
+                        ? (string) $totp_res['error']
+                        : __('WebCare Pro Security Sentinel: Invalid Two-Factor Authentication code. Please verify the code in your authenticator app and try again.', 'webcare-pro-security');
+                    $error->add('webcareproscan_step_up_totp_invalid', $err_detail);
                     return $error;
                 }
+
+                delete_transient($stepup_rl_key);
 
                 if (class_exists(WebCareActivityLogger::class)) {
                     WebCareActivityLogger::log(
@@ -284,12 +343,15 @@ class ApplicationPasswordSentinel {
                 }
 
                 if (!wp_check_password($step_up_pass, $user->user_pass, $user_id)) {
+                    set_transient($stepup_rl_key, $stepup_failed_cnt + 1, 300);
                     $error->add(
                         'webcareproscan_step_up_password_invalid',
                         __('WebCare Pro Security Sentinel: Incorrect account password entered for step-up identity verification.', 'webcare-pro-security')
                     );
                     return $error;
                 }
+
+                delete_transient($stepup_rl_key);
 
                 if (class_exists(WebCareActivityLogger::class)) {
                     WebCareActivityLogger::log(
@@ -398,16 +460,30 @@ class ApplicationPasswordSentinel {
      * @return bool
      */
     public static function is_host_trusted(string $host, string $scheme = ''): bool {
-        // If empty host or scheme, consider untrusted
+        $scheme = strtolower(trim($scheme));
+        $host   = strtolower(trim($host));
+
+        // Never trust dangerous executable/pseudo schemes regardless of host
+        $dangerous_schemes = ['javascript', 'data', 'vbscript', 'file', 'blob', 'about', 'filesystem', 'view-source'];
+        if (in_array($scheme, $dangerous_schemes, true)) {
+            return false;
+        }
+
+        // If empty host, only allow safe registered native app custom schemes (never http/https/empty/script schemes)
         if ($host === '') {
-            // Check for valid local custom mobile app URI schemes (e.g. "my-app://callback" where host may be empty)
-            if ($scheme !== '' && !in_array($scheme, ['http', 'https'], true)) {
+            if ($scheme !== '' && !in_array($scheme, ['http', 'https'], true) && preg_match('/^[a-z][a-z0-9+.-]{1,31}$/', $scheme) === 1) {
                 return true;
             }
             return false;
         }
 
-        $host = strtolower(trim($host));
+        // Require https (or http strictly for loopback CLI/dev tools) when scheme is provided
+        if ($scheme !== '' && $scheme !== 'https') {
+            $is_loopback = in_array($host, ['localhost', '127.0.0.1', '::1'], true);
+            if (!($scheme === 'http' && $is_loopback)) {
+                return false;
+            }
+        }
 
         // 1. Loopback addresses are always trusted for local CLI or native apps
         if (in_array($host, ['localhost', '127.0.0.1', '::1'], true)) {

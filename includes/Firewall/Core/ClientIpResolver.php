@@ -209,6 +209,66 @@ class ClientIpResolver {
         self::$real_ip = null;
     }
 
+    /**
+     * Verify that incoming Cloudflare edge headers (CF-IPCountry, CF-IPASN, CF-Ray, etc.)
+     * originate from an authenticated Cloudflare proxy peer rather than client spoofing.
+     */
+    public static function is_trusted_cloudflare_request(): bool {
+        $has_cf_hdr = !empty($_SERVER['HTTP_CF_RAY'])
+            || !empty($_SERVER['HTTP_CF_CONNECTING_IP'])
+            || !empty($_SERVER['HTTP_CF_IPCOUNTRY'])
+            || !empty($_SERVER['HTTP_CF_CONNECTING_IP_COUNTRY'])
+            || !empty($_SERVER['HTTP_CF_IPASN']);
+        if (!$has_cf_hdr) {
+            return false;
+        }
+
+        $remote_addr = isset($_SERVER['REMOTE_ADDR']) ? trim(sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR']))) : '';
+        if (stripos($remote_addr, '::ffff:') === 0) {
+            $mapped_v4 = substr($remote_addr, 7);
+            if (filter_var($mapped_v4, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+                $remote_addr = $mapped_v4;
+            }
+        }
+        if (!filter_var($remote_addr, FILTER_VALIDATE_IP)) {
+            return false;
+        }
+
+        $settings         = class_exists(SettingsManager::class) ? SettingsManager::get_settings() : [];
+        $cf_trust_mode    = (string) ($settings['waf_cloudflare_proxy_trust_mode'] ?? 'disabled');
+        $cf_origin_secret = (string) ($settings['waf_cloudflare_origin_secret'] ?? '');
+
+        $is_cf_peer = self::is_cloudflare_ip($remote_addr);
+        if (!$is_cf_peer) {
+            if ($cf_trust_mode === 'disabled' || !self::is_trusted_proxy($remote_addr)) {
+                return false;
+            }
+        }
+
+        if ($cf_origin_secret !== '') {
+            $incoming_secret = '';
+            foreach (['HTTP_X_ORIGIN_SECRET', 'HTTP_CF_ORIGIN_SECRET'] as $secret_hdr_key) {
+                if (isset($_SERVER[$secret_hdr_key]) && is_string($_SERVER[$secret_hdr_key])) {
+                    // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Exact secret bytes are length/control-char validated before hash_equals()
+                    $candidate_secret = (string) wp_unslash($_SERVER[$secret_hdr_key]);
+                    if ($candidate_secret !== '') {
+                        $incoming_secret = $candidate_secret;
+                        break;
+                    }
+                }
+            }
+            $sec_len = strlen($incoming_secret);
+            if ($sec_len === 0 || $sec_len > 512 || preg_match('/[\x00-\x1F\x7F]/', $incoming_secret) === 1) {
+                return false;
+            }
+            if (!hash_equals($cf_origin_secret, $incoming_secret)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     public const CRON_HOOK_REFRESH_CIDRS = 'webcareproscan_refresh_cf_cidrs';
     public const OPTION_CF_CIDR_CACHE     = 'webcareproscan_cf_cidr_cache';
 

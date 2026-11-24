@@ -26,9 +26,11 @@ class SecurityHeadersEngine {
         add_action('send_headers', [__CLASS__, 'send_security_headers'], 5);
         add_action('login_init', [__CLASS__, 'send_security_headers'], 5);
 
-        // User Enumeration Defense
+        // User Enumeration Defense (Author queries, REST /users, Core Users Sitemap, oEmbed Author Metadata)
         add_action('init', [__CLASS__, 'protect_user_enumeration'], 1);
         add_filter('rest_endpoints', [__CLASS__, 'filter_rest_user_endpoints'], 10, 1);
+        add_filter('wp_sitemaps_add_provider', [__CLASS__, 'filter_users_sitemap_provider'], 10, 2);
+        add_filter('oembed_response_data', [__CLASS__, 'filter_oembed_author_metadata'], 10, 4);
 
         // Information Leakage Hardening (WP version tags and query strings)
         self::apply_version_leak_hardening();
@@ -129,12 +131,51 @@ class SecurityHeadersEngine {
             return;
         }
 
-        // Check query string for author=1, author=admin, etc.
+        // Check query string for ?author=1, ?author[]=1, or ?author_name=admin
         // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Author enumeration detection on guest GET requests
-        if (isset($_REQUEST['author']) && (is_numeric($_REQUEST['author']) || is_string($_REQUEST['author']))) {
+        if (isset($_REQUEST['author']) || (isset($_GET['author_name']) && $_GET['author_name'] !== '')) {
             wp_safe_redirect(home_url('/'), 301);
             exit;
         }
+    }
+
+    /**
+     * Suppress the core WordPress users sitemap provider when user enumeration protection is enabled.
+     *
+     * @param mixed  $provider
+     * @param string $name
+     * @return mixed
+     */
+    public static function filter_users_sitemap_provider($provider, string $name) {
+        if ($name !== 'users') {
+            return $provider;
+        }
+        $settings = SettingsManager::get_settings();
+        if (!empty($settings['block_user_enumeration']) || !empty($settings['waf_block_author_scan'])) {
+            if (!function_exists('is_user_logged_in') || !is_user_logged_in()) {
+                return false;
+            }
+        }
+        return $provider;
+    }
+
+    /**
+     * Strip author_name and author_url from oEmbed JSON responses for guests when enumeration protection is active.
+     *
+     * @param array<string, mixed> $data
+     * @param mixed                $post
+     * @param int                  $width
+     * @param int                  $height
+     * @return array<string, mixed>
+     */
+    public static function filter_oembed_author_metadata(array $data, $post = null, $width = 0, $height = 0): array {
+        $settings = SettingsManager::get_settings();
+        if (!empty($settings['block_user_enumeration']) || !empty($settings['waf_block_author_scan'])) {
+            if (!function_exists('is_user_logged_in') || !is_user_logged_in()) {
+                unset($data['author_name'], $data['author_url']);
+            }
+        }
+        return $data;
     }
 
     /**

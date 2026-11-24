@@ -695,12 +695,13 @@ class MicroWafCompiler {
         $out .= "        \$raw_clean_path = \$request_path_candidates[0] ?? \$normalize_preload_path(\$uri);\n";
         $out .= "        foreach (\$request_path_candidates as \$candidate_path) { if (preg_match('#(?:/wp-json/|admin-ajax\\.php|admin-post\\.php|xmlrpc\\.php|/wp-admin/)#', \$candidate_path)) { \$raw_clean_path = \$candidate_path; break; } }\n";
         $out .= "        \$mod_clean_uri = (string) \$raw_clean_path;\n";
+        $out .= "        \$mod_clean_uri_lc = strtolower(\$mod_clean_uri);\n";
         $out .= "        \$preload_body_text = '';\n";
         $out .= "        \$preload_body_budget = 65536;\n";
         $out .= "        \$preload_body_truncated = false;\n";
         $out .= "        // Direct-access PHP scripts (outside WordPress front controller / wp-admin) require admin auth to bypass preload inspection\n";
         $out .= "        \$is_direct_script_target = (bool) preg_match('/\\.(?:php[3-8]?|phtml)$/i', \$mod_clean_uri) && !preg_match('#(?:^/index\\.php|/wp-admin/|wp-login\\.php|wp-cron\\.php|xmlrpc\\.php)#i', \$mod_clean_uri);\n";
-        $out .= "        \$auth_bypass_body = \$is_direct_script_target ? \$mod_is_admin_user : \$mod_has_login_cookie;\n";
+        $out .= "        \$auth_bypass_body = \$mod_is_admin_user;\n";
         $out .= "        // Authenticated sessions defer POST/JSON body inspection to post-boot WordPress runtime WAF where editor capabilities are known\n";
         $out .= "        if (!\$auth_bypass_body && in_array(\$mod_req_method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {\n";
         $out .= "            \$post_fields_seen = 0;\n";
@@ -873,7 +874,7 @@ class MicroWafCompiler {
         $out .= "                if (in_array(\$v_id, \$trusted_visual, true) || in_array(\$v_id, \$vis_exempt_ids, true)) continue;\n";
         $out .= "                \$v_action  = strtolower(trim((string) (\$v_rule['action_type'] ?? 'block')));\n";
         $out .= "                if (!in_array(\$v_action, ['block', 'block_and_ban', 'allow'], true)) { continue; }\n";
-        $out .= "                if (\$mod_has_login_cookie && \$v_action !== 'allow') {\n";
+        $out .= "                if (\$mod_is_admin_user && \$v_action !== 'allow') {\n";
         $out .= "                    continue;\n";
         $out .= "                }\n";
         $out .= "                \$v_gl      = strtoupper((string) (\$v_rule['group_logic'] ?? 'OR')) === 'AND' ? 'AND' : 'OR';\n";
@@ -1055,7 +1056,7 @@ class MicroWafCompiler {
         $out .= "        }\n";
         $out .= "        if (!\$mod_rescue_paused) {\n";
         $out .= "            // 5B. Custom rules evaluation: explicit immediate-block rules run even on allowlisted URLs\n";
-        $out .= "            if (!\$mod_has_login_cookie && !empty(\$mod_rules['custom_rules_enforced'])) {\n";
+        $out .= "            if (!\$mod_is_admin_user && !empty(\$mod_rules['custom_rules_enforced'])) {\n";
         $out .= "                \$mod_payload_rx = '/(?:(?:^|[^a-z_]|[\\d.eE])union\\\\s+(?:all\\\\s+)?select\\\\b|\\\\bselect\\\\b.{1,40}\\\\bfrom\\\\b.{1,40}\\\\bwp_users\\\\b|sleep\\\\s*\\\\(\\\\s*\\\\d+\\\\s*\\\\)|benchmark\\\\s*\\\\(|<script\\\\b|javascript:|wp_capabilities|(?:(?:\"|\'|\\\\b)(?:role|default_role|user_role|capabilities)\\\\b[^a-z0-9_]{0,20}\\\\badministrator\\\\b)|s:13:\"administrator\")/i';\n";
         $out .= "                \$trusted_custom = is_array(\$mod_trusted['rule_ids'] ?? null) ? \$mod_trusted['rule_ids'] : [];\n";
         $out .= "                foreach (\$mod_rules['custom_rules_enforced'] as \$c_rule) {\n";
@@ -1072,7 +1073,7 @@ class MicroWafCompiler {
         $out .= "                    \$c_val = strtolower(trim((string) (\$c_rule['target_value'] ?? '')));\n";
         $out .= "                    if (\$c_uri === '' && \$c_param === '') { continue; }\n";
         $out .= "                    \$c_rest_norm = (\$mod_rest_q_match !== '') ? '/wp-json/' . ltrim(\$mod_rest_q_match, '/') : '';\n";
-        $out .= "                    \$c_uri_match = (\$c_uri === '') || (strpos(\$mod_clean_uri, \$c_uri) !== false) || (\$mod_rest_q_match !== '' && (strpos(\$mod_rest_q_match, \$c_uri) !== false || strpos(\$c_rest_norm, \$c_uri) !== false));\n";
+        $out .= "                    \$c_uri_match = (\$c_uri === '') || (stripos(\$mod_clean_uri, \$c_uri) !== false) || (\$mod_rest_q_match !== '' && (stripos(\$mod_rest_q_match, \$c_uri) !== false || stripos(\$c_rest_norm, \$c_uri) !== false));\n";
         $out .= "                    \$c_methods = is_array(\$c_rule['methods'] ?? null) ? array_map('strtoupper', \$c_rule['methods']) : [];\n";
         $out .= "                    \$c_method_match = empty(\$c_methods) || in_array(\$mod_req_method, \$c_methods, true);\n";
         $out .= "                    \$c_param_match = true;\n";
@@ -1109,7 +1110,7 @@ class MicroWafCompiler {
         $out .= "        }\n";
         $out .= "        // 5C. Modular Heuristics (Gated by URL allowlists and custom allow rules)\n";
         $out .= "        if (!\$mod_rescue_paused && !\$url_whitelisted && !\$vis_allow_all_custom) {\n";
-        $out .= "            if (!\$mod_has_login_cookie && !empty(\$mod_rules['ajax_actions_enforced']) && strpos(\$mod_clean_uri, 'admin-ajax.php') !== false) {\n";
+        $out .= "            if (!\$mod_is_admin_user && !empty(\$mod_rules['ajax_actions_enforced']) && strpos(\$mod_clean_uri_lc, 'admin-ajax.php') !== false) {\n";
         $out .= "                \$ajax_act = isset(\$_REQUEST['action']) ? strtolower(trim((string) \$_REQUEST['action'])) : '';\n";
         $out .= "                \$trusted_ajax = is_array(\$mod_trusted['ajax_actions'] ?? null) ? \$mod_trusted['ajax_actions'] : [];\n";
         $out .= "                if (!empty(\$ajax_act) && !in_array(\$ajax_act, \$trusted_ajax, true) && isset(\$mod_rules['ajax_actions_enforced'][\$ajax_act])) {\n";
@@ -1119,7 +1120,7 @@ class MicroWafCompiler {
         $out .= "                    }\n";
         $out .= "                }\n";
         $out .= "            }\n";
-        $out .= "            if (!\$mod_has_login_cookie && !empty(\$mod_rules['rest_routes_enforced'])) {\n";
+        $out .= "            if (!\$mod_is_admin_user && !empty(\$mod_rules['rest_routes_enforced'])) {\n";
         $out .= "                \$rest_q = \$mod_rest_q_match;\n";
         $out .= "                \$trusted_routes = is_array(\$mod_trusted['rest_routes'] ?? null) ? \$mod_trusted['rest_routes'] : [];\n";
         $out .= "                foreach (\$mod_rules['rest_routes_enforced'] as \$r_route => \$r_spec) {\n";
@@ -1129,7 +1130,7 @@ class MicroWafCompiler {
         $out .= "                    if (\$r_route_lc === '' || in_array(\$r_route_lc, \$trusted_routes, true)) {\n";
         $out .= "                        continue;\n";
         $out .= "                    }\n";
-        $out .= "                    \$matches_route = (strpos(\$mod_clean_uri, '/wp-json' . \$r_route_lc) !== false) || (\$rest_q !== '' && strpos(\$rest_q, \$r_route_lc) === 0);\n";
+        $out .= "                    \$matches_route = (strpos(\$mod_clean_uri_lc, '/wp-json' . \$r_route_lc) !== false) || (\$rest_q !== '' && strpos(strtolower(\$rest_q), \$r_route_lc) === 0);\n";
         $out .= "                    if (\$matches_route) {\n";
         $out .= "                        \$r_methods = is_array(\$r_spec['methods'] ?? null) ? array_map('strtoupper', \$r_spec['methods']) : ['POST', 'PUT', 'DELETE'];\n";
         $out .= "                        if (empty(\$r_methods) || in_array(\$mod_req_method, \$r_methods, true)) {\n";
@@ -1181,6 +1182,9 @@ class MicroWafCompiler {
         $out .= "    if (!headers_sent()) {\n";
         $out .= "        http_response_code(403);\n";
         $out .= "        header('HTTP/1.1 403 Forbidden');\n";
+        $out .= "        header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0, private');\n";
+        $out .= "        header('Pragma: no-cache');\n";
+        $out .= "        header('X-LiteSpeed-Cache-Control: no-cache');\n";
         $out .= "        header(\$is_json_or_ajax ? 'Content-Type: application/json; charset=UTF-8' : 'Content-Type: text/html; charset=UTF-8');\n";
         $out .= "        header('X-WebCare-Defense: Preload-Micro-WAF-Active');\n";
         $out .= "        header('Connection: close');\n";
@@ -1246,26 +1250,28 @@ class MicroWafCompiler {
         }
 
         // Build directive block
+        $quoted_ini_file      = '"' . str_replace(['\\', '"'], ['\\\\', '\\"'], $compiled_file) . '"';
+        $quoted_htaccess_file = '"' . str_replace(['\\', '"'], ['\\\\', '\\"'], $compiled_file) . '"';
         $block = "\n" . $begin_marker . "\n";
         if ($target_info['target'] === 'user_ini') {
             $block .= "; WebCare Pro Security Zero-Latency Preload Micro-WAF\n";
-            $block .= "auto_prepend_file = '{$compiled_file}'\n";
+            $block .= "auto_prepend_file = {$quoted_ini_file}\n";
         } else {
             $block .= "# WebCare Pro Security Zero-Latency Preload Micro-WAF\n";
             $block .= "<IfModule mod_php.c>\n";
-            $block .= "    php_value auto_prepend_file '{$compiled_file}'\n";
+            $block .= "    php_value auto_prepend_file {$quoted_htaccess_file}\n";
             $block .= "</IfModule>\n";
             $block .= "<IfModule mod_php7.c>\n";
-            $block .= "    php_value auto_prepend_file '{$compiled_file}'\n";
+            $block .= "    php_value auto_prepend_file {$quoted_htaccess_file}\n";
             $block .= "</IfModule>\n";
             $block .= "<IfModule mod_php8.c>\n";
-            $block .= "    php_value auto_prepend_file '{$compiled_file}'\n";
+            $block .= "    php_value auto_prepend_file {$quoted_htaccess_file}\n";
             $block .= "</IfModule>\n";
             $block .= "<IfModule LiteSpeed>\n";
-            $block .= "    php_value auto_prepend_file '{$compiled_file}'\n";
+            $block .= "    php_value auto_prepend_file {$quoted_htaccess_file}\n";
             $block .= "</IfModule>\n";
             $block .= "<IfModule mod_lsapi.c>\n";
-            $block .= "    php_value auto_prepend_file '{$compiled_file}'\n";
+            $block .= "    php_value auto_prepend_file {$quoted_htaccess_file}\n";
             $block .= "</IfModule>\n";
         }
         $block .= $end_marker . "\n";

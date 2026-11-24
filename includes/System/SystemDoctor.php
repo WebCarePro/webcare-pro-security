@@ -461,6 +461,38 @@ final class SystemDoctor {
             ];
         }
 
+        // 18. Reverse-Proxy & Client IP Attribution Integrity Check
+        $remote_addr    = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash((string) $_SERVER['REMOTE_ADDR'])) : '';
+        $has_cf_header  = !empty($_SERVER['HTTP_CF_CONNECTING_IP']);
+        $has_xff_header = !empty($_SERVER['HTTP_X_FORWARDED_FOR']) || !empty($_SERVER['HTTP_X_REAL_IP']);
+        $trusted_proxies = class_exists(\WebCareProScanner\Firewall\Core\ClientIpResolver::class)
+            ? \WebCareProScanner\Firewall\Core\ClientIpResolver::get_configured_trusted_proxies()
+            : [];
+        $cf_trusted = class_exists(\WebCareProScanner\Firewall\Core\ClientIpResolver::class)
+            && \WebCareProScanner\Firewall\Core\ClientIpResolver::is_trusted_cloudflare_request();
+        $proxy_misconfig = false;
+        $proxy_msg       = __('Client IP resolution is properly isolated against untrusted forwarding headers.', 'webcare-pro-security');
+        $proxy_current   = $remote_addr !== '' ? $remote_addr : __('Unknown', 'webcare-pro-security');
+
+        if (($remote_addr === '127.0.0.1' || $remote_addr === '::1') && ($has_xff_header || $has_cf_header) && empty($trusted_proxies) && !$cf_trusted) {
+            $proxy_misconfig = true;
+            $proxy_msg = __('Server peer IP is loopback (127.0.0.1/::1) with proxy forwarding headers present, but no trusted proxy CIDR or Cloudflare secret is configured. Configure Trusted Proxies so visitors are not rate-limited together.', 'webcare-pro-security');
+        } elseif ($has_cf_header && !$cf_trusted) {
+            $proxy_misconfig = true;
+            $proxy_msg = __('CF-Connecting-IP header is arriving from a non-Cloudflare origin IP or unverified origin secret. Configure Cloudflare Origin Secret or Trusted Proxies to preserve real client IP detection.', 'webcare-pro-security');
+        }
+
+        $checks['proxy_ip_integrity'] = [
+            'id'       => 'proxy_ip_integrity',
+            'title'    => __('Client IP & Reverse-Proxy Attribution', 'webcare-pro-security'),
+            'category' => 'waf',
+            'status'   => $proxy_misconfig ? 'warn' : 'pass',
+            'severity' => $proxy_misconfig ? 'high' : 'info',
+            'message'  => $proxy_msg,
+            'current'  => $proxy_current,
+            'required' => __('Verified real visitor IP attribution', 'webcare-pro-security'),
+        ];
+
         // Compute overall score
         $total = count($checks);
         $passed = 0;

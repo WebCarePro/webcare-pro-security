@@ -362,13 +362,21 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
         $is_webcare_rest_route = str_starts_with(strtolower($rest_route), '/webcare-pro-security/');
         // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only routing check for WooCommerce AJAX surface.
         $has_wc_ajax_surface = isset($_GET['wc-ajax']) && is_string($_GET['wc-ajax']) && $_GET['wc-ajax'] !== '';
+        $is_frontend_public_route = !function_exists('is_admin') || !is_admin();
         $is_target_surface = $has_ajax_surface
             || $has_xmlrpc_surface
             || $has_wc_ajax_surface
             || ($has_rest_surface && !$is_webcare_rest_route)
-            || ($rest_route !== '' && !$is_webcare_rest_route);
+            || ($rest_route !== '' && !$is_webcare_rest_route)
+            || ($is_frontend_public_route && !$is_webcare_rest_route);
         if (!$is_target_surface) {
             return false;
+        }
+
+        if ((defined('DOING_CRON') && DOING_CRON) || (defined('WP_CLI') && WP_CLI)) {
+            if (!\WebCareProScanner\Firewall\DeclarativePatchVerifier::is_test_context()) {
+                return false;
+            }
         }
 
         if (function_exists('is_user_logged_in') && is_user_logged_in()) {
@@ -402,6 +410,108 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
     }
 
     /**
+     * Single-pass lexical SQL skeletonizer: strips string literals FIRST before unwrapping
+     * conditional comments and stripping standard SQL comments. Prevents block-comment tokens
+     * inside quotes from swallowing live SQL keywords between separate string literals.
+     */
+    public static function normalize_sql_skeleton(string $sql): string {
+        $len        = strlen($sql);
+        $i          = 0;
+        $out        = '';
+        $cond_depth = 0;
+
+        while ($i < $len) {
+            $ch = $sql[$i];
+
+            if ($ch === '\'' || $ch === '"') {
+                $quote = $ch;
+                $i++;
+                while ($i < $len) {
+                    $c = $sql[$i];
+                    if ($c === '\\') {
+                        $i += 2;
+                        continue;
+                    }
+                    if ($c === $quote) {
+                        if (($i + 1) < $len && $sql[$i + 1] === $quote) {
+                            $i += 2;
+                            continue;
+                        }
+                        $i++;
+                        break;
+                    }
+                    $i++;
+                }
+                $out .= "''";
+                continue;
+            }
+
+            if ($ch === '`') {
+                $out .= '`';
+                $i++;
+                while ($i < $len) {
+                    $c = $sql[$i];
+                    $out .= $c;
+                    if ($c === '`') {
+                        if (($i + 1) < $len && $sql[$i + 1] === '`') {
+                            $out .= '`';
+                            $i += 2;
+                            continue;
+                        }
+                        $i++;
+                        break;
+                    }
+                    $i++;
+                }
+                continue;
+            }
+
+            if ($ch === '/' && ($i + 2) < $len && $sql[$i + 1] === '*' && $sql[$i + 2] === '!') {
+                $i += 3;
+                while ($i < $len && ctype_digit($sql[$i])) {
+                    $i++;
+                }
+                $out .= ' ';
+                $cond_depth++;
+                continue;
+            }
+
+            if ($cond_depth > 0 && $ch === '*' && ($i + 1) < $len && $sql[$i + 1] === '/') {
+                $i += 2;
+                $out .= ' ';
+                $cond_depth--;
+                continue;
+            }
+
+            if ($ch === '/' && ($i + 1) < $len && $sql[$i + 1] === '*') {
+                $i += 2;
+                $end = strpos($sql, '*/', $i);
+                $i   = ($end === false) ? $len : ($end + 2);
+                continue;
+            }
+
+            if ($ch === '#') {
+                $end = strpos($sql, "\n", $i + 1);
+                $i   = ($end === false) ? $len : ($end + 1);
+                $out .= ' ';
+                continue;
+            }
+
+            if ($ch === '-' && ($i + 2) < $len && $sql[$i + 1] === '-' && in_array($sql[$i + 2], [' ', "\t", "\r", "\n"], true)) {
+                $end = strpos($sql, "\n", $i + 2);
+                $i   = ($end === false) ? $len : ($end + 1);
+                $out .= ' ';
+                continue;
+            }
+
+            $out .= $ch;
+            $i++;
+        }
+
+        return $out;
+    }
+
+    /**
      * Pure testable SQL AST anomaly analyzer (strips quoted literals before structural checks).
      *
      * @param string $sql
@@ -419,36 +529,33 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
         $is_select = str_starts_with(strtoupper($trimmed), 'SELECT');
         $cache_key = '';
         if ($is_select && strlen($trimmed) < 2048) {
-            $cache_key = md5(preg_replace('/\d+|(?<=\')([^\']*)(?=\')/', '?', $trimmed));
+            $cache_key = md5((string) preg_replace("/'(?:\\\\.|''|[^'\\\\])*'|\"(?:\\\\.|\"\"|[^\"\\\\])*\"|\b\d+\b/", '?', $trimmed));
             if (array_key_exists($cache_key, self::$query_shape_cache)) {
                 return self::$query_shape_cache[$cache_key];
             }
         }
 
-        $users_tbl    = isset($wpdb->users) ? preg_quote($wpdb->users, '/') : 'wp_users';
-        $usermeta_tbl = isset($wpdb->usermeta) ? preg_quote($wpdb->usermeta, '/') : 'wp_usermeta';
-        $options_tbl  = isset($wpdb->options) ? preg_quote($wpdb->options, '/') : 'wp_options';
-        $posts_tbl    = isset($wpdb->posts) ? preg_quote($wpdb->posts, '/') : 'wp_posts';
+        $prefix       = isset($wpdb->prefix) ? (string) $wpdb->prefix : 'wp_';
+        $users_tbl    = isset($wpdb->users) ? preg_quote($wpdb->users, '/') : preg_quote($prefix . 'users', '/');
+        $usermeta_tbl = isset($wpdb->usermeta) ? preg_quote($wpdb->usermeta, '/') : preg_quote($prefix . 'usermeta', '/');
+        $options_tbl  = isset($wpdb->options) ? preg_quote($wpdb->options, '/') : preg_quote($prefix . 'options', '/');
+        $posts_tbl    = isset($wpdb->posts) ? preg_quote($wpdb->posts, '/') : preg_quote($prefix . 'posts', '/');
+        $wc_orders    = preg_quote($prefix . 'wc_orders', '/');
+        $wc_keys      = preg_quote($prefix . 'woocommerce_api_keys', '/');
 
         // Never block if currently inside an internal plugin operation or standard neutralized query
         if (self::$internal_query_depth > 0 || stripos($trimmed, 'SELECT NULL WHERE 1=0') === 0) {
             return null;
         }
 
-        // Pre-process SQL: unwrap MySQL conditional comments (e.g., /*!50000 SELECT */ -> SELECT)
-        $unwrapped = (string) preg_replace('#/\*!\d*\s*([\s\S]*?)\s*\*/#', ' $1 ', $trimmed);
+        // Single-pass lexical SQL skeletonizer: mask string literals FIRST before stripping comments
+        // so `'/*' ... '*/'` cannot conceal UNION SELECT between two literals.
+        $skeleton = self::normalize_sql_skeleton($trimmed);
 
-        // Strip standard SQL comments (/* ... */, -- ..., # ...) to defeat keyword splitting evasion
-        // We strip inline block comments first without spaces so split tokens like UN/**/ION re-join into UNION,
-        // and replace line comments with space.
-        $clean_sql = (string) preg_replace('#/\*[\s\S]*?\*/#', '', $unwrapped);
-        $clean_sql = (string) preg_replace('/(?:--[ \t][^\r\n]*|--[\r\n]|\#[^\r\n]*)/', ' ', $clean_sql);
-
-        // Strip balanced string literals to prevent false positives on blog/post text content
-        $skeleton = (string) preg_replace("/'(?:\\\\.|[^'\\\\])*'|\"(?:\\\\.|[^\"\\\\])*\"/", "''", $clean_sql);
-
-        // 1. Cross-table UNION SELECT touching credential/usermeta tables
-        if (preg_match('/\bUNION\s+(?:ALL\s+)?SELECT\b/i', $skeleton) && preg_match('/\b(?:' . $users_tbl . '|' . $usermeta_tbl . ')\b/i', $skeleton)) {
+        // 1. Cross-table UNION SELECT touching credential, options, or WooCommerce sensitive tables
+        if (preg_match('/\bUNION\s+(?:(?:ALL|DISTINCT)\s+)?SELECT\b/i', $skeleton)
+            && preg_match('/\b(?:' . $users_tbl . '|' . $usermeta_tbl . '|' . $options_tbl . '|' . $wc_orders . '|' . $wc_keys . ')\b/i', $skeleton)
+        ) {
             return 'UNION_SELECT_CREDENTIAL_TABLE';
         }
 

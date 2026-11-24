@@ -153,7 +153,8 @@ class ActivityRetention {
     private static function prune_single_partition(string $file_path, string $filename): bool {
         $lines = @file($file_path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
         if (empty($lines)) {
-            return wp_delete_file($file_path);
+            wp_delete_file($file_path);
+            return !file_exists($file_path);
         }
 
         $first_seq = null;
@@ -210,7 +211,8 @@ class ActivityRetention {
         }
 
         // Delete file using WordPress filesystem wrapper
-        return wp_delete_file($file_path);
+        wp_delete_file($file_path);
+        return !file_exists($file_path);
     }
 
     /**

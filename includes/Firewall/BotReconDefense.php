@@ -193,16 +193,9 @@ class BotReconDefense {
         // 2. Check AI Scrapers & Crawler Policy (3-Switch Controls)
         $ai_bot_matched = self::match_ai_scraper($ua_lower);
         if ($ai_bot_matched) {
-            $is_search_citation_bot = (
-                str_contains($ua_lower, 'oai-searchbot') ||
-                str_contains($ua_lower, 'perplexitybot') ||
-                str_contains($ua_lower, 'claude-searchbot')
-            );
-
-            // Switch 1: Allow verified search & citation assistants (OAI-SearchBot, PerplexityBot, Claude-SearchBot)
+            // Switch 1: Allow ONLY IP/rDNS-verified search & citation assistants (OAI-SearchBot, PerplexityBot, Claude-SearchBot)
             $allow_citations = !empty($settings['waf_ai_allow_search_citations']);
-            if ($is_search_citation_bot && $allow_citations && self::is_read_only_public_crawl()) {
-                // Allowed for search citation indexing
+            if ($allow_citations && self::is_verified_ai_citation_bot($client_ip, $user_agent)) {
                 return null;
             }
 

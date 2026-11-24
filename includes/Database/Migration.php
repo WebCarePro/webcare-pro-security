@@ -32,7 +32,8 @@ class Migration {
             created_at_gmt datetime NULL,
             started_at datetime(3) NULL,
             completed_at datetime(3) NULL,
-            PRIMARY KEY  (id)
+            PRIMARY KEY  (id),
+            KEY status_created (status, created_at)
         ) $charset_collate;";
 
         // 2. Scan Issues Table
@@ -54,7 +55,9 @@ class Migration {
             PRIMARY KEY  (id),
             KEY scan_id (scan_id),
             KEY severity (severity),
-            KEY status (status)
+            KEY status (status),
+            KEY scan_status (scan_id, status),
+            KEY scan_severity (scan_id, severity)
         ) $charset_collate;";
 
         // 3. Scan Files Log Table
@@ -88,7 +91,9 @@ class Migration {
             restored_at_gmt datetime NULL,
             PRIMARY KEY  (id),
             KEY scan_id (scan_id),
-            KEY status (status)
+            KEY status (status),
+            KEY sha256 (sha256),
+            KEY status_quarantined (status, quarantined_at)
         ) $charset_collate;";
 
         // 5. Firewall Blocked Requests Table
@@ -113,7 +118,8 @@ class Migration {
             KEY ip_address (ip_address(50)),
             KEY rule_category (rule_category),
             KEY http_status_code (http_status_code),
-            KEY created_at (created_at)
+            KEY created_at (created_at),
+            KEY action_created (action_taken, created_at)
         ) $charset_collate;";
 
         // 6. User Login History & Device Forensics (All Telemetry Encrypted via SecretVault)
@@ -134,7 +140,8 @@ class Migration {
             PRIMARY KEY  (id),
             KEY user_id (user_id),
             KEY session_token (session_token(32)),
-            KEY login_time (login_time)
+            KEY login_time (login_time),
+            KEY user_login_time (user_id, login_time)
         ) $charset_collate;";
 
         // 7. Centralized Cron & Scheduled Tasks Execution Logs
@@ -190,7 +197,7 @@ class Migration {
         }
 
         if ($all_created) {
-            update_option('webcareproscan_db_version', defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '3.24.0', false);
+            update_option('webcareproscan_db_version', defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '0.0.1', false);
         }
     }
 }

@@ -1618,11 +1618,11 @@ export const App = ({ initialTab }: { initialTab?: NavTab } = {}) => {
   const [navTab, setNavTab] = useState<NavTab>(getInitialNavTab);
   const [containmentActive, setContainmentActive] = useState<boolean>(false);
   const [initialFimFile, setInitialFimFile] = useState<string | null>(null);
-  const [initialSettingsSubTab, setInitialSettingsSubTab] = useState<'containment' | 'schedule' | 'email' | 'webhooks' | 'cloudflare' | 'headers' | 'ai' | 'mcp' | 'performance' | 'import_export' | 'updates' | 'cleanup' | 'support' | undefined>(() => {
+  const [initialSettingsSubTab, setInitialSettingsSubTab] = useState<'containment' | 'schedule' | 'email' | 'webhooks' | 'cloudflare' | 'headers' | 'ai' | 'mcp' | 'performance' | 'import_export' | 'cleanup' | 'support' | undefined>(() => {
     try {
       const urlParams = new URLSearchParams(window.location.search);
       const sub = urlParams.get('tab') || urlParams.get('subtab');
-      if (sub && ['containment', 'schedule', 'email', 'webhooks', 'cloudflare', 'headers', 'ai', 'mcp', 'performance', 'import_export', 'updates', 'cleanup', 'support'].includes(sub)) {
+      if (sub && ['containment', 'schedule', 'email', 'webhooks', 'cloudflare', 'headers', 'ai', 'mcp', 'performance', 'import_export', 'cleanup', 'support'].includes(sub)) {
         return sub as any;
       }
     } catch (e) {}

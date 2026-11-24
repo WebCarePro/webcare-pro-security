@@ -80,6 +80,21 @@ if (!function_exists('webcare_purge_test_storage')) {
         $GLOBALS['wp_mock_transients'] = [];
         $GLOBALS['wp_mock_transient_ttls'] = [];
         $GLOBALS['wp_mock_transient_expires'] = [];
+        $GLOBALS['wp_mock_users'] = [];
+        $GLOBALS['wp_mock_user_meta'] = [];
+        $GLOBALS['wp_mock_is_multisite'] = false;
+        $GLOBALS['wp_mock_current_blog_id'] = 1;
+        $GLOBALS['wp_mock_blog_memberships'] = [];
+        $GLOBALS['wp_mock_super_admins'] = [];
+        $GLOBALS['wp_mock_mails'] = [];
+        $GLOBALS['wp_mock_sessions_destroyed'] = [];
+        $GLOBALS['wp_mock_http_requests'] = [];
+        $GLOBALS['wp_mock_http_callback'] = null;
+        $GLOBALS['wp_mock_current_user_can_callback'] = null;
+        unset($GLOBALS['wp_mock_current_user_can'], $GLOBALS['wp_mock_current_user']);
+        if (class_exists('WebCareProScanner\\System\\SettingsManager') && method_exists('WebCareProScanner\\System\\SettingsManager', 'reset_settings_cache')) {
+            \WebCareProScanner\System\SettingsManager::reset_settings_cache();
+        }
         $rl_dir = ($GLOBALS['wp_mock_upload_dir'] ?? sys_get_temp_dir() . '/wp-uploads-mock') . '/webcare-pro-security/rate-limits';
         if (is_dir($rl_dir)) {
             $files = glob($rl_dir . '/rl_*.php');
@@ -276,7 +291,28 @@ if (!function_exists('wp_max_upload_size')) {
 
 if (!function_exists('is_multisite')) {
     function is_multisite(): bool {
-        return false;
+        return !empty($GLOBALS['wp_mock_is_multisite']);
+    }
+}
+
+if (!function_exists('get_current_blog_id')) {
+    function get_current_blog_id(): int {
+        return (int) ($GLOBALS['wp_mock_current_blog_id'] ?? 1);
+    }
+}
+
+if (!function_exists('is_super_admin')) {
+    function is_super_admin(?int $user_id = null): bool {
+        $uid = $user_id ?? get_current_user_id();
+        return !empty($GLOBALS['wp_mock_super_admins'][$uid]);
+    }
+}
+
+if (!function_exists('is_user_member_of_blog')) {
+    function is_user_member_of_blog(int $user_id = 0, int $blog_id = 0): bool {
+        $bid = $blog_id ?: get_current_blog_id();
+        $members = $GLOBALS['wp_mock_blog_memberships'][$bid] ?? [];
+        return !empty($members[$user_id]);
     }
 }
 
@@ -296,11 +332,15 @@ if (!class_exists('WP_User')) {
     class WP_User {
         public int $ID = 0;
         public string $user_login = '';
+        public string $user_email = '';
+        public string $display_name = '';
         public array $roles = [];
         public array $allcaps = [];
         public function __construct(int $id = 0, string $name = '') {
             $this->ID = $id;
             $this->user_login = $name ?: 'user_' . $id;
+            $this->user_email = $this->user_login . '@example.com';
+            $this->display_name = $this->user_login;
         }
         public function exists(): bool {
             return $this->ID > 0;
@@ -327,10 +367,67 @@ if (!function_exists('is_user_logged_in')) {
 
 if (!function_exists('get_userdata')) {
     function get_userdata(int $user_id) {
+        if (isset($GLOBALS['wp_mock_users'][$user_id])) {
+            return $GLOBALS['wp_mock_users'][$user_id];
+        }
         if (!empty($GLOBALS['wp_mock_current_user']) && $GLOBALS['wp_mock_current_user']->ID === $user_id) {
             return $GLOBALS['wp_mock_current_user'];
         }
         return false;
+    }
+}
+
+if (!function_exists('get_user_by')) {
+    function get_user_by(string $field, int|string $value) {
+        if ($field === 'id' || $field === 'ID') {
+            return get_userdata((int) $value);
+        }
+        foreach (($GLOBALS['wp_mock_users'] ?? []) as $u) {
+            if ($field === 'login' && ($u->user_login ?? '') === $value) {
+                return $u;
+            }
+            if ($field === 'email' && ($u->user_email ?? '') === $value) {
+                return $u;
+            }
+        }
+        return false;
+    }
+}
+
+if (!function_exists('get_user_meta')) {
+    function get_user_meta(int $user_id, string $key = '', bool $single = false) {
+        $all = $GLOBALS['wp_mock_user_meta'][$user_id] ?? [];
+        if ($key === '') {
+            return $all;
+        }
+        if (!array_key_exists($key, $all)) {
+            return $single ? '' : [];
+        }
+        return $single ? $all[$key] : [$all[$key]];
+    }
+}
+
+if (!function_exists('update_user_meta')) {
+    function update_user_meta(int $user_id, string $meta_key, mixed $meta_value, mixed $prev_value = ''): int|bool {
+        $GLOBALS['wp_mock_user_meta'][$user_id][$meta_key] = $meta_value;
+        return true;
+    }
+}
+
+if (!function_exists('delete_user_meta')) {
+    function delete_user_meta(int $user_id, string $meta_key, mixed $meta_value = ''): bool {
+        unset($GLOBALS['wp_mock_user_meta'][$user_id][$meta_key]);
+        return true;
+    }
+}
+
+if (!function_exists('user_can')) {
+    function user_can(int|\WP_User $user, string $capability, mixed ...$args): bool {
+        $user_obj = $user instanceof WP_User ? $user : get_userdata((int) $user);
+        if (!$user_obj instanceof WP_User) {
+            return false;
+        }
+        return $user_obj->has_cap($capability);
     }
 }
 
@@ -618,6 +715,30 @@ if (!function_exists('esc_html__')) {
     }
 }
 
+if (!function_exists('esc_html_e')) {
+    function esc_html_e(string $text, string $domain = 'default'): void {
+        echo htmlspecialchars($text, ENT_QUOTES, 'UTF-8');
+    }
+}
+
+if (!function_exists('esc_attr__')) {
+    function esc_attr__(string $text, string $domain = 'default'): string {
+        return htmlspecialchars($text, ENT_QUOTES, 'UTF-8');
+    }
+}
+
+if (!function_exists('esc_attr_e')) {
+    function esc_attr_e(string $text, string $domain = 'default'): void {
+        echo htmlspecialchars($text, ENT_QUOTES, 'UTF-8');
+    }
+}
+
+if (!function_exists('number_format_i18n')) {
+    function number_format_i18n(float $number, int $decimals = 0): string {
+        return number_format($number, $decimals);
+    }
+}
+
 if (!function_exists('esc_url_raw')) {
     function esc_url_raw(string $url): string {
         return filter_var($url, FILTER_SANITIZE_URL) ?: '';
@@ -649,6 +770,9 @@ if (!function_exists('size_format')) {
 
 if (!function_exists('current_user_can')) {
     function current_user_can(string $capability, ...$args): bool {
+        if (!empty($GLOBALS['wp_mock_current_user_can_callback']) && is_callable($GLOBALS['wp_mock_current_user_can_callback'])) {
+            return (bool) call_user_func($GLOBALS['wp_mock_current_user_can_callback'], $capability, ...$args);
+        }
         if (isset($GLOBALS['wp_mock_current_user_can'])) {
             return (bool) $GLOBALS['wp_mock_current_user_can'];
         }
@@ -793,6 +917,7 @@ if (!class_exists('wpdb')) {
     #[\AllowDynamicProperties]
     class wpdb {
         public string $prefix = 'wp_';
+        public int $insert_id = 0;
         public array $queries = [];
         public array $mock_tables = [];
         public $mock_get_var_callback = null;
@@ -846,7 +971,7 @@ if (!class_exists('wpdb')) {
                 static fn($a) => is_string($a) ? str_replace("'", "\\'", $a) : $a,
                 $args
             );
-            return vsprintf(str_replace(['%s', '%d'], ["'%s'", '%d'], $query), $escapedArgs);
+            return vsprintf(str_replace(['%s', '%d', '%i'], ["'%s'", '%d', '`%s`'], $query), $escapedArgs);
         }
 
         public function get_var(string $query) {
@@ -1356,6 +1481,104 @@ if (!function_exists('esc_url')) {
 if (!function_exists('sanitize_textarea_field')) {
     function sanitize_textarea_field(string $str): string {
         return trim(strip_tags($str));
+    }
+}
+
+if (!class_exists('WP_Session_Tokens')) {
+    class WP_Session_Tokens {
+        private int $user_id;
+        public function __construct(int $user_id) { $this->user_id = $user_id; }
+        public static function get_instance(int $user_id): self { return new self($user_id); }
+        public function destroy_all(): void {
+            $GLOBALS['wp_mock_sessions_destroyed'][] = $this->user_id;
+            delete_user_meta($this->user_id, 'session_tokens');
+        }
+    }
+}
+
+if (!function_exists('get_password_reset_key')) {
+    function get_password_reset_key($user): string|WP_Error {
+        return 'mock-reset-key-' . bin2hex(random_bytes(8));
+    }
+}
+
+if (!function_exists('network_site_url')) {
+    function network_site_url(string $path = '', ?string $scheme = null): string {
+        return 'https://example.com/' . ltrim($path, '/');
+    }
+}
+
+if (!function_exists('wp_mail')) {
+    function wp_mail(string|array $to, string $subject, string $message, string|array $headers = '', string|array $attachments = []): bool {
+        $GLOBALS['wp_mock_mails'][] = ['to' => $to, 'subject' => $subject, 'message' => $message];
+        return true;
+    }
+}
+
+if (!function_exists('wp_login_url')) {
+    function wp_login_url(string $redirect = '', bool $force_reauth = false): string {
+        return 'https://example.com/wp-login.php';
+    }
+}
+
+if (!function_exists('rest_ensure_response')) {
+    function rest_ensure_response($response) {
+        if ($response instanceof WP_Error || $response instanceof WP_REST_Response) {
+            return $response;
+        }
+        return new WP_REST_Response($response, 200);
+    }
+}
+
+if (!function_exists('has_filter')) {
+    function has_filter(string $hook_name, mixed $callback = false): bool|int {
+        $callbacks = $GLOBALS['wp_mock_filters'][$hook_name] ?? [];
+        if (empty($callbacks)) {
+            return false;
+        }
+        if ($callback === false) {
+            return true;
+        }
+        foreach ($callbacks as $priority => $entries) {
+            foreach ($entries as $entry) {
+                if (($entry['function'] ?? null) === $callback) {
+                    return (int) $priority;
+                }
+            }
+        }
+        return false;
+    }
+}
+
+if (!function_exists('has_action')) {
+    function has_action(string $hook_name, mixed $callback = false): bool|int {
+        return has_filter($hook_name, $callback);
+    }
+}
+
+if (!function_exists('wp_safe_remote_post')) {
+    function wp_safe_remote_post(string $url, array $args = []): array {
+        $GLOBALS['wp_mock_http_requests'][] = ['method' => 'POST', 'url' => $url, 'args' => $args];
+        if (!empty($GLOBALS['wp_mock_http_callback']) && is_callable($GLOBALS['wp_mock_http_callback'])) {
+            return call_user_func($GLOBALS['wp_mock_http_callback'], $url, $args);
+        }
+        return [
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body'     => '{}',
+        ];
+    }
+}
+
+if (!function_exists('wp_safe_remote_get')) {
+    function wp_safe_remote_get(string $url, array $args = []): array {
+        $GLOBALS['wp_mock_http_requests'][] = ['method' => 'GET', 'url' => $url, 'args' => $args];
+        if (!empty($GLOBALS['wp_mock_http_callback']) && is_callable($GLOBALS['wp_mock_http_callback'])) {
+            return call_user_func($GLOBALS['wp_mock_http_callback'], $url, $args);
+        }
+        return [
+            'response' => ['code' => 404, 'message' => 'Not Found'],
+            'body'     => '',
+        ];
     }
 }
 

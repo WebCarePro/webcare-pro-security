@@ -950,6 +950,17 @@ class NotificationDispatcher {
         $color_int = $is_danger ? 14428198 : 164999;
         $status_emoji = $severity === 'critical' ? '🚨' : ($severity === 'high' ? '⚠️' : '🛡️');
 
+        $is_forced = !empty($payload['force_webhook']);
+
+        // Helper closure to send immediately only on explicit admin test trigger, otherwise enqueue non-blocking
+        $emit_webhook = static function (string $url, array $hook_payload, string $platform) use ($is_forced): void {
+            if ($is_forced) {
+                self::post_webhook_direct($url, $hook_payload);
+            } else {
+                WebhookService::enqueue_webhook($url, $hook_payload, $platform);
+            }
+        };
+
         // 1. Slack
         if ($has_slack) {
             $slack_payload = [
@@ -984,7 +995,7 @@ class NotificationDispatcher {
                     ]
                 ]
             ];
-            self::post_webhook_direct($settings['slack_webhook_url'], $slack_payload);
+            $emit_webhook($settings['slack_webhook_url'], $slack_payload, 'Slack');
         }
 
         // 2. Discord
@@ -1008,7 +1019,7 @@ class NotificationDispatcher {
                     ]
                 ]
             ];
-            self::post_webhook_direct($settings['discord_webhook_url'], $discord_payload);
+            $emit_webhook($settings['discord_webhook_url'], $discord_payload, 'Discord');
         }
 
         // 3. ClickUp
@@ -1021,7 +1032,7 @@ class NotificationDispatcher {
                 'event'       => $payload['event_key'],
                 'site_name'   => $site_name,
             ];
-            self::post_webhook_direct($settings['clickup_webhook_url'], $clickup_payload);
+            $emit_webhook($settings['clickup_webhook_url'], $clickup_payload, 'ClickUp');
         }
 
         // 4. Asana
@@ -1034,7 +1045,7 @@ class NotificationDispatcher {
                     'notes' => "{$message}\n\nSite: {$site_name} ({$site_url})\nDashboard: {$dash_url}",
                 ],
             ];
-            self::post_webhook_direct($settings['asana_webhook_url'], $asana_payload);
+            $emit_webhook($settings['asana_webhook_url'], $asana_payload, 'Asana');
         }
 
         // 5. Generic Automation Webhook
@@ -1051,7 +1062,7 @@ class NotificationDispatcher {
                 'datetime'      => $payload['datetime'],
                 'details'       => $payload['details'] ?? [],
             ];
-            self::post_webhook_direct($settings['generic_webhook_url'], $generic_payload);
+            $emit_webhook($settings['generic_webhook_url'], $generic_payload, 'Automation Webhook');
         }
 
         return true;
@@ -1065,22 +1076,12 @@ class NotificationDispatcher {
             return false;
         }
 
-        $parsed = wp_parse_url($url);
-        $scheme = strtolower($parsed['scheme'] ?? '');
-        $host   = strtolower($parsed['host'] ?? '');
-
-        // Strict HTTPS enforcement (allow localhost HTTP strictly if defined in local development constant)
-        if ($scheme !== 'https') {
-            $is_local_dev = defined('WP_ENVIRONMENT_TYPE') && WP_ENVIRONMENT_TYPE === 'local';
-            if (!$is_local_dev) {
-                return false;
-            }
-        }
-
-        // SSRF protection: reject AWS/GCP/Azure instance metadata endpoints
-        if ($host === '169.254.169.254' || $host === 'metadata.google.internal' || $host === 'instance-data') {
+        $target_check = WebhookService::validate_webhook_target($url);
+        if (empty($target_check['valid'])) {
             return false;
         }
+
+        $payload = WebhookService::sanitize_webhook_payload($payload);
 
         $resp = wp_safe_remote_post($url, [
             'timeout'     => 8,

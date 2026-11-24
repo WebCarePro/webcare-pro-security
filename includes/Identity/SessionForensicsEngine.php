@@ -574,8 +574,10 @@ class SessionForensicsEngine {
      * @return array
      */
     private static function resolve_ip_geo(string $ip): array {
-        if (!empty($_SERVER['HTTP_CF_IPCOUNTRY'])) {
-            $code = sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_IPCOUNTRY']));
+        $trusted_cf = class_exists('\\WebCareProScanner\\Firewall\\Core\\ClientIpResolver')
+            && \WebCareProScanner\Firewall\Core\ClientIpResolver::is_trusted_cloudflare_request();
+        if ($trusted_cf && !empty($_SERVER['HTTP_CF_IPCOUNTRY'])) {
+            $code = strtoupper(sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_IPCOUNTRY'])));
             return [
                 'country'      => self::country_code_to_name($code),
                 'country_code' => $code,
@@ -632,12 +634,8 @@ class SessionForensicsEngine {
         if (class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine')) {
             return \WebCareProScanner\Firewall\FirewallEngine::get_client_ip();
         }
-        if (!empty($_SERVER['HTTP_CF_CONNECTING_IP'])) {
-            return sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_CONNECTING_IP']));
-        }
-        if (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
-            $parts = explode(',', sanitize_text_field(wp_unslash($_SERVER['HTTP_X_FORWARDED_FOR'])));
-            return trim($parts[0]);
+        if (class_exists('\\WebCareProScanner\\Firewall\\Core\\ClientIpResolver')) {
+            return \WebCareProScanner\Firewall\Core\ClientIpResolver::get_real_ip();
         }
         return isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '127.0.0.1';
     }

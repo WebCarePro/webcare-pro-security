@@ -56,18 +56,32 @@ class WafFileLogger {
             return rtrim(self::$custom_storage_dir, '/\\');
         }
 
-        // 1. Prefer external WEBCARE_WAF_STORAGE_DIR (above webroot) when defined
+        // 1. Prefer external WEBCARE_WAF_STORAGE_DIR (above webroot) when defined, scoped per blog in Multisite
         if (defined('WEBCARE_WAF_STORAGE_DIR') && is_string(WEBCARE_WAF_STORAGE_DIR) && WEBCARE_WAF_STORAGE_DIR !== '') {
-            return rtrim(wp_normalize_path(WEBCARE_WAF_STORAGE_DIR), '/\\') . '/' . self::SUBDIR;
+            $ext_base = rtrim(wp_normalize_path(WEBCARE_WAF_STORAGE_DIR), '/\\');
+            if (function_exists('is_multisite') && is_multisite() && function_exists('get_current_blog_id')) {
+                $blog_id = (int) get_current_blog_id();
+                if ($blog_id > 1) {
+                    $ext_base .= '/sites/' . $blog_id;
+                }
+            }
+            return $ext_base . '/' . self::SUBDIR;
         }
 
-        // 2. Default to hardened WAF Vault directory (WP_CONTENT_DIR/webcare-waf/logs)
+        // 2. Default to hardened WAF Vault directory (WP_CONTENT_DIR/webcare-waf[/sites/{id}]/vault/logs)
         if (class_exists('\\WebCareProScanner\\Firewall\\Core\\WafVaultManager')) {
             return wp_normalize_path(rtrim(\WebCareProScanner\Firewall\Core\WafVaultManager::get_vault_dir(), '/\\') . '/' . self::SUBDIR);
         }
 
         $base = defined('WP_CONTENT_DIR') ? WP_CONTENT_DIR : ABSPATH . 'wp-content';
-        return wp_normalize_path(rtrim($base, '/\\') . '/webcare-waf/' . self::SUBDIR);
+        $site_suffix = '';
+        if (function_exists('is_multisite') && is_multisite() && function_exists('get_current_blog_id')) {
+            $blog_id = (int) get_current_blog_id();
+            if ($blog_id > 1) {
+                $site_suffix = '/sites/' . $blog_id;
+            }
+        }
+        return wp_normalize_path(rtrim($base, '/\\') . '/webcare-waf' . $site_suffix . '/' . self::SUBDIR);
     }
 
     /**

@@ -41,7 +41,105 @@ class WebhookService {
      * @param string $platform_name
      * @return void
      */
+    /**
+     * Validate a webhook destination URL against SSRF & insecure schemes.
+     *
+     * @param string $url Target webhook URL.
+     * @return array{valid:bool,message:string}
+     */
+    public static function validate_webhook_target(string $url): array {
+        $url = trim($url);
+        if ($url === '') {
+            return ['valid' => false, 'message' => __('Webhook URL cannot be empty.', 'webcare-pro-security')];
+        }
+
+        $parsed = wp_parse_url($url);
+        if (!is_array($parsed)) {
+            return ['valid' => false, 'message' => __('Invalid webhook URL syntax.', 'webcare-pro-security')];
+        }
+
+        $scheme = strtolower((string) ($parsed['scheme'] ?? ''));
+        $host   = strtolower((string) ($parsed['host'] ?? ''));
+        if ($host === '') {
+            return ['valid' => false, 'message' => __('Webhook URL is missing a valid hostname.', 'webcare-pro-security')];
+        }
+
+        $unbracketed_host = trim($host, '[]');
+        $is_local_dev     = defined('WP_ENVIRONMENT_TYPE') && WP_ENVIRONMENT_TYPE === 'local';
+        $is_loopback_host = in_array($unbracketed_host, ['localhost', '127.0.0.1', '::1'], true);
+
+        // Strict HTTPS enforcement (allow loopback HTTP strictly if WP_ENVIRONMENT_TYPE === 'local')
+        if ($scheme !== 'https') {
+            if (!($is_local_dev && $is_loopback_host && $scheme === 'http')) {
+                return ['valid' => false, 'message' => __('Webhook URL must use secure HTTPS.', 'webcare-pro-security')];
+            }
+        }
+
+        // SSRF protection: reject AWS/GCP/Azure metadata, internal hostnames, and private/reserved IPs
+        $blocked_hosts = [
+            '169.254.169.254',
+            '169.254.170.2',
+            'fd00:ec2::254',
+            'metadata.google.internal',
+            'metadata.goog',
+            'instance-data',
+            'localhost.localdomain',
+            'ip6-localhost',
+            'ip6-loopback',
+            '0.0.0.0',
+            '0',
+            '::',
+        ];
+        if (
+            in_array($unbracketed_host, $blocked_hosts, true)
+            || (!$is_local_dev && $is_loopback_host)
+            || str_ends_with($unbracketed_host, '.internal')
+            || str_ends_with($unbracketed_host, '.local')
+            || str_ends_with($unbracketed_host, '.localhost')
+        ) {
+            return ['valid' => false, 'message' => __('Webhook URL rejected: Prohibited local, internal, or metadata endpoint.', 'webcare-pro-security')];
+        }
+
+        // Reject decimal/hex/octal obfuscated IPv4 literals or direct private/reserved IP literals
+        if (
+            preg_match('/^(?:0x[0-9a-f]+|0[0-7]+|\d{7,10})$/i', $unbracketed_host)
+            || (
+                filter_var($unbracketed_host, FILTER_VALIDATE_IP) !== false
+                && !($is_local_dev && $is_loopback_host)
+                && filter_var($unbracketed_host, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false
+            )
+        ) {
+            return ['valid' => false, 'message' => __('Webhook URL rejected: Private or reserved IP address target is prohibited.', 'webcare-pro-security')];
+        }
+
+        return ['valid' => true, 'message' => ''];
+    }
+
+    /**
+     * Redact accidental secrets/credentials from outbound webhook payloads before queueing or posting.
+     */
+    public static function sanitize_webhook_payload(array $payload): array {
+        if (class_exists('\\WebCareProScanner\\Firewall\\NextGen\\ResponseDlpSentinel')) {
+            $has_leak        = false;
+            $matched_pattern = '';
+            $cleaned         = \WebCareProScanner\Firewall\NextGen\ResponseDlpSentinel::redact_data_recursive($payload, $has_leak, $matched_pattern);
+            if (is_array($cleaned)) {
+                return $cleaned;
+            }
+        }
+        return $payload;
+    }
+
+    /**
+     * Enqueue a webhook request asynchronously so live WAF/auth responses are never blocked by remote timeouts.
+     */
     public static function enqueue_webhook(string $url, array $payload, string $platform_name): void {
+        $target_check = self::validate_webhook_target($url);
+        if (empty($target_check['valid'])) {
+            return;
+        }
+        $payload = self::sanitize_webhook_payload($payload);
+
         $queue = get_option('webcareproscan_async_webhook_queue', []);
         if (!is_array($queue)) {
             $queue = [];
@@ -94,9 +192,10 @@ class WebhookService {
         $site_url  = get_site_url();
         $dashboard_url = \WebCareProScanner\Admin\RouteRegistry::url('webcare-pro-security');
         $plugin_version = defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '2.7.1';
+        $raw_custom = (!empty($custom_url) && !str_contains($custom_url, '••')) ? trim($custom_url) : '';
 
         if ($platform === 'slack') {
-            $url = !empty($custom_url) ? trim($custom_url) : ($settings['slack_webhook_url'] ?? '');
+            $url = $raw_custom !== '' ? $raw_custom : ($settings['slack_webhook_url'] ?? '');
             if (empty($url)) {
                 return ['success' => false, 'code' => 400, 'message' => __('No Slack Webhook URL provided.', 'webcare-pro-security')];
             }
@@ -137,7 +236,7 @@ class WebhookService {
             return self::post_webhook($url, $payload, 'Slack', true);
 
         } elseif ($platform === 'discord') {
-            $url = !empty($custom_url) ? trim($custom_url) : ($settings['discord_webhook_url'] ?? '');
+            $url = $raw_custom !== '' ? $raw_custom : ($settings['discord_webhook_url'] ?? '');
             if (empty($url)) {
                 return ['success' => false, 'code' => 400, 'message' => __('No Discord Webhook URL provided.', 'webcare-pro-security')];
             }
@@ -164,7 +263,7 @@ class WebhookService {
             return self::post_webhook($url, $payload, 'Discord', true);
 
         } elseif ($platform === 'clickup') {
-            $url = !empty($custom_url) ? trim($custom_url) : ($settings['clickup_webhook_url'] ?? '');
+            $url = $raw_custom !== '' ? $raw_custom : ($settings['clickup_webhook_url'] ?? '');
             if (empty($url)) {
                 return ['success' => false, 'code' => 400, 'message' => __('No ClickUp Webhook URL provided.', 'webcare-pro-security')];
             }
@@ -185,7 +284,7 @@ class WebhookService {
             return self::post_webhook($url, $payload, 'ClickUp', true);
 
         } elseif ($platform === 'asana') {
-            $url = !empty($custom_url) ? trim($custom_url) : ($settings['asana_webhook_url'] ?? '');
+            $url = $raw_custom !== '' ? $raw_custom : ($settings['asana_webhook_url'] ?? '');
             if (empty($url)) {
                 return ['success' => false, 'code' => 400, 'message' => __('No Asana Webhook URL provided.', 'webcare-pro-security')];
             }
@@ -206,7 +305,7 @@ class WebhookService {
             return self::post_webhook($url, $payload, 'Asana', true);
 
         } elseif ($platform === 'generic') {
-            $url = !empty($custom_url) ? trim($custom_url) : ($settings['generic_webhook_url'] ?? '');
+            $url = $raw_custom !== '' ? $raw_custom : ($settings['generic_webhook_url'] ?? '');
             if (empty($url)) {
                 return ['success' => false, 'code' => 400, 'message' => __('No Automation Webhook URL provided.', 'webcare-pro-security')];
             }
@@ -691,31 +790,16 @@ class WebhookService {
      * Enforces SSRF defense (HTTPS-only, rejects RFC 1918 / loopback / cloud metadata).
      */
     private static function post_webhook(string $url, array $payload, string $platform_name, bool $is_manual_test = false): array {
-        $parsed = wp_parse_url($url);
-        $scheme = strtolower($parsed['scheme'] ?? '');
-        $host   = strtolower($parsed['host'] ?? '');
-
-        // Strict HTTPS enforcement (allow localhost HTTP strictly if defined in local development constant)
-        if ($scheme !== 'https') {
-            $is_local_dev = defined('WP_ENVIRONMENT_TYPE') && WP_ENVIRONMENT_TYPE === 'local';
-            if (!$is_local_dev) {
-                return [
-                    'success' => false,
-                    'code'    => 400,
-                    'message' => __('Webhook URL must use secure HTTPS.', 'webcare-pro-security'),
-                ];
-            }
-        }
-
-        // SSRF protection: reject AWS/GCP/Azure instance metadata endpoints
-        if ($host === '169.254.169.254' || $host === 'metadata.google.internal' || $host === 'instance-data') {
+        $target_check = self::validate_webhook_target($url);
+        if (empty($target_check['valid'])) {
             return [
                 'success' => false,
                 'code'    => 400,
-                'message' => __('Webhook URL rejected: Prohibited metadata endpoint.', 'webcare-pro-security'),
+                'message' => $target_check['message'],
             ];
         }
 
+        $payload = self::sanitize_webhook_payload($payload);
         $timeout = $is_manual_test ? 4 : 5;
 
         // Use wp_safe_remote_post to validate IP boundaries and avoid private intranet SSRF

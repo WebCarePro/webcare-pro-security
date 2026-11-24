@@ -115,7 +115,7 @@ if (isset($wpdb) && $wpdb instanceof \wpdb) {
 }
 
 $webcareproscan_settings = get_option('webcareproscan_settings', []);
-$webcareproscan_delete_data = true; // Default to true for clean fresh uninstallation; can be configured in settings
+$webcareproscan_delete_data = false; // Default to false (KEEP ALL DATA) unless explicitly opted-in under Data & Purge
 
 if (is_array($webcareproscan_settings) && array_key_exists('delete_data_on_uninstall', $webcareproscan_settings)) {
     $webcareproscan_delete_data = (bool) $webcareproscan_settings['delete_data_on_uninstall'];
@@ -258,57 +258,80 @@ if ($webcareproscan_delete_data) {
         }
     }
 
-    // 6. Remove all plugin-created files in uploads (logs, quarantine, backups, compiled binaries)
+    // 6. Remove all plugin-created files in uploads and isolated webcare-waf storage across single-site and multisite
     if ($webcareproscan_delete_uploads) {
-        $webcareproscan_upload_dir = wp_upload_dir();
-        if (!empty($webcareproscan_upload_dir['basedir'])) {
-            $webcareproscan_storage_dir = untrailingslashit($webcareproscan_upload_dir['basedir']) . '/webcare-pro-security';
-            if (is_dir($webcareproscan_storage_dir)) {
-                global $wp_filesystem;
-                if (!$wp_filesystem) {
-                    require_once ABSPATH . 'wp-admin/includes/file.php';
-                    WP_Filesystem();
+        $webcareproscan_purge_dir = static function (string $target_dir): void {
+            if ($target_dir === '' || !is_dir($target_dir)) {
+                return;
+            }
+            global $wp_filesystem;
+            if (!$wp_filesystem) {
+                require_once ABSPATH . 'wp-admin/includes/file.php';
+                WP_Filesystem();
+            }
+            $deleted = false;
+            if ($wp_filesystem && is_object($wp_filesystem) && method_exists($wp_filesystem, 'delete')) {
+                try {
+                    $deleted = (bool) $wp_filesystem->delete($target_dir, true);
+                } catch (\Throwable $e) {
+                    $deleted = false;
                 }
-                $webcareproscan_deleted = false;
-                if ($wp_filesystem && is_object($wp_filesystem) && method_exists($wp_filesystem, 'delete')) {
-                    try {
-                        $webcareproscan_deleted = (bool) $wp_filesystem->delete($webcareproscan_storage_dir, true);
-                    } catch (\Throwable $e) {
-                        $webcareproscan_deleted = false;
+            }
+            if (!$deleted && is_dir($target_dir)) {
+                $del_recursive = static function (string $dir) use (&$del_recursive): void {
+                    if (!is_dir($dir)) {
+                        return;
                     }
-                }
-                // Fallback recursive delete using standard WordPress functions if wp_filesystem failed
-                if (!$webcareproscan_deleted && is_dir($webcareproscan_storage_dir)) {
-                    $webcare_del_recursive = static function ($dir, $del_fn) {
-                        if (!is_dir($dir)) {
-                            return;
-                        }
-                        $items = @scandir($dir);
-                        if (!is_array($items)) {
-                            return;
-                        }
+                    $items = @scandir($dir);
+                    if (is_array($items)) {
                         foreach ($items as $item) {
                             if ($item === '.' || $item === '..') {
                                 continue;
                             }
                             $path = $dir . DIRECTORY_SEPARATOR . $item;
                             if (is_dir($path)) {
-                                $del_fn($path, $del_fn);
+                                $del_recursive($path);
                             } else {
                                 wp_delete_file($path);
                             }
                         }
-                        global $wp_filesystem;
-                        if ($wp_filesystem && is_object($wp_filesystem) && method_exists($wp_filesystem, 'rmdir')) {
-                            $wp_filesystem->rmdir($dir);
-                        } else {
-                            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_rmdir -- Fallback directory purge during plugin uninstallation.
-                            @rmdir($dir);
-                        }
-                    };
-                    $webcare_del_recursive($webcareproscan_storage_dir, $webcare_del_recursive);
-                }
+                    }
+                    global $wp_filesystem;
+                    if ($wp_filesystem && is_object($wp_filesystem) && method_exists($wp_filesystem, 'rmdir')) {
+                        $wp_filesystem->rmdir($dir);
+                    } else {
+                        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_rmdir -- Fallback directory purge during plugin uninstallation.
+                        @rmdir($dir);
+                    }
+                };
+                $del_recursive($target_dir);
             }
+        };
+
+        $webcareproscan_upload_dir = wp_upload_dir();
+        if (!empty($webcareproscan_upload_dir['basedir'])) {
+            $webcareproscan_purge_dir(untrailingslashit((string) $webcareproscan_upload_dir['basedir']) . '/webcare-pro-security');
+        }
+
+        if (is_multisite() && !empty($webcareproscan_blogs) && is_array($webcareproscan_blogs)) {
+            $webcareproscan_cur_blog = (int) get_current_blog_id();
+            foreach ($webcareproscan_blogs as $webcareproscan_b_id) {
+                if ((int) $webcareproscan_b_id === $webcareproscan_cur_blog) {
+                    continue;
+                }
+                switch_to_blog((int) $webcareproscan_b_id);
+                $webcareproscan_sub_upload = wp_upload_dir();
+                if (!empty($webcareproscan_sub_upload['basedir'])) {
+                    $webcareproscan_purge_dir(untrailingslashit((string) $webcareproscan_sub_upload['basedir']) . '/webcare-pro-security');
+                }
+                restore_current_blog();
+            }
+        }
+
+        $webcareproscan_content_dir = defined('WP_CONTENT_DIR') ? WP_CONTENT_DIR : ABSPATH . 'wp-content';
+        $webcareproscan_purge_dir(rtrim((string) $webcareproscan_content_dir, '/\\') . '/webcare-waf');
+        if (defined('WEBCARE_WAF_STORAGE_DIR') && is_string(WEBCARE_WAF_STORAGE_DIR) && WEBCARE_WAF_STORAGE_DIR !== '') {
+            $webcareproscan_purge_dir(untrailingslashit(WEBCARE_WAF_STORAGE_DIR));
         }
     }
 }

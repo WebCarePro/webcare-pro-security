@@ -1506,10 +1506,14 @@ class ModularFirewallSynthesizer {
         $rest_query = isset($_GET['rest_route']) ? strtolower(sanitize_text_field(wp_unslash($_GET['rest_route']))) : '';
         $payload_rx = '/(?:\bunion\s+all\s+select\b|\bselect\b.{1,40}\bfrom\b.{1,40}\bwp_users\b|sleep\s*\(\s*\d+\s*\)|benchmark\s*\(|<script\b|javascript:|wp_capabilities|(?:(?:"|\'|\b)(?:role|default_role|user_role|capabilities)\b[^a-z0-9_]{0,20}\badministrator\b)|s:13:"administrator")/i';
 
-        // Read raw body once for REST JSON / API payloads up to 64KB
+        // Read raw body once via RequestBodyReader bounded stream up to 64KB
         $raw_body = '';
         if (in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
-            $raw_body = (string) @file_get_contents('php://input', false, null, 0, 65536);
+            if (class_exists(\WebCareProScanner\Firewall\Core\RequestBodyReader::class)) {
+                $raw_body = \WebCareProScanner\Firewall\Core\RequestBodyReader::get_bounded_body(65536);
+            } else {
+                $raw_body = (string) @file_get_contents('php://input', false, null, 0, 65536);
+            }
         }
         $raw_json_data = null;
         $content_type  = isset($_SERVER['CONTENT_TYPE']) ? sanitize_text_field(wp_unslash($_SERVER['CONTENT_TYPE'])) : '';

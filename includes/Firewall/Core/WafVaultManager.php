@@ -40,13 +40,26 @@ final class WafVaultManager {
     }
 
     /**
+     * Resolve relative site storage scope so Multisite subsites never share vault shards/counters.
+     */
+    private static function get_scoped_vault_rel(): string {
+        if (function_exists('is_multisite') && is_multisite() && function_exists('get_current_blog_id')) {
+            $blog_id = (int) get_current_blog_id();
+            if ($blog_id > 1) {
+                return 'webcare-waf/sites/' . $blog_id . '/vault';
+            }
+        }
+        return self::VAULT_DIR_NAME;
+    }
+
+    /**
      * Get the WAF vault directory path without mutating permissions or creating directories.
      *
      * @return string
      */
     public static function get_vault_dir_readonly(): string {
         $base = defined('WP_CONTENT_DIR') ? WP_CONTENT_DIR : ABSPATH . 'wp-content';
-        return wp_normalize_path(rtrim($base, '/\\') . '/' . self::VAULT_DIR_NAME);
+        return wp_normalize_path(rtrim($base, '/\\') . '/' . self::get_scoped_vault_rel());
     }
 
     /**
@@ -56,7 +69,7 @@ final class WafVaultManager {
      */
     public static function get_vault_dir(): string {
         $base = defined('WP_CONTENT_DIR') ? WP_CONTENT_DIR : ABSPATH . 'wp-content';
-        $dir  = wp_normalize_path(rtrim($base, '/\\') . '/' . self::VAULT_DIR_NAME);
+        $dir  = wp_normalize_path(rtrim($base, '/\\') . '/' . self::get_scoped_vault_rel());
 
         // phpcs:disable WordPress.WP.AlternativeFunctions.file_system_operations_chmod
         if (!is_dir($dir)) {

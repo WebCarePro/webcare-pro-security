@@ -1672,9 +1672,9 @@ export function exportScanAsPDF(
               </div>
             </div>
 
-            <!-- About Us Paragraph (Exact requested text) -->
+            <!-- About Us Paragraph (Solo freelancer tone) -->
             <p class="footer-about-text">
-              WebCare Pro helps businesses build, secure, optimize, and manage high-performance websites and servers. From Linux &amp; cloud infrastructure to blazing-fast performance, website security, migrations, Cloudflare, DNS, managed hosting, and modern web development—we keep your online presence fast, secure, and always available.
+              Mir Alamin (WebCare Pro) helps businesses build, secure, optimize, and manage high-performance websites and servers. From Linux &amp; cloud infrastructure to blazing-fast performance, website security, migrations, Cloudflare, DNS, managed hosting, and modern web development—I keep your online presence fast, secure, and always available.
             </p>
           </div>
 

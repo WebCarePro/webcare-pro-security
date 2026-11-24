@@ -186,7 +186,7 @@ final class McpController extends AbstractApiController {
         }
 
         // If key is masked or empty, fall back to stored key
-        if ($api_key === '' || $api_key === '••••••••') {
+        if ($api_key === '' || str_contains($api_key, '••')) {
             $settings = \WebCareProScanner\System\SettingsManager::get_settings();
             if ($provider === 'gemini') {
                 $api_key = $settings['gemini_api_key'] ?? '';
@@ -194,6 +194,12 @@ final class McpController extends AbstractApiController {
             } elseif ($provider === 'claude') {
                 $api_key = $settings['claude_api_key'] ?? '';
                 if (!$model) $model = $settings['claude_model'] ?? 'claude-sonnet-5-5';
+            } elseif ($provider === 'deepseek') {
+                $api_key = $settings['deepseek_api_key'] ?? '';
+                if (!$model) $model = $settings['deepseek_model'] ?? 'deepseek-chat';
+            } elseif ($provider === 'openrouter') {
+                $api_key = $settings['openrouter_api_key'] ?? '';
+                if (!$model) $model = $settings['openrouter_model'] ?? 'auto';
             } else {
                 $api_key = $settings['openai_api_key'] ?? '';
                 if (!$model) $model = $settings['openai_model'] ?? 'gpt-6.1-sol';
@@ -240,7 +246,7 @@ final class McpController extends AbstractApiController {
             $params = $request->get_json_params() ?: [];
             $auto_upgrade = !isset($params['auto_upgrade']) || !empty($params['auto_upgrade']);
             $result = \WebCareProScanner\System\AIService::check_and_update_models($auto_upgrade);
-            $settings = \WebCareProScanner\System\SettingsManager::get_settings();
+            $settings = \WebCareProScanner\System\SettingsManager::get_settings_for_ui();
             $result['settings'] = $settings;
             return rest_ensure_response($result);
         } catch (\Exception $e) {
@@ -274,7 +280,15 @@ final class McpController extends AbstractApiController {
         }
 
         $result = \WebCareProScanner\Api\MCPAgentService::execute_tool($tool, $args);
-        return rest_ensure_response($result);
+        $dlp    = \WebCareProScanner\Api\MCPAgentService::apply_outbound_dlp($result, $tool);
+        if (empty($dlp['success'])) {
+            return new \WP_Error(
+                'mcp_dlp_failed',
+                (string) ($dlp['message'] ?? __('Tool output could not be safely inspected.', 'webcare-pro-security')),
+                ['status' => 500]
+            );
+        }
+        return rest_ensure_response($dlp['data']);
     }
 
     public static function get_mcp_audit(\WP_REST_Request $request) {

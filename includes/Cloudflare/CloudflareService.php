@@ -1239,11 +1239,11 @@ class CloudflareService {
         if ($enable) {
             // Build expression: supports single or multiple contains
             if (count($normalized_paths) === 1) {
-                $path_expr = '(http.request.uri.path contains "' . esc_sql($normalized_paths[0]) . '")';
+                $path_expr = '(http.request.uri.path contains "' . str_replace(['\\', '"'], ['\\\\', '\\"'], $normalized_paths[0]) . '")';
             } else {
                 $parts = [];
                 foreach ($normalized_paths as $np) {
-                    $parts[] = 'http.request.uri.path contains "' . esc_sql($np) . '"';
+                    $parts[] = 'http.request.uri.path contains "' . str_replace(['\\', '"'], ['\\\\', '\\"'], $np) . '"';
                 }
                 $path_expr = '(' . implode(' or ', $parts) . ')';
             }

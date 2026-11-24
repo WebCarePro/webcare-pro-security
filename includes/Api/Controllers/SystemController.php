@@ -526,18 +526,8 @@ final class SystemController extends AbstractApiController {
             $notification_settings = [];
         }
 
-        // Strip raw secrets before sending settings dictionary to frontend
-        $safe_settings = $global_settings;
-        unset(
-            $safe_settings['cloudflare_api_token'],
-            $safe_settings['ai_api_key'],
-            $safe_settings['openai_api_key'],
-            $safe_settings['gemini_api_key'],
-            $safe_settings['claude_api_key'],
-            $safe_settings['virus_total_api_key'],
-            $safe_settings['wpscan_api_key'],
-            $safe_settings['mcp_token']
-        );
+        // Strip all Vaulted credentials & secret tokens via centralized UI masker
+        $safe_settings = \WebCareProScanner\System\SettingsManager::get_settings_for_ui($global_settings);
 
         // PHP Extension & Server Requirement Gate
         $php_ver = PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION;
@@ -1448,7 +1438,7 @@ final class SystemController extends AbstractApiController {
 
         return rest_ensure_response([
             'success'                        => true,
-            'settings'                       => $settings,
+            'settings'                       => \WebCareProScanner\System\SettingsManager::get_settings_for_ui($settings),
             'ai_connect_status'              => \WebCareProScanner\System\AIService::get_ai_connect_status(),
             'next_scheduled'                 => $time_info['next_scheduled_wp'],
             'schedule_time'                  => $time_info,
@@ -1522,7 +1512,7 @@ final class SystemController extends AbstractApiController {
         return rest_ensure_response([
             'success'           => true,
             'message'           => __('Settings successfully saved.', 'webcare-pro-security'),
-            'settings'          => $saved,
+            'settings'          => \WebCareProScanner\System\SettingsManager::get_settings_for_ui($saved),
             'ai_connect_status' => \WebCareProScanner\System\AIService::get_ai_connect_status(),
             'next_scheduled'    => $time_info['next_scheduled_wp'],
             'schedule_time'     => $time_info,
@@ -1563,7 +1553,7 @@ final class SystemController extends AbstractApiController {
             return rest_ensure_response([
                 'success'  => true,
                 'message'  => __('Settings successfully imported and applied.', 'webcare-pro-security'),
-                'settings' => $imported,
+                'settings' => \WebCareProScanner\System\SettingsManager::get_settings_for_ui($imported),
             ]);
         } catch (\Exception $e) {
             return new \WP_Error('import_failed', $e->getMessage(), ['status' => 400]);
@@ -1585,7 +1575,7 @@ final class SystemController extends AbstractApiController {
         return rest_ensure_response([
             'success'  => true,
             'message'  => __('Settings have been reset to factory defaults.', 'webcare-pro-security'),
-            'settings' => $defaults,
+            'settings' => \WebCareProScanner\System\SettingsManager::get_settings_for_ui($defaults),
         ]);
     }
 
@@ -1594,6 +1584,9 @@ final class SystemController extends AbstractApiController {
      */
     public static function undo_settings(\WP_REST_Request $request) {
         $result = \WebCareProScanner\System\SettingsManager::undo_last_settings();
+        if (isset($result['settings']) && is_array($result['settings'])) {
+            $result['settings'] = \WebCareProScanner\System\SettingsManager::get_settings_for_ui($result['settings']);
+        }
         if (!$result['success']) {
             return new \WP_Error('undo_failed', $result['message'], ['status' => 400]);
         }
@@ -1666,12 +1659,19 @@ final class SystemController extends AbstractApiController {
 
         $updated = array_merge($current, $preset);
         $saved = \WebCareProScanner\System\SettingsManager::save_settings($updated);
+        if ($saved === false || !is_array($saved)) {
+            return new \WP_Error(
+                'preset_save_failed',
+                __('Failed to apply security hardening preset due to settings lock contention.', 'webcare-pro-security'),
+                ['status' => 409]
+            );
+        }
         $audit = \WebCareProScanner\Hardening\SecurityHeadersEngine::audit_hardening_status();
 
         return rest_ensure_response([
             'success'  => true,
             'message'  => __('Recommended A+ Security Hardening preset applied successfully.', 'webcare-pro-security'),
-            'settings' => $saved,
+            'settings' => \WebCareProScanner\System\SettingsManager::get_settings_for_ui($saved),
             'audit'    => $audit,
         ]);
     }
@@ -1779,7 +1779,8 @@ final class SystemController extends AbstractApiController {
     public static function test_chat_webhook(\WP_REST_Request $request) {
         $params   = $request->get_json_params() ?: [];
         $platform = sanitize_text_field($params['platform'] ?? 'slack');
-        $url      = !empty($params['webhook_url']) ? esc_url_raw(trim($params['webhook_url'])) : null;
+        $raw_url  = isset($params['webhook_url']) ? trim((string) $params['webhook_url']) : '';
+        $url      = ($raw_url !== '' && !str_contains($raw_url, '••')) ? esc_url_raw($raw_url) : null;
 
         $result = \WebCareProScanner\Notifications\WebhookService::send_test($platform, $url);
         return rest_ensure_response($result);

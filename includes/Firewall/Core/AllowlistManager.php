@@ -122,27 +122,70 @@ final class AllowlistManager {
     /**
      * Check if a given request URI is whitelisted
      */
+    /**
+     * Resolve URL encoding (up to 2 passes) and collapse dot segments (., .., //) in a path
+     * so path-traversal allowlist smuggling (`/whitelisted/../wp-login.php`) cannot match.
+     */
+    private static function canonicalize_path(string $raw_path): string {
+        $decoded = str_replace('\\', '/', $raw_path);
+        for ($i = 0; $i < 2; $i++) {
+            $next = rawurldecode($decoded);
+            if ($next === $decoded) {
+                break;
+            }
+            $decoded = str_replace('\\', '/', $next);
+        }
+        $decoded = str_replace("\0", '', $decoded);
+
+        $segments = explode('/', $decoded);
+        $resolved = [];
+        foreach ($segments as $seg) {
+            if ($seg === '' || $seg === '.') {
+                continue;
+            }
+            if ($seg === '..') {
+                array_pop($resolved);
+                continue;
+            }
+            $resolved[] = $seg;
+        }
+
+        return '/' . implode('/', $resolved);
+    }
+
+    /**
+     * Determine whether an incoming URI matches any administrator-configured whitelisted URL path or prefix.
+     *
+     * @param string $uri            Incoming request URI
+     * @param string $whitelist_text Newline-delimited whitelist entries
+     * @return bool True if matched
+     */
     public static function is_url_whitelisted(string $uri, string $whitelist_text): bool {
         if (empty(trim($whitelist_text))) {
             return false;
         }
 
         $lines = array_filter(array_map('trim', explode("\n", str_replace("\r", "", $whitelist_text))));
-        $path  = (string) wp_parse_url($uri, PHP_URL_PATH);
+        $raw_path = (string) (wp_parse_url($uri, PHP_URL_PATH) ?? '');
+        if ($raw_path === '') {
+            $raw_path = '/';
+        }
+        $path = self::canonicalize_path($raw_path);
 
         foreach ($lines as $allowed) {
             if ($allowed === '') {
                 continue;
             }
-            // Strip any query or hash from whitelist line for comparison
-            $allowed_clean = (string) wp_parse_url($allowed, PHP_URL_PATH);
-            if (empty($allowed_clean)) {
-                $allowed_clean = $allowed;
+            // Strip any query or hash from whitelist line and canonicalize path
+            $allowed_parsed = (string) (wp_parse_url($allowed, PHP_URL_PATH) ?? '');
+            if ($allowed_parsed === '') {
+                $allowed_parsed = $allowed;
             }
+            $allowed_clean = self::canonicalize_path($allowed_parsed);
 
             // Exact match or prefix match with boundary check (prevents / from wiping out entire whitelist)
             $trimmed = rtrim($allowed_clean, '/');
-            if ($uri === $allowed || $path === $allowed_clean || ($trimmed !== '' && ($path === $trimmed || strpos($path, $trimmed . '/') === 0))) {
+            if ($path === $allowed_clean || ($trimmed !== '' && ($path === $trimmed || strpos($path, $trimmed . '/') === 0))) {
                 return true;
             }
         }
@@ -158,8 +201,8 @@ final class AllowlistManager {
      * @return bool
      */
     public static function is_configured_support_path(string $request_uri, string $configured_contact_url): bool {
-        $contact_path = rtrim(strtolower((string) wp_parse_url($configured_contact_url, PHP_URL_PATH)), '/');
-        $request_path = rtrim(strtolower((string) (wp_parse_url($request_uri, PHP_URL_PATH) ?? '')), '/');
+        $contact_path = rtrim(strtolower(self::canonicalize_path((string) (wp_parse_url($configured_contact_url, PHP_URL_PATH) ?? ''))), '/');
+        $request_path = rtrim(strtolower(self::canonicalize_path((string) (wp_parse_url($request_uri, PHP_URL_PATH) ?? ''))), '/');
 
         return $contact_path !== '' && $contact_path !== '/' && $request_path === $contact_path;
     }
@@ -173,10 +216,8 @@ final class AllowlistManager {
             return null;
         }
 
-        $path = (string) wp_parse_url($uri, PHP_URL_PATH);
-        if (empty($path)) {
-            $path = '/';
-        }
+        $raw_path = (string) (wp_parse_url($uri, PHP_URL_PATH) ?? '');
+        $path = self::canonicalize_path($raw_path === '' ? '/' : $raw_path);
         $upper_method = strtoupper($method);
 
         foreach ($rules as $rule) {

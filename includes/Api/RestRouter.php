@@ -35,6 +35,7 @@ final class RestRouter {
         'post'                 => Controllers\ScanController::class,
         'issues'               => Controllers\ScanController::class,
         'component'            => Controllers\ScanController::class,
+        'advisor'              => Controllers\ScanController::class,
 
         // 2. FirewallController
         'firewall'             => Controllers\FirewallController::class,

@@ -30,6 +30,14 @@ class SettingsManager {
     private static array $options_table_innodb_cache = [];
 
     /**
+     * Per-request memoized decrypted settings cache keyed by "<blog_id>:<md5_of_raw_options>".
+     *
+     * @var array<string, mixed>|null
+     */
+    private static ?array $request_settings_cache = null;
+    private static ?string $request_settings_cache_key = null;
+
+    /**
      * Tracks option writes staged inside the currently open fenced transaction for post-commit notifications.
      *
      * @var array<string, array{existed: bool, old_value: mixed, new_value: mixed}>|null
@@ -37,10 +45,19 @@ class SettingsManager {
     private static ?array $active_tx_writes = null;
 
     /**
+     * Reset per-request memoized decrypted settings cache.
+     */
+    public static function reset_settings_cache(): void {
+        self::$request_settings_cache = null;
+        self::$request_settings_cache_key = null;
+    }
+
+    /**
      * Reset cached storage-engine verification state (used for deterministic test isolation).
      */
     public static function reset_storage_engine_cache(): void {
         self::$options_table_innodb_cache = [];
+        self::reset_settings_cache();
     }
 
     /**
@@ -633,6 +650,7 @@ class SettingsManager {
             wp_cache_delete($k, 'options');
         }
         wp_cache_delete('alloptions', 'options');
+        self::reset_settings_cache();
     }
 
     /**
@@ -829,6 +847,7 @@ class SettingsManager {
             self::$active_tx_writes = null;
         }
 
+        self::reset_settings_cache();
         self::dispatch_post_commit_option_notifications($committed_writes);
         return true;
     }
@@ -999,7 +1018,7 @@ class SettingsManager {
             'waf_block_xss'            => true,
             'waf_block_traversal'      => true,
             'waf_block_php_injection'  => true,
-            'waf_disable_xmlrpc'       => false,
+            'waf_disable_xmlrpc'       => true,
             'waf_allow_jetpack_xmlrpc' => false, // Allow verified Automattic Jetpack sync via xmlrpc.php if Jetpack is used
             'waf_login_rate_limit'     => true,
             'waf_whitelisted_ips'      => '',
@@ -1112,7 +1131,7 @@ class SettingsManager {
             'threat_intel_cisa_kev_enabled'      => true,
             'threat_intel_nvd_cve_enabled'       => true,
             'threat_intel_public_cidr_enabled'   => true,
-            'waf_auto_enforce_virtual_patches'   => false, // Automatically enforce vendor-verified high-confidence virtual patches (owner opt-in required)
+            'waf_auto_enforce_virtual_patches'   => true, // Automatically enforce vendor-verified high-confidence virtual patches
 
             // 10. Multi-Factor Authentication (2FA), Login Hardening & Session Sentinel
             'auth_2fa_enabled'                   => true,
@@ -1617,6 +1636,19 @@ class SettingsManager {
             $saved = [];
         }
 
+        $act_settings = get_option('webcareproscan_activity_log_settings', []);
+        $act_settings = is_array($act_settings) ? $act_settings : [];
+
+        $blog_id   = function_exists('get_current_blog_id') ? (int) get_current_blog_id() : 1;
+        $cache_key = $blog_id . ':' . md5(serialize([$saved, $act_settings]));
+        if (self::$request_settings_cache !== null && self::$request_settings_cache_key === $cache_key) {
+            $merged = self::$request_settings_cache;
+            if (function_exists('apply_filters')) {
+                $merged = apply_filters('webcareproscan_settings', $merged);
+            }
+            return $merged;
+        }
+
         $defaults = self::get_defaults();
         $merged = array_merge($defaults, $saved);
 
@@ -1624,6 +1656,7 @@ class SettingsManager {
         $sensitive_keys = [
             'cloudflare_api_token',
             'cloudflare_zone_id',
+            'waf_cloudflare_origin_secret',
             'openai_api_key',
             'gemini_api_key',
             'claude_api_key',
@@ -1646,23 +1679,27 @@ class SettingsManager {
             }
         }
 
-        // Mask API keys and credentials for security in UI output
-        $merged['has_openai_key']          = !empty($merged['openai_api_key']);
-        $merged['has_gemini_key']          = !empty($merged['gemini_api_key']);
-        $merged['has_claude_key']          = !empty($merged['claude_api_key']);
-        $merged['has_deepseek_key']        = !empty($merged['deepseek_api_key']);
-        $merged['has_openrouter_key']      = !empty($merged['openrouter_api_key']);
-        $merged['has_cloudflare_key']      = !empty($merged['cloudflare_api_token']);
-        $merged['has_slack_webhook']       = !empty($merged['slack_webhook_url']);
-        $merged['has_discord_webhook']     = !empty($merged['discord_webhook_url']);
-        $merged['has_clickup_webhook']     = !empty($merged['clickup_webhook_url']);
-        $merged['has_asana_webhook']       = !empty($merged['asana_webhook_url']);
-        $merged['has_generic_webhook']     = !empty($merged['generic_webhook_url']);
-        $merged['has_mcp_token']           = !empty($merged['mcp_token']);
+        // Boolean configuration flags for UI state without needing plaintext credentials
+        $merged['has_openai_key']             = !empty($merged['openai_api_key']);
+        $merged['has_gemini_key']             = !empty($merged['gemini_api_key']);
+        $merged['has_claude_key']             = !empty($merged['claude_api_key']);
+        $merged['has_deepseek_key']           = !empty($merged['deepseek_api_key']);
+        $merged['has_openrouter_key']         = !empty($merged['openrouter_api_key']);
+        $merged['has_cloudflare_key']         = !empty($merged['cloudflare_api_token']);
+        $merged['has_cloudflare_zone_id']     = !empty($merged['cloudflare_zone_id']);
+        $merged['has_cloudflare_origin_secret'] = !empty($merged['waf_cloudflare_origin_secret']);
+        $merged['has_slack_webhook']          = !empty($merged['slack_webhook_url']);
+        $merged['has_discord_webhook']        = !empty($merged['discord_webhook_url']);
+        $merged['has_clickup_webhook']        = !empty($merged['clickup_webhook_url']);
+        $merged['has_asana_webhook']          = !empty($merged['asana_webhook_url']);
+        $merged['has_generic_webhook']        = !empty($merged['generic_webhook_url']);
+        $merged['has_mcp_token']              = !empty($merged['mcp_token']);
 
         // Activity log options
-        $act_settings = get_option('webcareproscan_activity_log_settings', []);
-        $merged['activity_log_settings']   = is_array($act_settings) ? $act_settings : [];
+        $merged['activity_log_settings']      = $act_settings;
+
+        self::$request_settings_cache     = $merged;
+        self::$request_settings_cache_key = $cache_key;
 
         // Apply developer and policy overrides via filter hook
         if (function_exists('apply_filters')) {
@@ -1670,6 +1707,42 @@ class SettingsManager {
         }
 
         return $merged;
+    }
+
+    /**
+     * Retrieve UI-safe settings with all SecretVault credentials replaced by masked sentinels
+     * and accurate has_* presence booleans preserved for React forms.
+     *
+     * @param array<string, mixed>|null $settings Optional pre-loaded settings array
+     * @return array<string, mixed>
+     */
+    public static function get_settings_for_ui(?array $settings = null): array {
+        $ui = $settings ?? self::get_settings();
+
+        $ui['has_openai_key']               = !empty($ui['openai_api_key']) || !empty($ui['has_openai_key']);
+        $ui['has_gemini_key']               = !empty($ui['gemini_api_key']) || !empty($ui['has_gemini_key']);
+        $ui['has_claude_key']               = !empty($ui['claude_api_key']) || !empty($ui['has_claude_key']);
+        $ui['has_deepseek_key']             = !empty($ui['deepseek_api_key']) || !empty($ui['has_deepseek_key']);
+        $ui['has_openrouter_key']           = !empty($ui['openrouter_api_key']) || !empty($ui['has_openrouter_key']);
+        $ui['has_cloudflare_key']           = !empty($ui['cloudflare_api_token']) || !empty($ui['has_cloudflare_key']);
+        $ui['has_cloudflare_zone_id']       = !empty($ui['cloudflare_zone_id']) || !empty($ui['has_cloudflare_zone_id']);
+        $ui['has_cloudflare_origin_secret'] = !empty($ui['waf_cloudflare_origin_secret']) || !empty($ui['has_cloudflare_origin_secret']);
+        $ui['has_slack_webhook']            = !empty($ui['slack_webhook_url']) || !empty($ui['has_slack_webhook']);
+        $ui['has_discord_webhook']          = !empty($ui['discord_webhook_url']) || !empty($ui['has_discord_webhook']);
+        $ui['has_clickup_webhook']          = !empty($ui['clickup_webhook_url']) || !empty($ui['has_clickup_webhook']);
+        $ui['has_asana_webhook']            = !empty($ui['asana_webhook_url']) || !empty($ui['has_asana_webhook']);
+        $ui['has_generic_webhook']          = !empty($ui['generic_webhook_url']) || !empty($ui['has_generic_webhook']);
+        $ui['has_mcp_token']                = !empty($ui['mcp_token']) || !empty($ui['has_mcp_token']);
+
+        foreach (self::SECRET_KEYS as $secret_key) {
+            if (empty($ui[$secret_key])) {
+                $ui[$secret_key] = '';
+                continue;
+            }
+            $ui[$secret_key] = ($secret_key === 'mcp_token') ? 'wcp_mcp_••••••••' : '••••••••';
+        }
+
+        return $ui;
     }
 
     /**
@@ -1774,8 +1847,8 @@ class SettingsManager {
         // Preserve existing keys if incoming is masked or empty, and securely encrypt for database storage
         $in_openai = trim($input['openai_api_key'] ?? '');
         $old_openai_val = \WebCareProScanner\Security\SecretVault::decrypt($current['openai_api_key'] ?? '');
-        $openai_val = ($in_openai === '' || $in_openai === '••••••••') 
-            ? $old_openai_val 
+        $openai_val = ($in_openai === '' || str_contains($in_openai, '••'))
+            ? $old_openai_val
             : sanitize_text_field($in_openai);
         $clean['openai_api_key'] = ($openai_val === $old_openai_val && !empty($current['openai_api_key']))
             ? $current['openai_api_key']
@@ -1784,8 +1857,8 @@ class SettingsManager {
 
         $in_gemini = trim($input['gemini_api_key'] ?? '');
         $old_gemini_val = \WebCareProScanner\Security\SecretVault::decrypt($current['gemini_api_key'] ?? '');
-        $gemini_val = ($in_gemini === '' || $in_gemini === '••••••••') 
-            ? $old_gemini_val 
+        $gemini_val = ($in_gemini === '' || str_contains($in_gemini, '••'))
+            ? $old_gemini_val
             : sanitize_text_field($in_gemini);
         $clean['gemini_api_key'] = ($gemini_val === $old_gemini_val && !empty($current['gemini_api_key']))
             ? $current['gemini_api_key']
@@ -1794,8 +1867,8 @@ class SettingsManager {
 
         $in_claude = trim($input['claude_api_key'] ?? '');
         $old_claude_val = \WebCareProScanner\Security\SecretVault::decrypt($current['claude_api_key'] ?? '');
-        $claude_val = ($in_claude === '' || $in_claude === '••••••••') 
-            ? $old_claude_val 
+        $claude_val = ($in_claude === '' || str_contains($in_claude, '••'))
+            ? $old_claude_val
             : sanitize_text_field($in_claude);
         $clean['claude_api_key'] = ($claude_val === $old_claude_val && !empty($current['claude_api_key']))
             ? $current['claude_api_key']
@@ -1804,8 +1877,8 @@ class SettingsManager {
 
         $in_deepseek = trim($input['deepseek_api_key'] ?? '');
         $old_deepseek_val = \WebCareProScanner\Security\SecretVault::decrypt($current['deepseek_api_key'] ?? '');
-        $deepseek_val = ($in_deepseek === '' || $in_deepseek === '••••••••') 
-            ? $old_deepseek_val 
+        $deepseek_val = ($in_deepseek === '' || str_contains($in_deepseek, '••'))
+            ? $old_deepseek_val
             : sanitize_text_field($in_deepseek);
         $clean['deepseek_api_key'] = ($deepseek_val === $old_deepseek_val && !empty($current['deepseek_api_key']))
             ? $current['deepseek_api_key']
@@ -1814,8 +1887,8 @@ class SettingsManager {
 
         $in_openrouter = trim($input['openrouter_api_key'] ?? '');
         $old_openrouter_val = \WebCareProScanner\Security\SecretVault::decrypt($current['openrouter_api_key'] ?? '');
-        $openrouter_val = ($in_openrouter === '' || $in_openrouter === '••••••••') 
-            ? $old_openrouter_val 
+        $openrouter_val = ($in_openrouter === '' || str_contains($in_openrouter, '••'))
+            ? $old_openrouter_val
             : sanitize_text_field($in_openrouter);
         $clean['openrouter_api_key'] = ($openrouter_val === $old_openrouter_val && !empty($current['openrouter_api_key']))
             ? $current['openrouter_api_key']
@@ -1994,7 +2067,24 @@ class SettingsManager {
         $clean['waf_block_ai_prompt_injection'] = !empty($merged['waf_block_ai_prompt_injection']);
         $cf_mode_in = sanitize_key($merged['waf_cloudflare_proxy_trust_mode'] ?? 'disabled');
         $clean['waf_cloudflare_proxy_trust_mode'] = in_array($cf_mode_in, ['disabled', 'auto_detected', 'enabled'], true) ? $cf_mode_in : 'disabled';
-        $clean['waf_cloudflare_origin_secret'] = sanitize_text_field($merged['waf_cloudflare_origin_secret'] ?? '');
+        if (array_key_exists('waf_cloudflare_origin_secret', $input)) {
+            // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Origin pull secrets preserve percent/special characters; control chars are stripped prior to Vault encryption
+            $raw_origin_secret = is_string($input['waf_cloudflare_origin_secret']) ? (string) wp_unslash($input['waf_cloudflare_origin_secret']) : '';
+            $raw_origin_secret = (string) preg_replace('/[\x00-\x1F\x7F]/', '', $raw_origin_secret);
+            $raw_origin_secret = substr($raw_origin_secret, 0, 512);
+            if ($raw_origin_secret === '') {
+                $clean['waf_cloudflare_origin_secret'] = '';
+            } elseif (str_contains($raw_origin_secret, '••')) {
+                $clean['waf_cloudflare_origin_secret'] = (string) ($current['waf_cloudflare_origin_secret'] ?? '');
+            } else {
+                $old_origin_secret = \WebCareProScanner\Security\SecretVault::decrypt((string) ($current['waf_cloudflare_origin_secret'] ?? ''));
+                $clean['waf_cloudflare_origin_secret'] = ($raw_origin_secret === $old_origin_secret && !empty($current['waf_cloudflare_origin_secret']))
+                    ? (string) $current['waf_cloudflare_origin_secret']
+                    : \WebCareProScanner\Security\SecretVault::encrypt($raw_origin_secret);
+            }
+        } else {
+            $clean['waf_cloudflare_origin_secret'] = (string) ($current['waf_cloudflare_origin_secret'] ?? '');
+        }
         $clean['waf_rewrite_server_remote_addr'] = !empty($merged['waf_rewrite_server_remote_addr']);
         $clean['waf_max_inspected_body_bytes']  = max(1048576, min(67108864, (int) ($merged['waf_max_inspected_body_bytes'] ?? 4194304)));
 
@@ -2603,6 +2693,7 @@ class SettingsManager {
             'generic_webhook_url',
             'cloudflare_api_token',
             'cloudflare_zone_id',
+            'waf_cloudflare_origin_secret',
         ];
 
         foreach ($keys as $k) {
@@ -2720,12 +2811,13 @@ class SettingsManager {
      */
     public static function export_settings(): array {
         $settings = get_option(self::OPTION_KEY, self::get_defaults());
+        $safe_settings = self::strip_secrets(is_array($settings) ? $settings : []);
         return [
-            'app'        => 'WebCare Pro Security & Firewall',
-            'version'    => defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '1.3.0',
-            'exported_at'=> current_time('mysql'),
-            'site_url'   => get_site_url(),
-            'settings'   => $settings,
+            'app'         => 'WebCare Pro Security & Firewall',
+            'version'     => defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '1.3.0',
+            'exported_at' => current_time('mysql'),
+            'site_url'    => get_site_url(),
+            'settings'    => $safe_settings,
         ];
     }
 

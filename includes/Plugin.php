@@ -92,9 +92,18 @@ class Plugin {
             static fn(string $k): bool => str_starts_with($k, 'wordpress_logged_in_')
         );
         $req_uri_val = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash((string) $_SERVER['REQUEST_URI'])) : '';
-        $is_xmlrpc = str_contains(strtolower($req_uri_val), 'xmlrpc.php');
+        $uri_lower   = strtolower($req_uri_val);
+        $is_xmlrpc   = str_contains($uri_lower, 'xmlrpc.php');
+        $req_method  = isset($_SERVER['REQUEST_METHOD']) ? strtoupper(sanitize_text_field(wp_unslash((string) $_SERVER['REQUEST_METHOD']))) : 'GET';
+        // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Route detection only; non-mutating check for custom login pages
+        $has_login_post = ($req_method === 'POST') && (isset($_POST['log']) || isset($_POST['user_login']) || isset($_POST['pwd']) || isset($_POST['webcareproscan_2fa_code']));
+        $hints_custom_login = str_contains($uri_lower, 'login')
+            || str_contains($uri_lower, 'signin')
+            || str_contains($uri_lower, 'auth')
+            || str_contains($uri_lower, 'account')
+            || str_contains($uri_lower, 'webcareproscan_2fa');
 
-        // Auth guards: boot on wp-login, WooCommerce/Membership login surfaces, XML-RPC, REST, Admin, CLI
+        // Auth guards: boot on wp-login, custom login pages/POSTs, WooCommerce/Membership login surfaces, XML-RPC, REST, Admin, CLI
         if (
             in_array($route_class, [
                 \WebCareProScanner\Contracts\RouteClass::AuthLogin,
@@ -102,6 +111,8 @@ class Plugin {
                 \WebCareProScanner\Contracts\RouteClass::Commerce,
                 \WebCareProScanner\Contracts\RouteClass::RestApi,
             ], true)
+            || $has_login_post
+            || $hints_custom_login
             || $is_xmlrpc
             || $is_admin
             || $is_cli
@@ -117,24 +128,58 @@ class Plugin {
             \WebCareProScanner\WordPress\RestApiInventory::init();
         }
 
-        // Session binding and forensics must protect any logged-in session on every route
-        if ($has_auth_cookie || $route_class === \WebCareProScanner\Contracts\RouteClass::AuthLogin || $is_admin) {
+        // Session binding and forensics protect any logged-in session, REST passkey/auth logins, and custom logins
+        if (
+            $has_auth_cookie
+            || $route_class === \WebCareProScanner\Contracts\RouteClass::AuthLogin
+            || $route_class === \WebCareProScanner\Contracts\RouteClass::RestApi
+            || $has_login_post
+            || $hints_custom_login
+            || $is_admin
+        ) {
             \WebCareProScanner\Auth\SessionSentinel::init();
             \WebCareProScanner\Auth\LoginHistoryManager::init();
             \WebCareProScanner\Identity\SessionForensicsEngine::init();
         }
 
-        // Lightweight public forms and scans
-        \WebCareProScanner\Scan\ScanVaultManager::register();
-        \WebCareProScanner\Firewall\RescueAssistantManager::init();
+        // Lightweight public forms, egress, and threat response modules (route- & context-gated)
+        if ($is_admin || $is_cron || $is_cli || $has_auth_cookie) {
+            \WebCareProScanner\Firewall\RescueAssistantManager::init();
+        }
         \WebCareProScanner\Firewall\DistributedVelocityShield::init();
         \WebCareProScanner\Firewall\FormSpamProtectionEngine::init();
         \WebCareProScanner\Firewall\OutboundEgressFirewall::init();
         \WebCareProScanner\Firewall\GhostRouteTrap::init();
-        \WebCareProScanner\Security\EmergencyContainmentManager::init();
+        if (
+            $has_auth_cookie
+            || $is_admin
+            || $is_cron
+            || $is_cli
+            || $route_class === \WebCareProScanner\Contracts\RouteClass::RestApi
+            || $is_xmlrpc
+        ) {
+            \WebCareProScanner\Security\EmergencyContainmentManager::init();
+        }
         \WebCareProScanner\Security\PromptInjectionGuard::init();
-        \WebCareProScanner\Content\ScriptInventoryMonitor::init();
-        \WebCareProScanner\Content\BlockDirectiveSanitizer::init();
+        if (
+            !$is_admin
+            && !$is_cron
+            && !$is_cli
+            && !$is_xmlrpc
+            && $route_class !== \WebCareProScanner\Contracts\RouteClass::RestApi
+        ) {
+            \WebCareProScanner\Content\ScriptInventoryMonitor::init();
+        }
+        if (
+            $is_admin
+            || $route_class === \WebCareProScanner\Contracts\RouteClass::RestApi
+            || $is_cron
+            || $is_cli
+            || $has_auth_cookie
+            || $req_method !== 'GET'
+        ) {
+            \WebCareProScanner\Content\BlockDirectiveSanitizer::init();
+        }
         \WebCareProScanner\Core\ModuleRegistry::boot_all();
 
         // 2. Custom WP-Cron Schedules (Always active across all request contexts so wp_reschedule_event never fails with invalid_schedule)
@@ -152,6 +197,7 @@ class Plugin {
         // 4. Admin, Cron & WP-CLI Heavy Subsystems (Never booted on public storefront GET/POST)
         if ($is_admin || $is_cron || $is_cli) {
             self::ensure_uploads_storage_protected();
+            \WebCareProScanner\Scan\ScanVaultManager::register();
             AdminMenu::register();
             \WebCareProScanner\System\Scheduler::register();
             \WebCareProScanner\Backup\DatabaseBackup::init();
@@ -167,6 +213,10 @@ class Plugin {
             \WebCareProScanner\Firewall\DomainReputationMonitor::init();
             \WebCareProScanner\Firewall\CAF\AdaptiveFirewallAdvisor::register_lifecycle_hooks();
             \WebCareProScanner\Firewall\CAF\CloudflareIpListSynchronizer::register_cron();
+
+            if (function_exists('is_multisite') && is_multisite()) {
+                add_action('wp_delete_site', [self::class, 'cleanup_deleted_multisite_blog'], 10, 1);
+            }
         }
 
         if ($is_cli && class_exists('\\WP_CLI')) {
@@ -286,6 +336,10 @@ class Plugin {
                     $_GET = $orig_get;
                 }
             });
+
+            if (class_exists(\WebCareProScanner\Cli\WafCliCommand::class)) {
+                \WebCareProScanner\Cli\WafCliCommand::register();
+            }
         }
     }
 
@@ -854,6 +908,91 @@ class Plugin {
         }
 
         \WP_CLI::success('All WebCare Pro security self-checks passed.');
+    }
+
+    /**
+     * Purge WebCare Pro tables, options, and isolated vault/upload storage when a Multisite subsite is deleted.
+     *
+     * @param \WP_Site|object|int $old_site Site object or blog ID passed by wp_delete_site.
+     */
+    public static function cleanup_deleted_multisite_blog($old_site): void {
+        $blog_id = is_object($old_site) && isset($old_site->blog_id)
+            ? (int) $old_site->blog_id
+            : (is_numeric($old_site) ? (int) $old_site : 0);
+
+        if ($blog_id <= 1) {
+            return;
+        }
+
+        global $wpdb;
+        $switched = false;
+        if (function_exists('switch_to_blog')) {
+            switch_to_blog($blog_id);
+            $switched = true;
+        }
+
+        try {
+            if (isset($wpdb) && $wpdb instanceof \wpdb) {
+                $prefix = $wpdb->get_blog_prefix($blog_id);
+                $tables = [
+                    $prefix . 'webcareproscan_scans',
+                    $prefix . 'webcareproscan_scan_issues',
+                    $prefix . 'webcareproscan_scan_files',
+                    $prefix . 'webcareproscan_quarantine',
+                    $prefix . 'webcareproscan_firewall_logs',
+                    $prefix . 'webcareproscan_login_history',
+                    $prefix . 'webcareproscan_cron_logs',
+                ];
+                foreach ($tables as $tbl) {
+                    // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.DirectDatabaseQuery.SchemaChange, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+                    $wpdb->query("DROP TABLE IF EXISTS `{$tbl}`");
+                }
+                $options_table = $prefix . 'options';
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+                $wpdb->query($wpdb->prepare('DELETE FROM %i WHERE option_name LIKE %s', $options_table, '%webcare%'));
+            }
+
+            $paths = [];
+            $upload_dir = function_exists('wp_upload_dir') ? wp_upload_dir() : [];
+            if (!empty($upload_dir['basedir'])) {
+                $paths[] = untrailingslashit((string) $upload_dir['basedir']) . '/webcare-pro-security';
+            }
+            $content_base = defined('WP_CONTENT_DIR') ? WP_CONTENT_DIR : ABSPATH . 'wp-content';
+            $paths[] = rtrim((string) $content_base, '/\\') . '/webcare-waf/sites/' . $blog_id;
+            if (defined('WEBCARE_WAF_STORAGE_DIR') && is_string(WEBCARE_WAF_STORAGE_DIR) && WEBCARE_WAF_STORAGE_DIR !== '') {
+                $paths[] = rtrim((string) WEBCARE_WAF_STORAGE_DIR, '/\\') . '/sites/' . $blog_id;
+            }
+
+            $rmdir_recursive = static function (string $dir) use (&$rmdir_recursive): void {
+                if (!is_dir($dir)) {
+                    return;
+                }
+                $items = @scandir($dir);
+                if (is_array($items)) {
+                    foreach ($items as $item) {
+                        if ($item === '.' || $item === '..') {
+                            continue;
+                        }
+                        $p = $dir . DIRECTORY_SEPARATOR . $item;
+                        if (is_dir($p)) {
+                            $rmdir_recursive($p);
+                        } else {
+                            wp_delete_file($p);
+                        }
+                    }
+                }
+                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_rmdir -- Multisite site deletion cleanup
+                @rmdir($dir);
+            };
+
+            foreach ($paths as $target_dir) {
+                $rmdir_recursive($target_dir);
+            }
+        } finally {
+            if ($switched && function_exists('restore_current_blog')) {
+                restore_current_blog();
+            }
+        }
     }
 
     /**

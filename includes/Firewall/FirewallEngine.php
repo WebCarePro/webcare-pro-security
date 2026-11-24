@@ -61,6 +61,8 @@ class FirewallEngine {
 
         // Protect XML-RPC early if enabled
         add_action('init', [__CLASS__, 'check_xmlrpc_guard'], 0);
+        add_filter('xmlrpc_methods', [Core\ExploitSignatureEngine::class, 'filter_xmlrpc_methods'], 20);
+        add_action('xmlrpc_call', [Core\ExploitSignatureEngine::class, 'enforce_xmlrpc_call_limits'], 1);
 
         // Flush Preload Micro-WAF custom rule ban intents queued prior to WordPress boot
         add_action('init', [__CLASS__, 'flush_preload_ban_queue'], 5);
@@ -645,7 +647,7 @@ class FirewallEngine {
             return false;
         }
 
-        if (!function_exists('current_user_can') || !(current_user_can('edit_posts') || current_user_can('manage_woocommerce'))) {
+        if (!function_exists('current_user_can') || !(current_user_can('unfiltered_html') || current_user_can('manage_options'))) {
             return false;
         }
 
@@ -3366,7 +3368,7 @@ class FirewallEngine {
      */
     public static function check_author_scan_suppression(): void {
         // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Author enumeration scan inspection
-        if (!isset($_GET['author'])) {
+        if (!isset($_GET['author']) && !isset($_GET['author_name'])) {
             return;
         }
 
@@ -3384,11 +3386,24 @@ class FirewallEngine {
             return;
         }
 
-        // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-        $author_param = isset($_GET['author']) ? sanitize_text_field(wp_unslash($_GET['author'])) : '';
-        if (!preg_match('/^[0-9]+$/', trim($author_param))) {
+        // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Public pre-dispatch author enumeration WAF check.
+        $raw_author = isset($_GET['author']) ? map_deep(wp_unslash($_GET['author']), 'sanitize_text_field') : null;
+        // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Public pre-dispatch author enumeration WAF check.
+        $raw_author_name = isset($_GET['author_name']) ? map_deep(wp_unslash($_GET['author_name']), 'sanitize_text_field') : null;
+
+        $is_author_array_probe = is_array($raw_author) && !empty($raw_author);
+        $author_param          = is_scalar($raw_author) ? trim((string) $raw_author) : '';
+        $is_author_id_probe    = ($author_param !== '' && (bool) preg_match('/^[0-9]+$/', $author_param));
+        $author_name_param     = (is_scalar($raw_author_name) && !is_user_logged_in()) ? trim((string) $raw_author_name) : '';
+        $is_author_name_probe  = ($author_name_param !== '');
+
+        if (!$is_author_array_probe && !$is_author_id_probe && !$is_author_name_probe) {
             return;
         }
+
+        $probe_label = $is_author_name_probe
+            ? ('?author_name=' . $author_name_param)
+            : ($is_author_array_probe ? '?author[]=...' : ('?author=' . $author_param));
 
         $client_ip = self::get_client_ip();
 
@@ -3396,10 +3411,10 @@ class FirewallEngine {
             'id'          => 'WAF-AUTHOR-ENUM',
             'name'        => 'Author Permalink Enumeration Suppression',
             'category'    => 'Reconnaissance & Enumeration',
-            'description' => sprintf('Author ID enumeration query (?author=%s) blocked from harvesting usernames.', esc_html($author_param)),
+            'description' => sprintf('Author enumeration query (%s) blocked from harvesting usernames.', esc_html($probe_label)),
             'match_type'  => 'Author Query Probe',
-            'match_value' => '?author=' . $author_param,
-            'payload'     => "URI: {$author_param} IP: {$client_ip}",
+            'match_value' => $probe_label,
+            'payload'     => "Probe: {$probe_label} IP: {$client_ip}",
         ];
 
         $whitelist_ctx = self::check_ip_whitelist_context($client_ip, $settings);
@@ -4120,6 +4135,28 @@ class FirewallEngine {
                     if ($coupon_lock_error) {
                         return $coupon_lock_error;
                     }
+                }
+
+                if (
+                    (!empty($settings['waf_block_rest_user_enum']) || !empty($settings['block_user_enumeration']))
+                    && preg_match('#^/wp/v2/users(?:/|$)#i', $sub_path)
+                    && $sub_path !== '/wp/v2/users/me'
+                ) {
+                    $rule_triggered = [
+                        'id'          => 'WAF-REST-BATCH-USER-ENUM',
+                        'name'        => 'Unauthenticated REST Batch User Enumeration (Rule #29)',
+                        'category'    => 'Reconnaissance & Enumeration',
+                        'description' => sprintf('Unauthenticated REST batch %s sub-request targeting "%s" blocked.', $sub_method, esc_html($sub_path)),
+                        'match_type'  => 'Guest REST Batch User Enum',
+                        'match_value' => $sub_path,
+                        'payload'     => "Method: {$sub_method} SubRoute: {$sub_path} IP: {$client_ip}",
+                    ];
+                    if ($policy === 'block') {
+                        self::log_incident($rule_triggered, 'blocked');
+                        return new \WP_Error('webcare_waf_rest_batch_users_blocked', __('Unauthenticated REST API user enumeration via batch is disabled by WebCare Firewall.', 'webcare-pro-security'), ['status' => 403]);
+                    }
+                    self::log_incident($rule_triggered, 'monitored');
+                    break;
                 }
 
                 if (in_array($sub_method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {

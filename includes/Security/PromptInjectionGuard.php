@@ -178,6 +178,37 @@ class PromptInjectionGuard {
     }
 
     /**
+     * Normalize compatibility/fullwidth Unicode forms (with pure-PHP fallback when ext-intl Normalizer is absent).
+     */
+    private static function normalize_unicode_text(string $text): string {
+        if ($text === '') {
+            return '';
+        }
+        $norm = $text;
+        if (class_exists('Normalizer')) {
+            if (\Normalizer::isNormalized($norm, \Normalizer::FORM_KC) === false) {
+                $norm = \Normalizer::normalize($norm, \Normalizer::FORM_KC) ?: $norm;
+            }
+        }
+        if (preg_match('/[\x{FF01}-\x{FF5E}\x{3000}]/u', $norm) === 1) {
+            $norm = (string) preg_replace_callback('/[\x{FF01}-\x{FF5E}\x{3000}]/u', static function (array $m): string {
+                $ch = $m[0];
+                if (strlen($ch) === 3) {
+                    $cp = ((ord($ch[0]) & 0x0F) << 12) | ((ord($ch[1]) & 0x3F) << 6) | (ord($ch[2]) & 0x3F);
+                    if ($cp === 0x3000) {
+                        return ' ';
+                    }
+                    if ($cp >= 0xFF01 && $cp <= 0xFF5E) {
+                        return chr($cp - 0xFEE0);
+                    }
+                }
+                return $ch;
+            }, $norm);
+        }
+        return $norm;
+    }
+
+    /**
      * Deep inspection of any prompt text destined for LLM inference, order summaries, or agent tools.
      *
      * @param string $text Raw incoming text
@@ -194,13 +225,8 @@ class PromptInjectionGuard {
         $has_mcp_call     = false;
         $has_secret_leak  = false;
 
-        // Step 0: Unicode NFKC normalization & zero-width cleaning for probe inspection
-        $normalized_probe = $text;
-        if (class_exists('Normalizer')) {
-            if (\Normalizer::isNormalized($text, \Normalizer::FORM_KC) === false) {
-                $normalized_probe = \Normalizer::normalize($text, \Normalizer::FORM_KC) ?: $text;
-            }
-        }
+        // Step 0: Unicode NFKC & fullwidth folding + zero-width cleaning for probe inspection
+        $normalized_probe = self::normalize_unicode_text($text);
 
         // 1. Invisible Unicode Tag Characters & Bidi Control Smuggling
         if (!empty($settings['block_unicode_tags']) && preg_match(self::UNICODE_TAG_REGEX, $text)) {
@@ -280,25 +306,40 @@ class PromptInjectionGuard {
             }
         }
 
-        // Clean text: strip invisible unicode tag planes, zero-width chars, and neutralize delimiters
+        // Clean text: strip invisible unicode tag planes & fold compatibility/fullwidth homoglyphs when suspicious
         $cleaned = (string) preg_replace(self::UNICODE_TAG_REGEX, '', $text);
+        if ($score > 0) {
+            $cleaned = self::normalize_unicode_text($cleaned);
+        }
 
-        // Neutralize LLM delimiters into HTML entities so LLM parsers do not evaluate them as tokens
-        $cleaned = str_replace(
-            ['<|im_start|>', '<|im_end|>', '<|im_sep|>', '<|begin_of_text|>', '<|start_header_id|>', '<|end_header_id|>', '<|eot_id|>', '[INST]', '[/INST]'],
-            ['&lt;|im_start|&gt;', '&lt;|im_end|&gt;', '&lt;|im_sep|&gt;', '&lt;|begin_of_text|&gt;', '&lt;|start_header_id|&gt;', '&lt;|end_header_id|&gt;', '&lt;|eot_id|&gt;', '&#91;INST&#93;', '&#91;/INST&#93;'],
+        // Case-insensitive neutralization of LLM delimiters so parsers do not evaluate them as control tokens
+        $cleaned = str_ireplace(
+            ['<|im_start|>', '<|im_end|>', '<|im_sep|>', '<|begin_of_text|>', '<|start_header_id|>', '<|end_header_id|>', '<|eot_id|>', '[INST]', '[/INST]', '<<SYS>>', '<</SYS>>'],
+            ['&lt;|im_start|&gt;', '&lt;|im_end|&gt;', '&lt;|im_sep|&gt;', '&lt;|begin_of_text|&gt;', '&lt;|start_header_id|&gt;', '&lt;|end_header_id|&gt;', '&lt;|eot_id|&gt;', '&#91;INST&#93;', '&#91;/INST&#93;', '&lt;&lt;SYS&gt;&gt;', '&lt;&lt;/SYS&gt;&gt;'],
             $cleaned
         );
 
-        // Neutralize prompt overrides and tool injection calls in sanitized output
+        // Neutralize prompt overrides, turn delimiters, MCP tool injection calls, and secret probes in sanitized output
         if ($has_override) {
             foreach (self::PROMPT_OVERRIDE_PATTERNS as $pattern) {
                 $cleaned = (string) preg_replace($pattern, '[neutralized directive]', $cleaned);
             }
         }
+        if ($has_delimiters) {
+            foreach (['turn_directive_tags', 'anthropic_turn_tags'] as $delim_key) {
+                if (isset(self::LLM_DELIMITER_PATTERNS[$delim_key])) {
+                    $cleaned = (string) preg_replace(self::LLM_DELIMITER_PATTERNS[$delim_key], ' [neutralized role marker] ', $cleaned);
+                }
+            }
+        }
         if ($has_mcp_call) {
             foreach (self::MCP_TOOL_CALL_PATTERNS as $pattern) {
                 $cleaned = (string) preg_replace($pattern, '[neutralized tool call]', $cleaned);
+            }
+        }
+        if ($has_secret_leak) {
+            foreach (self::SECRET_LEAK_PATTERNS as $pattern) {
+                $cleaned = (string) preg_replace($pattern, '[neutralized secret reference]', $cleaned);
             }
         }
 
@@ -434,19 +475,23 @@ class PromptInjectionGuard {
             return $data;
         }
 
-        $content = $data['post_content'] ?? '';
-        $title   = $data['post_title'] ?? '';
-        $probe   = $title . ' ' . $content;
+        $content = (string) ($data['post_content'] ?? '');
+        $title   = (string) ($data['post_title'] ?? '');
 
-        if (empty($probe) || strlen($probe) < 10) {
+        if (strlen($title) < 5 && strlen($content) < 10) {
             return $data;
         }
 
-        $analysis = self::inspect_prompt($probe, 'post_content');
+        // Inspect post_title and post_content independently to prevent content corruption
+        $content_analysis = ($content !== '') ? self::inspect_prompt($content, 'post_content') : ['is_safe' => true, 'findings' => [], 'risk_score' => 0, 'cleaned_text' => $content];
+        $title_analysis   = ($title !== '') ? self::inspect_prompt($title, 'post_content') : ['is_safe' => true, 'findings' => [], 'risk_score' => 0, 'cleaned_text' => $title];
 
-        if (!$analysis['is_safe']) {
+        $combined_score    = max((int) $content_analysis['risk_score'], (int) $title_analysis['risk_score']);
+        $combined_findings = array_merge($title_analysis['findings'], $content_analysis['findings']);
+
+        if (!$content_analysis['is_safe'] || !$title_analysis['is_safe']) {
             $settings = self::get_settings();
-            self::record_catch('post_content', $analysis['findings'], $analysis['risk_score'], $settings['action']);
+            self::record_catch('post_content', $combined_findings, $combined_score, $settings['action']);
 
             if ($settings['action'] === 'block') {
                 wp_die(
@@ -456,7 +501,12 @@ class PromptInjectionGuard {
                     ['response' => 403, 'back_link' => true]
                 );
             } elseif ($settings['action'] === 'sanitize') {
-                $data['post_content'] = $analysis['cleaned_text'];
+                if (!$content_analysis['is_safe']) {
+                    $data['post_content'] = $content_analysis['cleaned_text'];
+                }
+                if (!$title_analysis['is_safe']) {
+                    $data['post_title'] = $title_analysis['cleaned_text'];
+                }
             } elseif ($settings['action'] === 'moderate') {
                 // Force post into pending review status
                 $data['post_status'] = 'pending';
@@ -532,17 +582,15 @@ class PromptInjectionGuard {
         update_option(self::OPTION_CATCHES, $catches, false);
 
         if (class_exists(WafFileLogger::class)) {
+            $log_action = ($action === 'block') ? 'blocked' : 'sanitized';
             WafFileLogger::log_incident([
-                'ip'              => $ip,
-                'category'        => 'prompt_injection_guard',
-                'rule_id'         => 'webcare_ai_prompt_injection',
-                'reason'          => implode(' | ', $findings),
-                'action'          => ($action === 'block') ? 'block' : 'sanitize',
-                'http_status'     => ($action === 'block') ? 403 : 200,
-                'request_uri'     => isset($_SERVER['REQUEST_URI']) ? esc_url_raw(wp_unslash($_SERVER['REQUEST_URI'])) : '',
-                'request_method'  => 'POST',
-                'user_agent'      => isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '',
-            ]);
+                'id'          => 'WAF-AI-PROMPT-INJECTION',
+                'name'        => 'AI Prompt Injection Guard',
+                'category'    => 'AI Prompt Injection',
+                'description' => implode(' | ', $findings),
+                'payload'     => 'Source: ' . $source . ' | Score: ' . $score,
+                'http_status' => ($action === 'block') ? 403 : 200,
+            ], $log_action);
         }
 
         if (class_exists(WebCareActivityLogger::class)) {
@@ -657,11 +705,11 @@ class PromptInjectionGuard {
     }
 
     /**
-     * Strip model control-delimiter spoofing and sanitize non-untrusted leaf strings.
+     * Score raw string BEFORE stripping control delimiters so delimiter spoofing is accurately scored,
+     * then neutralize/strip delimiter tags on safe/lower-risk strings.
      */
     private static function sanitize_leaf_string(string $val, string $field_name): string {
-        $clean = self::strip_control_delimiters($val);
-        $check = self::inspect_prompt($clean, 'mcp_telemetry_' . $field_name);
+        $check = self::inspect_prompt($val, 'mcp_telemetry_' . $field_name);
         if (!empty($check) && empty($check['is_safe']) && (int) ($check['risk_score'] ?? 0) >= 50) {
             return sprintf(
                 '[REDACTED_BY_PROMPT_GUARD field="%s" risk_score="%d" reason="Suspected indirect prompt injection"]',
@@ -669,7 +717,7 @@ class PromptInjectionGuard {
                 (int) $check['risk_score']
             );
         }
-        return $clean;
+        return self::strip_control_delimiters($val);
     }
 
     /**
@@ -689,9 +737,7 @@ class PromptInjectionGuard {
             return $val;
         }
 
-        $clean = self::strip_control_delimiters($val);
-        $check = self::inspect_prompt($clean, 'mcp_telemetry_' . $field_name);
-
+        $check = self::inspect_prompt($val, 'mcp_telemetry_' . $field_name);
         if (!empty($check) && empty($check['is_safe']) && (int) ($check['risk_score'] ?? 0) >= 50) {
             return sprintf(
                 '<untrusted_evidence field="%s" redacted="true" risk_score="%d">[REDACTED: Suspected indirect prompt injection payload neutralized by WebCare Pro PromptInjectionGuard]</untrusted_evidence>',
@@ -699,6 +745,8 @@ class PromptInjectionGuard {
                 (int) $check['risk_score']
             );
         }
+
+        $clean = self::strip_control_delimiters($val);
 
         if (strlen($clean) > 2048) {
             $clean = substr($clean, 0, 2048) . '...[TRUNCATED]';

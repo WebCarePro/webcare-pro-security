@@ -187,6 +187,76 @@ class BlockDirectiveSanitizer {
     }
 
     /**
+     * Decode slashes, HTML entities, and JSON unicode escapes from a directive attribute value.
+     */
+    private static function decode_directive_value(string $raw): string {
+        $val = html_entity_decode($raw, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $decode_unicode = static function (string $input): string {
+            return (string) preg_replace_callback(
+                '/\\\\{1,2}u(?:\{([0-9a-fA-F]{1,6})\}|([0-9a-fA-F]{4}))/',
+                static function (array $m): string {
+                    $hex = !empty($m[1]) ? $m[1] : ($m[2] ?? '0');
+                    $cp  = hexdec($hex);
+                    return ($cp > 0 && $cp <= 0x10FFFF && function_exists('mb_chr')) ? (string) mb_chr($cp, 'UTF-8') : '';
+                },
+                $input
+            );
+        };
+        // Decode JSON/CSS unicode escapes before stripslashes so \u005f isn't turned into u005f
+        $val = $decode_unicode($val);
+        $val = stripslashes($val);
+        return $decode_unicode($val);
+    }
+
+    /**
+     * Recursively detect prototype-pollution dictionary keys inside decoded JSON context state.
+     */
+    private static function array_has_prototype_key(mixed $node, int $depth = 0): bool {
+        if (!is_array($node) || $depth > 16) {
+            return false;
+        }
+        foreach ($node as $key => $value) {
+            if (is_string($key)) {
+                $k = strtolower($key);
+                if ($k === '__proto__' || $k === 'constructor' || $k === 'prototype') {
+                    return true;
+                }
+            }
+            if (is_array($value) && self::array_has_prototype_key($value, $depth + 1)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Determine whether a data-wp-context value attempts prototype pollution.
+     */
+    private static function is_hostile_context_value(string $raw_val): bool {
+        $entity_decoded = html_entity_decode($raw_val, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        foreach ([$entity_decoded, stripslashes($entity_decoded)] as $json_candidate) {
+            $json_data = json_decode($json_candidate, true);
+            if (is_array($json_data) && self::array_has_prototype_key($json_data)) {
+                return true;
+            }
+        }
+
+        $decoded = self::decode_directive_value($raw_val);
+        return stripos($decoded, '__proto__') !== false
+            || stripos($decoded, 'constructor') !== false
+            || stripos($decoded, 'prototype') !== false;
+    }
+
+    /**
+     * Determine whether a data-wp-bind--* attribute value injects executable URIs or CSS expressions.
+     */
+    private static function is_hostile_bind_value(string $raw_val): bool {
+        $decoded = self::decode_directive_value($raw_val);
+        $compact = (string) preg_replace('/[\x00-\x20\x7F]+/u', '', $decoded);
+        return preg_match('/(?:javascript:|vbscript:|data:text\/html|expression\(|-moz-binding|url\(\s*["\']?\s*(?:javascript|vbscript):)/i', $compact) === 1;
+    }
+
+    /**
      * Sanitize content by stripping or neutralizing hostile Interactivity API directives.
      *
      * @param string $content
@@ -235,17 +305,16 @@ class BlockDirectiveSanitizer {
 
         // 2. Sanitize data-wp-context (Prototype Pollution Guard)
         $content = preg_replace_callback(
-            '/\b(data-wp-context)\s*=\s*(["\'])((?:\\\\.|(?!\2).)*)\2/is',
+            '/\b(data-wp-context)\s*=\s*(?:(["\'])((?:\\\\.|(?!\2).)*)\2|([^\s"\'=<>`]+))/is',
             function ($matches) use (&$modified, &$threats) {
-                $val = html_entity_decode(stripslashes($matches[3]), ENT_QUOTES | ENT_HTML5, 'UTF-8');
-
-                // Check for prototype pollution tokens
-                if (stripos($val, '__proto__') !== false || stripos($val, 'constructor') !== false || stripos($val, 'prototype') !== false) {
+                $raw_val = isset($matches[3]) && $matches[3] !== '' ? $matches[3] : ($matches[4] ?? '');
+                if (self::is_hostile_context_value($raw_val)) {
+                    $decoded = self::decode_directive_value($raw_val);
                     $modified = true;
                     $threats[] = [
                         'type'    => 'context_prototype_pollution',
                         'attr'    => 'data-wp-context',
-                        'value'   => substr($val, 0, 100),
+                        'value'   => substr($decoded, 0, 100),
                         'snippet' => $matches[0]
                     ];
                     return 'data-wp-context="{}"';
@@ -256,19 +325,20 @@ class BlockDirectiveSanitizer {
             $content
         );
 
-        // 3. Sanitize data-wp-bind--* (Attribute Injection Guard)
+        // 3. Sanitize data-wp-bind--* (Attribute Injection Guard across all bindable DOM properties)
         $content = preg_replace_callback(
-            '/\b(data-wp-bind--(?:href|src|style))\s*=\s*(["\'])((?:\\\\.|(?!\2).)*)\2/is',
+            '/\b(data-wp-bind--[a-zA-Z0-9_:-]+)\s*=\s*(?:(["\'])((?:\\\\.|(?!\2).)*)\2|([^\s"\'=<>`]+))/is',
             function ($matches) use (&$modified, &$threats) {
-                $attr = $matches[1];
-                $val  = trim(stripslashes($matches[3]));
+                $attr    = $matches[1];
+                $raw_val = isset($matches[3]) && $matches[3] !== '' ? $matches[3] : ($matches[4] ?? '');
 
-                if (preg_match('/(?:javascript\s*:|data\s*:\s*text\/html|expression\s*\(|-moz-binding)/i', $val)) {
+                if (self::is_hostile_bind_value($raw_val)) {
+                    $decoded = self::decode_directive_value($raw_val);
                     $modified = true;
                     $threats[] = [
                         'type'    => 'hostile_bind_directive',
                         'attr'    => $attr,
-                        'value'   => substr($val, 0, 100),
+                        'value'   => substr(trim($decoded), 0, 100),
                         'snippet' => $matches[0]
                     ];
                     return 'data-wp-bind-neutralized=""';
@@ -402,10 +472,10 @@ class BlockDirectiveSanitizer {
         }
 
         // 2. Audit data-wp-context (Prototype Pollution)
-        if (preg_match_all('/\bdata-wp-context\s*=\s*(["\'])((?:\\\\.|(?!\1).)*)\1/is', $content, $matches, PREG_SET_ORDER)) {
+        if (preg_match_all('/\bdata-wp-context\s*=\s*(?:(["\'])((?:\\\\.|(?!\1).)*)\1|([^\s"\'=<>`]+))/is', $content, $matches, PREG_SET_ORDER)) {
             foreach ($matches as $m) {
-                $val = html_entity_decode(stripslashes($m[2]), ENT_QUOTES | ENT_HTML5, 'UTF-8');
-                if (stripos($val, '__proto__') !== false || stripos($val, 'constructor') !== false || stripos($val, 'prototype') !== false) {
+                $raw_val = isset($m[2]) && $m[2] !== '' ? $m[2] : ($m[3] ?? '');
+                if (self::is_hostile_context_value($raw_val)) {
                     $detections[] = [
                         'type'       => 'interactivity_context_prototype_pollution',
                         'snippet'    => substr($m[0], 0, 140),
@@ -417,11 +487,11 @@ class BlockDirectiveSanitizer {
             }
         }
 
-        // 3. Audit data-wp-bind--* (Attribute injection)
-        if (preg_match_all('/\b(data-wp-bind--(?:href|src|style))\s*=\s*(["\'])((?:\\\\.|(?!\2).)*)\2/is', $content, $matches, PREG_SET_ORDER)) {
+        // 3. Audit data-wp-bind--* (Attribute injection across all bindable DOM properties)
+        if (preg_match_all('/\b(data-wp-bind--[a-zA-Z0-9_:-]+)\s*=\s*(?:(["\'])((?:\\\\.|(?!\2).)*)\2|([^\s"\'=<>`]+))/is', $content, $matches, PREG_SET_ORDER)) {
             foreach ($matches as $m) {
-                $val = trim(stripslashes($m[3]));
-                if (preg_match('/(?:javascript\s*:|data\s*:\s*text\/html|expression\s*\(|-moz-binding)/i', $val)) {
+                $raw_val = isset($m[3]) && $m[3] !== '' ? $m[3] : ($m[4] ?? '');
+                if (self::is_hostile_bind_value($raw_val)) {
                     $detections[] = [
                         'type'       => 'interactivity_hostile_attribute_bind',
                         'snippet'    => substr($m[0], 0, 140),

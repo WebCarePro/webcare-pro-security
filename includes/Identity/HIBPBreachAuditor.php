@@ -115,15 +115,18 @@ class HIBPBreachAuditor {
             }
 
             // 2. Check 2FA Enrollment status
-            $two_fa_active = get_user_meta($u->ID, 'webcareproscan_2fa_enabled', true);
+            $two_fa_active = get_user_meta($u->ID, '_webcareproscan_2fa_enabled', true);
             if (empty($two_fa_active)) {
                 $warnings[] = 'Two-Factor Authentication (2FA) is NOT enabled';
                 $risk_score += 25;
             }
 
             // 3. Check for stale / inactive administrative account (> 60 days no login)
-            $last_login = get_user_meta($u->ID, 'webcareproscan_last_login_time', true);
-            if (!empty($last_login) && (time() - $last_login > (60 * 86400))) {
+            $last_login = get_user_meta($u->ID, '_webcareproscan_last_login', true);
+            $last_login_ts = is_numeric($last_login)
+                ? (int) $last_login
+                : (is_string($last_login) && $last_login !== '' ? (int) strtotime($last_login) : 0);
+            if ($last_login_ts > 0 && (time() - $last_login_ts > (60 * 86400))) {
                 $warnings[] = 'Inactive account: no login recorded in over 60 days';
                 $risk_score += 20;
             }
@@ -211,9 +214,8 @@ class HIBPBreachAuditor {
         /* translators: %s: user email address */
         $success_msg = sprintf(__('All active sessions terminated and password reset email dispatched to %s.', 'webcare-pro-security'), $user->user_email);
         return [
-            'success'   => true,
-            'message'   => $success_msg,
-            'reset_url' => $reset_url,
+            'success' => true,
+            'message' => $success_msg,
         ];
     }
 

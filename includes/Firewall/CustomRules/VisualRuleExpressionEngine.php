@@ -510,9 +510,13 @@ class VisualRuleExpressionEngine {
         $edge_groups    = [];
         $skipped_fields = [];
         $top_join       = (strtoupper(trim($group_logic)) === 'AND') ? ' and ' : ' or ';
+        $top_incomplete = false;
 
         foreach ($groups as $grp) {
-            $clauses = [];
+            $clauses         = [];
+            $grp_has_skipped = false;
+            $grp_join        = (strtoupper(trim((string) ($grp['logic'] ?? 'AND'))) === 'OR') ? ' or ' : ' and ';
+
             foreach (($grp['rules'] ?? []) as $cond) {
                 $f = (string) ($cond['field'] ?? '');
                 if (isset(self::LAYER_FIELDS_EDGE_MAP[$f]) || $f === 'http.headers') {
@@ -522,13 +526,34 @@ class VisualRuleExpressionEngine {
                         continue;
                     }
                 }
+                $grp_has_skipped  = true;
                 $skipped_fields[] = $f;
             }
+
+            // Never strip a narrowing WordPress condition from an AND group on Cloudflare Edge:
+            // dropping `B` from `A AND B` would falsely enforce/allow plain `A` at the CDN perimeter.
+            if ($grp_has_skipped && $grp_join === ' and ') {
+                $top_incomplete = true;
+                continue;
+            }
+
             if (!empty($clauses)) {
-                $grp_join      = (strtoupper(trim((string) ($grp['logic'] ?? 'AND'))) === 'OR') ? ' or ' : ' and ';
                 $joined        = implode($grp_join, $clauses);
                 $edge_groups[] = count($clauses) > 1 ? "({$joined})" : $joined;
+            } elseif ($grp_has_skipped) {
+                $top_incomplete = true;
             }
+        }
+
+        // Similarly, if multiple top-level groups are joined with AND and any group relies on WP fields,
+        // refuse partial Edge compilation so Edge never enforces an over-broad subset.
+        if ($top_incomplete && $top_join === ' and ') {
+            $skipped_fields = array_values(array_unique(array_filter($skipped_fields)));
+            return [
+                'expression'     => '',
+                'partial'        => true,
+                'skipped_fields' => $skipped_fields,
+            ];
         }
 
         if (count($edge_groups) === 1 && substr($edge_groups[0], 0, 1) === '(' && substr($edge_groups[0], -1) === ')') {

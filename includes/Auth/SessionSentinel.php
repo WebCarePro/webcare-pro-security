@@ -692,7 +692,9 @@ class SessionSentinel {
 
             $now = time();
             $current_ua = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';
-            $current_asn = isset($_SERVER['HTTP_CF_IPASN']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_IPASN'])) : '';
+            $is_trusted_cf = class_exists('\\WebCareProScanner\\Firewall\\Core\\ClientIpResolver')
+                && \WebCareProScanner\Firewall\Core\ClientIpResolver::is_trusted_cloudflare_request();
+            $current_asn = ($is_trusted_cf && isset($_SERVER['HTTP_CF_IPASN'])) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_IPASN'])) : '';
             $recorded_asn = $decoded['asn'] ?? '';
 
             // Retrieve and maintain unlimited IP access history for this session
@@ -797,7 +799,7 @@ class SessionSentinel {
                 $recorded_uuid = $session_info['device_uuid'] ?? ($decoded['device_uuid'] ?? '');
                 $incoming_uuid = isset($_COOKIE['webcareproscan_device_uuid']) ? sanitize_text_field(wp_unslash($_COOKIE['webcareproscan_device_uuid'])) : '';
                 $recorded_country = $session_info['country_code'] ?? ($decoded['country_code'] ?? '');
-                $incoming_country = isset($_SERVER['HTTP_CF_IPCOUNTRY']) ? strtoupper(sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_IPCOUNTRY']))) : '';
+                $incoming_country = ($is_trusted_cf && isset($_SERVER['HTTP_CF_IPCOUNTRY'])) ? strtoupper(sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_IPCOUNTRY']))) : '';
 
                 // Compound Risk: Country mismatch + device UUID missing/mismatched + UA mismatch
                 $uuid_mismatch = (!empty($recorded_uuid) && (empty($incoming_uuid) || !hash_equals((string) $recorded_uuid, (string) $incoming_uuid)));
@@ -857,15 +859,6 @@ class SessionSentinel {
                 if ($base_parts[0] === $inc_parts[0] && $base_parts[1] === $inc_parts[1] && $base_parts[2] === $inc_parts[2]) {
                     return true;
                 }
-
-                // If behind Cloudflare and User-Agent is an exact identical match, tolerate /16 subnet (ISP regional CGNAT pool)
-                $recorded_ua = $decoded_meta['user_agent'] ?? '';
-                $is_cf = !empty($_SERVER['HTTP_CF_CONNECTING_IP']) || !empty($_SERVER['HTTP_CF_RAY']);
-                if ($is_cf && !empty($recorded_ua) && !empty($current_ua) && $recorded_ua === $current_ua) {
-                    if ($base_parts[0] === $inc_parts[0] && $base_parts[1] === $inc_parts[1]) {
-                        return true;
-                    }
-                }
             }
         }
 
@@ -884,19 +877,7 @@ class SessionSentinel {
             }
         }
 
-        // 5. Dual-Stack Cloudflare Flapping (One is IPv4 and one is IPv6)
-        // Under Cloudflare and modern browsers (RFC 8305 Happy Eyeballs),
-        // browser races IPv4 and IPv6 sockets. If User-Agent is an exact match and request arrives via Cloudflare:
-        if (($is_base_v4 && $is_inc_v6) || ($is_base_v6 && $is_inc_v4)) {
-            $recorded_ua = $decoded_meta['user_agent'] ?? '';
-            $is_cf = !empty($_SERVER['HTTP_CF_CONNECTING_IP']) || !empty($_SERVER['HTTP_CF_RAY']);
-
-            if ($is_cf && !empty($recorded_ua) && !empty($current_ua) && $recorded_ua === $current_ua) {
-                return true;
-            }
-        }
-
-        // 6. Loopback / Internal Proxy Failsafe
+        // 5. Loopback / Internal Proxy Failsafe
         // If incoming request resolved to localhost/private IP due to internal proxy/cron/loopback, do not kill admin session
         if ($incoming_ip === '127.0.0.1' || $incoming_ip === '::1' || \WebCareProScanner\Firewall\FirewallEngine::is_private_ip($incoming_ip)) {
             return true;
@@ -983,7 +964,7 @@ class SessionSentinel {
                 'ip_events'  => $existing_events,
                 'alt_ip'     => $existing_decoded['alt_ip'] ?? '',
                 'user_agent' => substr(!empty($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : ($existing_decoded['user_agent'] ?? 'Unknown'), 0, 255),
-                'asn'        => isset($_SERVER['HTTP_CF_IPASN']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_IPASN'])) : ($existing_decoded['asn'] ?? ''),
+                'asn'        => (class_exists('\\WebCareProScanner\\Firewall\\Core\\ClientIpResolver') && \WebCareProScanner\Firewall\Core\ClientIpResolver::is_trusted_cloudflare_request() && isset($_SERVER['HTTP_CF_IPASN'])) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_IPASN'])) : ($existing_decoded['asn'] ?? ''),
                 'tls_fp'     => !empty($_SERVER['SSL_CIPHER']) ? hash('sha256', (string) sanitize_text_field(wp_unslash($_SERVER['SSL_CIPHER']))) : ($existing_decoded['tls_fp'] ?? ''),
                 'auth_type'  => $existing_info['auth_type'] ?? ($existing_decoded['auth_type'] ?? 'password'),
                 'auth_label' => $existing_info['auth_label'] ?? ($existing_decoded['auth_label'] ?? 'Password'),
@@ -2131,9 +2112,11 @@ class SessionSentinel {
      */
     public static function get_cloudflare_country(string $ip = ''): array {
         $code = '';
-        if (!empty($_SERVER['HTTP_CF_IPCOUNTRY'])) {
+        $is_trusted_cf = class_exists('\\WebCareProScanner\\Firewall\\Core\\ClientIpResolver')
+            && \WebCareProScanner\Firewall\Core\ClientIpResolver::is_trusted_cloudflare_request();
+        if ($is_trusted_cf && !empty($_SERVER['HTTP_CF_IPCOUNTRY'])) {
             $code = strtoupper(sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_IPCOUNTRY'])));
-        } elseif (!empty($_SERVER['HTTP_CF_CONNECTING_IP_COUNTRY'])) {
+        } elseif ($is_trusted_cf && !empty($_SERVER['HTTP_CF_CONNECTING_IP_COUNTRY'])) {
             $code = strtoupper(sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_CONNECTING_IP_COUNTRY'])));
         }
 

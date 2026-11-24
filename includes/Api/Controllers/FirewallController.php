@@ -1477,12 +1477,13 @@ final class FirewallController extends AbstractApiController {
                 ['status' => 500]
             );
         }
+        $ui_settings = \WebCareProScanner\System\SettingsManager::get_settings_for_ui($saved);
         return rest_ensure_response([
             'success'  => true,
             'message'  => sprintf('Rule "%s" successfully saved.', $key),
             'key'      => $key,
-            'value'    => $saved[$key] ?? $val,
-            'settings' => $saved,
+            'value'    => $ui_settings[$key] ?? (in_array($key, \WebCareProScanner\System\SettingsManager::SECRET_KEYS, true) ? (!empty($val) ? '••••••••' : '') : $val),
+            'settings' => $ui_settings,
         ]);
     }
 

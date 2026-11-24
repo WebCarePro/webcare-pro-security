@@ -350,7 +350,7 @@ class FormSpamProtectionEngine {
         // Tier 3: Cryptographic Speed-Gate & Timing Verification
         if (!empty($settings['form_speed_gate_enabled'])) {
             if (!isset($request_data['webcare_time_gate'])) {
-                if ($form_source === 'Comment' || $form_source === 'Registration') {
+                if (str_contains($form_source, 'Comment') || str_contains($form_source, 'Registration')) {
                     self::record_spam_drop('missing_time_gate', $form_source, $client_ip);
                     return new \WP_Error('webcare_spam_missing_gate', __('Security token missing from form submission. Please refresh and try again.', 'webcare-pro-security'));
                 }
@@ -358,11 +358,12 @@ class FormSpamProtectionEngine {
                 $raw_token = sanitize_text_field(wp_unslash($request_data['webcare_time_gate']));
                 $decrypted = false;
 
-                if (class_exists('\\WebCareProScanner\\Security\\SecretVault')) {
+                if (class_exists('\\WebCareProScanner\\Security\\SecretVault') && SecretVault::is_encrypted($raw_token)) {
                     $decrypted = SecretVault::decrypt($raw_token);
                 }
-                if (!$decrypted) {
-                    $decrypted = base64_decode($raw_token);
+                if (!$decrypted || strpos((string) $decrypted, '|') === false) {
+                    self::record_spam_drop('invalid_time_gate', $form_source, $client_ip);
+                    return new \WP_Error('webcare_spam_invalid_gate', __('Security token validation failed. Please refresh the page and try again.', 'webcare-pro-security'));
                 }
 
                 if ($decrypted && strpos($decrypted, '|') !== false) {

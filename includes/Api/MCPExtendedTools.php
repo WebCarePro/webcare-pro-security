@@ -350,6 +350,7 @@ class MCPExtendedTools {
             case 'webcareproscan_list_quarantine_items':
                 $qm   = new QuarantineManager();
                 $rows = $qm->list_records();
+                $rows = PromptInjectionGuard::sanitize_mcp_telemetry($rows);
                 return self::envelope(['success' => true, 'items' => $rows, 'count' => count($rows)]);
 
             case 'webcareproscan_restore_quarantined_file':

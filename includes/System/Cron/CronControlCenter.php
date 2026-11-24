@@ -813,16 +813,26 @@ class CronControlCenter {
                         ];
 
                     case 'webcareproscan_waf_log_retention_prune':
+                        $activity_pruned = 0;
+                        if (class_exists('\\WebCareProScanner\\System\\ActivityLogs\\ActivityRetention')) {
+                            $act_res = \WebCareProScanner\System\ActivityLogs\ActivityRetention::prune_expired_partitions();
+                            $activity_pruned = (int) ($act_res['pruned_count'] ?? 0);
+                        }
                         $days = WafFileLogger::get_retention_days();
                         if ($days <= 0) {
-                            return ['status' => 'skipped', 'summary' => __('Retention set to forever (0 days); no logs pruned.', 'webcare-pro-security')];
+                            return [
+                                'status'  => 'success',
+                                /* translators: %d: deleted activity log count */
+                                'summary' => sprintf(__('WAF log retention set to forever (0 days); pruned %d expired activity log partition(s).', 'webcare-pro-security'), $activity_pruned),
+                                'metrics' => ['pruned_files' => 0, 'activity_pruned' => $activity_pruned, 'retention_days' => 0],
+                            ];
                         }
                         $pruned = WafFileLogger::prune_expired_logs();
                         return [
                             'status'  => 'success',
-                            /* translators: 1: pruned file count, 2: retention days */
-                            'summary' => sprintf(__('Pruned %1$d expired WAF log shard(s) older than %2$d days.', 'webcare-pro-security'), $pruned, $days),
-                            'metrics' => ['pruned_files' => $pruned, 'retention_days' => $days],
+                            /* translators: 1: pruned WAF shard count, 2: retention days, 3: pruned activity partition count */
+                            'summary' => sprintf(__('Pruned %1$d expired WAF log shard(s) older than %2$d days and %3$d activity log partition(s).', 'webcare-pro-security'), $pruned, $days, $activity_pruned),
+                            'metrics' => ['pruned_files' => $pruned, 'activity_pruned' => $activity_pruned, 'retention_days' => $days],
                         ];
 
                     case 'webcareproscan_daily_cve_audit':

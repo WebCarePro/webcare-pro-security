@@ -1725,14 +1725,11 @@ class MCPAgentService {
         if (!empty($scope_check['force_stage'])) {
             $needs_gate = true;
         }
-        if ($dynamic_tier >= 3 && !empty($catalog_map[$tool]['isMutating'])) {
-            // Tier 3/4 sensitive payloads auto-escalate to confirmation gate unless tool policy explicitly opted in AND tier < 4
-            if ($dynamic_tier >= 3 || !empty($preflight['force_stage'])) {
-                $needs_gate = true;
-            }
+        if ($dynamic_tier >= 3 && !empty($preflight['force_stage'])) {
+            $needs_gate = true;
         }
 
-        // 4. Staged Action Confirmation Gate
+        // 4. Staged Action Confirmation Gate (applies to read/scoped tools requiring confirmation; mutating tools already rejected in 0B when !$bypass_gate)
         if (!$bypass_gate && $needs_gate) {
             return self::stage_action_for_approval($tool, $args, $client_ip, $user_agent, $start_time, $dynamic_tier, $preflight);
         }
@@ -2544,6 +2541,9 @@ class MCPAgentService {
 
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.NotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
         $rows = $wpdb->get_results($wpdb->prepare($sql, ...$params), ARRAY_A) ?: [];
+        if (class_exists('\\WebCareProScanner\\Security\\PromptInjectionGuard')) {
+            $rows = \WebCareProScanner\Security\PromptInjectionGuard::sanitize_mcp_telemetry($rows);
+        }
 
         return [
             'content' => [
@@ -2558,6 +2558,9 @@ class MCPAgentService {
 
     private static function tool_audit_baseline(): array {
         $drift = BehavioralBaselineEngine::audit_baseline();
+        if (class_exists('\\WebCareProScanner\\Security\\PromptInjectionGuard')) {
+            $drift = \WebCareProScanner\Security\PromptInjectionGuard::sanitize_mcp_telemetry($drift);
+        }
 
         return [
             'content' => [
@@ -2836,6 +2839,9 @@ class MCPAgentService {
 
     private static function tool_get_supply_chain_sbom(): array {
         $report = \WebCareProScanner\SupplyChain\SbomSentinelEngine::check_drift();
+        if (class_exists('\\WebCareProScanner\\Security\\PromptInjectionGuard')) {
+            $report = \WebCareProScanner\Security\PromptInjectionGuard::sanitize_mcp_telemetry($report);
+        }
         return [
             'isError' => false,
             'content' => [
@@ -2854,6 +2860,9 @@ class MCPAgentService {
             'snapshots' => \WebCareProScanner\SupplyChain\UpdateGatekeeperEngine::get_snapshots(),
             'settings'  => \WebCareProScanner\SupplyChain\UpdateGatekeeperEngine::get_settings(),
         ];
+        if (class_exists('\\WebCareProScanner\\Security\\PromptInjectionGuard')) {
+            $data = \WebCareProScanner\Security\PromptInjectionGuard::sanitize_mcp_telemetry($data);
+        }
         return [
             'isError' => false,
             'content' => [
@@ -2909,6 +2918,9 @@ class MCPAgentService {
             'honeytoken'     => class_exists('\WebCareProScanner\Firewall\HoneyTokenEngine') ? \WebCareProScanner\Firewall\HoneyTokenEngine::get_summary() : [],
             'rate_limiter'   => class_exists('\WebCareProScanner\Firewall\AdaptiveRateLimiter') ? \WebCareProScanner\Firewall\AdaptiveRateLimiter::get_telemetry() : [],
         ];
+        if (class_exists('\\WebCareProScanner\\Security\\PromptInjectionGuard')) {
+            $data = \WebCareProScanner\Security\PromptInjectionGuard::sanitize_mcp_telemetry($data);
+        }
 
         return [
             'isError' => false,
@@ -2958,6 +2970,9 @@ class MCPAgentService {
             'sessions_report'   => class_exists('\WebCareProScanner\Identity\SessionForensicsEngine') ? \WebCareProScanner\Identity\SessionForensicsEngine::get_active_sessions_report() : [],
             'hibp_summary'      => class_exists('\WebCareProScanner\Identity\HIBPBreachAuditor') ? \WebCareProScanner\Identity\HIBPBreachAuditor::get_summary() : [],
         ];
+        if (class_exists('\\WebCareProScanner\\Security\\PromptInjectionGuard')) {
+            $data = \WebCareProScanner\Security\PromptInjectionGuard::sanitize_mcp_telemetry($data);
+        }
 
         return [
             'isError' => false,
@@ -3009,6 +3024,9 @@ class MCPAgentService {
 
     private static function tool_get_threat_intel_network(): array {
         $telemetry = ThreatIntelNetwork::get_network_telemetry();
+        if (class_exists('\\WebCareProScanner\\Security\\PromptInjectionGuard')) {
+            $telemetry = \WebCareProScanner\Security\PromptInjectionGuard::sanitize_mcp_telemetry($telemetry);
+        }
         return [
             'isError' => false,
             'content' => [
@@ -3289,6 +3307,47 @@ class MCPAgentService {
     }
 
     /**
+     * Apply fail-closed ResponseDlpSentinel outbound redaction to any MCP payload.
+     * Shared across both JSON-RPC (/mcp/rpc) and REST (/mcp/execute) endpoints.
+     *
+     * @param mixed  $payload
+     * @param string $tool_name
+     * @return array{success: bool, data?: mixed, message?: string}
+     */
+    public static function apply_outbound_dlp(mixed $payload, string $tool_name = ''): array {
+        if (!class_exists('\\WebCareProScanner\\Firewall\\NextGen\\ResponseDlpSentinel')) {
+            return [
+                'success' => false,
+                'message' => 'Internal error: Security DLP Sentinel is unavailable; failing closed.',
+            ];
+        }
+
+        $has_leak    = false;
+        $matched_pat = '';
+        try {
+            $safe_result = \WebCareProScanner\Firewall\NextGen\ResponseDlpSentinel::redact_data_recursive($payload, $has_leak, $matched_pat);
+            return [
+                'success' => true,
+                'data'    => $safe_result,
+            ];
+        } catch (\Throwable $dlp_err) {
+            try {
+                if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                    \WebCareProScanner\System\AuditLogger::log_operational('mcp_dlp_inspection_limit_exceeded', [
+                        'tool'   => $tool_name,
+                        'reason' => $dlp_err->getCode() ?: 'dlp_limit',
+                    ]);
+                }
+            } catch (\Throwable $ignore) {
+            }
+            return [
+                'success' => false,
+                'message' => 'Tool output could not be safely inspected.',
+            ];
+        }
+    }
+
+    /**
      * Unified JSON-RPC 2.0 MCP transport dispatcher supporting Claude Desktop, Cursor, Windsurf, and Antigravity.
      *
      * @param array<string, mixed> $payload
@@ -3359,40 +3418,17 @@ class MCPAgentService {
                     ];
                 }
                 $exec = self::execute_tool($tool_name, $tool_args);
-
-                // Outbound DLP Secret Inspection & Redaction on MCP tool execution outputs
-                if (!class_exists('\\WebCareProScanner\\Firewall\\NextGen\\ResponseDlpSentinel')) {
-                    return [
-                        'jsonrpc' => '2.0',
-                        'id'      => $id,
-                        'error'   => ['code' => -32603, 'message' => 'Internal error: Security DLP Sentinel is unavailable; failing closed.'],
-                    ];
-                }
-
                 $content_payload = $exec['content'] ?? [['type' => 'text', 'text' => (string) wp_json_encode($exec)]];
-                $has_leak = false;
-                $matched_pat = '';
-
-                try {
-                    $safe_result = \WebCareProScanner\Firewall\NextGen\ResponseDlpSentinel::redact_data_recursive($content_payload, $has_leak, $matched_pat);
-                } catch (\Throwable $dlp_err) {
-                    try {
-                        if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
-                            \WebCareProScanner\System\AuditLogger::log_operational('mcp_dlp_inspection_limit_exceeded', [
-                                'tool'   => $tool_name,
-                                'reason' => $dlp_err->getCode() ?: 'dlp_limit',
-                            ]);
-                        }
-                    } catch (\Throwable $ignore) {
-                    }
-
+                $dlp = self::apply_outbound_dlp($content_payload, $tool_name);
+                if (empty($dlp['success'])) {
                     return [
                         'jsonrpc' => '2.0',
                         'id'      => $id,
-                        'error'   => ['code' => -32603, 'message' => 'Tool output could not be safely inspected.'],
+                        'error'   => ['code' => -32603, 'message' => (string) ($dlp['message'] ?? 'Tool output could not be safely inspected.')],
                     ];
                 }
 
+                $safe_result = $dlp['data'];
                 return [
                     'jsonrpc' => '2.0',
                     'id'      => $id,

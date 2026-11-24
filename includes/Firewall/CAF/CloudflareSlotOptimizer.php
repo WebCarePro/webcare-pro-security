@@ -584,7 +584,7 @@ class CloudflareSlotOptimizer {
         // Legitimate webhook dispatchers and API services (e.g. PayPal AS17012, Stripe, WooCommerce webhooks) which Cloudflare flags as cf.client.bot
         // are strictly safeguarded so legitimate POST webhooks are never dropped.
         $crawler_uas = '(lower(http.user_agent) contains "googlebot" or lower(http.user_agent) contains "bingbot" or lower(http.user_agent) contains "applebot" or lower(http.user_agent) contains "duckduckbot" or lower(http.user_agent) contains "yandexbot" or lower(http.user_agent) contains "baiduspider" or lower(http.user_agent) contains "ahrefsbot" or lower(http.user_agent) contains "semrushbot" or lower(http.user_agent) contains "dotbot" or lower(http.user_agent) contains "rogerbot" or lower(http.user_agent) contains "mj12bot" or lower(http.user_agent) contains "screaming frog")';
-        $clauses[] = '(((' . $crawler_uas . ' and not http.request.method in {"GET" "HEAD" "OPTIONS"}) or ((cf.client.bot or ' . $crawler_uas . ') and (http.request.uri.path in {"/wp-login.php" "/wp-register.php" "/wp-signup.php" "/wp-comments-post.php"} or http.request.uri.query contains "action=register" or http.request.uri.query contains "add-to-cart="))) and not (ip.geoip.asnum in {17012} or http.request.uri.path contains "/paypal" or http.request.uri.path contains "/wc-api" or http.request.uri.path contains "/wc-stripe" or http.request.uri.path contains "webhook"))';
+        $clauses[] = '(((' . $crawler_uas . ' and not http.request.method in {"GET" "HEAD" "OPTIONS"}) or ((cf.client.bot or ' . $crawler_uas . ') and (http.request.uri.path in {"/wp-login.php" "/wp-register.php" "/wp-signup.php" "/wp-comments-post.php"} or http.request.uri.query contains "action=register" or http.request.uri.query contains "add-to-cart="))) and not (ip.geoip.asnum in {17012} or starts_with(http.request.uri.path, "/wc-api/") or starts_with(http.request.uri.path, "/wp-json/wc-stripe/") or starts_with(http.request.uri.path, "/wp-json/wc/v3/") or starts_with(http.request.uri.path, "/wp-json/wc/store/")))';
 
         return implode(' or ', $clauses);
     }
@@ -683,13 +683,13 @@ class CloudflareSlotOptimizer {
         $clauses = [
             '((http.request.uri.path in ' . $login_paths . ') and (cf.client.bot or cf.threat_score gt 15 or not http.request.version in {"HTTP/2" "HTTP/3"}))',
             '((http.request.uri.path eq "/wp-comments-post.php") and http.request.method eq "POST" and (http.referer eq "" or http.request.version eq "HTTP/1.0" or cf.client.bot))',
-            CloudflareService::decode_cf_sig('28687474702e757365725f6167656e7420636f6e7461696e73202273716c6d617022206f7220687474702e757365725f6167656e7420636f6e7461696e73202277707363616e22206f7220687474702e757365725f6167656e7420636f6e7461696e7320226e75636c656922206f7220687474702e757365725f6167656e7420636f6e7461696e7320226e696b746f22206f7220687474702e757365725f6167656e7420636f6e7461696e7320226d61737363616e22206f7220687474702e757365725f6167656e7420636f6e7461696e732022707974686f6e2d72657175657374732229'),
+            '(lower(http.user_agent) contains "sqlmap" or lower(http.user_agent) contains "wpscan" or lower(http.user_agent) contains "nuclei" or lower(http.user_agent) contains "nikto" or lower(http.user_agent) contains "masscan" or lower(http.user_agent) contains "python-requests")',
         ];
 
         // Origin Survival Mode dynamic escalation (Carding swarm / brute-force surge / CPU stress)
         if ($origin_survival_active) {
             $clauses[] = '(http.request.uri.path in ' . $login_paths . ')';
-            $clauses[] = '(http.request.uri.query contains "s=" and not http.cookie contains "wordpress_logged_in_" and not cf.client.bot)';
+            $clauses[] = '(http.request.uri.query contains "s=" and not cf.client.bot)';
             if ($has_woo) {
                 $clauses[] = '((http.request.uri.path contains "/checkout" or http.request.uri.path contains "/cart") and cf.threat_score gt 5)';
             }
@@ -708,17 +708,48 @@ class CloudflareSlotOptimizer {
             ? AdaptiveFirewallAdvisor::has_ecosystem('woocommerce')
             : class_exists('WooCommerce');
 
-        // Hex-decoded at runtime to protect codebase from hosting antivirus / heuristic false positives
-        $combined = CloudflareService::decode_cf_sig('28286c6f77657228687474702e726571756573742e7572692e71756572792920636f6e7461696e732022756e696f6e2220616e64206c6f77657228687474702e726571756573742e7572692e71756572792920636f6e7461696e73202273656c6563742229206f7220286c6f77657228687474702e726571756573742e7572692e71756572792920636f6e7461696e732022696e666f726d6174696f6e5f736368656d612229206f7220286c6f77657228687474702e726571756573742e7572692e71756572792920636f6e7461696e732022736c6565702822206f72206c6f77657228687474702e726571756573742e7572692e71756572792920636f6e7461696e73202262656e63686d61726b2822206f72206c6f77657228687474702e726571756573742e7572692e71756572792920636f6e7461696e73202277616974666f722064656c61792229206f7220286c6f77657228687474702e726571756573742e7572692e71756572792920636f6e7461696e732022636f6e636174282220616e64206c6f77657228687474702e726571756573742e7572692e71756572792920636f6e7461696e73202230782229206f7220286c6f77657228687474702e726571756573742e7572692e71756572792920636f6e7461696e7320226578747261637476616c75652822206f72206c6f77657228687474702e726571756573742e7572692e71756572792920636f6e7461696e732022757064617465786d6c282229206f7220286c6f77657228687474702e726571756573742e7572692e71756572792920636f6e7461696e73202220616e6420313d3022206f72206c6f77657228687474702e726571756573742e7572692e71756572792920636f6e7461696e73202220616e6420313d3122206f72206c6f77657228687474702e726571756573742e7572692e71756572792920636f6e7461696e732022206f7220313d3122206f72206c6f77657228687474702e726571756573742e7572692e71756572792920636f6e7461696e73202227206f7220313d3122206f72206c6f77657228687474702e726571756573742e7572692e71756572792920636f6e7461696e732022276f7220313d3122206f72206c6f77657228687474702e726571756573742e7572692e71756572792920636f6e7461696e73202267726f75705f636f6e63617422206f72206c6f77657228687474702e726571756573742e7572692e71756572792920636f6e7461696e732022696e746f206f757466696c6522206f72206c6f77657228687474702e726571756573742e7572692e71756572792920636f6e7461696e732022696e746f2064756d7066696c65222929206f72202828687474702e726571756573742e75726920636f6e7461696e7320222e2e2f22206f7220687474702e726571756573742e75726920636f6e7461696e7320222e2e25326622206f7220687474702e726571756573742e7572692e717565727920636f6e7461696e7320226574632f70617373776422206f7220687474702e726571756573742e7572692e717565727920636f6e7461696e7320226261736536345f6465636f646522206f7220687474702e726571756573742e7572692e717565727920636f6e7461696e7320226576616c2822206f7220687474702e726571756573742e75726920636f6e7461696e732022253030222929206f72202828687474702e726571756573742e7572692e717565727920636f6e7461696e732022617574686f723d22206f722028687474702e726571756573742e7572692e7061746820636f6e7461696e73202277702d6a736f6e2f77702f76322f75736572732220616e64206e6f7420687474702e726571756573742e7572692e7061746820636f6e7461696e73202275736572732f6d652220616e64206e6f7420687474702e726571756573742e7572692e717565727920636f6e7461696e732022636f6e746578743d656469742220616e64206e6f7420687474702e636f6f6b696520636f6e7461696e732022776f726470726573735f6c6f676765645f696e22292929');
+        // Balanced, bypass-resistant SQLi / LFI / Path Traversal / Enumeration Wirefilter expression
+        // (No spoofable cookie bypasses and no substring path exemptions on /paypal or /wc-api)
+        $sqli_clauses = [
+            '(lower(http.request.uri.query) contains "union" and lower(http.request.uri.query) contains "select")',
+            'lower(http.request.uri.query) contains "information_schema"',
+            'lower(http.request.uri.query) contains "sleep("',
+            'lower(http.request.uri.query) contains "benchmark("',
+            'lower(http.request.uri.query) contains "waitfor delay"',
+            '(lower(http.request.uri.query) contains "concat(" and lower(http.request.uri.query) contains "0x")',
+            'lower(http.request.uri.query) contains "extractvalue("',
+            'lower(http.request.uri.query) contains "updatexml("',
+            'lower(http.request.uri.query) contains " and 1=0"',
+            'lower(http.request.uri.query) contains " and 1=1"',
+            'lower(http.request.uri.query) contains " or 1=1"',
+            'lower(http.request.uri.query) contains "\' or 1=1"',
+            'lower(http.request.uri.query) contains "group_concat"',
+            'lower(http.request.uri.query) contains "into outfile"',
+            'lower(http.request.uri.query) contains "into dumpfile"',
+        ];
 
-        // Smart Rule #48: Cover ?rest_route=/wp/v2/users user enumeration as well as /wp-json/wp/v2/users
-        $combined = substr($combined, 0, -2) . ' or (lower(http.request.uri.query) contains "wp/v2/users" and not lower(http.request.uri.query) contains "users/me" and not http.cookie contains "wordpress_logged_in")))';
+        $lfi_clauses = [
+            'http.request.uri contains "../"',
+            'http.request.uri contains "..%2f"',
+            'http.request.uri.query contains "etc/passwd"',
+            'http.request.uri.query contains "base64_decode"',
+            'http.request.uri.query contains "eval("',
+            'http.request.uri contains "%00"',
+        ];
 
-        // WooCommerce REST API & Payment Webhook exemption: ensure /wp-json/wc/store/ and verified payment gateway webhooks (PayPal, Stripe, etc.) are exempt from false positives
+        $enum_clauses = [
+            'lower(http.request.uri.query) contains "author="',
+            '(lower(http.request.uri.path) contains "wp-json/wp/v2/users" and not lower(http.request.uri.path) contains "users/me")',
+            '(lower(http.request.uri.query) contains "wp/v2/users" and not lower(http.request.uri.query) contains "users/me")',
+        ];
+
+        $combined = '(' . implode(' or ', $sqli_clauses) . ') or (' . implode(' or ', $lfi_clauses) . ') or (' . implode(' or ', $enum_clauses) . ')';
+
+        // Strict storefront WooCommerce exemption only (never exempt arbitrary /wc-api or /paypal URLs from SQLi/LFI protection)
         if ($has_woo) {
-            return '(not (starts_with(http.request.uri.path, "/wp-json/wc/store/") or http.request.uri.path contains "/paypal" or http.request.uri.path contains "/wc-api" or http.request.uri.path contains "/wc-stripe" or ip.geoip.asnum in {17012})) and (' . $combined . ')';
+            return '(not (starts_with(http.request.uri.path, "/wp-json/wc/store/") or ip.geoip.asnum in {17012})) and (' . $combined . ')';
         }
 
-        return '(not (http.request.uri.path contains "/paypal" or http.request.uri.path contains "/wc-api" or http.request.uri.path contains "/wc-stripe" or ip.geoip.asnum in {17012})) and (' . $combined . ')';
+        return '(not (ip.geoip.asnum in {17012})) and (' . $combined . ')';
     }
 }

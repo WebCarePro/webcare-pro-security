@@ -182,7 +182,8 @@ class GhostRouteTrap {
                 || BotReconDefense::is_genuine_uptime_monitor($ip, $user_agent, $settings);
         }
 
-        if ($is_prefetch || $is_genuine_crawler) {
+        $req_method = isset($_SERVER['REQUEST_METHOD']) ? strtoupper(sanitize_key(wp_unslash((string) $_SERVER['REQUEST_METHOD']))) : 'GET';
+        if (($is_prefetch && in_array($req_method, ['GET', 'HEAD'], true)) || $is_genuine_crawler) {
             status_header(404);
             nocache_headers();
             header('X-Robots-Tag: noindex, nofollow, noarchive');

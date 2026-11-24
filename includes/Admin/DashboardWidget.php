@@ -19,7 +19,7 @@ if (!defined('ABSPATH')) {
 
 use WebCareProScanner\Firewall\Core\WafVaultManager;
 use WebCareProScanner\Firewall\WafFileLogger;
-use WebCareProScanner\Rescue\RescueAssistantManager;
+use WebCareProScanner\Firewall\RescueAssistantManager;
 
 final class DashboardWidget {
 
@@ -43,12 +43,9 @@ final class DashboardWidget {
      */
     public static function render(): void {
         // 1. Safe Mode / Protection Status (O(1) memory/transient lookup)
-        $is_safe_mode = class_exists(RescueAssistantManager::class) && RescueAssistantManager::is_safe_mode_active();
-        $safe_mode_remaining = 0;
-        if ($is_safe_mode) {
-            $state = RescueAssistantManager::get_safe_mode_status();
-            $safe_mode_remaining = (int) ($state['seconds_remaining'] ?? 0);
-        }
+        $pause_state = class_exists(RescueAssistantManager::class) ? RescueAssistantManager::get_pause_status() : [];
+        $is_safe_mode = !empty($pause_state['paused']);
+        $safe_mode_remaining = (int) ($pause_state['seconds_remaining'] ?? 0);
 
         // 2. Metrics (O(1) JSON file/vault lookups, zero heavy SQL)
         $today_stats = class_exists(WafFileLogger::class) ? WafFileLogger::get_log_stats('today') : [];

@@ -327,6 +327,19 @@ class CrashGuard {
             return [];
         }
 
+        // Never expose source snippets from credential/config or secret-vault files in DB/notice dossiers.
+        $norm_path = str_replace('\\', '/', strtolower($file));
+        $base_name = basename($norm_path);
+        if (
+            in_array($base_name, ['wp-config.php', 'wp-config-local.php', '.env', '.htaccess', '.user.ini'], true)
+            || str_contains($norm_path, '/webcare-waf/')
+            || str_contains($norm_path, '/.webcare-vault/')
+            || str_ends_with($base_name, '.key')
+            || str_ends_with($base_name, '.pem')
+        ) {
+            return [];
+        }
+
         $lines = @file($file);
         if (!$lines || !is_array($lines)) {
             return [];
@@ -336,9 +349,28 @@ class CrashGuard {
         $start_line = max(1, $target_line - 10);
         $end_line   = min($total_lines, $target_line + 10);
 
+        $has_dlp = class_exists('\\WebCareProScanner\\Firewall\\NextGen\\ResponseDlpSentinel');
+
         $snippet = [];
         for ($i = $start_line; $i <= $end_line; $i++) {
             $raw_line = rtrim($lines[$i - 1], "\r\n");
+            // Redact inline secrets/constants/tokens before persisting or rendering snippet
+            $raw_line = (string) preg_replace(
+                '/(\b(?:DB_PASSWORD|AUTH_KEY|SECURE_AUTH_KEY|LOGGED_IN_KEY|NONCE_KEY|AUTH_SALT|SECURE_AUTH_SALT|LOGGED_IN_SALT|NONCE_SALT)\b\s*,\s*[\'"])[^\'"]+([\'"])/i',
+                '$1[REDACTED]$2',
+                $raw_line
+            );
+            $raw_line = (string) preg_replace(
+                '/(\b(?:api_?key|secret|token|password|passwd|private_?key|bearer)\b\s*(?:=>|=|:)\s*[\'"])[^\'"]{6,}([\'"])/i',
+                '$1[REDACTED]$2',
+                $raw_line
+            );
+            if ($has_dlp) {
+                $dlp_res = \WebCareProScanner\Firewall\NextGen\ResponseDlpSentinel::inspect_and_redact($raw_line, true);
+                if (!empty($dlp_res['leaked']) && isset($dlp_res['redacted'])) {
+                    $raw_line = (string) $dlp_res['redacted'];
+                }
+            }
             $is_error = ($i === $target_line);
             $snippet[] = [
                 'line_num' => $i,
@@ -384,18 +416,18 @@ class CrashGuard {
     }
 
     /**
-     * Safe client IP detection.
+     * Safe client IP detection (uses trusted ClientIpResolver when available, else REMOTE_ADDR only).
      */
     private static function get_sanitized_ip(): string {
-        $headers = ['HTTP_CF_CONNECTING_IP', 'HTTP_X_FORWARDED_FOR', 'REMOTE_ADDR'];
-        foreach ($headers as $h) {
-            if (!empty($_SERVER[$h])) {
-                $raw = sanitize_text_field(wp_unslash($_SERVER[$h]));
-                $parts = explode(',', $raw);
-                $ip = trim($parts[0]);
-                if (filter_var($ip, FILTER_VALIDATE_IP)) {
-                    return $ip;
-                }
+        if (class_exists('\\WebCareProScanner\\Firewall\\Core\\ClientIpResolver')) {
+            return \WebCareProScanner\Firewall\Core\ClientIpResolver::get_client_ip();
+        }
+        if (!empty($_SERVER['REMOTE_ADDR'])) {
+            $raw = sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR']));
+            $parts = explode(',', $raw);
+            $ip = trim($parts[0]);
+            if (filter_var($ip, FILTER_VALIDATE_IP)) {
+                return $ip;
             }
         }
         return '127.0.0.1';

@@ -69,7 +69,7 @@ class VirtualPatchManager {
                 'description'  => 'Blocks serialized PHP object payload injection through donation forms and donation receipt parameter handles.',
                 'php_rule'     => [
                     'target_uris' => ['give_action', 'give-donation'],
-                    'regex'       => '/(O:[0-9]+:"[a-zA-Z0-9_]+":|a:[0-9]+:\{|give_title)/i',
+                    'regex'       => '/(O:[0-9]+:"[a-zA-Z0-9_\\\\]+":|a:[0-9]+:\{|give_title)/i',
                 ],
                 'cf_expression' => '(http.request.uri.path contains "give" or http.request.uri.query contains "give") and (http.request.body contains "O:" or http.request.uri.query contains "O:")',
             ],
@@ -110,7 +110,7 @@ class VirtualPatchManager {
                 'php_rule'     => [
                     'target_uris' => ['/wp-admin/admin-ajax.php', '/wp-json/'],
                     'methods'     => ['POST'],
-                    'regex'       => '/(filename=[\'"][^\'"]+\.(php[0-9]?|phtml|sh|bash|cgi|exe)[\'"]|application\/x-php)/i',
+                    'regex'       => '/(?:filename=[\'"][^\'"]+\.(php[0-9]?|phar|phtml|pht|sh|bash|cgi|exe|htaccess|user\.ini)(?:[\'"]|\.)|application\/x-php|text\/x-php)/i',
                 ],
                 'cf_expression' => '(http.request.uri.path contains "admin-ajax.php" or http.request.uri.path contains "wp-json") and http.request.method eq "POST" and (http.request.body contains ".php" or http.request.body contains "application/x-php")',
             ],
@@ -810,8 +810,25 @@ class VirtualPatchManager {
                         }
                     }
                 }
-                // Header-targeted rules must not leak their header regex into query string or POST parameters
-                continue;
+                // Pure header-targeted rules (e.g. CVE-2023-28121) must not leak generic numeric regex into query/POST
+                if (!empty($rule['headers_only']) || $patch_id === 'CVE-2023-28121') {
+                    continue;
+                }
+            }
+
+            // Inspect PHP $_FILES metadata (multipart bodies are consumed by PHP before php://input)
+            // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Pre-auth WAF virtual patch inspection of uploaded filename/MIME metadata.
+            $uploaded_files_raw = (isset($_FILES) && is_array($_FILES)) ? $_FILES : [];
+            if (($patch_id === 'VPATCH-FILE-UPLOAD' || $patch_id === 'CVE-2023-38000') && !empty($uploaded_files_raw)) {
+                $flat_files = self::flatten_uploaded_file_metadata($uploaded_files_raw);
+                foreach ($flat_files as $file_candidate) {
+                    if (!empty($rule['regex']) && @preg_match($rule['regex'], $file_candidate)) {
+                        return self::trigger_patch_block($patch_id, $patch, $file_candidate, 'Multipart $_FILES');
+                    }
+                    if (preg_match('/\.(?:php[0-9]?|phar|phtml|pht|sh|bash|cgi|exe|htaccess|user\.ini)(?:$|\.)/i', $file_candidate)) {
+                        return self::trigger_patch_block($patch_id, $patch, $file_candidate, 'Multipart $_FILES Executable Extension');
+                    }
+                }
             }
 
             // Check Query string and Body with Regex
@@ -835,10 +852,62 @@ class VirtualPatchManager {
                 if (!empty($matched_evidence)) {
                     return self::trigger_patch_block($patch_id, $patch, $matched_evidence, 'Payload Parameter');
                 }
+
+                // Endpoint-scoped php_rule fail-closed check if payload exceeded 64KB bounded inspection ceiling
+                $scoped_uris = (array) ($rule['target_uris'] ?? []);
+                if (
+                    in_array($method, ['POST', 'PUT', 'PATCH'], true)
+                    && !empty($scoped_uris)
+                    && !in_array('/', $scoped_uris, true)
+                    && class_exists(\WebCareProScanner\Firewall\Core\RequestBodyReader::class)
+                    && \WebCareProScanner\Firewall\Core\RequestBodyReader::is_truncated()
+                ) {
+                    return [
+                        'id'          => 'WAF-VPATCH-BODY-INCOMPLETE',
+                        'name'        => '[Virtual Patch] Truncated Payload Fail-Closed',
+                        'category'    => 'Virtual Patch (CVE Shield)',
+                        'detector'    => 'VirtualPatchManager',
+                        'sig_id'      => 'cve:' . strtolower($patch_id),
+                        'action'      => 'block',
+                        'status_code' => 413,
+                        'match_type'  => 'Payload Truncation',
+                        'match_value' => 'Body exceeded bounded 64KB inspection ceiling',
+                    ];
+                }
             }
         }
 
         return null;
+    }
+
+    /**
+     * Flatten recursive PHP $_FILES array entries (filenames & MIME types) for upload inspection.
+     *
+     * @param array<string, mixed> $files
+     * @return string[]
+     */
+    private static function flatten_uploaded_file_metadata(array $files): array {
+        $out = [];
+        $walk = static function ($val) use (&$walk, &$out): void {
+            if (is_array($val)) {
+                foreach ($val as $v) {
+                    $walk($v);
+                }
+            } elseif (is_string($val) && $val !== '') {
+                $out[] = 'filename="' . $val . '" ' . $val;
+            }
+        };
+        foreach ($files as $entry) {
+            if (is_array($entry)) {
+                if (isset($entry['name'])) {
+                    $walk($entry['name']);
+                }
+                if (isset($entry['type'])) {
+                    $walk($entry['type']);
+                }
+            }
+        }
+        return $out;
     }
 
     /**

@@ -374,19 +374,27 @@ class WebAuthnManager {
                 $cose_key = StrictCborDecoder::decode($cose_bytes);
                 if (is_array($cose_key)) {
                     $kty = $cose_key[1] ?? null;
-                    $crv = $cose_key[-1] ?? null;
-                    $x   = $cose_key[-2] ?? null;
-                    $y   = $cose_key[-3] ?? null;
                     // COSE Key EC2 (kty=2) and P-256 (crv=1)
-                    if ($kty === 2 && $crv === 1 && is_string($x) && is_string($y) && strlen($x) === 32 && strlen($y) === 32) {
-                        $raw_point = "\x04" . $x . $y;
-                        $spki_prefix = hex2bin('3059301306072a8648ce3d020106082a8648ce3d030107034200');
-                        $spki = $spki_prefix . $raw_point;
-                        $public_key_pem = "-----BEGIN PUBLIC KEY-----\n" . chunk_split(base64_encode($spki), 64, "\n") . "-----END PUBLIC KEY-----\n";
+                    if ($kty === 2 && ($cose_key[-1] ?? null) === 1) {
+                        $x = $cose_key[-2] ?? null;
+                        $y = $cose_key[-3] ?? null;
+                        if (is_string($x) && is_string($y) && strlen($x) === 32 && strlen($y) === 32) {
+                            $raw_point = "\x04" . $x . $y;
+                            $spki_prefix = hex2bin('3059301306072a8648ce3d020106082a8648ce3d030107034200');
+                            $spki = $spki_prefix . $raw_point;
+                            $public_key_pem = "-----BEGIN PUBLIC KEY-----\n" . chunk_split(base64_encode($spki), 64, "\n") . "-----END PUBLIC KEY-----\n";
+                        }
+                    } elseif ($kty === 3) {
+                        // COSE Key RSA (kty=3, RS256): -1 = modulus n, -2 = public exponent e
+                        $mod = $cose_key[-1] ?? null;
+                        $exp = $cose_key[-2] ?? null;
+                        if (is_string($mod) && is_string($exp) && strlen($mod) >= 128 && $exp !== '') {
+                            $public_key_pem = self::cose_rsa_to_pem($mod, $exp);
+                        }
                     }
                 }
             } catch (\Throwable) {
-                // Defer to fallback
+                // Defer to CBOR attestation authData fallback
             }
         }
 
@@ -394,14 +402,7 @@ class WebAuthnManager {
             $public_key_pem = self::extract_public_key_pem_from_attestation($attestation_bin);
         }
 
-        // Fallback: check if client provided direct DER public key via getPublicKey()
-        $client_pk_b64 = $payload['response']['publicKey'] ?? '';
-        if (empty($public_key_pem) && !empty($client_pk_b64)) {
-            $pk_der = self::base64url_decode($client_pk_b64);
-            $public_key_pem = self::parse_public_key_to_pem($pk_der);
-        }
-
-        // Strict Cryptographic Enforcement: Passkeys without verifiable public keys cannot be registered
+        // Strict Cryptographic Enforcement: Never fall back to client-supplied unverified payload.response.publicKey.
         if (empty($public_key_pem) || strpos($public_key_pem, '-----BEGIN PUBLIC KEY-----') === false) {
             return [
                 'success' => false,
@@ -678,6 +679,16 @@ class WebAuthnManager {
             ];
         }
 
+        // Strict Cryptographic Signature Verification via OpenSSL BEFORE counter anomaly alerts
+        // to prevent unauthenticated attackers from triggering clone logs with forged assertions.
+        $verified = openssl_verify($signed_data, $signature_bin, $stored_pubkey, OPENSSL_ALGO_SHA256);
+        if ($verified !== 1) {
+            return [
+                'success' => false,
+                'message' => __('Passkey authentication failed. Invalid credential or signature.', 'webcare-pro-security'),
+            ];
+        }
+
         // Parse signature counter from authenticatorData (bytes 33-36, 32-bit big-endian)
         $incoming_sign_count = (ord($auth_data_bin[33]) << 24)
             | (ord($auth_data_bin[34]) << 16)
@@ -695,15 +706,6 @@ class WebAuthnManager {
             return [
                 'success' => false,
                 'message' => __('Authentication rejected: Authenticator sequence anomaly detected (potential clone).', 'webcare-pro-security'),
-            ];
-        }
-
-        // Strict Cryptographic Signature Verification via OpenSSL
-        $verified = openssl_verify($signed_data, $signature_bin, $stored_pubkey, OPENSSL_ALGO_SHA256);
-        if ($verified !== 1) {
-            return [
-                'success' => false,
-                'message' => __('Passkey authentication failed. Invalid credential or signature.', 'webcare-pro-security'),
             ];
         }
 
@@ -782,7 +784,7 @@ class WebAuthnManager {
         $found = false;
 
         foreach ($creds as $c) {
-            if (($c['credential_id'] ?? '') === $credential_id) {
+            if (self::credential_ids_match((string) ($c['credential_id'] ?? ''), $credential_id)) {
                 $found = true;
                 continue;
             }
@@ -949,6 +951,40 @@ class WebAuthnManager {
     }
 
     /**
+     * Encode an RSA COSE key (modulus + exponent) as an OpenSSL-verified X.509 SPKI PEM.
+     */
+    private static function cose_rsa_to_pem(string $modulus, string $exponent): string {
+        $der_len = static function (int $len): string {
+            if ($len < 128) {
+                return chr($len);
+            }
+            $bytes = ltrim(pack('N', $len), "\x00");
+            return chr(0x80 | strlen($bytes)) . $bytes;
+        };
+        $der_int = static function (string $raw) use ($der_len): string {
+            $trimmed = ltrim($raw, "\x00");
+            if ($trimmed === '') {
+                $trimmed = "\x00";
+            }
+            if ((ord($trimmed[0]) & 0x80) !== 0) {
+                $trimmed = "\x00" . $trimmed;
+            }
+            return "\x02" . $der_len(strlen($trimmed)) . $trimmed;
+        };
+
+        $rsa_body  = $der_int($modulus) . $der_int($exponent);
+        $rsa_seq   = "\x30" . $der_len(strlen($rsa_body)) . $rsa_body;
+        $bit_str   = "\x03" . $der_len(strlen($rsa_seq) + 1) . "\x00" . $rsa_seq;
+        $alg_id    = hex2bin('300d06092a864886f70d0101010500');
+        $spki_body = $alg_id . $bit_str;
+        $spki      = "\x30" . $der_len(strlen($spki_body)) . $spki_body;
+
+        $pem = "-----BEGIN PUBLIC KEY-----\n" . chunk_split(base64_encode($spki), 64, "\n") . "-----END PUBLIC KEY-----\n";
+        $res = @openssl_pkey_get_public($pem);
+        return $res !== false ? $pem : '';
+    }
+
+    /**
      * Helper to extract public key PEM from CBOR attestation object.
      *
      * @param string $attestation_bin
@@ -1059,7 +1095,10 @@ class WebAuthnManager {
                 notice.id = 'webcare-passkey-notice';
                 notice.className = isSuccess ? 'notice notice-success' : 'notice notice-error';
                 notice.style.cssText = 'padding: 10px 14px; margin-bottom: 16px; border-left: 4px solid ' + (isSuccess ? '#46b450' : '#dc3232') + '; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.1); font-size: 13px; line-height: 1.4;';
-                notice.innerHTML = '<p style="margin: 0;">' + msg + '</p>';
+                var p = document.createElement('p');
+                p.style.margin = '0';
+                p.textContent = String(msg || '');
+                notice.appendChild(p);
                 if (loginForm && loginForm.parentNode) {
                     loginForm.parentNode.insertBefore(notice, loginForm);
                 }

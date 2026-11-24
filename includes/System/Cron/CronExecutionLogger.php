@@ -58,6 +58,9 @@ class CronExecutionLogger {
      */
     public static function start_run(string $task_id, string $hook, string $trigger_source = 'wp_cron', int $actor_id = 0): int {
         global $wpdb;
+        if (!isset($wpdb) || !is_object($wpdb) || !method_exists($wpdb, 'insert')) {
+            return 0;
+        }
         self::ensure_table_exists();
 
         $table = self::get_table_name();
@@ -84,7 +87,7 @@ class CronExecutionLogger {
             ['%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%d', '%s']
         );
 
-        $log_id = $inserted ? (int) $wpdb->insert_id : 0;
+        $log_id = $inserted ? (int) ($wpdb->insert_id ?? 0) : 0;
         if ($log_id > 0) {
             self::$active_running_context = [
                 'log_id'         => $log_id,

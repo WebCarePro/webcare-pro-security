@@ -467,17 +467,48 @@ final class AuthController extends AbstractApiController {
     /**
      * Auth Security: Admin Disable 2FA for target user (Emergency recovery / lockout unlock)
      */
+    /**
+     * Authorize an administrative action targeting another/specific user account.
+     * Enforces edit_user capability and Multisite current-blog membership (unless Super Admin).
+     *
+     * @return \WP_User|\WP_Error
+     */
+    private static function authorize_target_user_action(int $user_id, string $missing_code = 'invalid_user'): \WP_User|\WP_Error {
+        if ($user_id <= 0) {
+            return new \WP_Error($missing_code, __('Valid user ID is required.', 'webcare-pro-security'), ['status' => 400]);
+        }
+
+        $user = get_user_by('id', $user_id);
+        if (!$user instanceof \WP_User) {
+            return new \WP_Error('user_not_found', __('User does not exist.', 'webcare-pro-security'), ['status' => 404]);
+        }
+
+        if (!current_user_can('edit_user', $user_id)) {
+            return new \WP_Error(
+                'forbidden_user_action',
+                __('You do not have permission to manage security controls for this user.', 'webcare-pro-security'),
+                ['status' => 403]
+            );
+        }
+
+        if (is_multisite() && !is_super_admin() && !is_user_member_of_blog($user_id, get_current_blog_id())) {
+            return new \WP_Error(
+                'multisite_user_out_of_scope',
+                __('Cross-site user management requires Super Admin privileges.', 'webcare-pro-security'),
+                ['status' => 403]
+            );
+        }
+
+        return $user;
+    }
+
     public static function admin_disable_user_2fa(\WP_REST_Request $request) {
         $params  = $request->get_json_params() ?: [];
         $user_id = (int) ($params['user_id'] ?? 0);
 
-        if (!$user_id) {
-            return new \WP_Error('invalid_user', __('Valid user ID is required.', 'webcare-pro-security'), ['status' => 400]);
-        }
-
-        $user = get_user_by('id', $user_id);
-        if (!$user) {
-            return new \WP_Error('user_not_found', __('User does not exist.', 'webcare-pro-security'), ['status' => 404]);
+        $user = self::authorize_target_user_action($user_id);
+        if (is_wp_error($user)) {
+            return $user;
         }
 
         \WebCareProScanner\Auth\TwoFactorAuth::disable_user($user_id);
@@ -513,13 +544,9 @@ final class AuthController extends AbstractApiController {
         $params  = $request->get_json_params() ?: [];
         $user_id = (int) ($params['user_id'] ?? 0);
 
-        if (!$user_id) {
-            return new \WP_Error('invalid_user', __('Valid user ID is required.', 'webcare-pro-security'), ['status' => 400]);
-        }
-
-        $user = get_user_by('id', $user_id);
-        if (!$user) {
-            return new \WP_Error('user_not_found', __('User does not exist.', 'webcare-pro-security'), ['status' => 404]);
+        $user = self::authorize_target_user_action($user_id);
+        if (is_wp_error($user)) {
+            return $user;
         }
 
         $current_uid = get_current_user_id();
@@ -528,8 +555,8 @@ final class AuthController extends AbstractApiController {
         if ($user_id !== $current_uid) {
             \WebCareProScanner\Auth\TwoFactorAuth::disable_user($user_id);
             update_user_meta($user_id, 'webcareproscan_force_2fa_setup', 1);
-            delete_user_meta($user_id, 'webcareproscan_2fa_secret');
-            delete_user_meta($user_id, 'webcareproscan_2fa_backup_codes');
+            delete_user_meta($user_id, \WebCareProScanner\Auth\TwoFactorAuth::META_SECRET);
+            delete_user_meta($user_id, \WebCareProScanner\Auth\TwoFactorAuth::META_BACKUP_CODES);
 
             if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
                 \WebCareProScanner\System\AuditLogger::log_event(
@@ -594,13 +621,9 @@ final class AuthController extends AbstractApiController {
         $params  = $request->get_json_params() ?: [];
         $user_id = (int) ($params['user_id'] ?? 0);
 
-        if (!$user_id) {
-            return new \WP_Error('invalid_user', __('Valid user ID is required.', 'webcare-pro-security'), ['status' => 400]);
-        }
-
-        $user = get_user_by('id', $user_id);
-        if (!$user) {
-            return new \WP_Error('user_not_found', __('User does not exist.', 'webcare-pro-security'), ['status' => 404]);
+        $user = self::authorize_target_user_action($user_id);
+        if (is_wp_error($user)) {
+            return $user;
         }
 
         if (!\WebCareProScanner\Auth\TwoFactorAuth::is_user_enabled($user_id)) {
@@ -655,13 +678,9 @@ final class AuthController extends AbstractApiController {
         $params  = $request->get_json_params() ?: [];
         $user_id = (int) ($params['user_id'] ?? 0);
 
-        if (!$user_id) {
-            return new \WP_Error('invalid_user', __('Valid user ID is required.', 'webcare-pro-security'), ['status' => 400]);
-        }
-
-        $user = get_user_by('id', $user_id);
-        if (!$user) {
-            return new \WP_Error('user_not_found', __('User does not exist.', 'webcare-pro-security'), ['status' => 404]);
+        $user = self::authorize_target_user_action($user_id);
+        if (is_wp_error($user)) {
+            return $user;
         }
 
         $res = \WebCareProScanner\Auth\TwoFactorAuth::unlock_user_lockouts($user_id);
@@ -936,8 +955,9 @@ final class AuthController extends AbstractApiController {
         $params  = $request->get_json_params() ?: [];
         $user_id = intval($params['user_id'] ?? 0);
 
-        if (!$user_id) {
-            return new \WP_Error('missing_user_id', __('User ID is required.', 'webcare-pro-security'), ['status' => 400]);
+        $user = self::authorize_target_user_action($user_id, 'missing_user_id');
+        if (is_wp_error($user)) {
+            return $user;
         }
 
         if (!class_exists('\WebCareProScanner\Identity\HIBPBreachAuditor')) {
@@ -1142,6 +1162,11 @@ final class AuthController extends AbstractApiController {
             ], 400);
         }
 
+        $target_user = self::authorize_target_user_action($user_id);
+        if (is_wp_error($target_user)) {
+            return $target_user;
+        }
+
         $result = \WebCareProScanner\Auth\ApplicationPasswordSentinel::revoke_password($user_id, $uuid);
 
         if (!$result) {
@@ -1176,11 +1201,9 @@ final class AuthController extends AbstractApiController {
         $params  = $request->get_json_params() ?: [];
         $user_id = isset($params['user_id']) ? (int) $params['user_id'] : 0;
 
-        if ($user_id <= 0) {
-            return new \WP_REST_Response([
-                'success' => false,
-                'message' => __('Valid User ID is required.', 'webcare-pro-security'),
-            ], 400);
+        $target_user = self::authorize_target_user_action($user_id);
+        if (is_wp_error($target_user)) {
+            return $target_user;
         }
 
         $result = \WebCareProScanner\Auth\ApplicationPasswordSentinel::revoke_all_for_user($user_id);

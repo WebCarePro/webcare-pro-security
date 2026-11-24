@@ -2454,18 +2454,44 @@ final class ScanController extends AbstractApiController {
      */
     public static function get_component_changelog(\WP_REST_Request $request) {
         $raw_path = sanitize_text_field($request->get_param('path') ?: ($request->get_param('file_path') ?: ''));
-        $slug = sanitize_text_field($request->get_param('slug') ?: '');
+        $raw_slug = sanitize_text_field($request->get_param('slug') ?: '');
         $type = sanitize_key($request->get_param('type') ?: 'plugin'); // 'plugin' or 'theme'
         $installed_ver = sanitize_text_field($request->get_param('installed_version') ?: '');
-        $latest_ver = sanitize_text_field($request->get_param('latest_version') ?: '');
+        $raw_latest_ver = sanitize_text_field($request->get_param('latest_version') ?: '');
+
+        // Validate slug and version identifiers strictly before filesystem or SVN remote lookup
+        $slug = (preg_match('/^[a-zA-Z0-9._-]{1,120}$/', $raw_slug) === 1 && !str_contains($raw_slug, '..'))
+            ? $raw_slug
+            : '';
+        $latest_ver = (preg_match('/^[a-zA-Z0-9._+-]{1,40}$/', $raw_latest_ver) === 1 && !str_contains($raw_latest_ver, '..'))
+            ? $raw_latest_ver
+            : '';
 
         $target_dir = '';
-        if (!empty($raw_path)) {
-            $raw_path = str_replace(['../', '..\\'], '', $raw_path);
-            if (is_dir($raw_path)) {
-                $target_dir = wp_normalize_path($raw_path);
-            } elseif (is_file($raw_path)) {
-                $target_dir = wp_normalize_path(dirname($raw_path));
+        if (!empty($raw_path) && !str_contains($raw_path, "\0")) {
+            $real_target = realpath($raw_path);
+            if ($real_target !== false) {
+                $norm_real    = wp_normalize_path($real_target);
+                $allowed_roots = array_filter([
+                    defined('ABSPATH') ? realpath(ABSPATH) : false,
+                    defined('WP_CONTENT_DIR') ? realpath(WP_CONTENT_DIR) : false,
+                    defined('WP_PLUGIN_DIR') ? realpath(WP_PLUGIN_DIR) : false,
+                ]);
+                $inside_root = false;
+                foreach ($allowed_roots as $root) {
+                    $norm_root = rtrim(wp_normalize_path($root), '/') . '/';
+                    if (str_starts_with(rtrim($norm_real, '/') . '/', $norm_root)) {
+                        $inside_root = true;
+                        break;
+                    }
+                }
+                if ($inside_root) {
+                    if (is_dir($real_target)) {
+                        $target_dir = $norm_real;
+                    } elseif (is_file($real_target)) {
+                        $target_dir = wp_normalize_path(dirname($real_target));
+                    }
+                }
             }
         }
 
@@ -2498,6 +2524,9 @@ final class ScanController extends AbstractApiController {
             }
         }
         $slug = preg_replace('/\.php$/i', '', $slug);
+        if (preg_match('/^[a-zA-Z0-9._-]{1,120}$/', (string) $slug) !== 1 || str_contains((string) $slug, '..')) {
+            $slug = '';
+        }
 
         // Fetch component metadata if versions are not provided
         if (empty($installed_ver) || empty($latest_ver)) {
@@ -2641,10 +2670,11 @@ final class ScanController extends AbstractApiController {
                 // 1.4 Official WordPress.org SVN Repository (for free/official directory plugins)
                 if (!$latest_changelog_found && !empty($slug)) {
                     $svn_urls = [];
+                    $enc_slug = rawurlencode($slug);
                     if (!empty($latest_ver)) {
-                        $svn_urls[] = "https://plugins.svn.wordpress.org/{$slug}/tags/{$latest_ver}/readme.txt";
+                        $svn_urls[] = 'https://plugins.svn.wordpress.org/' . $enc_slug . '/tags/' . rawurlencode($latest_ver) . '/readme.txt';
                     }
-                    $svn_urls[] = "https://plugins.svn.wordpress.org/{$slug}/trunk/readme.txt";
+                    $svn_urls[] = 'https://plugins.svn.wordpress.org/' . $enc_slug . '/trunk/readme.txt';
 
                     foreach ($svn_urls as $url) {
                         $response = function_exists('wp_safe_remote_get')
@@ -2686,8 +2716,10 @@ final class ScanController extends AbstractApiController {
             } else {
                 $candidates = [];
                 if (!empty($latest_ver)) {
-                    $candidates[] = "https://themes.svn.wordpress.org/{$slug}/{$latest_ver}/readme.txt";
-                    $candidates[] = "https://themes.svn.wordpress.org/{$slug}/{$latest_ver}/changelog.txt";
+                    $enc_theme = rawurlencode($slug);
+                    $enc_ver   = rawurlencode($latest_ver);
+                    $candidates[] = 'https://themes.svn.wordpress.org/' . $enc_theme . '/' . $enc_ver . '/readme.txt';
+                    $candidates[] = 'https://themes.svn.wordpress.org/' . $enc_theme . '/' . $enc_ver . '/changelog.txt';
                 }
                 foreach ($candidates as $url) {
                     $response = function_exists('wp_safe_remote_get')

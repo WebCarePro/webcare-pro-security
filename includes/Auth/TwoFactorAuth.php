@@ -37,6 +37,7 @@ class TwoFactorAuth {
         add_action('password_reset', [__CLASS__, 'on_password_reset'], 10, 2);
         // Intercept admin dashboard if 2FA is strictly enforced and user grace period expired
         add_action('admin_init', [__CLASS__, 'enforce_admin_dashboard_access']);
+        add_filter('rest_pre_dispatch', [__CLASS__, 'enforce_rest_2fa_onboarding'], 10, 3);
         // Display admin notice during grace period
         add_action('admin_notices', [__CLASS__, 'render_enforcement_grace_notice']);
     }
@@ -188,39 +189,93 @@ class TwoFactorAuth {
     }
 
     /**
-     * Enforce admin dashboard access: redirect unconfigured administrators if enforcement is mandatory
+     * Determine whether an authenticated administrator must complete 2FA onboarding before
+     * accessing dashboard screens, admin-ajax actions, or administrative REST API routes.
+     */
+    public static function needs_forced_2fa_onboarding(int $user_id): bool {
+        if ($user_id <= 0 || !user_can($user_id, 'administrator')) {
+            return false;
+        }
+        if (self::is_user_enabled($user_id)) {
+            return false;
+        }
+        if (!empty(get_user_meta($user_id, 'webcareproscan_force_2fa_setup', true))) {
+            return true;
+        }
+        if (!self::is_enforced_for_admins()) {
+            return false;
+        }
+        $compliance = self::get_user_compliance_status($user_id);
+        return ($compliance['status'] ?? '') === 'enforcement_required';
+    }
+
+    /**
+     * Enforce admin dashboard and admin-ajax access for administrators requiring forced 2FA onboarding.
      */
     public static function enforce_admin_dashboard_access() {
-        if (wp_doing_ajax() || (defined('REST_REQUEST') && REST_REQUEST)) {
+        $user_id = get_current_user_id();
+        if (!self::needs_forced_2fa_onboarding($user_id)) {
             return;
+        }
+
+        if (wp_doing_ajax()) {
+            // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+            $ajax_action = isset($_REQUEST['action']) ? sanitize_key(wp_unslash($_REQUEST['action'])) : '';
+            $allowed_ajax = ['heartbeat', 'wp-remove-post-lock'];
+            if (in_array($ajax_action, $allowed_ajax, true) || str_starts_with($ajax_action, 'webcareproscan_2fa_')) {
+                return;
+            }
+            wp_send_json_error(
+                ['message' => __('Two-Factor Authentication setup is required before performing administrative actions.', 'webcare-pro-security')],
+                403
+            );
+        }
+
+        if (defined('REST_REQUEST') && REST_REQUEST) {
+            return;
+        }
+
+        // Allow access ONLY to the 2FA configuration page
+        // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+        $current_page = isset($_GET['page']) ? sanitize_text_field(wp_unslash($_GET['page'])) : '';
+        $is_auth_page = ($current_page === 'webcare-pro-login') || ($current_page === 'webcare-pro-auth');
+        if (!$is_auth_page) {
+            wp_safe_redirect(\WebCareProScanner\Admin\RouteRegistry::url('webcare-pro-login', '2fa', '', ['forced' => '1']));
+            exit;
+        }
+    }
+
+    /**
+     * Block un-enrolled administrators requiring forced 2FA onboarding from invoking
+     * non-2FA REST endpoints (including core /wp/v2/users and /settings).
+     */
+    public static function enforce_rest_2fa_onboarding($result, $server, $request) {
+        if ($result !== null) {
+            return $result;
         }
 
         $user_id = get_current_user_id();
-        if (!$user_id || !current_user_can('administrator')) {
-            return;
+        if (!self::needs_forced_2fa_onboarding($user_id)) {
+            return $result;
         }
 
-        if (self::is_user_enabled($user_id)) {
-            return;
-        }
-
-        if (!self::is_enforced_for_admins()) {
-            return;
-        }
-
-        $compliance = self::get_user_compliance_status($user_id);
-        if ($compliance['status'] === 'enforcement_required') {
-            // Allow access ONLY to the 2FA configuration page
-            // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-            $current_page = isset($_GET['page']) ? sanitize_text_field(wp_unslash($_GET['page'])) : '';
-            // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-            $current_tab  = isset($_GET['tab']) ? sanitize_text_field(wp_unslash($_GET['tab'])) : '';
-            $is_auth_page = ($current_page === 'webcare-pro-login') || ($current_page === 'webcare-pro-auth');
-            if (!$is_auth_page) {
-                wp_safe_redirect(\WebCareProScanner\Admin\RouteRegistry::url('webcare-pro-login', '2fa', '', ['forced' => '1']));
-                exit;
+        $route = ($request instanceof \WP_REST_Request) ? (string) $request->get_route() : '';
+        $allowed_prefixes = [
+            '/webcare-pro-security/v1/auth/2fa',
+            '/webcare-pro-security/v1/auth/status',
+            '/webcare-pro-security/v1/auth/webauthn',
+        ];
+        foreach ($allowed_prefixes as $prefix) {
+            if ($route === $prefix || str_starts_with($route, $prefix . '/')) {
+                return $result;
             }
         }
+
+        return new \WP_Error(
+            'webcare_2fa_onboarding_required',
+            __('Two-Factor Authentication enrollment is required before accessing administrative REST endpoints.', 'webcare-pro-security'),
+            ['status' => 403]
+        );
     }
 
     /**
@@ -580,6 +635,7 @@ class TwoFactorAuth {
         update_user_meta($user_id, self::META_ALGORITHM, in_array(strtolower($algo), ['sha1', 'sha256', 'sha512'], true) ? strtolower($algo) : 'sha1');
         update_user_meta($user_id, self::META_DIGITS, ($digits === 8 || strtolower($algo) === 'sha512') ? 8 : 6);
         update_user_meta($user_id, self::META_ENABLED, 1);
+        delete_user_meta($user_id, 'webcareproscan_force_2fa_setup');
 
         if (class_exists('\\WebCareProScanner\\Notifications\\NotificationDispatcher')) {
             $user = get_userdata($user_id);
@@ -1022,15 +1078,11 @@ class TwoFactorAuth {
 
         // Check if user has 2FA enabled
         if (!self::is_user_enabled($user->ID)) {
-            // Check if user is an administrator and 2FA is enforced
-            if (self::is_enforced_for_admins() && in_array('administrator', (array) $user->roles, true)) {
-                $compliance = self::get_user_compliance_status($user->ID);
-                if ($compliance['status'] === 'enforcement_required') {
-                    // Force redirect directly to 2FA configuration wizard upon completing password auth
-                    add_filter('login_redirect', function ($url, $requested, $user_obj) {
-                        return \WebCareProScanner\Admin\RouteRegistry::url('webcare-pro-login', '2fa', '', ['setup' => '1', 'forced' => '1']);
-                    }, 99, 3);
-                }
+            // Redirect to mandatory self-enrollment if enforced globally or explicitly forced after admin reset
+            if (self::needs_forced_2fa_onboarding($user->ID)) {
+                add_filter('login_redirect', function ($url, $requested, $user_obj) {
+                    return \WebCareProScanner\Admin\RouteRegistry::url('webcare-pro-login', '2fa', '', ['setup' => '1', 'forced' => '1']);
+                }, 99, 3);
             }
             return $user;
         }
@@ -1047,14 +1099,29 @@ class TwoFactorAuth {
             return $user; // Trusted device bypass granted!
         }
 
+        // Bound active pending 2FA challenges per (user_id, IP) to prevent unlimited key generation
+        $client_ip = class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine')
+            ? \WebCareProScanner\Firewall\FirewallEngine::get_client_ip()
+            : (isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '127.0.0.1');
+        $pending_cnt_key = 'webcareproscan_2fa_pending_cnt_' . hash('sha256', $user->ID . '|' . $client_ip);
+        $pending_cnt     = (int) get_transient($pending_cnt_key);
+        if ($pending_cnt >= 5) {
+            return new \WP_Error(
+                'webcareproscan_2fa_rate_limited',
+                __('Too many two-factor verification challenges created recently. Please wait 5 minutes before signing in again.', 'webcare-pro-security')
+            );
+        }
+        set_transient($pending_cnt_key, $pending_cnt + 1, 300);
+
         // All 2FA verifications must pass through the rate-limited 2FA challenge screen
         $pending_key = wp_generate_password(32, false);
         // phpcs:ignore WordPress.Security.NonceVerification.Missing
         $remember_val = !empty($_POST['rememberme']);
         set_transient(self::SESSION_TRANSIENT . $pending_key, [
-            'user_id'    => $user->ID,
-            'user_login' => $user->user_login,
-            'remember'   => $remember_val,
+            'user_id'         => $user->ID,
+            'user_login'      => $user->user_login,
+            'remember'        => $remember_val,
+            'pending_cnt_key' => $pending_cnt_key,
         ], 300); // 5 minutes window
 
         // phpcs:ignore WordPress.Security.NonceVerification.Recommended
@@ -1140,6 +1207,9 @@ class TwoFactorAuth {
                 // Delete session and attempt transients
                 delete_transient(self::SESSION_TRANSIENT . $pending_key);
                 delete_transient($attempt_transient);
+                if (!empty($session['pending_cnt_key']) && is_string($session['pending_cnt_key'])) {
+                    delete_transient($session['pending_cnt_key']);
+                }
 
                 if (class_exists('\\WebCareProScanner\\Auth\\SessionSentinel')) {
                     \WebCareProScanner\Auth\SessionSentinel::$pending_auth_type = '2fa';
@@ -1165,6 +1235,13 @@ class TwoFactorAuth {
                 exit;
             } else {
                 set_transient($attempt_transient, $failed_attempts + 1, 300);
+                $fail_err = new \WP_Error('invalid_2fa_code', __('Invalid two-factor verification code.', 'webcare-pro-security'));
+                if (has_action('wp_login_failed', [\WebCareProScanner\Auth\LoginHardening::class, 'record_failed_attempt'])) {
+                    // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- Core WordPress failed login telemetry hook
+                    do_action('wp_login_failed', $user->user_login, $fail_err);
+                } elseif (class_exists('\\WebCareProScanner\\Auth\\LoginHardening')) {
+                    \WebCareProScanner\Auth\LoginHardening::record_failed_attempt($user->user_login, $fail_err);
+                }
                 if (empty($error_msg)) {
                     $attempts_left = max(0, 5 - ($failed_attempts + 1));
                     /* translators: %d: number of remaining verification attempts */

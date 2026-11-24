@@ -21,7 +21,8 @@ final class MicroWafPreloadBodyTest extends TestCase
         $this->assertStringContainsString('$preload_body_budget = 65536;', $phpCode);
         $this->assertStringContainsString('$preload_body_truncated = false;', $phpCode);
         $this->assertStringContainsString('$is_direct_script_target =', $phpCode);
-        $this->assertStringContainsString('$auth_bypass_body = $is_direct_script_target ? $mod_is_admin_user : $mod_has_login_cookie;', $phpCode);
+        $this->assertStringContainsString('$auth_bypass_body = $mod_is_admin_user;', $phpCode);
+        $this->assertStringNotContainsString('$mod_has_login_cookie', substr($phpCode, (int) strpos($phpCode, '$auth_bypass_body'), 120));
         $this->assertStringContainsString("webcare_micro_waf_block(\$ip, 'PRELOAD-BODY-TRUNCATED'", $phpCode);
         $this->assertStringContainsString('application/(?:[a-z0-9.+-]+\\+)?xml', $phpCode);
 

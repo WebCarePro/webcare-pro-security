@@ -160,8 +160,28 @@ class ResponseDlpSentinel implements SecurityModuleInterface {
 
         $redactions = [
             'WP_CONFIG_SECRET_DEFINE' => [
-                'pattern'     => '/(define\s*\(\s*[\'"](?:DB_PASSWORD|AUTH_KEY|SECURE_AUTH_KEY|LOGGED_IN_KEY|NONCE_KEY|AUTH_SALT|SECURE_AUTH_SALT)[\'"]\s*,\s*[\'"])(?:[^\'"]*)([\'"]\s*\))/i',
+                'pattern'     => '/(define\s*\(\s*[\'"](?:DB_PASSWORD|DB_USER|AUTH_KEY|SECURE_AUTH_KEY|LOGGED_IN_KEY|NONCE_KEY|AUTH_SALT|SECURE_AUTH_SALT|LOGGED_IN_SALT|NONCE_SALT)[\'"]\s*,\s*[\'"])(?:[^\'"]*)([\'"]\s*\))/i',
                 'replacement' => '$1[REDACTED_BY_WEBCARE_DLP]$2',
+            ],
+            'WEBCARE_VAULT_CIPHER' => [
+                'pattern'     => '/\bwebcare_(?:gcm|cbc):[A-Za-z0-9+\/=:-]{12,}/',
+                'replacement' => '[REDACTED_WEBCARE_VAULT_SECRET]',
+            ],
+            'WEBCARE_MCP_TOKEN' => [
+                'pattern'     => '/\bwebcareproscan_mcp_[a-f0-9]{16,64}\b/i',
+                'replacement' => '[REDACTED_WEBCARE_MCP_TOKEN]',
+            ],
+            'AI_PROVIDER_API_KEY' => [
+                'pattern'     => '/\b(?:sk-proj-[A-Za-z0-9_-]{20,}|sk-ant-[A-Za-z0-9_-]{20,}|sk-(?:or-v1-)?[A-Za-z0-9_-]{24,}|AIza[0-9A-Za-z_-]{32,})\b/',
+                'replacement' => '[REDACTED_AI_API_KEY]',
+            ],
+            'CLOUDFLARE_API_TOKEN' => [
+                'pattern'     => '/\bcf(?:ut|at)_[A-Za-z0-9_-]{20,}\b/',
+                'replacement' => '[REDACTED_CLOUDFLARE_TOKEN]',
+            ],
+            'WEBHOOK_SECRET_URL' => [
+                'pattern'     => '/https:\/\/(?:hooks\.slack\.com\/services|discord(?:app)?\.com\/api\/webhooks|hooks\.zapier\.com\/hooks\/catch|hook\.[a-z0-9.-]+\.make\.com)\/[A-Za-z0-9\/_-]{8,}/i',
+                'replacement' => '[REDACTED_WEBHOOK_URL]',
             ],
             'LINUX_PASSWD_FILE_DUMP' => [
                 'pattern'     => '/root:[x*]:0:0:[^:\r\n]*:[^:\r\n]*:[^\r\n]*/',
