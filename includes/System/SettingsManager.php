@@ -22,9 +22,12 @@ class SettingsManager {
     private static bool $last_webhook_secret_store_failed = false;
 
     /**
-     * Cached InnoDB storage-engine verification result for $wpdb->options.
+     * Table-scoped cache of InnoDB storage-engine verification results keyed by
+     * "<dbname>|<table_name>" so multisite blog switches re-verify the active options table.
+     *
+     * @var array<string, bool>
      */
-    private static ?bool $options_table_is_innodb = null;
+    private static array $options_table_innodb_cache = [];
 
     /**
      * Tracks option writes staged inside the currently open fenced transaction for post-commit notifications.
@@ -37,38 +40,97 @@ class SettingsManager {
      * Reset cached storage-engine verification state (used for deterministic test isolation).
      */
     public static function reset_storage_engine_cache(): void {
-        self::$options_table_is_innodb = null;
+        self::$options_table_innodb_cache = [];
     }
 
     /**
-     * Verify that $wpdb->options uses the InnoDB storage engine before relying on
-     * transactional SELECT ... FOR UPDATE row locking and ROLLBACK semantics.
-     * Fails closed (returns false) if the engine is non-InnoDB, unavailable, or inconclusive.
+     * Resolve a normalized identity key for the active $wpdb->options table, or null if ambiguous/invalid.
+     *
+     * @return array{cache_key: string, table_name: string, schema_name: string|null}|null
      */
-    public static function is_options_table_innodb(): bool {
-        if (self::$options_table_is_innodb !== null) {
-            return self::$options_table_is_innodb;
+    private static function resolve_options_table_identity(): ?array {
+        global $wpdb;
+        if (!($wpdb instanceof \wpdb) || !isset($wpdb->options) || !is_string($wpdb->options)) {
+            return null;
         }
 
-        global $wpdb;
-        if (!($wpdb instanceof \wpdb) || empty($wpdb->options)) {
+        $raw_table = trim($wpdb->options);
+        if ($raw_table === '' || str_contains($raw_table, "\0") || preg_match('/\s/', $raw_table) === 1) {
+            return null;
+        }
+
+        $schema_name = null;
+        $table_name = $raw_table;
+        if (str_contains($raw_table, '.')) {
+            $parts = explode('.', $raw_table, 2);
+            $s_part = trim((string) ($parts[0] ?? ''), "` \t\r\n");
+            $t_part = trim((string) ($parts[1] ?? ''), "` \t\r\n");
+            if ($s_part === '' || $t_part === '' || str_contains($t_part, '.')) {
+                return null;
+            }
+            $schema_name = $s_part;
+            $table_name = $t_part;
+        }
+
+        $db_id = $schema_name
+            ?? ((isset($wpdb->dbname) && is_string($wpdb->dbname) && trim($wpdb->dbname) !== '')
+                ? trim($wpdb->dbname)
+                : '__default__');
+
+        return [
+            'cache_key'   => strtolower($db_id . '|' . $table_name),
+            'table_name'  => $table_name,
+            'schema_name' => $schema_name,
+        ];
+    }
+
+    /**
+     * Verify that the currently active $wpdb->options table uses the InnoDB storage engine before
+     * relying on transactional SELECT ... FOR UPDATE row locking and ROLLBACK semantics.
+     * Cache is strictly scoped per table identity so multisite blog switches always re-check new tables.
+     * Fails closed (returns false) if table identity is missing/ambiguous or engine is non-InnoDB/inconclusive.
+     */
+    public static function is_options_table_innodb(): bool {
+        $identity = self::resolve_options_table_identity();
+        if ($identity === null) {
             return false;
         }
 
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-        $engine = $wpdb->get_var(
-            $wpdb->prepare(
-                "SELECT ENGINE
-                 FROM information_schema.TABLES
-                 WHERE TABLE_SCHEMA = DATABASE()
-                   AND TABLE_NAME = %s
-                 LIMIT 1",
-                $wpdb->options
-            )
-        );
+        $cache_key = $identity['cache_key'];
+        if (array_key_exists($cache_key, self::$options_table_innodb_cache)) {
+            return self::$options_table_innodb_cache[$cache_key];
+        }
+
+        global $wpdb;
+        if ($identity['schema_name'] !== null) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            $engine = $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT ENGINE
+                     FROM information_schema.TABLES
+                     WHERE TABLE_SCHEMA = %s
+                       AND TABLE_NAME = %s
+                     LIMIT 1",
+                    $identity['schema_name'],
+                    $identity['table_name']
+                )
+            );
+        } else {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            $engine = $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT ENGINE
+                     FROM information_schema.TABLES
+                     WHERE TABLE_SCHEMA = DATABASE()
+                       AND TABLE_NAME = %s
+                     LIMIT 1",
+                    $identity['table_name']
+                )
+            );
+        }
 
         $is_innodb = is_string($engine) && strcasecmp(trim($engine), 'InnoDB') === 0;
-        self::$options_table_is_innodb = $is_innodb;
+        self::$options_table_innodb_cache[$cache_key] = $is_innodb;
         return $is_innodb;
     }
 

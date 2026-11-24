@@ -846,4 +846,61 @@ final class SettingsUndoAtomicityTest extends TestCase
             $GLOBALS['wpdb'] = $origWpdb;
         }
     }
+
+    public function testMultisiteOptionsTableSwitchRevalidatesEngineAndFailsClosedOnMyIsam(): void
+    {
+        global $wpdb;
+        $origWpdb = $wpdb ?? null;
+        $mockDb = new \wpdb();
+        $mockDb->options = 'wp_options';
+        $mockDb->mock_table_engines = [
+            'wp_options'   => 'InnoDB',
+            'wp_2_options' => 'MyISAM',
+        ];
+        $GLOBALS['wpdb'] = $mockDb;
+
+        try {
+            // 1. Blog 1 uses InnoDB -> save_settings() verifies & caches wp_options => true, succeeds
+            $this->assertTrue(SettingsManager::is_options_table_innodb());
+            $savedBlog1 = SettingsManager::save_settings(['waf_mode' => 'learning']);
+            $this->assertIsArray($savedBlog1);
+            $blog1Rev = SettingsManager::get_settings_revision();
+
+            // 2. Switch to Blog 2 (wp_2_options using MyISAM) in the SAME PHP process WITHOUT resetting cache!
+            $mockDb->options = 'wp_2_options';
+            $this->assertFalse(
+                SettingsManager::is_options_table_innodb(),
+                'Switching $wpdb->options in multisite must invalidate/bypass previous blog cache and detect MyISAM.'
+            );
+
+            // Seed Blog 2 option directly only to verify save_settings/undo/reset refuse to modify it
+            $GLOBALS['wp_mock_options'][SettingsManager::OPTION_KEY] = ['waf_mode' => 'enabled'];
+            $GLOBALS['wp_mock_options'][SettingsManager::OPTION_REVISION_KEY] = 42;
+            $GLOBALS['wp_mock_options'][SettingsManager::OPTION_SNAPSHOTS_KEY] = [
+                ['id' => 'snap_b2', 'revision' => 42, 'timestamp' => time(), 'settings' => ['waf_mode' => 'disabled']],
+            ];
+
+            // Must fail closed without writing settings, revision, or snapshots on Blog 2's MyISAM table
+            $this->assertFalse(SettingsManager::save_settings(['waf_mode' => 'disabled']));
+            $this->assertFalse(SettingsManager::reset_defaults());
+            $undoBlog2 = SettingsManager::undo_last_settings();
+            $this->assertFalse($undoBlog2['success']);
+
+            $this->assertSame('enabled', $GLOBALS['wp_mock_options'][SettingsManager::OPTION_KEY]['waf_mode']);
+            $this->assertSame(42, (int) $GLOBALS['wp_mock_options'][SettingsManager::OPTION_REVISION_KEY]);
+            $this->assertCount(1, $GLOBALS['wp_mock_options'][SettingsManager::OPTION_SNAPSHOTS_KEY]);
+
+            // 3. Ambiguous / empty table identity must also fail closed
+            $mockDb->options = '   ';
+            $this->assertFalse(SettingsManager::is_options_table_innodb());
+
+            // 4. Switching back to Blog 1 (wp_options, InnoDB) continues to succeed
+            $mockDb->options = 'wp_options';
+            $this->assertTrue(SettingsManager::is_options_table_innodb());
+            $this->assertGreaterThan(0, $blog1Rev);
+        } finally {
+            SettingsManager::reset_storage_engine_cache();
+            $GLOBALS['wpdb'] = $origWpdb;
+        }
+    }
 }

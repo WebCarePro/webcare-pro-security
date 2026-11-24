@@ -798,6 +798,7 @@ if (!class_exists('wpdb')) {
         public $mock_get_var_callback = null;
         public array $tx_undo_stack = [];
         public ?string $mock_options_engine = 'InnoDB';
+        public array $mock_table_engines = [];
 
         private function record_tx_option_undo(string $optKey): void {
             if (empty($this->tx_undo_stack)) {
@@ -854,7 +855,11 @@ if (!class_exists('wpdb')) {
                 return ($this->mock_get_var_callback)($query);
             }
             if (!empty($this->options)) {
-                if (preg_match("/SELECT\s+ENGINE\s+FROM\s+information_schema\.TABLES\s+WHERE/is", $query)) {
+                if (preg_match("/SELECT\s+ENGINE\s+FROM\s+information_schema\.TABLES\s+WHERE.*TABLE_NAME\s*=\s*'((?:\\\\'|[^'])+)'/is", $query, $emTbl)) {
+                    $queriedTbl = str_replace("\\'", "'", $emTbl[1]);
+                    if (array_key_exists($queriedTbl, $this->mock_table_engines)) {
+                        return $this->mock_table_engines[$queriedTbl];
+                    }
                     return $this->mock_options_engine;
                 }
 
