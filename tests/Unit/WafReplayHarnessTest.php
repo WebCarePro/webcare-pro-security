@@ -748,6 +748,37 @@ class WafReplayHarnessTest extends TestCase {
             \WebCareProScanner\System\AuditLogger::$operational_log_hook = null;
         }
 
+        // Case D3: Failure-injection where queue persistence fails, rollback compensation fails, AND marker persistence fails
+        // Verifies explicit emission of cf_reconciliation_marker_write_failed
+        $fail_ip_marker = '203.0.113.148';
+        $logged_marker_events = [];
+        \WebCareProScanner\System\AuditLogger::$operational_log_hook = static function ($event, $details) use (&$logged_marker_events) {
+            $logged_marker_events[] = $event;
+        };
+
+        delete_option(CloudflareIpListSynchronizer::OPTION_RECONCILIATION_FLAG);
+        $GLOBALS['wp_mock_update_option_failures'][CloudflareIpListSynchronizer::OPTION_BAN_QUEUE] = true;
+        $marker_gen_count = 0;
+        $GLOBALS['wp_mock_update_option_failures'][CloudflareIpListSynchronizer::OPTION_IP_GENERATIONS] = function () use (&$marker_gen_count) {
+            $marker_gen_count++;
+            return ($marker_gen_count >= 2); // fail rollback
+        };
+        $GLOBALS['wp_mock_update_option_failures'][CloudflareIpListSynchronizer::OPTION_RECONCILIATION_FLAG] = true; // fail marker write
+
+        try {
+            $marker_fail_res = CloudflareIpListSynchronizer::queue_ip_ban($fail_ip_marker, 'Triple fail test', 86400);
+            $this->assertSame('enqueue_failed', $marker_fail_res['cf_sync_state']);
+            $this->assertNull($marker_fail_res['operation_id']);
+            $this->assertContains('cf_queue_compensation_failed', $logged_marker_events);
+            $this->assertContains('cf_reconciliation_marker_write_failed', $logged_marker_events, 'Must emit cf_reconciliation_marker_write_failed when marker persistence fails');
+            $this->assertEmpty(get_option(CloudflareIpListSynchronizer::OPTION_RECONCILIATION_FLAG, null), 'Marker must not be reported persisted when write failed');
+        } finally {
+            unset($GLOBALS['wp_mock_update_option_failures'][CloudflareIpListSynchronizer::OPTION_BAN_QUEUE]);
+            unset($GLOBALS['wp_mock_update_option_failures'][CloudflareIpListSynchronizer::OPTION_IP_GENERATIONS]);
+            unset($GLOBALS['wp_mock_update_option_failures'][CloudflareIpListSynchronizer::OPTION_RECONCILIATION_FLAG]);
+            \WebCareProScanner\System\AuditLogger::$operational_log_hook = null;
+        }
+
         // Case E: increment_ip_generation() failure propagation (mutex contention & persistence failure)
         $inc_ip = '203.0.113.146';
         $inc_initial_gen = CloudflareIpListSynchronizer::get_ip_generation($inc_ip);
@@ -893,12 +924,22 @@ class WafReplayHarnessTest extends TestCase {
         $this->assertContains('waf_logs_purge_intent', $audited_events, 'Must record waf_logs_purge_intent before deleting files');
         $this->assertContains('waf_logs_purged', $audited_events, 'Must record waf_logs_purged after successful deletion');
 
-        // Test that clear_all_logs() refuses to purge and preserves all WAF log files when audit write fails
+        // Test that clear_all_logs() refuses to purge and preserves all WAF log files byte-for-byte when audit write fails
         // First log a fresh incident to ensure at least one physical log file exists on disk
         WafFileLogger::log_incident($rule, 'blocked');
         $storage_dir = WafFileLogger::get_storage_dir();
-        $files_before = is_dir($storage_dir) ? array_values(array_filter(scandir($storage_dir), fn($f) => preg_match('/-waf-logs\.json(?:\.\d+)?$/', $f))) : [];
-        $this->assertNotEmpty($files_before, 'At least one WAF log file must exist before testing purge refusal');
+        
+        // Build filename => SHA-256 hash map before attempted purge
+        $hashes_before = [];
+        if (is_dir($storage_dir)) {
+            foreach (scandir($storage_dir) as $f) {
+                if (preg_match('/-waf-logs\.json(?:\.\d+)?$/', $f)) {
+                    $path = $storage_dir . '/' . $f;
+                    $hashes_before[$f] = hash_file('sha256', $path);
+                }
+            }
+        }
+        $this->assertNotEmpty($hashes_before, 'At least one WAF log file with valid hash must exist before testing purge refusal');
 
         $orig_custom_log_dir = \WebCareProScanner\System\AuditLogger::$custom_log_dir;
         \WebCareProScanner\System\AuditLogger::$custom_log_dir = '/proc/nonexistent_webcare_readonly_path';
@@ -906,9 +947,19 @@ class WafReplayHarnessTest extends TestCase {
             $refused = WafFileLogger::clear_all_logs();
             $this->assertFalse($refused, 'clear_all_logs must return false and refuse to purge if audit intent write cannot be confirmed');
             
-            // Assert that original WAF log files remain 100% untouched and preserved on refusal
-            $files_after = is_dir($storage_dir) ? array_values(array_filter(scandir($storage_dir), fn($f) => preg_match('/-waf-logs\.json(?:\.\d+)?$/', $f))) : [];
-            $this->assertSame($files_before, $files_after, 'All WAF log files must be preserved byte-for-byte on audit intent write refusal');
+            // Build filename => SHA-256 hash map after refused purge
+            $hashes_after = [];
+            if (is_dir($storage_dir)) {
+                foreach (scandir($storage_dir) as $f) {
+                    if (preg_match('/-waf-logs\.json(?:\.\d+)?$/', $f)) {
+                        $path = $storage_dir . '/' . $f;
+                        $hashes_after[$f] = hash_file('sha256', $path);
+                    }
+                }
+            }
+            
+            // Assert that original WAF log files remain 100% untouched and byte-for-byte identical (untruncated, unmutated)
+            $this->assertSame($hashes_before, $hashes_after, 'All WAF log files must remain 100% byte-for-byte identical (SHA-256 match) on audit intent write refusal');
         } finally {
             \WebCareProScanner\System\AuditLogger::$custom_log_dir = $orig_custom_log_dir;
         }

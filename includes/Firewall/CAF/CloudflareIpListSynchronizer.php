@@ -618,13 +618,20 @@ class CloudflareIpListSynchronizer {
                 // Compensate/Rollback OPTION_IP_GENERATIONS to previous state if queue persistence failed
                 $rolled_back = self::save_verified_option(self::OPTION_IP_GENERATIONS, $prev_generations);
                 if (!$rolled_back) {
-                    // Set a durable persistent reconciliation-needed marker in database
-                    update_option(self::OPTION_RECONCILIATION_FLAG, time(), false);
+                    // Set and verify a durable persistent reconciliation-needed marker in database
+                    $marker_persisted = self::save_verified_option(self::OPTION_RECONCILIATION_FLAG, time());
                     if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
                         \WebCareProScanner\System\AuditLogger::log_operational('cf_queue_compensation_failed', [
-                            'error'     => 'Failed to reconcile OPTION_IP_GENERATIONS after queue persistence failure',
-                            'timestamp' => time(),
+                            'error'            => 'Failed to reconcile OPTION_IP_GENERATIONS after queue persistence failure',
+                            'marker_persisted' => $marker_persisted,
+                            'timestamp'        => time(),
                         ]);
+                        if (!$marker_persisted) {
+                            \WebCareProScanner\System\AuditLogger::log_operational('cf_reconciliation_marker_write_failed', [
+                                'error'     => 'Failed to persist durable reconciliation marker to database',
+                                'timestamp' => time(),
+                            ]);
+                        }
                     }
                 }
                 return false;
