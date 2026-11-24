@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   ShieldCheck,
   ShieldAlert,
@@ -7,21 +7,23 @@ import {
   Play,
   Pause,
   CheckCircle2,
-  Database,
   ArrowRight,
   Lock,
-  Server,
   Zap,
   Globe,
   RefreshCw,
-  Search,
-  Ban,
   Clock,
   Layers,
-  Sparkles,
   Check,
   AlertTriangle,
-  FolderArchive,
+  Users,
+  CalendarClock,
+  Bell,
+  ChevronDown,
+  Target,
+  FolderSearch,
+  Image,
+  FileCode2,
 } from 'lucide-react';
 import { apiRequest } from '../utils/api';
 import { buildAdminUrl } from '../utils/routeRegistry';
@@ -44,6 +46,61 @@ export interface DashboardOverviewProps {
   formatRelativeTime: (dateStr: any) => string;
 }
 
+interface AdminSessionsSummary {
+  loaded: boolean;
+  adminCount: number;
+  sessionCount: number;
+  usernames: string[];
+}
+
+interface CloudflareLiveStatus {
+  loaded: boolean;
+  configured: boolean;
+  zoneName: string;
+  autoSyncBans: boolean;
+  error?: string;
+}
+
+interface ScheduleLiveStatus {
+  loaded: boolean;
+  enabled: boolean;
+  frequency: string;
+  nextScheduledHuman: string;
+  alertsEnabled: boolean;
+  alertEmail: string;
+}
+
+const TARGET_SCAN_CHOICES = [
+  {
+    id: 'plugins_themes',
+    title: 'Quick Checkup (Plugins & Themes)',
+    subtitle: 'Check installed plugins, themes & known risks',
+    icon: Zap,
+    isTargeted: false,
+  },
+  {
+    id: 'full',
+    title: 'Complete Website Scan',
+    subtitle: 'Full audit of WordPress core, themes, plugins & files',
+    icon: Shield,
+    isTargeted: false,
+  },
+  {
+    id: 'core_integrity',
+    title: 'WordPress Core Files Only',
+    subtitle: 'Verify official WordPress core file checksums',
+    icon: FileCode2,
+    isTargeted: true,
+  },
+  {
+    id: 'suspicious_uploads',
+    title: 'Uploads & Media Folder',
+    subtitle: 'Check wp-content/uploads for hidden scripts',
+    icon: Image,
+    isTargeted: true,
+  },
+] as const;
+
 export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   currentScan,
   uniqueIssues,
@@ -52,27 +109,81 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   serverInfo,
   vulnReport,
   quarantinedFiles,
-  backups = [],
   isScanning,
   onStartScan,
   onOpenRescueModal,
   isRescuePaused = false,
-  onNavigate,
   formatRelativeTime,
 }) => {
   const [internalPaused, setInternalPaused] = useState<boolean>(isRescuePaused);
   const [pauseSecondsLeft, setPauseSecondsLeft] = useState<number>(0);
   const [isPausing, setIsPausing] = useState<boolean>(false);
+  const [launchingScan, setLaunchingScan] = useState<boolean>(false);
 
-  // Sync rescue pause status from backend or props
+  // Target scan dropdown state
+  const [scanMenuOpen, setScanMenuOpen] = useState<boolean>(false);
+  const scanMenuContainerRef = useRef<HTMLDivElement | null>(null);
+  const scanCaretBtnRef = useRef<HTMLButtonElement | null>(null);
+
+  // Expandable guard cards
+  const [expandedLayerKey, setExpandedLayerKey] = useState<string | null>(null);
+
+  // Real-time backend data for Dashboard widgets
+  const [adminSummary, setAdminSummary] = useState<AdminSessionsSummary>({
+    loaded: false,
+    adminCount: 0,
+    sessionCount: 0,
+    usernames: [],
+  });
+  const [cfStatus, setCfStatus] = useState<CloudflareLiveStatus>({
+    loaded: false,
+    configured: false,
+    zoneName: '',
+    autoSyncBans: false,
+  });
+  const [scheduleInfo, setScheduleInfo] = useState<ScheduleLiveStatus>({
+    loaded: false,
+    enabled: false,
+    frequency: 'daily',
+    nextScheduledHuman: '',
+    alertsEnabled: false,
+    alertEmail: '',
+  });
+
   useEffect(() => {
     setInternalPaused(isRescuePaused);
   }, [isRescuePaused]);
 
-  // Load rescue pause timer if active
+  // Close Target Scan dropdown on outside click or Escape
+  useEffect(() => {
+    if (!scanMenuOpen) return;
+    const handleOutside = (e: MouseEvent) => {
+      if (
+        scanMenuContainerRef.current &&
+        !scanMenuContainerRef.current.contains(e.target as Node)
+      ) {
+        setScanMenuOpen(false);
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setScanMenuOpen(false);
+        scanCaretBtnRef.current?.focus();
+      }
+    };
+    document.addEventListener('mousedown', handleOutside);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, [scanMenuOpen]);
+
+  // Load real rescue pause, active admin sessions, Cloudflare status, schedule & notification status
   useEffect(() => {
     let active = true;
-    apiRequest({ path: '/rescue/status?minutes=15', method: 'GET' })
+
+    apiRequest({ path: '/webcare-pro-security/v1/rescue/status?minutes=15', method: 'GET' })
       .then((res: any) => {
         if (!active || !res?.success) return;
         if (res.pause_status?.paused) {
@@ -84,6 +195,84 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
         }
       })
       .catch(() => {});
+
+    apiRequest({ path: '/webcare-pro-security/v1/auth/sessions/list', method: 'GET' })
+      .then((res: any) => {
+        if (!active) return;
+        const rawSessions: any[] = Array.isArray(res?.sessions) ? res.sessions : [];
+        const activeAdmins = rawSessions.filter(
+          (s) => s && s.is_active === true && !s.is_revoked && s.status !== 'logged_out'
+        );
+        const names: string[] = [];
+        const uniqueAdmins = new Set<string>();
+        activeAdmins.forEach((s) => {
+          const idKey = String(s.user_id || s.user_login || '');
+          if (idKey) uniqueAdmins.add(idKey);
+          const display = String(s.user_login || s.display_name || '').trim();
+          if (display && !names.includes(display)) names.push(display);
+        });
+        setAdminSummary({
+          loaded: true,
+          adminCount: uniqueAdmins.size,
+          sessionCount: activeAdmins.length,
+          usernames: names,
+        });
+      })
+      .catch(() => {
+        if (active) {
+          setAdminSummary((prev) => ({ ...prev, loaded: true }));
+        }
+      });
+
+    apiRequest({ path: '/webcare-pro-security/v1/cloudflare/status', method: 'GET' })
+      .then((res: any) => {
+        if (!active) return;
+        const st = res?.status || {};
+        setCfStatus({
+          loaded: true,
+          configured: Boolean(st.configured),
+          zoneName: String(st.zone_name || ''),
+          autoSyncBans: Boolean(st.auto_sync_bans),
+          error: st.error ? String(st.error) : undefined,
+        });
+      })
+      .catch(() => {
+        if (active) {
+          setCfStatus((prev) => ({ ...prev, loaded: true }));
+        }
+      });
+
+    apiRequest({ path: '/webcare-pro-security/v1/settings', method: 'GET' })
+      .then((res: any) => {
+        if (!active) return;
+        const s = res?.settings || {};
+        const ti = res?.schedule_time || {};
+        let nextHuman = '';
+        if (ti?.next_scheduled_wp) {
+          const diffSec = Number(ti.diff_seconds || 0);
+          if (diffSec > 0 && diffSec < 3600) {
+            nextHuman = `Next checkup in ${Math.max(1, Math.round(diffSec / 60))} min`;
+          } else if (diffSec >= 3600 && diffSec < 86400 * 7) {
+            nextHuman = `Next checkup in ${Math.round(diffSec / 3600)}h`;
+          } else {
+            nextHuman = `Next: ${ti.next_scheduled_wp}`;
+          }
+        }
+        setScheduleInfo({
+          loaded: true,
+          enabled: Boolean(s.schedule_enabled),
+          frequency: String(s.schedule_frequency || 'daily'),
+          nextScheduledHuman: nextHuman,
+          alertsEnabled: Boolean(s.notification_master_enabled || s.email_alerts_enabled),
+          alertEmail: String(s.alert_emails || ''),
+        });
+      })
+      .catch(() => {
+        if (active) {
+          setScheduleInfo((prev) => ({ ...prev, loaded: true }));
+        }
+      });
+
     return () => {
       active = false;
     };
@@ -104,12 +293,11 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     return () => clearInterval(interval);
   }, [internalPaused, pauseSecondsLeft]);
 
-  // Handle 15-Min Safe Mode Quick Toggle
   const handleToggleSafeMode = async () => {
     if (internalPaused) {
       setIsPausing(true);
       try {
-        const res = await apiRequest({ path: '/rescue/resume', method: 'POST' });
+        const res = await apiRequest({ path: '/webcare-pro-security/v1/rescue/resume', method: 'POST' });
         if (res?.success) {
           setInternalPaused(false);
           setPauseSecondsLeft(0);
@@ -122,7 +310,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     } else {
       setIsPausing(true);
       try {
-        const res = await apiRequest({ path: '/rescue/pause-15m', method: 'POST' });
+        const res = await apiRequest({ path: '/webcare-pro-security/v1/rescue/pause-15m', method: 'POST' });
         if (res?.success) {
           setInternalPaused(true);
           setPauseSecondsLeft(res.pause_status?.seconds_remaining || 900);
@@ -137,7 +325,34 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     }
   };
 
-  // Evaluate active threats and security score
+  // Launch chosen target scan cleanly on the backend before redirecting to Scanner page
+  const handleTargetScanLaunch = async (targetId: string, isTargeted: boolean) => {
+    setScanMenuOpen(false);
+    if (isScanning || launchingScan) {
+      window.location.href = buildAdminUrl('webcare-pro-scanner', isTargeted ? 'targeted' : 'malware');
+      return;
+    }
+
+    setLaunchingScan(true);
+    try {
+      const startRes: any = await apiRequest({
+        path: '/webcare-pro-security/v1/scan/start',
+        method: 'POST',
+        data: { target: targetId },
+      });
+      if (startRes?.success) {
+        window.location.href = buildAdminUrl('webcare-pro-scanner', isTargeted ? 'targeted' : 'malware');
+        return;
+      }
+    } catch {
+      // Fall back to opening the scanner page / parent callback cleanly
+    } finally {
+      setLaunchingScan(false);
+    }
+    onStartScan();
+  };
+
+  // Evaluate active threats and security score from real issues
   const openIssues = useMemo(
     () => (uniqueIssues || []).filter((i) => i.status === 'open'),
     [uniqueIssues]
@@ -169,47 +384,46 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     return { healthScore: score, protectionStatusLabel: label, protectionStatusColor: color };
   }, [openIssues]);
 
-  // Threats blocked count
   const threatsBlockedCount = firewallStatus?.total_blocks ?? 0;
+  const vulnTotal = (vulnReport?.plugins_vulnerable || 0) + (vulnReport?.themes_vulnerable || 0);
 
-  // Latest backup info
-  const latestBackup = backups && backups.length > 0 ? backups[0] : null;
-  const latestBackupTime = latestBackup
-    ? formatRelativeTime(latestBackup.created_at || latestBackup.timestamp || latestBackup.date)
-    : null;
-
-  // Overall State Evaluation for Peace-of-Mind Hero
   let heroState: 'protected' | 'review' | 'paused' | 'scanning' = 'protected';
-  if (isScanning) {
+  if (isScanning || launchingScan) {
     heroState = 'scanning';
   } else if (internalPaused) {
     heroState = 'paused';
-  } else if (reviewItemsCount > 0) {
+  } else if (reviewItemsCount > 0 || vulnTotal > 0) {
     heroState = 'review';
   }
 
-  // Format pause timer display mm:ss
   const formatPauseTimer = (secs: number) => {
     const m = Math.floor(secs / 60);
     const s = secs % 60;
     return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
-  // Circular score progress calculations (r = 18, circumference = 2 * PI * 18 ~ 113.1)
   const ringRadius = 18;
   const ringCircumference = 2 * Math.PI * ringRadius;
   const strokeDashoffset = ringCircumference - (healthScore / 100) * ringCircumference;
 
-  // Vulnerability count for Plugin & Theme Risks tile
-  const vulnTotal = (vulnReport?.plugins_vulnerable || 0) + (vulnReport?.themes_vulnerable || 0);
+  const resolvedSiteHost = useMemo(() => {
+    const siteUrl =
+      serverInfo?.wordpress?.site_url ||
+      (window as any).webcareScannerSettings?.siteUrl ||
+      window.location.origin;
+    try {
+      return new URL(siteUrl).hostname;
+    } catch {
+      return window.location.hostname;
+    }
+  }, [serverInfo]);
 
-  // Extract exact runtime telemetry from serverInfo (supporting both structured serverInfo and flat fallbacks)
   const resolvedPhpVersion = useMemo(() => {
     return (
       serverInfo?.php?.version ||
       serverInfo?.php_version ||
       (window as any).webcareScannerSettings?.serverInfo?.php?.version ||
-      '8.4+'
+      '8.3+'
     );
   }, [serverInfo]);
 
@@ -237,76 +451,156 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
       if (rawSoftware.toLowerCase().includes('iis')) return 'IIS';
       return rawSoftware.split('/')[0].split(' ')[0];
     }
-    return 'Apache';
+    return 'Web Server';
   }, [serverInfo]);
+
+  const formatFrequencyLabel = (freq: string) => {
+    switch (freq) {
+      case 'hourly':
+        return 'Hourly';
+      case 'twicedaily':
+        return 'Twice Daily';
+      case 'weekly':
+        return 'Weekly';
+      default:
+        return 'Daily';
+    }
+  };
+
+  const lastScanText = currentScan?.finished_at
+    ? formatRelativeTime(currentScan.finished_at)
+    : null;
+
+  // Canonical WordPress pillar links
+  const urlScannerRisks = buildAdminUrl('webcare-pro-scanner', 'risks');
+  const urlScannerTargeted = buildAdminUrl('webcare-pro-scanner', 'targeted');
+  const urlScannerFiles = buildAdminUrl('webcare-pro-scanner', 'file-changes');
+  const urlLoginSessions = buildAdminUrl('webcare-pro-login', 'sessions');
+  const urlLogin2fa = buildAdminUrl('webcare-pro-login', '2fa');
+  const urlCloudflare = buildAdminUrl('webcare-pro-firewall', 'cloudflare');
+  const urlFirewallRules = buildAdminUrl('webcare-pro-firewall', 'rules');
+  const urlFirewallLogs = buildAdminUrl('webcare-pro-logs', 'firewall');
+  const urlAdminActivity = buildAdminUrl('webcare-pro-logs', 'activity');
+  const urlSchedules = buildAdminUrl('webcare-pro-settings', 'schedules');
+  const urlAlerts = buildAdminUrl('webcare-pro-settings', 'alerts');
+  const urlDoctor = buildAdminUrl('webcare-pro-settings', 'doctor');
+
+  const careLayers = [
+    {
+      key: 'firewall',
+      name: 'Perimeter Firewall',
+      badge: firewallStatus?.is_enabled === false ? 'Paused' : 'Active',
+      tone: firewallStatus?.is_enabled === false ? 'warning' : 'active',
+      desc: 'Filters harmful bots and exploit payloads before WordPress even loads, keeping pages fast.',
+      href: urlFirewallRules,
+      linkText: 'Firewall Rules',
+    },
+    {
+      key: 'login',
+      name: 'Friendly Login & 2FA',
+      badge: 'Active',
+      tone: 'active',
+      desc: 'Supports WebAuthn passkeys and 2FA while slowing down password guessers automatically.',
+      href: urlLogin2fa,
+      linkText: 'Login & 2FA',
+    },
+    {
+      key: 'integrity',
+      name: 'Core File Integrity',
+      badge: reviewItemsCount > 0 ? `${reviewItemsCount} Notice` : 'Clean',
+      tone: reviewItemsCount > 0 ? 'warning' : 'active',
+      desc: 'Compares WordPress core files against official releases to confirm nothing unexpected changed.',
+      href: urlScannerFiles,
+      linkText: 'File Verification',
+    },
+    {
+      key: 'risks',
+      name: 'Plugin & Theme Risks',
+      badge: vulnTotal > 0 ? `${vulnTotal} to Review` : '0 Risks',
+      tone: vulnTotal > 0 ? 'warning' : 'active',
+      desc: 'Monitors active plugins and themes for known vulnerabilities and guides safe updates.',
+      href: urlScannerRisks,
+      linkText: 'Check Risks',
+    },
+    {
+      key: 'cloudflare',
+      name: 'Cloudflare Edge Sync',
+      badge: !cfStatus.loaded ? 'Checking' : cfStatus.configured ? 'Synced' : 'Optional',
+      tone: cfStatus.configured ? 'active' : 'neutral',
+      desc: 'Aligns real visitor IP detection and optional edge firewall filtering cleanly with your origin.',
+      href: urlCloudflare,
+      linkText: 'Cloudflare Setup',
+    },
+    {
+      key: 'doctor',
+      name: 'Site Health Doctor',
+      badge: 'Ready',
+      tone: 'active',
+      desc: 'Monitors PHP, InnoDB settings locks, cron health, and safe server configuration automatically.',
+      href: urlDoctor,
+      linkText: 'Open Site Doctor',
+    },
+  ];
+
+  const totalAlertsText =
+    vulnTotal > 0
+      ? `${vulnTotal} plugin or theme risk${vulnTotal === 1 ? '' : 's'} ready for review`
+      : reviewItemsCount > 0
+      ? `${reviewItemsCount} item${reviewItemsCount === 1 ? '' : 's'} ready for your calm review`
+      : '';
 
   return (
     <div className="wcp-dash-container">
-      {/* =========================================================================
-          1. Hero Sanctuary Card (.wcp-dash-hero)
-         ========================================================================= */}
-      <section className={`wcp-dash-hero is-${heroState}`}>
-        <div className="wcp-dash-hero-glow" />
+      {/* Top Utility Header Bar + Notifications Link (#6) */}
+      <div className="wcp-dash-topbar">
+        <div className="wcp-dash-topbar-left">
+          <span className="wcp-dash-topbar-brand">WebCare Pro Security &amp; Firewall</span>
+          <span aria-hidden="true">&rsaquo;</span>
+          <span className="wcp-dash-topbar-crumb">Peace of Mind Overview</span>
+        </div>
 
+        <div className="wcp-dash-topbar-right">
+          <span>{resolvedSiteHost} &bull; On-Premise Shield</span>
+          <a href={urlAlerts} className="wcp-dash-notify-pill">
+            <Bell size={13} />
+            <span>Email &amp; Alert Settings</span>
+            <ArrowRight size={12} />
+          </a>
+        </div>
+      </div>
+
+      {/* =========================================================================
+          1. Serene Sanctuary Hero Card (.wcp-dash-hero)
+         ========================================================================= */}
+      <section className={`wcp-dash-hero is-${heroState}${scanMenuOpen ? ' has-menu-open' : ''}`}>
         <div className="wcp-dash-hero-content">
-          {/* Animated Living Shield Emblem */}
+          {/* Animated Living Botanical Shield */}
           <div className="wcp-dash-emblem-wrap">
+            <div className="wcp-dash-aura-outer" />
+            <div className="wcp-dash-aura-inner" />
             <svg
               className="wcp-dash-emblem-svg"
-              viewBox="0 0 84 84"
+              viewBox="0 0 80 80"
               fill="none"
               xmlns="http://www.w3.org/2000/svg"
+              aria-hidden="true"
             >
-              {/* Outer Breathing Ring */}
-              <circle
-                className="wcp-dash-ring-outer"
-                cx="42"
-                cy="42"
-                r="38"
-                stroke={
-                  heroState === 'scanning'
-                    ? '#6366f1'
-                    : heroState === 'review' || heroState === 'paused'
-                    ? '#f59e0b'
-                    : '#10b981'
-                }
-                strokeWidth="1.5"
-              />
-
-              {/* Inner Breathing Ring */}
-              <circle
-                className="wcp-dash-ring-inner"
-                cx="42"
-                cy="42"
-                r="31"
-                stroke={
-                  heroState === 'scanning'
-                    ? '#6366f1'
-                    : heroState === 'review' || heroState === 'paused'
-                    ? '#f59e0b'
-                    : '#10b981'
-                }
-                strokeWidth="1.5"
-              />
-
-              {/* Rotating Dashed Orbital Ring */}
               <circle
                 className="wcp-dash-ring-orbital"
-                cx="42"
-                cy="42"
-                r="25"
+                cx="40"
+                cy="40"
+                r="35"
                 stroke={
                   heroState === 'scanning'
-                    ? '#818cf8'
+                    ? '#6366f1'
                     : heroState === 'review' || heroState === 'paused'
-                    ? '#fbbf24'
-                    : '#34d399'
+                    ? '#f59e0b'
+                    : '#10b981'
                 }
                 strokeWidth="1.5"
               />
             </svg>
 
-            {/* Emblem Core Center */}
             <div className="wcp-dash-emblem-core">
               {heroState === 'scanning' ? (
                 <RefreshCw size={24} className="wcp-dash-spin" />
@@ -320,67 +614,127 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             </div>
           </div>
 
-          {/* Calm Status Copy */}
+          {/* Calm Human Copy */}
           <div className="wcp-dash-hero-body">
             <div className="wcp-dash-status-pill-row">
               <span className="wcp-dash-status-pill">
                 <span className="wcp-dash-pill-dot" />
                 {heroState === 'scanning'
-                  ? 'Security Scan Running'
+                  ? 'Calm Background Checkup Running'
                   : heroState === 'paused'
                   ? `Safe Mode Active • ${formatPauseTimer(pauseSecondsLeft)}`
-                  : 'Real-Time Shield Active'}
+                  : heroState === 'review'
+                  ? 'Shield Active • 1 Quick Suggestion'
+                  : 'Everything is Protected'}
               </span>
 
               <span className="wcp-dash-privacy-pill">
                 <Lock size={12} />
-                100% On-Premise Shield
+                Runs quietly on your server
               </span>
+
+              {lastScanText && (
+                <span className="wcp-dash-privacy-pill">
+                  <Clock size={12} />
+                  Last checked {lastScanText}
+                </span>
+              )}
             </div>
 
             <h1 className="wcp-dash-hero-title">
               {heroState === 'scanning'
-                ? 'Security scan is currently evaluating your files'
+                ? 'Checking your website files gently in the background…'
                 : heroState === 'paused'
-                ? 'Safe Mode is active — firewall paused temporarily'
-                : reviewItemsCount > 0
-                ? `Protection is active — ${reviewItemsCount} item${
-                    reviewItemsCount === 1 ? '' : 's'
-                  } ready for review`
-                : 'Your site is protected and running smoothly'}
+                ? 'Safe Mode is active — strict firewall checks are paused temporarily.'
+                : heroState === 'review'
+                ? `Your site is guarded — ${totalAlertsText}.`
+                : 'Rest easy — your website is safe and running smoothly.'}
             </h1>
 
             <p className="wcp-dash-hero-desc">
               {heroState === 'scanning'
-                ? 'Inspecting core files, plugin structures, and server configuration in non-blocking batches.'
+                ? 'Inspecting WordPress core files and plugins in non-blocking batches so visitors notice zero slowdown.'
                 : heroState === 'paused'
-                ? 'Firewall rules are temporarily paused for troubleshooting. All core exploit shields resume automatically.'
-                : reviewItemsCount > 0
-                ? 'Autonomous defenses are filtering malicious traffic. Recommended security advisories are prepared for your review.'
-                : 'All sentinels are active. WebCare Pro is filtering traffic, monitoring filesystem integrity, and defending your perimeter.'}
+                ? 'Work freely while editing layouts or updating plugins. Core exploit defenses automatically turn back on when the timer ends.'
+                : heroState === 'review'
+                ? 'Autonomous defenses are actively filtering malicious traffic. Follow the guided links below whenever you have a minute.'
+                : `WebCare Pro has quietly filtered ${threatsBlockedCount.toLocaleString()} suspicious request${
+                    threatsBlockedCount === 1 ? '' : 's'
+                  } without slowing down genuine visitors. No action is needed right now.`}
             </p>
           </div>
 
-          {/* Primary Actions (Right) */}
+          {/* #1 Target Scan Dropdown Menu + Safe Mode Button */}
           <div className="wcp-dash-hero-actions">
-            <button
-              type="button"
-              className="wcp-dash-btn-primary"
-              onClick={onStartScan}
-              disabled={isScanning}
-            >
-              {isScanning ? (
-                <>
-                  <RefreshCw size={14} className="wcp-dash-spin" />
-                  <span>Scanning...</span>
-                </>
-              ) : (
-                <>
-                  <Play size={14} fill="currentColor" />
-                  <span>Run Quick Scan</span>
-                </>
+            <div className="wcp-dash-split-wrap" ref={scanMenuContainerRef}>
+              <button
+                type="button"
+                className="wcp-dash-split-main"
+                onClick={() => handleTargetScanLaunch('plugins_themes', false)}
+                disabled={isScanning || launchingScan}
+              >
+                {isScanning || launchingScan ? (
+                  <>
+                    <RefreshCw size={14} className="wcp-dash-spin" />
+                    <span>Scanning…</span>
+                  </>
+                ) : (
+                  <>
+                    <Play size={14} fill="currentColor" />
+                    <span>Run Quick Scan</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                ref={scanCaretBtnRef}
+                type="button"
+                className="wcp-dash-split-caret"
+                aria-haspopup="menu"
+                aria-expanded={scanMenuOpen ? 'true' : 'false'}
+                aria-label="Choose target scan type"
+                onClick={() => setScanMenuOpen((prev) => !prev)}
+              >
+                <ChevronDown size={15} />
+              </button>
+
+              {scanMenuOpen && (
+                <div className="wcp-dash-scan-menu" role="menu" aria-label="Target scan choices">
+                  <div className="wcp-dash-scan-menu-header">Choose Scan Target</div>
+                  {TARGET_SCAN_CHOICES.map((choice) => {
+                    const IconComp = choice.icon;
+                    return (
+                      <button
+                        key={choice.id}
+                        type="button"
+                        role="menuitem"
+                        className="wcp-dash-scan-menu-item"
+                        onClick={() => handleTargetScanLaunch(choice.id, choice.isTargeted)}
+                      >
+                        <IconComp size={15} className="wcp-dash-scan-menu-icon" />
+                        <div>
+                          <div className="wcp-dash-scan-menu-title">{choice.title}</div>
+                          <div className="wcp-dash-scan-menu-sub">{choice.subtitle}</div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                  <hr className="wcp-dash-scan-menu-sep" />
+                  <a
+                    href={urlScannerTargeted}
+                    role="menuitem"
+                    className="wcp-dash-scan-menu-item"
+                    onClick={() => setScanMenuOpen(false)}
+                  >
+                    <Target size={15} className="wcp-dash-scan-menu-icon" />
+                    <div>
+                      <div className="wcp-dash-scan-menu-title">Custom &amp; Targeted Checks &rarr;</div>
+                      <div className="wcp-dash-scan-menu-sub">Open full targeted directory &amp; database tools</div>
+                    </div>
+                  </a>
+                </div>
               )}
-            </button>
+            </div>
 
             <button
               type="button"
@@ -389,8 +743,8 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
               disabled={isPausing}
               title={
                 internalPaused
-                  ? 'Resume firewall protection immediately'
-                  : 'Temporarily pause strict heuristic checks for 15 minutes'
+                  ? 'Resume strict firewall protection immediately'
+                  : 'Pause strict heuristic checks for 15 minutes while editing'
               }
             >
               {internalPaused ? (
@@ -410,23 +764,15 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
       </section>
 
       {/* =========================================================================
-          2. 4-Card Bento KPI Row (.wcp-dash-kpi-grid)
+          2. 4 Calm Reassurance KPI Cards (Safety Net Snapshot replaced cleanly)
          ========================================================================= */}
       <section className="wcp-dash-kpi-grid">
-        {/* KPI 1: Protection Score */}
-        <div
-          className="wcp-dash-kpi-card"
-          onClick={() => handleTileNavigate('settings', 'doctor')}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') handleTileNavigate('settings', 'doctor');
-          }}
-        >
+        {/* KPI 1: Site Wellness Score */}
+        <div className="wcp-dash-kpi-card">
           <div className="wcp-dash-kpi-top">
-            <span className="wcp-dash-kpi-label">Protection Score</span>
+            <span className="wcp-dash-kpi-label">Site Wellness Score</span>
             <div className="wcp-dash-progress-ring-wrap">
-              <svg className="wcp-dash-progress-ring-svg" viewBox="0 0 44 44">
+              <svg className="wcp-dash-progress-ring-svg" viewBox="0 0 44 44" aria-hidden="true">
                 <circle
                   className="wcp-dash-progress-ring-bg"
                   cx="22"
@@ -457,45 +803,27 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
               style={{ color: protectionStatusColor }}
             >
               {healthScore}
-              <span style={{ fontSize: '15px', color: 'var(--webcare-text-muted, #94a3b8)', fontWeight: 500 }}>
+              <span style={{ fontSize: '14px', color: 'var(--webcare-text-muted, #94a3b8)', fontWeight: 500 }}>
                 /100
               </span>
             </span>
-            <span
-              style={{
-                fontSize: '11px',
-                fontWeight: 600,
-                padding: '2px 8px',
-                borderRadius: '6px',
-                color: protectionStatusColor,
-                backgroundColor: `${protectionStatusColor}16`,
-                border: `1px solid ${protectionStatusColor}30`,
-              }}
-            >
+            <span className={`wcp-dash-layer-badge ${healthScore >= 85 ? 'is-active' : 'is-warning'}`}>
               {protectionStatusLabel}
             </span>
           </div>
 
           <div className="wcp-dash-kpi-bottom">
             <span>Automated diagnostic health</span>
-            <span className="wcp-dash-kpi-action-link">
+            <a href={urlDoctor} className="wcp-dash-kpi-link">
               Site Doctor <ArrowRight size={12} />
-            </span>
+            </a>
           </div>
         </div>
 
-        {/* KPI 2: Threats Blocked */}
-        <div
-          className="wcp-dash-kpi-card"
-          onClick={() => handleTileNavigate('logs', 'blocked')}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') handleTileNavigate('logs', 'blocked');
-          }}
-        >
+        {/* KPI 2: Distractions Kept Out */}
+        <div className="wcp-dash-kpi-card">
           <div className="wcp-dash-kpi-top">
-            <span className="wcp-dash-kpi-label">Threats Blocked</span>
+            <span className="wcp-dash-kpi-label">Distractions Kept Out</span>
             <div className="wcp-dash-kpi-icon-badge is-indigo">
               <Shield size={17} />
             </div>
@@ -505,12 +833,12 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             <span className="wcp-dash-kpi-val wcp-dash-tabular">
               {threatsBlockedCount.toLocaleString()}
             </span>
-            {/* Decorative wave sparkline */}
             <svg
               className="wcp-dash-sparkline-svg"
               viewBox="0 0 72 28"
               fill="none"
               xmlns="http://www.w3.org/2000/svg"
+              aria-hidden="true"
             >
               <path
                 d="M2 24C12 24 16 8 26 14C36 20 42 4 52 10C60 15 64 6 70 2"
@@ -519,371 +847,279 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />
-              <path
-                d="M2 24C12 24 16 8 26 14C36 20 42 4 52 10C60 15 64 6 70 2V28H2V24Z"
-                fill="url(#wcp-spark-grad)"
-                opacity="0.18"
-              />
-              <defs>
-                <linearGradient id="wcp-spark-grad" x1="36" y1="2" x2="36" y2="28" gradientUnits="userSpaceOnUse">
-                  <stop stopColor="#6366f1" />
-                  <stop offset="1" stopColor="#6366f1" stopOpacity="0" />
-                </linearGradient>
-              </defs>
             </svg>
           </div>
 
           <div className="wcp-dash-kpi-bottom">
-            <span>Perimeter Layer 7 filter</span>
-            <span className="wcp-dash-kpi-action-link">
+            <span>Filtered automatically</span>
+            <a href={urlFirewallLogs} className="wcp-dash-kpi-link">
               View Logs <ArrowRight size={12} />
-            </span>
+            </a>
           </div>
         </div>
 
-        {/* KPI 3: Items to Review */}
-        <div
-          className="wcp-dash-kpi-card"
-          onClick={() => handleTileNavigate('scan')}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') handleTileNavigate('scan');
-          }}
-        >
+        {/* KPI 3 (#3): Plugin & Theme Risks Button */}
+        <div className="wcp-dash-kpi-card">
           <div className="wcp-dash-kpi-top">
-            <span className="wcp-dash-kpi-label">Items to Review</span>
-            <div
-              className={`wcp-dash-kpi-icon-badge ${
-                reviewItemsCount === 0 ? 'is-emerald' : 'is-amber'
-              }`}
+            <span className="wcp-dash-kpi-label">Plugin &amp; Theme Health</span>
+            <div className={`wcp-dash-kpi-icon-badge ${vulnTotal === 0 ? 'is-emerald' : 'is-amber'}`}>
+              {vulnTotal === 0 ? <CheckCircle2 size={17} /> : <AlertTriangle size={17} />}
+            </div>
+          </div>
+
+          <div className="wcp-dash-kpi-center">
+            <span
+              className="wcp-dash-kpi-val wcp-dash-tabular"
+              style={{ color: vulnTotal === 0 ? '#10b981' : '#d97706', fontSize: '20px' }}
             >
-              {reviewItemsCount === 0 ? <CheckCircle2 size={17} /> : <AlertTriangle size={17} />}
-            </div>
-          </div>
-
-          <div className="wcp-dash-kpi-center">
-            {reviewItemsCount === 0 ? (
-              <span
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  color: '#10b981',
-                  fontWeight: 700,
-                  fontSize: '18px',
-                }}
-              >
-                <Check size={20} /> All Clear
-              </span>
-            ) : (
-              <span className="wcp-dash-kpi-val wcp-dash-tabular" style={{ color: '#d97706' }}>
-                {reviewItemsCount}
-              </span>
-            )}
+              {vulnTotal === 0
+                ? '0 Known Risks'
+                : `${vulnTotal} Risk${vulnTotal === 1 ? '' : 's'} Found`}
+            </span>
           </div>
 
           <div className="wcp-dash-kpi-bottom">
-            <span>
-              {reviewItemsCount === 0 ? '0 unresolved security warnings' : 'Ready for 1-click inspection'}
-            </span>
-            <span className="wcp-dash-kpi-action-link">
-              Open Scanner <ArrowRight size={12} />
-            </span>
+            <span>{vulnTotal === 0 ? 'All extensions clean' : 'Update check ready'}</span>
+            <a
+              href={urlScannerRisks}
+              className={`wcp-dash-risk-btn ${vulnTotal > 0 ? 'is-warning' : ''}`}
+            >
+              <span>Check Risks</span>
+              <ArrowRight size={12} />
+            </a>
           </div>
         </div>
 
-        {/* KPI 4: Latest Backup */}
-        <div
-          className="wcp-dash-kpi-card"
-          onClick={() => handleTileNavigate('backup')}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') handleTileNavigate('backup');
-          }}
-        >
+        {/* KPI 4 (#4): Logged-In Administrator Counter -> page=webcare-pro-login&tab=sessions */}
+        <div className="wcp-dash-kpi-card">
           <div className="wcp-dash-kpi-top">
-            <span className="wcp-dash-kpi-label">Latest Backup</span>
+            <span className="wcp-dash-kpi-label">Logged-In Administrators</span>
             <div className="wcp-dash-kpi-icon-badge is-cyan">
-              <Database size={17} />
+              <Users size={17} />
             </div>
           </div>
 
           <div className="wcp-dash-kpi-center">
-            {latestBackupTime ? (
-              <span className="wcp-dash-kpi-val-text">{latestBackupTime}</span>
+            {!adminSummary.loaded ? (
+              <span className="wcp-dash-kpi-val" style={{ fontSize: '17px' }}>Checking…</span>
             ) : (
-              <span className="wcp-dash-kpi-val-text is-muted">Create Backup</span>
+              <>
+                <span className="wcp-dash-kpi-val wcp-dash-tabular">
+                  {adminSummary.adminCount}{' '}
+                  <span style={{ fontSize: '14px', fontWeight: 500, color: 'var(--webcare-text-muted, #64748b)' }}>
+                    {adminSummary.adminCount === 1 ? 'Admin' : 'Admins'}
+                  </span>
+                </span>
+                <span className="wcp-dash-layer-badge is-active">
+                  {adminSummary.sessionCount === 1
+                    ? '1 Session'
+                    : `${adminSummary.sessionCount} Sessions`}
+                </span>
+              </>
             )}
           </div>
 
           <div className="wcp-dash-kpi-bottom">
             <span>
-              {latestBackupTime ? 'Encrypted snapshot saved' : 'No recovery snapshots yet'}
+              {!adminSummary.loaded
+                ? 'Inspecting active logins'
+                : adminSummary.usernames.length > 0
+                ? `Active: ${adminSummary.usernames.slice(0, 2).join(', ')}`
+                : 'No active admin tokens'}
             </span>
-            <span className="wcp-dash-kpi-action-link">
-              {latestBackupTime ? 'Manage' : 'Create First'} <ArrowRight size={12} />
-            </span>
+            <a href={urlLoginSessions} className="wcp-dash-kpi-link">
+              Sessions <ArrowRight size={12} />
+            </a>
           </div>
         </div>
       </section>
 
       {/* =========================================================================
-          3. Quick Actions Dock (.wcp-dash-actions-dock)
+          3. Connected Status Strip: #2 Cloudflare · #5 Scheduled Scan · #6 Alerts
          ========================================================================= */}
-      <section className="wcp-dash-actions-dock">
-        {/* Action 1: Run Security Scan */}
-        <button
-          type="button"
-          className="wcp-dash-dock-btn"
-          onClick={onStartScan}
-          disabled={isScanning}
-        >
-          <div className="wcp-dash-dock-icon is-indigo">
-            <Search size={18} />
+      <section className="wcp-dash-status-strip">
+        {/* #2 Cloudflare Connect Status */}
+        <a href={urlCloudflare} className="wcp-dash-status-link-card">
+          <div className="wcp-dash-status-link-left">
+            <div className="wcp-dash-status-link-icon is-sky">
+              <Globe size={18} />
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div className="wcp-dash-status-link-kicker">Cloudflare Edge Status</div>
+              <div className={`wcp-dash-status-link-val ${cfStatus.configured ? 'is-active' : ''}`}>
+                {!cfStatus.loaded ? (
+                  'Checking connection…'
+                ) : cfStatus.configured ? (
+                  <>
+                    <Check size={14} />
+                    <span>Connected{cfStatus.zoneName ? ` • ${cfStatus.zoneName}` : ''}</span>
+                  </>
+                ) : (
+                  <span>Not Connected</span>
+                )}
+              </div>
+              <div className="wcp-dash-status-link-sub">
+                {!cfStatus.loaded
+                  ? 'Inspecting edge configuration'
+                  : cfStatus.configured
+                  ? cfStatus.autoSyncBans
+                    ? 'Auto ban sync & real visitor IP active'
+                    : 'Zone linked & edge controls ready'
+                  : cfStatus.error
+                  ? 'Needs verification in Cloudflare settings'
+                  : 'Optional — connect free edge shield anytime'}
+              </div>
+            </div>
           </div>
-          <div className="wcp-dash-dock-text">
-            <span className="wcp-dash-dock-title">Run Security Scan</span>
-            <span className="wcp-dash-dock-sub">Core files &amp; plugins</span>
-          </div>
-        </button>
+          <span className="wcp-dash-status-link-cta">Configure &rarr;</span>
+        </a>
 
-        {/* Action 2: Blocked Traffic & Bans */}
-        <button
-          type="button"
-          className="wcp-dash-dock-btn"
-          onClick={() => handleTileNavigate('logs', 'blocked')}
-        >
-          <div className="wcp-dash-dock-icon is-cyan">
-            <Ban size={18} />
+        {/* #5 Scheduled Scanning Status */}
+        <a href={urlSchedules} className="wcp-dash-status-link-card">
+          <div className="wcp-dash-status-link-left">
+            <div className="wcp-dash-status-link-icon is-sage">
+              <CalendarClock size={18} />
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div className="wcp-dash-status-link-kicker">Scheduled Scanning</div>
+              <div className={`wcp-dash-status-link-val ${scheduleInfo.enabled ? 'is-active' : ''}`}>
+                {!scheduleInfo.loaded ? (
+                  'Loading schedule…'
+                ) : scheduleInfo.enabled ? (
+                  <>
+                    <Check size={14} />
+                    <span>Active &bull; {formatFrequencyLabel(scheduleInfo.frequency)}</span>
+                  </>
+                ) : (
+                  <span>Manual Scans Only</span>
+                )}
+              </div>
+              <div className="wcp-dash-status-link-sub">
+                {!scheduleInfo.loaded
+                  ? 'Checking background cron schedule'
+                  : scheduleInfo.enabled
+                  ? scheduleInfo.nextScheduledHuman || 'Automated checkups enabled'
+                  : 'Turn on automatic daily or weekly scans'}
+              </div>
+            </div>
           </div>
-          <div className="wcp-dash-dock-text">
-            <span className="wcp-dash-dock-title">Blocked Traffic &amp; Bans</span>
-            <span className="wcp-dash-dock-sub">Inspect perimeter blocks</span>
-          </div>
-        </button>
+          <span className="wcp-dash-status-link-cta">Schedule &rarr;</span>
+        </a>
 
-        {/* Action 3: Create Database Backup */}
-        <button
-          type="button"
-          className="wcp-dash-dock-btn"
-          onClick={() => handleTileNavigate('backup')}
-        >
-          <div className="wcp-dash-dock-icon is-purple">
-            <Database size={18} />
+        {/* #6 Notification Settings Link */}
+        <a href={urlAlerts} className="wcp-dash-status-link-card">
+          <div className="wcp-dash-status-link-left">
+            <div className="wcp-dash-status-link-icon is-indigo">
+              <Bell size={18} />
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div className="wcp-dash-status-link-kicker">Security Notifications</div>
+              <div className={`wcp-dash-status-link-val ${scheduleInfo.alertsEnabled ? 'is-active' : ''}`}>
+                {!scheduleInfo.loaded
+                  ? 'Checking alert channels…'
+                  : scheduleInfo.alertsEnabled
+                  ? 'Email Alerts Active'
+                  : 'Alerts Standby'}
+              </div>
+              <div className="wcp-dash-status-link-sub">
+                {!scheduleInfo.loaded
+                  ? 'Checking email preferences'
+                  : scheduleInfo.alertsEnabled && scheduleInfo.alertEmail
+                  ? `Sending to ${scheduleInfo.alertEmail}`
+                  : 'Choose when WebCare Pro notifies you'}
+              </div>
+            </div>
           </div>
-          <div className="wcp-dash-dock-text">
-            <span className="wcp-dash-dock-title">Create Database Backup</span>
-            <span className="wcp-dash-dock-sub">Safe rollback snapshot</span>
-          </div>
-        </button>
-
-        {/* Action 4: Site Health Check */}
-        <button
-          type="button"
-          className="wcp-dash-dock-btn"
-          onClick={() => handleTileNavigate('settings', 'doctor')}
-        >
-          <div className="wcp-dash-dock-icon is-emerald">
-            <Activity size={18} />
-          </div>
-          <div className="wcp-dash-dock-text">
-            <span className="wcp-dash-dock-title">Site Health Check</span>
-            <span className="wcp-dash-dock-sub">Run deep diagnostics</span>
-          </div>
-        </button>
+          <span className="wcp-dash-status-link-cta">Alerts &rarr;</span>
+        </a>
       </section>
 
       {/* =========================================================================
-          4. Lower Bento 2-Column Grid (.wcp-dash-lower-grid)
+          4. Lower Sanctuary Bento Grid: Always-On Site Care + Quiet Activity Journal
          ========================================================================= */}
       <div className="wcp-dash-lower-grid">
-        {/* Left Column: Protection Layers (2x3 Mini-Card Grid) */}
+        {/* Left Column: Expandable Always-On Guards */}
         <div className="wcp-dash-card">
           <div className="wcp-dash-card-header">
             <div className="wcp-dash-card-title-group">
               <Layers size={18} color="#10b981" />
-              <h3 className="wcp-dash-card-title">Protection Layers</h3>
+              <h3 className="wcp-dash-card-title">Always-On Site Care</h3>
             </div>
-            <span
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '5px',
-                fontSize: '11px',
-                fontWeight: 600,
-                color: '#059669',
-                background: 'rgba(16, 185, 129, 0.12)',
-                padding: '3px 9px',
-                borderRadius: '6px',
-              }}
-            >
-              <Check size={12} /> Active &amp; Guarded
+            <span className="wcp-dash-layer-badge is-active">
+              <Check size={11} style={{ marginRight: '4px', verticalAlign: 'middle' }} />
+              Active &amp; Guarded
             </span>
           </div>
           <p className="wcp-dash-card-subtitle">
-            Autonomous sentinels defending runtime requests, authentications, and core files.
+            Click any guard below to read in plain English what it quietly takes care of for you.
           </p>
 
           <div className="wcp-dash-layers-grid">
-            {/* Tile 1: Web Firewall */}
-            <div
-              className="wcp-dash-layer-tile"
-              onClick={() => handleTileNavigate('firewall', 'rules')}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') handleTileNavigate('firewall', 'rules');
-              }}
-            >
-              <div className="wcp-dash-layer-left">
-                <div className="wcp-dash-layer-icon">
-                  <ShieldCheck size={16} />
-                </div>
-                <span className="wcp-dash-layer-name">Web Firewall</span>
-              </div>
-              <span className="wcp-dash-layer-badge is-active">Active</span>
-            </div>
+            {careLayers.map((layer) => {
+              const isOpen = expandedLayerKey === layer.key;
+              return (
+                <div key={layer.key} className="wcp-dash-layer-tile">
+                  <button
+                    type="button"
+                    className="wcp-dash-layer-trigger"
+                    aria-expanded={isOpen ? 'true' : 'false'}
+                    onClick={() => setExpandedLayerKey(isOpen ? null : layer.key)}
+                  >
+                    <div className="wcp-dash-layer-left">
+                      <span className="wcp-dash-layer-name">{layer.name}</span>
+                    </div>
+                    <span className={`wcp-dash-layer-badge is-${layer.tone}`}>
+                      {layer.badge}
+                    </span>
+                  </button>
 
-            {/* Tile 2: Login & 2FA */}
-            <div
-              className="wcp-dash-layer-tile"
-              onClick={() => handleTileNavigate('auth', '2fa')}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') handleTileNavigate('auth', '2fa');
-              }}
-            >
-              <div className="wcp-dash-layer-left">
-                <div className="wcp-dash-layer-icon">
-                  <Lock size={15} />
+                  <div className="wcp-dash-layer-details" data-open={isOpen ? 'true' : 'false'}>
+                    <div className="wcp-dash-layer-details-inner">
+                      <p className="wcp-dash-layer-desc">{layer.desc}</p>
+                      <a href={layer.href} className="wcp-dash-kpi-link">
+                        {layer.linkText} <ArrowRight size={12} />
+                      </a>
+                    </div>
+                  </div>
                 </div>
-                <span className="wcp-dash-layer-name">Login &amp; 2FA</span>
-              </div>
-              <span className="wcp-dash-layer-badge is-active">Active</span>
-            </div>
-
-            {/* Tile 3: Malware Scanner */}
-            <div
-              className="wcp-dash-layer-tile"
-              onClick={() => handleTileNavigate('scan')}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') handleTileNavigate('scan');
-              }}
-            >
-              <div className="wcp-dash-layer-left">
-                <div className="wcp-dash-layer-icon">
-                  <Search size={15} />
-                </div>
-                <span className="wcp-dash-layer-name">Malware Scanner</span>
-              </div>
-              <span className="wcp-dash-layer-badge is-active">Ready</span>
-            </div>
-
-            {/* Tile 4: Plugin & Theme Risks */}
-            <div
-              className="wcp-dash-layer-tile"
-              onClick={() => handleTileNavigate('vulnerabilities')}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') handleTileNavigate('vulnerabilities');
-              }}
-            >
-              <div className="wcp-dash-layer-left">
-                <div className="wcp-dash-layer-icon">
-                  <Zap size={15} />
-                </div>
-                <span className="wcp-dash-layer-name">Plugin &amp; Theme Risks</span>
-              </div>
-              {vulnTotal > 0 ? (
-                <span className="wcp-dash-layer-badge is-warning">
-                  {vulnTotal} to Review
-                </span>
-              ) : (
-                <span className="wcp-dash-layer-badge is-active">Safe</span>
-              )}
-            </div>
-
-            {/* Tile 5: Database Backups */}
-            <div
-              className="wcp-dash-layer-tile"
-              onClick={() => handleTileNavigate('backup')}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') handleTileNavigate('backup');
-              }}
-            >
-              <div className="wcp-dash-layer-left">
-                <div className="wcp-dash-layer-icon">
-                  <Database size={15} />
-                </div>
-                <span className="wcp-dash-layer-name">Database Backups</span>
-              </div>
-              <span className="wcp-dash-layer-badge is-active">
-                {backups && backups.length > 0 ? `${backups.length} Saved` : 'Ready'}
-              </span>
-            </div>
-
-            {/* Tile 6: Site Doctor */}
-            <div
-              className="wcp-dash-layer-tile"
-              onClick={() => handleTileNavigate('settings', 'doctor')}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') handleTileNavigate('settings', 'doctor');
-              }}
-            >
-              <div className="wcp-dash-layer-left">
-                <div className="wcp-dash-layer-icon">
-                  <Activity size={15} />
-                </div>
-                <span className="wcp-dash-layer-name">Site Doctor</span>
-              </div>
-              <span className="wcp-dash-layer-badge is-active">Ready</span>
-            </div>
+              );
+            })}
           </div>
         </div>
 
-        {/* Right Column: Quiet Activity Pulse */}
+        {/* Right Column: Quiet Activity Journal */}
         <div className="wcp-dash-card">
           <div className="wcp-dash-card-header">
             <div className="wcp-dash-card-title-group">
               <Activity size={18} color="#6366f1" />
-              <h3 className="wcp-dash-card-title">Quiet Activity Pulse</h3>
+              <h3 className="wcp-dash-card-title">Quiet Activity Journal</h3>
             </div>
-            <button
-              type="button"
-              className="wcp-dash-kpi-action-link"
-              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '12px' }}
-              onClick={() => handleTileNavigate('logs')}
-            >
-              View all logs &rarr;
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <a href={urlAdminActivity} className="wcp-dash-kpi-link">
+                Admin Activity
+              </a>
+              <a href={urlFirewallLogs} className="wcp-dash-kpi-link">
+                All Logs <ArrowRight size={12} />
+              </a>
+            </div>
           </div>
           <p className="wcp-dash-card-subtitle">
-            Chronological ledger of recent security decisions and intercepted traffic.
+            Recent automated protections handled calmly without interrupting your visitors.
           </p>
 
           <div className="wcp-dash-pulse-timeline">
             {firewallLogs && firewallLogs.length > 0 ? (
-              firewallLogs.slice(0, 5).map((log: any, idx: number) => {
+              firewallLogs.slice(0, 4).map((log: any, idx: number) => {
                 const categoryClean = log.rule_category
-                  ? log.rule_category.replace(/_/g, ' ')
-                  : 'Malicious Incursion';
+                  ? String(log.rule_category).replace(/_/g, ' ')
+                  : 'Suspicious Request';
                 return (
                   <div key={log.id || `pulse-log-${idx}`} className="wcp-dash-pulse-item">
-                    <div className="wcp-dash-pulse-dot is-block" />
+                    <div className="wcp-dash-pulse-dot" />
                     <div className="wcp-dash-pulse-body">
                       <div className="wcp-dash-pulse-header">
                         <span className="wcp-dash-pulse-rule">
-                          Blocked {categoryClean}
+                          Quietly filtered {categoryClean}
                         </span>
                         <span className="wcp-dash-pulse-time">
                           {formatRelativeTime(log.created_at || log.timestamp)}
@@ -901,7 +1137,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
               })
             ) : (
               <div className="wcp-dash-pulse-empty">
-                All quiet — no threats intercepted recently.
+                All quiet — no suspicious traffic has needed filtering recently.
               </div>
             )}
           </div>
@@ -912,36 +1148,33 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
           5. Subtle System Readiness Footer Strip (.wcp-dash-footer-strip)
          ========================================================================= */}
       <footer className="wcp-dash-footer-strip">
-        <div className="wcp-dash-footer-item">
-          <span className="wcp-dash-footer-dot" />
-          <span>PHP:</span>
-          <span className="wcp-dash-footer-val wcp-dash-tabular">
-            {resolvedPhpVersion}
-          </span>
+        <div className="wcp-dash-footer-items">
+          <div className="wcp-dash-footer-item">
+            <span className="wcp-dash-footer-dot" />
+            <span>PHP:</span>
+            <span className="wcp-dash-footer-val wcp-dash-tabular">{resolvedPhpVersion}</span>
+          </div>
+
+          <div className="wcp-dash-footer-item">
+            <span>WordPress:</span>
+            <span className="wcp-dash-footer-val wcp-dash-tabular">{resolvedWpVersion}</span>
+          </div>
+
+          <div className="wcp-dash-footer-item">
+            <span>Server:</span>
+            <span className="wcp-dash-footer-val">{resolvedServerEngine}</span>
+          </div>
+
+          <div className="wcp-dash-footer-item">
+            <span>Quarantined Files:</span>
+            <span className="wcp-dash-footer-val wcp-dash-tabular">
+              {quarantinedFiles?.length || 0}
+            </span>
+          </div>
         </div>
 
         <div className="wcp-dash-footer-item">
-          <span>WordPress:</span>
-          <span className="wcp-dash-footer-val wcp-dash-tabular">
-            {resolvedWpVersion}
-          </span>
-        </div>
-
-        <div className="wcp-dash-footer-item">
-          <span>Server Engine:</span>
-          <span className="wcp-dash-footer-val">
-            {resolvedServerEngine}
-          </span>
-        </div>
-
-        <div className="wcp-dash-footer-item">
-          <span>Quarantined Files:</span>
-          <span className="wcp-dash-footer-val wcp-dash-tabular">
-            {quarantinedFiles?.length || 0}
-          </span>
-        </div>
-
-        <div className="wcp-dash-footer-item">
+          <FolderSearch size={13} />
           <span>Protection Mode:</span>
           <span className="wcp-dash-footer-val">Active / Fail-Closed</span>
         </div>
