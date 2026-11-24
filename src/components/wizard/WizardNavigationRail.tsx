@@ -28,7 +28,7 @@ export interface StepDefinition {
 
 interface WizardNavigationRailProps {
   currentStep: number;
-  mode: 'express' | 'developer';
+  mode: 'calm' | 'express' | 'developer';
   onSelectStep: (stepNum: number) => void;
   configuredSteps: Set<number>;
   postureScore: number;
@@ -67,6 +67,13 @@ export const WizardNavigationRail: React.FC<WizardNavigationRailProps> = ({
     { num: 14, label: 'Cryptographic Launch', phaseId: 4, icon: <CheckCircle2 size={14} /> },
   ];
 
+  // Calm 3 Steps Definitions (60-Second Setup)
+  const calmSteps: StepDefinition[] = [
+    { num: 1, label: 'Site Archetype Preset', phaseId: 1, icon: <Layers size={14} />, isAutoTuned: true },
+    { num: 2, label: 'Alerts & Safe Learning', phaseId: 2, icon: <Shield size={14} />, isAutoTuned: true },
+    { num: 3, label: 'Confirmation & Launch', phaseId: 3, icon: <CheckCircle2 size={14} /> },
+  ];
+
   // Express 6 Steps Definitions
   const expressSteps: StepDefinition[] = [
     { num: 1, label: 'Archetype & Zero-Lockout', phaseId: 1, icon: <Shield size={14} />, isAutoTuned: true },
@@ -84,7 +91,7 @@ export const WizardNavigationRail: React.FC<WizardNavigationRailProps> = ({
     { id: 4, name: 'Phase 4: Scanner & SOC' },
   ];
 
-  const stepsToRender = mode === 'express' ? expressSteps : developerSteps;
+  const stepsToRender = mode === 'calm' ? calmSteps : (mode === 'express' ? expressSteps : developerSteps);
 
   return (
     <aside

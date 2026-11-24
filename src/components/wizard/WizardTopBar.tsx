@@ -3,8 +3,8 @@ import { Sun, Moon, Zap, Sliders, Download, Upload } from 'lucide-react';
 import WebCareBrandLogo from '../WebCareBrandLogo';
 
 interface WizardTopBarProps {
-  mode: 'express' | 'developer';
-  onToggleMode: (mode: 'express' | 'developer') => void;
+  mode: 'calm' | 'express' | 'developer';
+  onToggleMode: (mode: 'calm' | 'express' | 'developer') => void;
   themeMode: 'dark' | 'light';
   onToggleTheme: () => void;
   onOpenBlueprint: () => void;
@@ -92,6 +92,27 @@ export const WizardTopBar: React.FC<WizardTopBarProps> = ({
         >
           <button
             type="button"
+            onClick={() => onToggleMode('calm')}
+            style={{
+              padding: '6px 12px',
+              fontSize: '12px',
+              fontWeight: 700,
+              borderRadius: '9px',
+              border: 'none',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              transition: 'all 0.18s ease',
+              background: mode === 'calm' ? 'var(--webcare-primary, #4f46e5)' : 'transparent',
+              color: mode === 'calm' ? '#ffffff' : 'var(--webcare-text-secondary, #475569)',
+              boxShadow: mode === 'calm' ? '0 2px 6px rgba(79, 70, 229, 0.3)' : 'none',
+            }}
+          >
+            <Zap size={13} /> 60s Calm (3 Steps)
+          </button>
+          <button
+            type="button"
             onClick={() => onToggleMode('express')}
             style={{
               padding: '6px 12px',
@@ -109,7 +130,7 @@ export const WizardTopBar: React.FC<WizardTopBarProps> = ({
               boxShadow: mode === 'express' ? '0 2px 6px rgba(79, 70, 229, 0.3)' : 'none',
             }}
           >
-            <Zap size={13} /> ⚡ Express (6 Steps)
+            <span>⚡ Express (6 Steps)</span>
           </button>
           <button
             type="button"
@@ -130,7 +151,7 @@ export const WizardTopBar: React.FC<WizardTopBarProps> = ({
               boxShadow: mode === 'developer' ? '0 2px 6px rgba(79, 70, 229, 0.3)' : 'none',
             }}
           >
-            <Sliders size={13} /> 🛠️ Developer Full-Control (14 Steps)
+            <Sliders size={13} /> 🛠️ Pro (14 Steps)
           </button>
         </div>
 

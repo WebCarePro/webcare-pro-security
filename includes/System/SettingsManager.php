@@ -7,7 +7,32 @@ if (!defined('ABSPATH')) {
 
 class SettingsManager {
     const OPTION_KEY = 'webcareproscan_settings';
+    const OPTION_SNAPSHOTS_KEY = 'webcareproscan_settings_snapshots';
     const CRON_HOOK = 'webcareproscan_scheduled_scan_event';
+    const MAX_SNAPSHOTS = 10;
+
+    /**
+     * Secret keys that MUST NEVER be included in settings snapshots, export files, or undo history.
+     */
+    public const SECRET_KEYS = [
+        'openai_api_key',
+        'gemini_api_key',
+        'claude_api_key',
+        'deepseek_api_key',
+        'openrouter_api_key',
+        'ai_api_key',
+        'virus_total_api_key',
+        'wpscan_api_key',
+        'cloudflare_api_token',
+        'cloudflare_zone_id',
+        'waf_cloudflare_origin_secret',
+        'mcp_token',
+        'slack_webhook_url',
+        'discord_webhook_url',
+        'clickup_webhook_url',
+        'asana_webhook_url',
+        'generic_webhook_url',
+    ];
 
     /**
      * Suppression flag for noisy secondary firewall_ruleset_modified logs during dedicated IP actions.
@@ -1322,6 +1347,11 @@ class SettingsManager {
         // Compute settings diff before persisting
         $diff = self::compute_settings_diff($current, $clean);
 
+        // Record a secret-stripped snapshot of the current settings if there are meaningful changes
+        if (!empty($diff)) {
+            self::record_settings_snapshot($current);
+        }
+
         update_option(self::OPTION_KEY, $clean, false);
 
         // Synchronize Cron Schedule
@@ -1689,6 +1719,134 @@ class SettingsManager {
         update_option(self::OPTION_KEY, $defaults, false);
         self::sync_cron_schedule($defaults);
         return self::get_settings();
+    }
+
+    /**
+     * Strip all secret and credential keys from a settings array.
+     *
+     * @param array $settings
+     * @return array
+     */
+    public static function strip_secrets(array $settings): array {
+        foreach (self::SECRET_KEYS as $secret_key) {
+            unset($settings[$secret_key]);
+        }
+        return $settings;
+    }
+
+    /**
+     * Record a snapshot of the current settings (excluding secrets) for Undo capability.
+     * Capped at MAX_SNAPSHOTS (10).
+     *
+     * @param array $settings
+     */
+    public static function record_settings_snapshot(array $settings): void {
+        $safe_settings = self::strip_secrets($settings);
+        if (empty($safe_settings)) {
+            return;
+        }
+
+        $snapshots = get_option(self::OPTION_SNAPSHOTS_KEY, []);
+        if (!is_array($snapshots)) {
+            $snapshots = [];
+        }
+
+        // Prepend newest snapshot
+        array_unshift($snapshots, [
+            'timestamp' => time(),
+            'user'      => function_exists('wp_get_current_user') ? (wp_get_current_user()->user_login ?? 'system') : 'system',
+            'settings'  => $safe_settings,
+        ]);
+
+        // Cap to MAX_SNAPSHOTS
+        if (count($snapshots) > self::MAX_SNAPSHOTS) {
+            $snapshots = array_slice($snapshots, 0, self::MAX_SNAPSHOTS);
+        }
+
+        update_option(self::OPTION_SNAPSHOTS_KEY, $snapshots, false);
+    }
+
+    /**
+     * Retrieve the list of recorded settings snapshots (without secrets).
+     *
+     * @return array
+     */
+    public static function get_settings_snapshots(): array {
+        $snapshots = get_option(self::OPTION_SNAPSHOTS_KEY, []);
+        return is_array($snapshots) ? $snapshots : [];
+    }
+
+    /**
+     * Undo the last settings change by popping the most recent snapshot and applying it.
+     * Preserves all active secrets currently in the database so credentials are never lost.
+     *
+     * @return array{'success': bool, 'message': string, 'settings': array, 'snapshots_remaining': int}
+     */
+    public static function undo_last_settings(): array {
+        $snapshots = self::get_settings_snapshots();
+        if (empty($snapshots)) {
+            return [
+                'success'             => false,
+                'message'             => __('No previous settings snapshot available to undo.', 'webcare-pro-security'),
+                'settings'            => self::get_settings(),
+                'snapshots_remaining' => 0,
+            ];
+        }
+
+        // Pop the most recent snapshot
+        $target_snapshot = array_shift($snapshots);
+        update_option(self::OPTION_SNAPSHOTS_KEY, $snapshots, false);
+
+        $restored_subset = $target_snapshot['settings'] ?? [];
+        if (!is_array($restored_subset) || empty($restored_subset)) {
+            return [
+                'success'             => false,
+                'message'             => __('Corrupted settings snapshot encountered.', 'webcare-pro-security'),
+                'settings'            => self::get_settings(),
+                'snapshots_remaining' => count($snapshots),
+            ];
+        }
+
+        // Preserve current active secrets
+        $current = get_option(self::OPTION_KEY, []);
+        if (!is_array($current)) {
+            $current = [];
+        }
+
+        $active_secrets = [];
+        foreach (self::SECRET_KEYS as $secret_key) {
+            if (isset($current[$secret_key])) {
+                $active_secrets[$secret_key] = $current[$secret_key];
+            }
+        }
+
+        // Merge restored non-secret settings with active secrets
+        $merged_restoration = array_merge($restored_subset, $active_secrets);
+
+        // Apply restoration
+        $saved = self::save_settings($merged_restoration);
+
+        if (class_exists('\\WebCareProScanner\\System\\WebCareActivityLogger')) {
+            $formatted_time = function_exists('date_i18n')
+                ? date_i18n('Y-m-d H:i:s', $target_snapshot['timestamp'] ?? time())
+                : gmdate('Y-m-d H:i:s', $target_snapshot['timestamp'] ?? time());
+            \WebCareProScanner\System\WebCareActivityLogger::notice(
+                'settings_undo_applied',
+                'settings',
+                [
+                    'description'         => sprintf('Reverted settings to snapshot from %s.', $formatted_time),
+                    'snapshot_time'       => $target_snapshot['timestamp'] ?? time(),
+                    'snapshots_remaining' => count($snapshots),
+                ]
+            );
+        }
+
+        return [
+            'success'             => true,
+            'message'             => __('Settings successfully reverted to the previous snapshot.', 'webcare-pro-security'),
+            'settings'            => $saved,
+            'snapshots_remaining' => count($snapshots),
+        ];
     }
 
     /**

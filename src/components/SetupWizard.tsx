@@ -62,13 +62,13 @@ export const SetupWizard = () => {
   const [saving, setSaving] = useState<boolean>(false);
   const [status, setStatus] = useState<WizardStatus | null>(null);
 
-  // Persona Mode: 'express' (6 steps) vs 'developer' (14 steps)
-  const [wizardMode, setWizardMode] = useState<'express' | 'developer'>(() => {
+  // Persona Mode: 'calm' (3 steps) vs 'express' (6 steps) vs 'developer' (14 steps)
+  const [wizardMode, setWizardMode] = useState<'calm' | 'express' | 'developer'>(() => {
     try {
       const saved = localStorage.getItem('webcare_wizard_mode');
-      if (saved === 'express' || saved === 'developer') return saved;
+      if (saved === 'calm' || saved === 'express' || saved === 'developer') return saved;
     } catch {}
-    return 'developer';
+    return 'calm';
   });
   const [isBlueprintModalOpen, setIsBlueprintModalOpen] = useState<boolean>(false);
   const [configuredSteps, setConfiguredSteps] = useState<Set<number>>(new Set([1]));
@@ -258,16 +258,16 @@ export const SetupWizard = () => {
     if (updateStepAndMode) {
       const urlParams = new URLSearchParams(window.location.search);
       const modeFromUrl = urlParams.get('mode');
-      if (modeFromUrl === 'express' || modeFromUrl === 'developer') {
+      if (modeFromUrl === 'calm' || modeFromUrl === 'express' || modeFromUrl === 'developer') {
         setWizardMode(modeFromUrl);
-      } else if (res.wizard_mode === 'express' || res.wizard_mode === 'developer') {
+      } else if (res.wizard_mode === 'calm' || res.wizard_mode === 'express' || res.wizard_mode === 'developer') {
         setWizardMode(res.wizard_mode);
       }
 
-      const activeMode = (modeFromUrl === 'express' || modeFromUrl === 'developer')
+      const activeMode = (modeFromUrl === 'calm' || modeFromUrl === 'express' || modeFromUrl === 'developer')
         ? modeFromUrl
-        : (res.wizard_mode || 'developer');
-      const maxStep = activeMode === 'express' ? 6 : 14;
+        : (res.wizard_mode || 'calm');
+      const maxStep = activeMode === 'calm' ? 3 : (activeMode === 'express' ? 6 : 14);
 
       const stepFromUrl = parseInt(urlParams.get('step') || '0', 10);
       const resolvedStep = (stepFromUrl >= 1 && stepFromUrl <= maxStep)
@@ -453,7 +453,7 @@ export const SetupWizard = () => {
     return () => { isMounted = false; };
   }, []);
 
-  const totalSteps = wizardMode === 'express' ? 6 : 14;
+  const totalSteps = wizardMode === 'calm' ? 3 : (wizardMode === 'express' ? 6 : 14);
 
   // Centralized Wizard Payload Builder
   const buildWizardPayload = (targetStepNum?: number) => ({
@@ -978,6 +978,197 @@ export const SetupWizard = () => {
     }
   };
 
+  // 60-Second Calm Setup Step Renderer (3 Steps)
+  const renderCalmStep = () => {
+    switch (step) {
+      case 1:
+        // Step 1: Site Archetype Selection
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', width: '100%', minWidth: 0, boxSizing: 'border-box' }}>
+            <div
+              style={{
+                padding: '16px 20px',
+                borderRadius: '12px',
+                background: 'rgba(79, 70, 229, 0.04)',
+                border: '1px solid rgba(79, 70, 229, 0.15)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+              }}
+            >
+              <Sparkles size={20} color="var(--webcare-primary, #4f46e5)" style={{ flexShrink: 0 }} />
+              <div>
+                <strong style={{ fontSize: '13px', color: 'var(--webcare-text-title, #0f172a)' }}>
+                  60-Second Calm Setup (Step 1 of 3)
+                </strong>
+                <p style={{ margin: '2px 0 0 0', fontSize: '12px', color: 'var(--webcare-text-secondary, #475569)' }}>
+                  Select your website type. WebCare Pro automatically applies the optimal conflict-free protection preset tailored to your plugins.
+                </p>
+              </div>
+            </div>
+            <Step01StackArchetype
+              archetype={archetype}
+              setArchetype={handleArchetypeSelect}
+              status={status}
+              adaptiveStackMonitoring={adaptiveStackMonitoring}
+              setAdaptiveStackMonitoring={setAdaptiveStackMonitoring}
+              environmentOverride={environmentOverride}
+              setEnvironmentOverride={setEnvironmentOverride}
+            />
+          </div>
+        );
+      case 2:
+        // Step 2: Alerts & Guided Learning Mode + Verified Admin IP Confirmation
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', width: '100%', minWidth: 0, boxSizing: 'border-box' }}>
+            <div
+              style={{
+                padding: '16px 20px',
+                borderRadius: '12px',
+                background: 'rgba(16, 185, 129, 0.04)',
+                border: '1px solid rgba(16, 185, 129, 0.2)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+              }}
+            >
+              <CheckCircle2 size={20} color="#10b981" style={{ flexShrink: 0 }} />
+              <div>
+                <strong style={{ fontSize: '13px', color: 'var(--webcare-text-title, #0f172a)' }}>
+                  60-Second Calm Setup (Step 2 of 3): Alerts &amp; Zero-Lockout Safety
+                </strong>
+                <p style={{ margin: '2px 0 0 0', fontSize: '12px', color: 'var(--webcare-text-secondary, #475569)' }}>
+                  Confirm your alert email, safe Learning Mode, and explicitly verify your detected admin IP address so you can never be locked out.
+                </p>
+              </div>
+            </div>
+
+            {/* Zero-Lockout IP Allowlist (Requires Explicit Confirmation) */}
+            <Step03ZeroLockoutWhitelist
+              status={status}
+              whitelistIp={whitelistIp}
+              setWhitelistIp={setWhitelistIp}
+              ipWhitelistEntries={ipWhitelistEntries}
+              setIpWhitelistEntries={setIpWhitelistEntries}
+            />
+
+            {/* Alert Email & Learning Mode Card */}
+            <div
+              className="webcare-firewall-rule-card"
+              style={{
+                padding: '20px',
+                borderRadius: '12px',
+                background: 'var(--webcare-bg-panel, #ffffff)',
+                border: '1px solid var(--webcare-border, #e2e8f0)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '16px',
+              }}
+            >
+              <h3 style={{ margin: 0, fontSize: '14px', fontWeight: 700, color: 'var(--webcare-text-title, #0f172a)' }}>
+                Security Notifications &amp; Safe Learning Mode
+              </h3>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--webcare-text-secondary, #475569)', marginBottom: '6px' }}>
+                  Admin Notification Email
+                </label>
+                <input
+                  type="email"
+                  value={alertEmail}
+                  onChange={(e) => setAlertEmail(e.target.value)}
+                  placeholder="admin@example.com"
+                  className="webcare-input"
+                  style={{
+                    width: '100%',
+                    maxWidth: '400px',
+                    padding: '8px 12px',
+                    borderRadius: '8px',
+                    fontSize: '13px',
+                    border: '1px solid var(--webcare-border, #cbd5e1)',
+                    background: 'var(--webcare-bg-surface, #ffffff)',
+                    color: 'var(--webcare-text-primary, #0f172a)',
+                  }}
+                />
+                <span style={{ display: 'block', fontSize: '11px', color: 'var(--webcare-text-muted, #64748b)', marginTop: '4px' }}>
+                  Instant email alerts for critical vulnerabilities and brute-force surges.
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', paddingTop: '8px', borderTop: '1px solid var(--webcare-border, #e2e8f0)' }}>
+                <input
+                  type="checkbox"
+                  id="calm_learning_mode"
+                  checked={!!wafAdvanced.waf_learning_mode}
+                  onChange={(e) => setWafAdvanced({ ...wafAdvanced, waf_learning_mode: e.target.checked })}
+                  style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                />
+                <label htmlFor="calm_learning_mode" style={{ fontSize: '13px', fontWeight: 600, color: 'var(--webcare-text-title, #0f172a)', cursor: 'pointer' }}>
+                  Guided Learning Mode (Recommended for first 48 hours)
+                </label>
+              </div>
+              <p style={{ margin: '0 0 0 26px', fontSize: '11.5px', color: 'var(--webcare-text-muted, #64748b)' }}>
+                Monitors and profiles genuine visitor traffic to eliminate false alarms before enforcing strict blocks.
+              </p>
+            </div>
+          </div>
+        );
+      case 3:
+        // Step 3: Confirmation & Launch with links
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', width: '100%', minWidth: 0, boxSizing: 'border-box' }}>
+            <Step14LedgerLaunch
+              postureScore={currentPostureScore}
+              controlsArmed={currentControlsArmed}
+              archetype={archetype}
+              isCfActive={!!(cfToken.trim() || status?.cloudflare_status?.has_saved_token)}
+              isPreloadActive={!!(status?.preload_waf?.is_active || status?.preload_waf?.is_compiled)}
+              onLaunchAudit={() => handleCompleteWizard(true)}
+              onOpenDashboard={() => handleCompleteWizard(false)}
+              onExportBlueprint={() => setIsBlueprintModalOpen(true)}
+              saving={saving}
+              governanceSettings={governanceSettings}
+              setGovernanceSettings={setGovernanceSettings}
+            />
+
+            {/* Advanced Wizard Link */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '14px 20px',
+                borderRadius: '10px',
+                background: 'var(--webcare-bg-surface, #f8fafc)',
+                border: '1px solid var(--webcare-border, #e2e8f0)',
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  setWizardMode('developer');
+                  setStep(1);
+                }}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--webcare-primary, #4f46e5)',
+                  fontSize: '12.5px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  textDecoration: 'underline',
+                }}
+              >
+                Want granular control? Open Advanced 14-Step Pro Hardening Wizard →
+              </button>
+            </div>
+          </div>
+        );
+      default:
+        return null;
+    }
+  };
+
   // Express Mode Step Renderer (6 Steps)
   const renderExpressStep = () => {
     switch (step) {
@@ -1383,7 +1574,7 @@ export const SetupWizard = () => {
                 </div>
               )}
 
-              {wizardMode === 'express' ? renderExpressStep() : renderDeveloperStep()}
+              {wizardMode === 'calm' ? renderCalmStep() : (wizardMode === 'express' ? renderExpressStep() : renderDeveloperStep())}
             </div>
 
             {/* STUDIO STAGE FOOTER CONTROLS */}

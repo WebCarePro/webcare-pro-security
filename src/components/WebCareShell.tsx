@@ -488,9 +488,10 @@ export const WebCareShell = ({ activeTab, activePillarId, children }: WebCareShe
           </div>
         </div>
 
-        {/* TIER 2: PRIMARY NAVIGATION ROW (7 CANONICAL PILLARS + ALL MODULES) */}
+        {/* TIER 2: PRIMARY NAVIGATION ROW (5-Tab Calm Mode vs Full 7-Pillar + All Modules in Developer Mode) */}
         <div className="webcare-header-tier-bottom">
           <nav className="nav-tabs" aria-label="Main Security Pillars">
+            {/* Overview / Peace of Mind */}
             <button
               type="button"
               className={`nav-tab-btn ${currentPillarId === 'webcare-pro-security' ? 'active' : ''}`}
@@ -499,9 +500,10 @@ export const WebCareShell = ({ activeTab, activePillarId, children }: WebCareShe
               aria-current={currentPillarId === 'webcare-pro-security' ? 'page' : undefined}
             >
               <LayoutDashboard size={15} />
-              <span>Dashboard</span>
+              <span>{isDeveloperMode ? 'Dashboard' : 'Overview ("Peace of Mind")'}</span>
             </button>
 
+            {/* Shield / Firewall */}
             <button
               type="button"
               className={`nav-tab-btn ${currentPillarId === 'webcare-pro-firewall' ? 'active' : ''}`}
@@ -510,20 +512,24 @@ export const WebCareShell = ({ activeTab, activePillarId, children }: WebCareShe
               aria-current={currentPillarId === 'webcare-pro-firewall' ? 'page' : undefined}
             >
               <Shield size={15} />
-              <span>Firewall</span>
+              <span>{isDeveloperMode ? 'Firewall' : 'Shield'}</span>
             </button>
 
-            <button
-              type="button"
-              className={`nav-tab-btn ${currentPillarId === 'webcare-pro-logs' ? 'active' : ''}`}
-              id="tabBtnLogs"
-              onClick={() => navigateTo('webcare-pro-logs')}
-              aria-current={currentPillarId === 'webcare-pro-logs' ? 'page' : undefined}
-            >
-              <FileText size={15} />
-              <span>Logs &amp; Bans</span>
-            </button>
+            {/* Developer Mode Only: Logs & Bans */}
+            {isDeveloperMode && (
+              <button
+                type="button"
+                className={`nav-tab-btn ${currentPillarId === 'webcare-pro-logs' ? 'active' : ''}`}
+                id="tabBtnLogs"
+                onClick={() => navigateTo('webcare-pro-logs')}
+                aria-current={currentPillarId === 'webcare-pro-logs' ? 'page' : undefined}
+              >
+                <FileText size={15} />
+                <span>Logs &amp; Bans</span>
+              </button>
+            )}
 
+            {/* Site Scan / Malware Scanner */}
             <button
               type="button"
               className={`nav-tab-btn ${currentPillarId === 'webcare-pro-scanner' ? 'active' : ''}`}
@@ -532,9 +538,10 @@ export const WebCareShell = ({ activeTab, activePillarId, children }: WebCareShe
               aria-current={currentPillarId === 'webcare-pro-scanner' ? 'page' : undefined}
             >
               <Radar size={15} />
-              <span>Malware &amp; Scanner</span>
+              <span>{isDeveloperMode ? 'Malware & Scanner' : 'Site Scan'}</span>
             </button>
 
+            {/* Login Safety / Login & Access */}
             <button
               type="button"
               className={`nav-tab-btn ${currentPillarId === 'webcare-pro-login' ? 'active' : ''}`}
@@ -543,20 +550,24 @@ export const WebCareShell = ({ activeTab, activePillarId, children }: WebCareShe
               aria-current={currentPillarId === 'webcare-pro-login' ? 'page' : undefined}
             >
               <Users size={15} />
-              <span>Login &amp; Access</span>
+              <span>{isDeveloperMode ? 'Login & Access' : 'Login Safety'}</span>
             </button>
 
-            <button
-              type="button"
-              className={`nav-tab-btn ${currentPillarId === 'webcare-pro-backups' ? 'active' : ''}`}
-              id="tabBtnVault"
-              onClick={() => navigateTo('webcare-pro-backups')}
-              aria-current={currentPillarId === 'webcare-pro-backups' ? 'page' : undefined}
-            >
-              <Server size={15} />
-              <span>Backups &amp; Vault</span>
-            </button>
+            {/* Developer Mode Only: Backups & Vault */}
+            {isDeveloperMode && (
+              <button
+                type="button"
+                className={`nav-tab-btn ${currentPillarId === 'webcare-pro-backups' ? 'active' : ''}`}
+                id="tabBtnVault"
+                onClick={() => navigateTo('webcare-pro-backups')}
+                aria-current={currentPillarId === 'webcare-pro-backups' ? 'page' : undefined}
+              >
+                <Server size={15} />
+                <span>Backups &amp; Vault</span>
+              </button>
+            )}
 
+            {/* Settings */}
             <button
               type="button"
               className={`nav-tab-btn ${currentPillarId === 'webcare-pro-settings' ? 'active' : ''}`}
@@ -565,10 +576,10 @@ export const WebCareShell = ({ activeTab, activePillarId, children }: WebCareShe
               aria-current={currentPillarId === 'webcare-pro-settings' ? 'page' : undefined}
             >
               <SettingsIcon size={15} />
-              <span>Settings &amp; Doctor</span>
+              <span>{isDeveloperMode ? 'Settings & Doctor' : 'Settings'}</span>
             </button>
 
-            {/* Quick-Jump Mega Menu Button */}
+            {/* Quick-Jump Mega Menu Button (Available in Developer Mode or via All Modules button) */}
             <button
               type="button"
               className={`nav-tab-btn webcare-mega-menu-trigger ${megaMenuOpen ? 'active' : ''}`}

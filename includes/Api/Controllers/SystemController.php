@@ -149,6 +149,12 @@ final class SystemController extends AbstractApiController {
             'permission_callback' => $permission,
         ]);
 
+        register_rest_route($namespace, '/settings/undo', [
+            'methods'             => 'POST',
+            'callback'            => [self::class, 'undo_settings'],
+            'permission_callback' => $permission,
+        ]);
+
         register_rest_route($namespace, '/settings/trigger-cron', [
             'methods'             => 'POST',
             'callback'            => [self::class, 'trigger_cron_now'],
@@ -1567,6 +1573,17 @@ final class SystemController extends AbstractApiController {
             'message'  => __('Settings have been reset to factory defaults.', 'webcare-pro-security'),
             'settings' => $defaults,
         ]);
+    }
+
+    /**
+     * Revert settings to the previous snapshot (Undo)
+     */
+    public static function undo_settings(\WP_REST_Request $request) {
+        $result = \WebCareProScanner\System\SettingsManager::undo_last_settings();
+        if (!$result['success']) {
+            return new \WP_Error('undo_failed', $result['message'], ['status' => 400]);
+        }
+        return rest_ensure_response($result);
     }
 
     /**
