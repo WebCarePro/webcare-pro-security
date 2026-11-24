@@ -216,6 +216,11 @@ class GhostRouteTrap {
             ], !empty($settings['block_client_ip']) ? 'blocked' : 'detected');
         }
 
+        // Record canary probe in BehavioralCampaignEngine (Single canary increases risk; no 24h ban from 1 hit alone)
+        if (class_exists('\\WebCareProScanner\\Firewall\\Core\\BehavioralCampaignEngine')) {
+            \WebCareProScanner\Firewall\Core\BehavioralCampaignEngine::record_probe($ip, 'canary_trap', $target_surface);
+        }
+
         AuditLogger::log(
             'ghost_route_triggered',
             sprintf('Autonomous bot trap triggered by IP %s on canary surface "%s". Action: %s.', $ip, $target_surface, strtoupper($event['action_taken']))

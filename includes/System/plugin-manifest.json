@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-24T10:47:53.902Z",
+  "generated_at": "2026-11-24T10:51:35.301Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -559,6 +559,10 @@
       "sha256": "73aba71e990e4147e71418ded2538a706e6beb757baac06c5922678d43ca6280",
       "size": 37132
     },
+    "includes/Firewall/Core/BehavioralCampaignEngine.php": {
+      "sha256": "ccfedf98fc4ba38f354b21004a98572c948437ba7fe1c1c19277c82e0c9aad62",
+      "size": 8198
+    },
     "includes/Firewall/Core/BlocklistRepository.php": {
       "sha256": "da84a5b415ce5c4807d2509b6bcff0762af19b98a68ec8bf0d323bf4c21839dc",
       "size": 33429
@@ -576,8 +580,8 @@
       "size": 41195
     },
     "includes/Firewall/Core/ExploitSignatureEngine.php": {
-      "sha256": "66780a07bb92d9259c2e8524d671d98bd6dd9878cb849c253d841ff1e293a54c",
-      "size": 145570
+      "sha256": "7f095b8bd4604add91fd2f46802f9a3c4a09a382c25f2bc4f2bba02f1aedc76b",
+      "size": 148732
     },
     "includes/Firewall/Core/FirewallTelemetryService.php": {
       "sha256": "3e002bc9d185d05cde822e78b9adf3a214a0088c3c2a3391e58a28059fd76945",
@@ -648,8 +652,8 @@
       "size": 16339
     },
     "includes/Firewall/Evaluators/AiAgentBehaviorEvaluator.php": {
-      "sha256": "534509eca61634862103b6d12e196b259b567791953ed959d960e468c3a4ddbc",
-      "size": 17295
+      "sha256": "9efb916674a625af710accb7a4cf80346a595b5179764601708ab562e7c4ae39",
+      "size": 19108
     },
     "includes/Firewall/Evaluators/AuthAndAjaxSurfaceEvaluator.php": {
       "sha256": "7d35d431a67665e42711f32dffc871e38941502ca63033e9b289433368ac4141",
@@ -672,8 +676,8 @@
       "size": 32693
     },
     "includes/Firewall/GhostRouteTrap.php": {
-      "sha256": "42902cbed574c1d5d4c49177f369eeb4c3e3f200993275b574c0ec6079490ed8",
-      "size": 14031
+      "sha256": "555956a0e1691fe115d55939bef90099d6b03290b6b995121502a6e211d6886b",
+      "size": 14376
     },
     "includes/Firewall/HoneyTokenEngine.php": {
       "sha256": "e64e5844a215c265d59fd91f44df590383db35bc79c14f130f526b5941c94591",

@@ -183,6 +183,37 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
             }
         }
 
+        // Heuristic 2b: Impossible Future Browser Major Version (Signal +45 risk ONLY — never independent ban trigger)
+        // Deterministic ceiling: Chrome versions > 150 (e.g. Chrome/155.0.0.0) indicate synthetic adversary simulation
+        if ($ua !== '' && preg_match('/Chrome\/(\d+)\./i', $ua, $chrome_matches)) {
+            $major_ver = (int) ($chrome_matches[1] ?? 0);
+            if ($major_ver >= 150) {
+                $risk_score += 45;
+                $signals[] = 'impossible_browser_version_future';
+            }
+        }
+
+        // Heuristic 2c: Hard-block raw HTTP clients probing non-existent .php files under /wp-content/ or /wp-admin/
+        if ($ua !== '' && preg_match('/^(?:Go-http-client|python-requests|curl|libwww-perl|Wget|aiohttp|httpx)(?:\/|\s|$)/i', $ua)) {
+            $req_path = strtolower((string) (wp_parse_url($ctx->uri, PHP_URL_PATH) ?: $ctx->uri));
+            if (str_ends_with($req_path, '.php') && (str_starts_with($req_path, '/wp-content/') || str_starts_with($req_path, '/wp-admin/maint/'))) {
+                if (class_exists('\\WebCareProScanner\\Firewall\\Core\\BehavioralCampaignEngine')) {
+                    \WebCareProScanner\Firewall\Core\BehavioralCampaignEngine::record_probe($ctx->ip, 'webshell_probe', $req_path);
+                }
+                return new WafVerdict(
+                    'block',
+                    'WAF-RAW-CLIENT-PHP-PROBE',
+                    'Direct scripted HTTP client reconnaissance against PHP subsystem forbidden.',
+                    [
+                        'category'    => 'Exploit Reconnaissance',
+                        'status_code' => 403,
+                        'user_agent'  => $ua,
+                        'path'        => $req_path,
+                    ]
+                );
+            }
+        }
+
         // Heuristic 3: Sub-250ms Form-Submit Velocity (+35 risk)
         // Validates HMAC-signed webcare_render_ts (ts:sig) to verify genuine human elapsed submit time
         if ($ctx->method === 'POST') {
