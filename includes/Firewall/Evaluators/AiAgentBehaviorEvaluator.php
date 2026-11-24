@@ -135,7 +135,32 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
             }
         }
 
-        // Calculate heuristic risk score
+        // 3b. Check Commercial / SEO Crawler Swarm Guard (PetalBot, Bytespider, Semrush, etc.)
+        if (class_exists('\\WebCareProScanner\\Firewall\\Core\\SubnetSwarmGuard')) {
+            $swarm_check = \WebCareProScanner\Firewall\Core\SubnetSwarmGuard::inspect_crawler_swarm($ctx->ip, $ua, $settings);
+            if ($swarm_check !== null) {
+                if ($swarm_check['action'] === 'block') {
+                    return new WafVerdict(
+                        'block',
+                        $swarm_check['rule_id'] ?? \WebCareProScanner\Firewall\Core\SubnetSwarmGuard::BLOCK_RULE_ID,
+                        $swarm_check['message'] ?? 'Commercial crawler blocked by policy.',
+                        ['category' => 'Bot Recon Defense', 'status_code' => 403]
+                    );
+                }
+                if ($swarm_check['action'] === 'throttle') {
+                    return new WafVerdict(
+                        'rate_limit',
+                        $swarm_check['rule_id'] ?? \WebCareProScanner\Firewall\Core\SubnetSwarmGuard::THROTTLE_RULE_ID,
+                        $swarm_check['message'] ?? 'Commercial crawler subnet swarm throttled.',
+                        [
+                            'category'    => 'Bot Recon Defense',
+                            'status_code' => 429,
+                            'retry_after' => $swarm_check['retry_after'] ?? 120,
+                        ]
+                    );
+                }
+            }
+        }
         $risk_score = 0;
         $signals = [];
 

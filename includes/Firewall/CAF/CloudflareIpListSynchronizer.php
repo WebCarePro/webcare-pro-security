@@ -36,6 +36,8 @@ class CloudflareIpListSynchronizer {
     /**
      * Increment monotonic per-IP generation token (preventing stale queued bans from applying after unban).
      *
+     * Protected inside the atomic mutation boundary to eliminate race conditions.
+     *
      * @param string $ip
      * @return int New generation number
      */
@@ -44,16 +46,21 @@ class CloudflareIpListSynchronizer {
         if ($ip === '') {
             return 1;
         }
-        $generations = get_option(self::OPTION_IP_GENERATIONS, []);
-        $generations = is_array($generations) ? $generations : [];
-        $current = (int) ($generations[$ip] ?? 0);
-        $next = $current + 1;
-        $generations[$ip] = $next;
-        if (count($generations) > 2000) {
-            $generations = array_slice($generations, -1000, null, true);
-        }
-        update_option(self::OPTION_IP_GENERATIONS, $generations, false);
-        return $next;
+        $next_gen = 1;
+        self::mutate_ban_queue(static function (array $queue) use ($ip, &$next_gen): array {
+            $generations = get_option(self::OPTION_IP_GENERATIONS, []);
+            $generations = is_array($generations) ? $generations : [];
+            $current = (int) ($generations[$ip] ?? 0);
+            $next_gen = $current + 1;
+            $generations[$ip] = $next_gen;
+            if (count($generations) > 2000) {
+                $generations = array_slice($generations, -1000, null, true);
+            }
+            update_option(self::OPTION_IP_GENERATIONS, $generations, false);
+            return $queue;
+        });
+
+        return $next_gen;
     }
 
     /**
@@ -155,26 +162,31 @@ class CloudflareIpListSynchronizer {
     }
 
     /**
-     * Add a banned IP to the synchronization queue and schedule immediate edge push if under burst threshold.
+     * Add a banned IP to the synchronization queue for background execution.
+     *
+     * Invariants:
+     * - ZERO shutdown HTTP calls or inline requests to Cloudflare (processed strictly via background worker / WP-Cron).
+     * - Returns an array with operation_id and cf_sync_state ('queued'|'disabled'|'enqueue_failed').
      *
      * @param string $ip Client IPv4 or IPv6
      * @param string $reason Reason description
      * @param int $ttl Time to live in seconds (default 86400)
+     * @return array{cf_sync_state: string, operation_id: ?string}
      */
-    public static function queue_ip_ban(string $ip, string $reason = 'WebCare WAF Threat', int $ttl = 86400): void {
+    public static function queue_ip_ban(string $ip, string $reason = 'WebCare WAF Threat', int $ttl = 86400): array {
         $ip = trim($ip);
         if (!filter_var($ip, FILTER_VALIDATE_IP)) {
-            return;
+            return ['cf_sync_state' => 'disabled', 'operation_id' => null];
         }
 
         // Never push private/loopback/reserved IPs to Cloudflare
         if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
-            return;
+            return ['cf_sync_state' => 'disabled', 'operation_id' => null];
         }
 
         $settings = SettingsManager::get_settings();
         if (empty($settings['cloudflare_enabled']) || empty($settings['cloudflare_api_token']) || empty($settings['cloudflare_zone_id'])) {
-            return;
+            return ['cf_sync_state' => 'disabled', 'operation_id' => null];
         }
 
         $generation = self::increment_ip_generation($ip);
@@ -195,11 +207,15 @@ class CloudflareIpListSynchronizer {
 
         // Always persist ban intent immediately to persistent queue under atomic spinlock (Finding 1.2)
         $queue_count = 0;
-        self::mutate_ban_queue(static function (array $queue) use ($ip, $entry, &$queue_count): array {
+        $success = self::mutate_ban_queue(static function (array $queue) use ($ip, $entry, &$queue_count): array {
             $queue[$ip] = $entry;
             $queue_count = count($queue);
             return $queue;
         });
+
+        if (!$success) {
+            return ['cf_sync_state' => 'enqueue_failed', 'operation_id' => null];
+        }
 
         self::log_sync_event([
             'operation_id' => $operation_id,
@@ -209,31 +225,7 @@ class CloudflareIpListSynchronizer {
             'status'       => 'queued',
         ]);
 
-        // Burst limiter: Check how many instant bans were pushed in the current 10-second window
-        $burst_key = 'webcare_cf_instant_burst';
-        $burst_count = function_exists('apcu_fetch') && ini_get('apc.enabled')
-            ? (int) apcu_fetch($burst_key)
-            : (int) get_transient($burst_key);
-
-        if ($burst_count < 5) {
-            if (function_exists('apcu_store') && ini_get('apc.enabled')) {
-                apcu_store($burst_key, $burst_count + 1, 10);
-            } else {
-                set_transient($burst_key, $burst_count + 1, 10);
-            }
-
-            self::$shutdown_immediate_queue[$ip] = $entry;
-            if (!self::$shutdown_registered) {
-                self::$shutdown_registered = true;
-                register_shutdown_function([__CLASS__, 'flush_immediate_shutdown_bans']);
-            }
-            return;
-        }
-
-        // High-velocity swarm (>5 bans in 10s): background flush if queue >= 25 entries
-        if ($queue_count >= 25) {
-            self::trigger_background_queue_flush();
-        }
+        return ['cf_sync_state' => 'queued', 'operation_id' => $operation_id];
     }
 
     /**

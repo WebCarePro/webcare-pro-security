@@ -42,24 +42,26 @@ final class OfficialCrawlerRegistry {
 
     /**
      * Exact allowed HTTPS feed configurations.
+     * Note: Only genuine JSON feeds with exact host verification are included.
+     * Crawlers without JSON feeds (Applebot, DuckDuckGo) rely on verified static fallbacks.
      */
     private const FEED_ENDPOINTS = [
         'googlebot' => [
             'url'        => 'https://developers.google.com/search/apis/ipranges/googlebot.json',
             'allowed_host' => 'developers.google.com',
-            'json_path'  => 'prefixes', // array of items with 'ipv4Prefix' or 'ipv6Prefix'
+            'json_path'  => 'prefixes',
             'format'     => 'google',
         ],
         'bingbot' => [
             'url'        => 'https://www.bing.com/msnbot.json',
             'allowed_host' => 'www.bing.com',
-            'json_path'  => 'prefixes', // array of items with 'ipv4Prefix' or 'ipv6Prefix'
+            'json_path'  => 'prefixes',
             'format'     => 'bing',
         ],
         'oai-searchbot' => [
             'url'        => 'https://openai.com/searchbot.json',
             'allowed_host' => 'openai.com',
-            'json_path'  => 'prefixes', // array of items with 'ipv4Prefix' or 'ipv6Prefix'
+            'json_path'  => 'prefixes',
             'format'     => 'openai',
         ],
         'oai-gptbot' => [
@@ -67,13 +69,6 @@ final class OfficialCrawlerRegistry {
             'allowed_host' => 'openai.com',
             'json_path'  => 'prefixes',
             'format'     => 'openai',
-        ],
-        'duckduckbot' => [
-            'url'        => 'https://duckduckgo.com/duckduckgo-help-pages/results/duckduckbot-ip-addresses/',
-            // Note: DuckDuckGo publishes static IPs; if endpoint is HTML/JSON we fallback to static ranges
-            'allowed_host' => 'duckduckgo.com',
-            'json_path'  => 'prefixes',
-            'format'     => 'duckduckgo',
         ],
     ];
 
@@ -276,6 +271,13 @@ final class OfficialCrawlerRegistry {
      * @return array<string, array<string, mixed>> Sync report per feed.
      */
     public static function sync_all_feeds_background(): array {
+        // Guard to run ONLY in background context (CLI, cron, or testing)
+        $is_cron = (defined('DOING_CRON') && DOING_CRON);
+        $is_cli  = (defined('WP_CLI') && WP_CLI) || (PHP_SAPI === 'cli');
+        if (!$is_cron && !$is_cli && !defined('WEBCAREPROSCAN_TESTING')) {
+            return [];
+        }
+
         $report = [];
         $existing_cache = self::load_cidr_cache();
         $updated_cache  = $existing_cache;
@@ -320,10 +322,10 @@ final class OfficialCrawlerRegistry {
             return ['success' => false, 'cidrs' => [], 'error' => 'Disallowed or non-HTTPS feed host'];
         }
 
-        // 2. Perform HTTP GET with 5s timeout & redirect verification
+        // 2. Perform HTTP GET with 5s timeout & zero-redirect exact host enforcement
         $args = [
             'timeout'     => self::HTTP_TIMEOUT,
-            'redirection' => 2,
+            'redirection' => 0,
             'httpversion' => '1.1',
             'user-agent'  => 'WebCarePro-Security-CrawlerFeedSync/1.0',
             'sslverify'   => true,

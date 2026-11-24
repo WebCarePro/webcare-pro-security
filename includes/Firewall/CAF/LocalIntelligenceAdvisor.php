@@ -54,8 +54,19 @@ final class LocalIntelligenceAdvisor {
             }
         }
 
-        $recommendations = [];
-        $settings = SettingsManager::get_settings();
+        // Verify storage readability
+        $storage_dir = WafFileLogger::get_storage_dir();
+        if (!is_dir($storage_dir) || !is_readable($storage_dir)) {
+            return [
+                'generated_at'    => time(),
+                'recommendations' => [],
+                'status'          => 'unavailable',
+            ];
+        }
+
+        try {
+            $recommendations = [];
+            $settings = SettingsManager::get_settings();
 
         // 1. Check Official Crawler Feed Age
         $crawler_cache = get_option(OfficialCrawlerRegistry::OPTION_CACHE_KEY, null);
@@ -123,17 +134,25 @@ final class LocalIntelligenceAdvisor {
             ];
         }
 
-        // Cap to at most 3 actionable suggestions
-        $sliced = array_slice($recommendations, 0, self::MAX_RECOMMENDATIONS);
+            // Cap to at most 3 actionable suggestions
+            $sliced = array_slice($recommendations, 0, self::MAX_RECOMMENDATIONS);
 
-        $result = [
-            'generated_at'    => time(),
-            'recommendations' => $sliced,
-            'status'          => 'ok',
-        ];
+            $result = [
+                'generated_at'    => time(),
+                'recommendations' => $sliced,
+                'status'          => 'ok',
+            ];
 
-        set_transient(self::CACHE_KEY, $result, self::CACHE_TTL);
-        return $result;
+            set_transient(self::CACHE_KEY, $result, self::CACHE_TTL);
+            return $result;
+        } catch (\Throwable $e) {
+            return [
+                'generated_at'    => time(),
+                'recommendations' => [],
+                'status'          => 'degraded',
+                'error'           => $e->getMessage(),
+            ];
+        }
     }
 
     /**

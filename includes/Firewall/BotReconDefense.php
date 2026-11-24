@@ -226,6 +226,33 @@ class BotReconDefense {
             }
         }
 
+        // 2b. Check Commercial / SEO Crawler Policy & Multi-Level Subnet Swarms (PetalBot, Bytespider, etc.)
+        if (class_exists('\\WebCareProScanner\\Firewall\\Core\\SubnetSwarmGuard')) {
+            $swarm_decision = \WebCareProScanner\Firewall\Core\SubnetSwarmGuard::inspect_crawler_swarm($client_ip, $user_agent, $settings);
+            if ($swarm_decision !== null) {
+                if ($swarm_decision['action'] === 'block') {
+                    return [
+                        'id'          => $swarm_decision['rule_id'] ?? 'WAF-CRAWLER-POLICY-BLOCKED',
+                        'name'        => 'Commercial Crawler Blocked by Policy',
+                        'category'    => 'Bot Recon Defense',
+                        'match_type'  => 'Crawler Policy',
+                        'match_value' => $swarm_decision['message'] ?? 'Crawler blocked',
+                    ];
+                }
+                if ($swarm_decision['action'] === 'throttle') {
+                    return [
+                        'id'          => $swarm_decision['rule_id'] ?? 'WAF-SUBNET-SWARM-THROTTLE',
+                        'name'        => 'Commercial Crawler Subnet Swarm Throttled',
+                        'category'    => 'Bot Recon Defense',
+                        'match_type'  => 'Subnet Rate Limit',
+                        'match_value' => $swarm_decision['message'] ?? 'Crawler throttled',
+                        'status_code' => 429,
+                        'retry_after' => $swarm_decision['retry_after'] ?? 120,
+                    ];
+                }
+            }
+        }
+
         // 3. Check Fake Search Engine & Cloud SEO Crawler Spoofing
         if (!empty($settings['waf_block_fake_bots'])) {
             $is_metadata_crawl_path = false;

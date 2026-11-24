@@ -70,6 +70,9 @@ class Plugin {
         if (class_exists(\WebCareProScanner\Firewall\WafFileLogger::class)) {
             \WebCareProScanner\Firewall\WafFileLogger::init();
         }
+        if (class_exists(\WebCareProScanner\Firewall\OfficialCrawlerRegistry::class)) {
+            \WebCareProScanner\Firewall\OfficialCrawlerRegistry::init();
+        }
         if (class_exists(\WebCareProScanner\Firewall\FirewallEngine::class)) {
             \WebCareProScanner\Firewall\FirewallEngine::init();
         }

@@ -546,6 +546,9 @@ final class AlwaysOnCoreGuard implements WafEvaluatorInterface {
         if (!empty($settings['waf_block_uploads_php_exec'])) {
             $clean_path = strtolower(wp_parse_url($request_uri, PHP_URL_PATH) ?: $request_uri);
             if (preg_match('/\/wp-content\/uploads\/.*\.php([0-9]|s|tml)?(\/|\?|$)/i', $clean_path) || preg_match('/\/wp-content\/uploads\/.*\.php([0-9]|s|tml)?/i', $request_uri)) {
+                if (class_exists('\\WebCareProScanner\\Firewall\\Core\\BehavioralCampaignEngine') && $client_ip !== '') {
+                    \WebCareProScanner\Firewall\Core\BehavioralCampaignEngine::record_probe($client_ip, 'uploads_php', $clean_path);
+                }
                 return new WafVerdict(
                     'block',
                     'WAF-UPLOADS-PHP-DENY',

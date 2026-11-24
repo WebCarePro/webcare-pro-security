@@ -1328,68 +1328,91 @@ class WafFileLogger {
      *
      * Invariants:
      * - Original raw WAF records remain 100% byte-for-byte immutable and recoverable.
-     * - Returns a separate aggregated read-view grouping events by IP within rolling bursts.
+     * - Segments bursts per IP using a rolling inactivity gap (default 300s / 5 minutes starts a new burst segment).
+     * - Returns a separate aggregated read-view with unique campaign_id, burst_count, distinct_target_count, and sample_uris.
      *
      * @param int $lookback_seconds Window to inspect (default 86400s / 24h)
      * @param int $max_records Max raw records to evaluate (default 5000)
-     * @return array<string, array<string, mixed>>
+     * @param int $burst_gap_seconds Inactivity threshold to segment bursts (default 300s)
+     * @return array<array<string, mixed>>
      */
-    public static function get_campaign_summaries(int $lookback_seconds = 86400, int $max_records = 5000): array {
+    public static function get_campaign_summaries(int $lookback_seconds = 86400, int $max_records = 5000, int $burst_gap_seconds = 300): array {
         $logs = self::query_logs(['range' => '24h'], $max_records, 0);
         $records = $logs['logs'] ?? [];
 
-        $campaigns = [];
         $cutoff = time() - $lookback_seconds;
 
+        // Group records by IP sorted chronologically
+        $by_ip = [];
         foreach ($records as $entry) {
             $ts = (int) ($entry['timestamp'] ?? 0);
             if ($ts < $cutoff) {
                 continue;
             }
-
             $ip = (string) ($entry['ip_address'] ?? '');
             if ($ip === '') {
                 continue;
             }
+            $by_ip[$ip][] = $entry;
+        }
 
-            $uri = (string) ($entry['request_uri'] ?? '/');
-            $rule_id = (string) ($entry['rule_id'] ?? 'WAF-GENERIC');
+        $campaigns = [];
 
-            if (!isset($campaigns[$ip])) {
-                $campaigns[$ip] = [
-                    'campaign_id'      => 'camp_' . substr(hash('xxh128', $ip . '_' . $ts), 0, 12),
-                    'ip_address'       => $ip,
-                    'burst_count'      => 0,
-                    'distinct_targets' => [],
-                    'rule_ids'         => [],
-                    'first_seen'       => $ts,
-                    'last_seen'        => $ts,
-                    'sample_uris'      => [],
-                ];
+        foreach ($by_ip as $ip => $ip_records) {
+            // Sort records chronologically ascending
+            usort($ip_records, static function ($a, $b) {
+                return ((int) ($a['timestamp'] ?? 0)) <=> ((int) ($b['timestamp'] ?? 0));
+            });
+
+            $current_burst = null;
+
+            foreach ($ip_records as $rec) {
+                $ts = (int) ($rec['timestamp'] ?? 0);
+                $uri = (string) ($rec['request_uri'] ?? '/');
+                $rule_id = (string) ($rec['rule_id'] ?? 'WAF-GENERIC');
+
+                if ($current_burst === null || ($ts - $current_burst['last_seen']) > $burst_gap_seconds) {
+                    // Finalize preceding burst if exists
+                    if ($current_burst !== null) {
+                        $current_burst['distinct_target_count'] = count($current_burst['distinct_targets']);
+                        unset($current_burst['distinct_targets']);
+                        $campaigns[] = $current_burst;
+                    }
+
+                    // Start new burst segment
+                    $current_burst = [
+                        'campaign_id'      => 'camp_' . substr(hash('xxh128', $ip . '_' . $ts . '_' . wp_rand()), 0, 12),
+                        'ip_address'       => $ip,
+                        'burst_count'      => 1,
+                        'distinct_targets' => [$uri],
+                        'rule_ids'         => [$rule_id],
+                        'first_seen'       => $ts,
+                        'last_seen'        => $ts,
+                        'sample_uris'      => [$uri],
+                    ];
+                } else {
+                    $current_burst['burst_count']++;
+                    $current_burst['last_seen'] = max($current_burst['last_seen'], $ts);
+
+                    if (!in_array($uri, $current_burst['distinct_targets'], true)) {
+                        $current_burst['distinct_targets'][] = $uri;
+                    }
+                    if (!in_array($rule_id, $current_burst['rule_ids'], true)) {
+                        $current_burst['rule_ids'][] = $rule_id;
+                    }
+                    if (count($current_burst['sample_uris']) < 10 && !in_array($uri, $current_burst['sample_uris'], true)) {
+                        $current_burst['sample_uris'][] = $uri;
+                    }
+                }
             }
 
-            $campaigns[$ip]['burst_count']++;
-            $campaigns[$ip]['first_seen'] = min($campaigns[$ip]['first_seen'], $ts);
-            $campaigns[$ip]['last_seen']  = max($campaigns[$ip]['last_seen'], $ts);
-
-            if (!in_array($uri, $campaigns[$ip]['distinct_targets'], true)) {
-                $campaigns[$ip]['distinct_targets'][] = $uri;
-            }
-            if (!in_array($rule_id, $campaigns[$ip]['rule_ids'], true)) {
-                $campaigns[$ip]['rule_ids'][] = $rule_id;
-            }
-            if (count($campaigns[$ip]['sample_uris']) < 10 && !in_array($uri, $campaigns[$ip]['sample_uris'], true)) {
-                $campaigns[$ip]['sample_uris'][] = $uri;
+            if ($current_burst !== null) {
+                $current_burst['distinct_target_count'] = count($current_burst['distinct_targets']);
+                unset($current_burst['distinct_targets']);
+                $campaigns[] = $current_burst;
             }
         }
 
-        // Format and compute count of distinct targets
-        foreach ($campaigns as &$c) {
-            $c['distinct_target_count'] = count($c['distinct_targets']);
-            unset($c['distinct_targets']); // Keep payload lean
-        }
-        unset($c);
-
-        return array_values($campaigns);
+        return $campaigns;
     }
 }

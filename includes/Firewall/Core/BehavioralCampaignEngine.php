@@ -150,11 +150,32 @@ final class BehavioralCampaignEngine {
     /**
      * Commit a 24-hour local ban and queue Cloudflare sync.
      *
+     * Invariant: Never ban authenticated admins, whitelisted IPs, or active shoppers.
+     *
      * @param string $ip
      * @param string $reason
      */
     public static function commit_campaign_autoban(string $ip, string $reason): void {
-        BlocklistRepository::block_ip($ip, 86400, $reason);
+        // Exemption checks: Admins, Whitelisted IPs, and Active Shoppers
+        if (class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine') && \WebCareProScanner\Firewall\FirewallEngine::is_authenticated_administrator()) {
+            return;
+        }
+
+        if (class_exists('\\WebCareProScanner\\Firewall\\Core\\AllowlistManager')) {
+            $settings = \WebCareProScanner\System\SettingsManager::get_settings();
+            if (\WebCareProScanner\Firewall\Core\AllowlistManager::is_ip_whitelisted($ip, (string) ($settings['waf_whitelisted_ips'] ?? ''))) {
+                return;
+            }
+        }
+
+        if (class_exists('\\WebCareProScanner\\Firewall\\Core\\CommerceSessionGuard')) {
+            if (\WebCareProScanner\Firewall\Core\CommerceSessionGuard::has_active_shopper_session() || \WebCareProScanner\Firewall\Core\CommerceSessionGuard::is_exempt_from_operational_ban($ip)) {
+                return;
+            }
+        }
+
+        // Pass arguments matching BlocklistRepository::block_ip($ip, $reason, 86400)
+        BlocklistRepository::block_ip($ip, $reason, 86400);
 
         // Queue generation-fenced Cloudflare ban
         if (class_exists(CloudflareIpListSynchronizer::class)) {

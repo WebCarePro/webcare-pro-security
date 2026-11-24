@@ -2644,6 +2644,11 @@ class FirewallEngine {
             $current_hits = (int) get_transient($honeypot_hit_key) + 1;
             set_transient($honeypot_hit_key, $current_hits, 600);
 
+            // Record into BehavioralCampaignEngine for high-confidence campaign tracking
+            if (class_exists('\\WebCareProScanner\\Firewall\\Core\\BehavioralCampaignEngine')) {
+                \WebCareProScanner\Firewall\Core\BehavioralCampaignEngine::record_probe($client_ip, 'auth_honeypot', 'username:' . $username);
+            }
+
             $honeypot_incident_id = 'WEBCARE-' . strtoupper(substr(md5($client_ip . microtime(true) . wp_rand()), 0, 8));
             self::log_incident([
                 'id'          => 'WAF-FORBIDDEN-USERNAME-TRAP',

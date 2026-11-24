@@ -882,22 +882,109 @@ final class ViolationResponder {
             }
         }
 
+        // Evaluate exemption boundaries BEFORE flipping $is_warning = false on terminal strikes
+        $rule_id_str = (string) ($rule['id'] ?? '');
+        $rule_cat    = (string) ($rule['category'] ?? '');
+        $is_admin_identity = $is_admin_session || (function_exists('is_user_logged_in') && is_user_logged_in() && function_exists('current_user_can') && current_user_can('manage_options'));
+
+        $is_verified_crawler = false;
+        if (class_exists('\\WebCareProScanner\\Firewall\\BotReconDefense')) {
+            $raw_ua = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';
+            $is_verified_crawler = \WebCareProScanner\Firewall\BotReconDefense::is_genuine_search_engine($client_ip, $raw_ua);
+        }
+
+        $has_shopper_session = class_exists('\\WebCareProScanner\\Firewall\\Core\\CommerceSessionGuard')
+            && (\WebCareProScanner\Firewall\Core\CommerceSessionGuard::has_active_shopper_session()
+                || \WebCareProScanner\Firewall\Core\CommerceSessionGuard::is_exempt_from_operational_ban());
+
+        $is_exempt_from_warning_bans = ($is_admin_identity || $is_verified_crawler || $has_shopper_session);
+
         // Evaluate progressive warning status and record single warning strike strictly when applicable
         $is_warning = self::is_progressive_warning_rule($rule, $settings);
         $strike_terminal = false;
         if ($is_warning && !isset($rule['strike_info'])) {
             $rule['strike_info'] = \WebCareProScanner\Firewall\Core\TransientRateLimiter::record_warning_strike($client_ip, 4, 900);
             if (!empty($rule['strike_info']['is_terminal_ban'])) {
-                $strike_terminal = true;
-                // Terminal warning strike reached: upgrade enforcement from warned to blocked
-                $is_warning = false;
+                // Invariant: Exemptions are strictly evaluated BEFORE upgrading enforcement on generic warning strikes
+                if (!$is_exempt_from_warning_bans || $tier === FirewallEngine::TIER_CONFIRMED_EXPLOIT || str_contains($rule_id_str, 'SENSITIVE-FILE')) {
+                    $strike_terminal = true;
+                    $is_warning = false;
+                }
             }
         } elseif (!empty($rule['strike_info']['is_terminal_ban'])) {
-            $strike_terminal = true;
-            $is_warning = false;
+            if (!$is_exempt_from_warning_bans || $tier === FirewallEngine::TIER_CONFIRMED_EXPLOIT || str_contains($rule_id_str, 'SENSITIVE-FILE')) {
+                $strike_terminal = true;
+                $is_warning = false;
+            }
         }
 
         $incident_id = 'WEBCARE-' . strtoupper(substr(md5($client_ip . microtime(true) . wp_rand()), 0, 8));
+
+        $eligible_for_ip_ban = false;
+        $effective_ban_ttl   = 0;
+
+        if ($tier === FirewallEngine::TIER_ADMIN_POLICY && $stored_custom_rule !== null) {
+            // 1. Explicit administrator-configured ban: strictly read TTL from the STORED database record
+            $stored_ban_ttl     = max(0, (int) ($stored_custom_rule['ban_ttl'] ?? 0));
+            if ($stored_ban_ttl > 0) {
+                $eligible_for_ip_ban = true;
+                $effective_ban_ttl   = $stored_ban_ttl;
+            }
+        } elseif ($tier === FirewallEngine::TIER_CONFIRMED_EXPLOIT) {
+            $eligible_for_ip_ban = true;
+            $rule_ban_ttl        = max(0, (int) ($rule['ban_ttl'] ?? 0));
+            $effective_ban_ttl   = $rule_ban_ttl > 0 ? $rule_ban_ttl : 86400;
+        } elseif ($strike_terminal) {
+            // 3. Progressive Warning strike terminal ban (3600s first ban, 86400s repeat within 24h)
+            $repeat_key = 'webcare_strike_ban_repeat_' . md5($client_ip);
+            $is_repeat_ban = (bool) get_transient($repeat_key);
+            $effective_ban_ttl = $is_repeat_ban ? 86400 : 3600;
+            set_transient($repeat_key, 1, 86400);
+            $eligible_for_ip_ban = true;
+        }
+
+        if ($tier !== FirewallEngine::TIER_CONFIRMED_EXPLOIT && !str_contains($rule_id_str, 'SENSITIVE-FILE')) {
+            if ($is_exempt_from_warning_bans) {
+                $eligible_for_ip_ban = false;
+            }
+        } else {
+            if ($is_admin_identity) {
+                $eligible_for_ip_ban = false;
+            } elseif ($has_shopper_session) {
+                $effective_ban_ttl = min($effective_ban_ttl, 900);
+            }
+        }
+
+        $cf_auto_sync_active = !empty($settings['cloudflare_enabled']) && !empty($settings['cloudflare_auto_sync_bans']);
+        $rule_sync_cf        = $eligible_for_ip_ban && ($cf_auto_sync_active || !empty($rule['sync_cloudflare']));
+
+        // Commit the local ban and enqueue CF operation BEFORE calling self::log_incident() so telemetry writes real values
+        if ($eligible_for_ip_ban) {
+            $ban_reason = sprintf('[%s] %s', $rule_id_str ?: $rule_cat, $rule['description'] ?? 'Critical WAF exploit intercepted');
+            BlocklistRepository::add_blocked_ip(
+                $client_ip,
+                $ban_reason,
+                $effective_ban_ttl,
+                $rule_id_str ?: 'WAF-CRITICAL',
+                $rule['name'] ?? $rule_cat,
+                $rule_cat,
+                $incident_id,
+                null,
+                $rule_sync_cf
+            );
+
+            $last_cf = BlocklistRepository::$last_ban_cf_result ?? ['cf_sync_state' => 'disabled', 'operation_id' => null];
+            $rule['cf_operation_id'] = $last_cf['operation_id'];
+            $rule['cf_sync_state']   = $last_cf['cf_sync_state'];
+            $rule['decision']        = 'block_and_ban';
+            $rule['enforcement_outcome'] = 'completed';
+        } else {
+            $rule['decision'] = $is_warning ? 'warn' : 'block';
+            $rule['enforcement_outcome'] = 'completed';
+            $rule['cf_operation_id'] = null;
+            $rule['cf_sync_state'] = 'disabled';
+        }
+
         self::log_incident($rule, $is_warning ? 'warned' : 'blocked', $incident_id);
 
         // Record blocked probe for 60-second rolling velocity counter (OS-01)

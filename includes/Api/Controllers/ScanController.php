@@ -166,6 +166,27 @@ final class ScanController extends AbstractApiController {
             'permission_callback' => $permission,
         ]);
 
+        register_rest_route($namespace, '/advisor/recommendations', [
+            'methods'             => 'GET',
+            'callback'            => [self::class, 'get_local_advisor_recommendations'],
+            'permission_callback' => $permission,
+        ]);
+
+    }
+
+    /**
+     * Get Local Adaptive Intelligence Advisor recommendations (recommend-only).
+     *
+     * @param \WP_REST_Request $request
+     * @return \WP_REST_Response
+     */
+    public static function get_local_advisor_recommendations(\WP_REST_Request $request): \WP_REST_Response {
+        $force = !empty($request->get_param('force_refresh'));
+        $data = class_exists('\\WebCareProScanner\\Firewall\\CAF\\LocalIntelligenceAdvisor')
+            ? \WebCareProScanner\Firewall\CAF\LocalIntelligenceAdvisor::get_recommendations($force)
+            : ['generated_at' => time(), 'recommendations' => [], 'status' => 'unavailable'];
+
+        return new \WP_REST_Response($data, 200);
     }
 
     public static function get_scan_manifest(\WP_REST_Request $request) {

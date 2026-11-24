@@ -171,6 +171,7 @@ final class BlocklistRepository {
         ]);
 
         // Context-Adaptive Firewall (CAF Phase 2): Queue IP ban for Cloudflare Edge synchronization
+        $cf_res = ['cf_sync_state' => 'disabled', 'operation_id' => null];
         if ($sync_cloudflare && class_exists('\\WebCareProScanner\\Firewall\\CAF\\CloudflareIpListSynchronizer')) {
             $forensic_note = FirewallEngine::build_forensic_cf_note(
                 !empty($reason) ? $reason : 'Blocked by security firewall policy',
@@ -180,15 +181,23 @@ final class BlocklistRepository {
                 $effective_duration,
                 $admin_user
             );
-            \WebCareProScanner\Firewall\CAF\CloudflareIpListSynchronizer::queue_ip_ban(
+            $cf_res = \WebCareProScanner\Firewall\CAF\CloudflareIpListSynchronizer::queue_ip_ban(
                 $ip,
                 $forensic_note,
                 $effective_duration > 0 ? $effective_duration : 86400
             );
         }
 
+        self::$last_ban_cf_result = $cf_res;
         return true;
     }
+
+    /**
+     * Last Cloudflare enqueue result from add_blocked_ip().
+     *
+     * @var array{cf_sync_state: string, operation_id: ?string}
+     */
+    public static array $last_ban_cf_result = ['cf_sync_state' => 'disabled', 'operation_id' => null];
 
     /**
      * Compatibility alias for blocking an IP address (used by GhostRouteTrap / Bot Traps)
