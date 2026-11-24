@@ -1231,55 +1231,20 @@ class WafFileLogger {
      * @param string|int $id
      * @return bool
      */
+    /**
+     * Delete log entry (Disallowed for Forensic Immutability).
+     *
+     * Invariant:
+     * Raw WAF forensic logs are write-once and immutable.
+     * In-place destructive rewriting of raw forensic partitions is prohibited to prevent evidence tampering.
+     * Storage volume is governed exclusively through explicit retention/archival pruning.
+     *
+     * @param string|int $id
+     * @return bool
+     */
     public static function delete_log($id): bool {
-        $id_str = trim((string) $id);
-        if ($id_str === '') {
-            return false;
-        }
-
-        $dir = self::get_storage_dir();
-        if (!is_dir($dir)) {
-            return false;
-        }
-
-        $files = scandir($dir);
-        $deleted = false;
-
-        foreach ($files as $file) {
-            if (!preg_match('/-waf-logs\.json(?:\.\d+)?$/', $file)) {
-                continue;
-            }
-
-            $filepath = $dir . '/' . $file;
-            $lines = @file($filepath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-            if (!is_array($lines)) {
-                continue;
-            }
-
-            $remaining = [];
-            $modified = false;
-
-            foreach ($lines as $line) {
-                $rec = json_decode($line, true);
-                if (is_array($rec)) {
-                    $match_id = (string) ($rec['id'] ?? '');
-                    $match_inc = (string) ($rec['incident_id'] ?? '');
-                    if ($match_id === $id_str || $match_inc === $id_str) {
-                        $modified = true;
-                        $deleted = true;
-                        continue;
-                    }
-                }
-                $remaining[] = $line;
-            }
-
-            if ($modified) {
-                // phpcs:ignore WordPress.WP.AlternativeFileSystem.file_put_contents_file_put_contents
-                @file_put_contents($filepath, implode("\n", $remaining) . (empty($remaining) ? '' : "\n"), LOCK_EX);
-            }
-        }
-
-        return $deleted;
+        // Individual raw event mutation is prohibited to preserve cryptographic forensic immutability
+        return false;
     }
 
     /**
@@ -1318,6 +1283,14 @@ class WafFileLogger {
                 // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
                 $wpdb->query("TRUNCATE TABLE `{$table}`");
             }
+        }
+
+        // Record immutable audit entry for administrator retention purge
+        if (class_exists('\\WebCareProScanner\\Audit\\AuditLogger')) {
+            \WebCareProScanner\Audit\AuditLogger::log(
+                'waf_logs_purged',
+                'Administrator triggered manual retention purge of WAF forensic log files.'
+            );
         }
 
         return true;
@@ -1379,9 +1352,9 @@ class WafFileLogger {
                         $campaigns[] = $current_burst;
                     }
 
-                    // Start new burst segment
+                    // Start new burst segment with deterministic campaign_id
                     $current_burst = [
-                        'campaign_id'      => 'camp_' . substr(hash('xxh128', $ip . '_' . $ts . '_' . wp_rand()), 0, 12),
+                        'campaign_id'      => 'camp_' . substr(hash('xxh128', $ip . '|' . $ts), 0, 12),
                         'ip_address'       => $ip,
                         'burst_count'      => 1,
                         'distinct_targets' => [$uri],

@@ -174,10 +174,14 @@ final class BehavioralCampaignEngine {
             }
         }
 
-        // Pass arguments matching BlocklistRepository::block_ip($ip, $reason, 86400)
-        BlocklistRepository::block_ip($ip, $reason, 86400);
+        // Commit the local ban first without duplicate auto-queueing (sync_cloudflare: false)
+        $local_banned = BlocklistRepository::block_ip($ip, $reason, 86400, false);
+        if (!$local_banned) {
+            // Local safety guards (admin, allowlist, shopper) rejected the ban; do not queue CF ban
+            return;
+        }
 
-        // Queue generation-fenced Cloudflare ban
+        // Local ban succeeded: queue generation-fenced Cloudflare ban once
         if (class_exists(CloudflareIpListSynchronizer::class)) {
             CloudflareIpListSynchronizer::queue_ip_ban($ip, $reason, 86400);
         }

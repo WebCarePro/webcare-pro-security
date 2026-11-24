@@ -23,6 +23,7 @@ tests/*
 tests/Unit/*
 !tests/Unit/MCPAgentServiceTest.php
 !tests/Unit/RouteRegistryTest.php
+!tests/Unit/WafReplayHarnessTest.php
 !tests/test_review_followup_regressions.php
 test_*.php
 test_*.js

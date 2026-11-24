@@ -165,8 +165,9 @@ class CloudflareIpListSynchronizer {
      * Add a banned IP to the synchronization queue for background execution.
      *
      * Invariants:
+     * - Advances the per-IP generation token AND persists the queue entry inside ONE shared mutex transaction.
+     * - Checks the boolean result of mutate_ban_queue(); returns 'enqueue_failed' on failure without fabricating generation tokens.
      * - ZERO shutdown HTTP calls or inline requests to Cloudflare (processed strictly via background worker / WP-Cron).
-     * - Returns an array with operation_id and cf_sync_state ('queued'|'disabled'|'enqueue_failed').
      *
      * @param string $ip Client IPv4 or IPv6
      * @param string $reason Reason description
@@ -189,31 +190,39 @@ class CloudflareIpListSynchronizer {
             return ['cf_sync_state' => 'disabled', 'operation_id' => null];
         }
 
-        $generation = self::increment_ip_generation($ip);
         $operation_id = 'cfop_' . bin2hex(random_bytes(8));
+        $assigned_generation = null;
 
-        $entry = [
-            'ip'           => $ip,
-            'reason'       => substr(sanitize_text_field($reason), 0, 240),
-            'banned_at'    => time(),
-            'expires_at'   => $ttl > 0 ? (time() + $ttl) : 0,
-            'status'       => 'pending',
-            'attempts'     => 0,
-            'next_retry'   => 0,
-            'last_error'   => '',
-            'operation_id' => $operation_id,
-            'generation'   => $generation,
-        ];
+        // Perform generation advancement AND queue insertion inside ONE shared mutex transaction
+        $success = self::mutate_ban_queue(static function (array $queue) use ($ip, $reason, $ttl, $operation_id, &$assigned_generation): array {
+            $generations = get_option(self::OPTION_IP_GENERATIONS, []);
+            $generations = is_array($generations) ? $generations : [];
+            $current = (int) ($generations[$ip] ?? 0);
+            $next_gen = $current + 1;
+            $generations[$ip] = $next_gen;
+            if (count($generations) > 2000) {
+                $generations = array_slice($generations, -1000, null, true);
+            }
+            update_option(self::OPTION_IP_GENERATIONS, $generations, false);
+            $assigned_generation = $next_gen;
 
-        // Always persist ban intent immediately to persistent queue under atomic spinlock (Finding 1.2)
-        $queue_count = 0;
-        $success = self::mutate_ban_queue(static function (array $queue) use ($ip, $entry, &$queue_count): array {
-            $queue[$ip] = $entry;
-            $queue_count = count($queue);
+            $queue[$ip] = [
+                'ip'           => $ip,
+                'reason'       => substr(sanitize_text_field($reason), 0, 240),
+                'banned_at'    => time(),
+                'expires_at'   => $ttl > 0 ? (time() + $ttl) : 0,
+                'status'       => 'pending',
+                'attempts'     => 0,
+                'next_retry'   => 0,
+                'last_error'   => '',
+                'operation_id' => $operation_id,
+                'generation'   => $next_gen,
+            ];
+
             return $queue;
         });
 
-        if (!$success) {
+        if (!$success || $assigned_generation === null) {
             return ['cf_sync_state' => 'enqueue_failed', 'operation_id' => null];
         }
 
@@ -221,7 +230,7 @@ class CloudflareIpListSynchronizer {
             'operation_id' => $operation_id,
             'ip'           => $ip,
             'type'         => 'ban_queued',
-            'generation'   => $generation,
+            'generation'   => $assigned_generation,
             'status'       => 'queued',
         ]);
 
@@ -1204,25 +1213,40 @@ class CloudflareIpListSynchronizer {
             return false;
         }
 
-        // Monotonic per-IP generation increment: invalidates any in-flight or pending queued bans for this IP
-        $unban_gen = self::increment_ip_generation($ip);
+        // 1. Remove from in-memory shutdown queue if present
+        if (isset(self::$shutdown_immediate_queue[$ip])) {
+            unset(self::$shutdown_immediate_queue[$ip]);
+        }
+
+        $unban_gen = null;
+
+        // Monotonic per-IP generation increment AND pending batch queue eviction inside ONE shared mutex transaction
+        $queue_removed = self::mutate_ban_queue(static function (array $queue) use ($ip, &$unban_gen): array {
+            $generations = get_option(self::OPTION_IP_GENERATIONS, []);
+            $generations = is_array($generations) ? $generations : [];
+            $current = (int) ($generations[$ip] ?? 0);
+            $next_gen = $current + 1;
+            $generations[$ip] = $next_gen;
+            if (count($generations) > 2000) {
+                $generations = array_slice($generations, -1000, null, true);
+            }
+            update_option(self::OPTION_IP_GENERATIONS, $generations, false);
+            $unban_gen = $next_gen;
+
+            unset($queue[$ip]);
+            return $queue;
+        });
+
+        if (!$queue_removed || $unban_gen === null) {
+            return false;
+        }
+
         self::log_sync_event([
             'ip'         => $ip,
             'type'       => 'ip_unbanned_locally',
             'generation' => $unban_gen,
             'status'     => 'unbanned',
         ]);
-
-        // 1. Remove from in-memory shutdown queue if present
-        if (isset(self::$shutdown_immediate_queue[$ip])) {
-            unset(self::$shutdown_immediate_queue[$ip]);
-        }
-
-        // 2. Remove from pending batch queue if queued
-        $queue_removed = self::mutate_ban_queue(static function (array $queue) use ($ip): array {
-            unset($queue[$ip]);
-            return $queue;
-        });
 
         if ($queue_removed === false) {
             return false;

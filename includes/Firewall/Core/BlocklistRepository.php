@@ -205,10 +205,11 @@ final class BlocklistRepository {
      * @param string $ip
      * @param string $reason
      * @param int $duration_seconds
+     * @param bool $sync_cloudflare
      * @return bool
      */
-    public static function block_ip(string $ip, string $reason = '', int $duration_seconds = 0): bool {
-        return self::add_blocked_ip($ip, $reason, $duration_seconds);
+    public static function block_ip(string $ip, string $reason = '', int $duration_seconds = 0, bool $sync_cloudflare = true): bool {
+        return self::add_blocked_ip($ip, $reason, $duration_seconds, null, null, null, null, null, $sync_cloudflare);
     }
 
     /**
