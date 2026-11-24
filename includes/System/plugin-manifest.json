@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-24T19:42:08.487Z",
+  "generated_at": "2026-11-24T19:48:26.755Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -556,8 +556,8 @@
       "size": 38405
     },
     "includes/Firewall/Core/AllowlistManager.php": {
-      "sha256": "614c62cadba5b0f41ff935b6b7b3cee3f6f389a631c5f1ed06005fa2f4a4ae62",
-      "size": 40702
+      "sha256": "5c73b66a1b8e10f2143c589b991d77b6662c2fe348ef517673dd665a82caa065",
+      "size": 40694
     },
     "includes/Firewall/Core/AlwaysOnCoreGuard.php": {
       "sha256": "93d6dd5202eb28df13d535dbcb47642e36a6a311bc7607888227982bd72ab592",
@@ -584,8 +584,8 @@
       "size": 41195
     },
     "includes/Firewall/Core/ExploitSignatureEngine.php": {
-      "sha256": "e6ebc7c07f9ada1ddbfcf6771aa52464480132c30f33c6b2ce6562578cbb2026",
-      "size": 150896
+      "sha256": "bf3823d596bb1551ed707ff68fe84d002182781fbee8bcf608d09baecf2cb17b",
+      "size": 150936
     },
     "includes/Firewall/Core/FirewallTelemetryService.php": {
       "sha256": "3e002bc9d185d05cde822e78b9adf3a214a0088c3c2a3391e58a28059fd76945",
@@ -952,8 +952,8 @@
       "size": 4314
     },
     "includes/Security/AtomicNonceStore.php": {
-      "sha256": "92c5ed2bfb389df08edae54d719370707023bffc6de8b52bc838bc1398362d1b",
-      "size": 11174
+      "sha256": "1b92b6092d94548d334bb5b7aac78f85843ad033ce77064e846c15266dfb240f",
+      "size": 12413
     },
     "includes/Security/AttackSimulationEngine.php": {
       "sha256": "c1700b535f0dc9721d16962083be9b95a24d5c32c4055afc7b0abf59aba26685",

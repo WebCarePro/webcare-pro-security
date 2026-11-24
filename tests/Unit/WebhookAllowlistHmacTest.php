@@ -307,6 +307,9 @@ final class WebhookAllowlistHmacTest extends TestCase
         $v1Fresh = hash_hmac('sha256', "{$now}.{$body}.2", $secret);
         foreach ([
             "t={$now},v1={$v1Fresh},extra=unexpected",
+            "t={$now}, v1={$v1Fresh}",
+            " t={$now},v1={$v1Fresh}",
+            "t={$now},v1={$v1Fresh} ",
             "t={$now},v1={$v1Fresh}\n",
             "t={$now},v1=" . str_repeat('z', 64),
             "t=abc,v1={$v1Fresh}",

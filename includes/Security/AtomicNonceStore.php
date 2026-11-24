@@ -29,15 +29,28 @@ final class AtomicNonceStore {
     public const PRUNE_THROTTLE_KEY = 'wcp_nonce_prune_last_run';
 
     /**
-     * Resolve and validate the WordPress options table identifier from $wpdb->options.
+     * Resolve and validate the WordPress options table handle from $wpdb->options.
+     *
+     * Distinguishes between:
+     * - 'valid'       : $wpdb->options is present and passes strict [A-Za-z0-9_]+ validation.
+     * - 'invalid'     : $wpdb instanceof \wpdb has an explicit `options` property whose value
+     *                   is invalid, empty, or unsafe — callers MUST fail closed without falling
+     *                   back to non-atomic WordPress option APIs.
+     * - 'unavailable' : $wpdb is not initialized or is a minimal unit-test mock without an
+     *                   `options` property — unit-test option fallback is permitted.
+     *
+     * @return array{status: 'valid'|'invalid'|'unavailable', table: string}
      */
-    private static function get_validated_options_table(): string {
+    private static function resolve_db_options_state(): array {
         global $wpdb;
-        if (!($wpdb instanceof \wpdb) || empty($wpdb->options) || !is_string($wpdb->options)) {
-            return '';
+        if (!($wpdb instanceof \wpdb) || !property_exists($wpdb, 'options')) {
+            return ['status' => 'unavailable', 'table' => ''];
         }
         $table = $wpdb->options;
-        return preg_match('/^[A-Za-z0-9_]+$/', $table) === 1 ? $table : '';
+        if (!is_string($table) || preg_match('/^[A-Za-z0-9_]+$/', $table) !== 1) {
+            return ['status' => 'invalid', 'table' => ''];
+        }
+        return ['status' => 'valid', 'table' => $table];
     }
 
     /**
@@ -79,8 +92,12 @@ final class AtomicNonceStore {
         $now = time();
         $expires_at = $now + $ttl;
 
-        $options_table = self::get_validated_options_table();
-        if ($options_table !== '') {
+        $db_state = self::resolve_db_options_state();
+        if ($db_state['status'] === 'invalid') {
+            return false;
+        }
+        if ($db_state['status'] === 'valid') {
+            $options_table = $db_state['table'];
             // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- $options_table is strictly validated as [A-Za-z0-9_]+ from $wpdb->options; all query values are prepared.
             $affected = $wpdb->query(
                 $wpdb->prepare(
@@ -103,7 +120,7 @@ final class AtomicNonceStore {
             return $claimed;
         }
 
-        // Fallback if $wpdb is unavailable (e.g. unit test minimal mock environment)
+        // Fallback strictly when $wpdb / $wpdb->options backend is genuinely unavailable (minimal unit-test mocks)
         $existing = get_option($key, null);
         if ($existing !== null) {
             $existing_expires = (int) $existing;
@@ -143,8 +160,12 @@ final class AtomicNonceStore {
         $next_allowed = $now + self::PRUNE_THROTTLE_SECONDS;
 
         global $wpdb;
-        $options_table = self::get_validated_options_table();
-        if ($options_table !== '') {
+        $db_state = self::resolve_db_options_state();
+        if ($db_state['status'] === 'invalid') {
+            return false;
+        }
+        if ($db_state['status'] === 'valid') {
+            $options_table = $db_state['table'];
             // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- $options_table is strictly validated as [A-Za-z0-9_]+ from $wpdb->options; all query values are prepared.
             $affected = $wpdb->query(
                 $wpdb->prepare(
@@ -192,8 +213,12 @@ final class AtomicNonceStore {
         $limit = max(1, min(500, $limit));
 
         global $wpdb;
-        $options_table = self::get_validated_options_table();
-        if ($options_table !== '') {
+        $db_state = self::resolve_db_options_state();
+        if ($db_state['status'] === 'invalid') {
+            return 0;
+        }
+        if ($db_state['status'] === 'valid') {
+            $options_table = $db_state['table'];
             $like_prefix = method_exists($wpdb, 'esc_like')
                 ? $wpdb->esc_like('wcp_nonce_') . '%'
                 : 'wcp_nonce\\_%';

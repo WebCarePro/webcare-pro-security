@@ -224,25 +224,60 @@ final class AtomicNonceStoreTest extends TestCase
         global $wpdb;
         $origWpdb = $wpdb ?? null;
         $mockDb = new \wpdb();
-        $mockDb->options = 'wp_options; DROP TABLE wp_users';
         $GLOBALS['wpdb'] = $mockDb;
 
         try {
-            $nonce = 'unsafe_tbl_' . bin2hex(random_bytes(8));
-            // Unsafe $wpdb->options fails table validation and never interpolates into $mockDb->queries
-            $mockDb->queries = [];
-            AtomicNonceStore::consume('tbl_check', $nonce, 60);
-            $this->assertSame([], $mockDb->queries, 'Unsafe $wpdb->options table name must never be interpolated into SQL.');
+            $GLOBALS['wp_mock_options'] = [];
+            AtomicNonceStore::reset_prune_throttle();
+            $now = time();
 
-            // Valid table identifier executes atomic INSERT statement and enforces replay rejection
+            // 1. Unsafe, empty, or non-string $wpdb->options on an active wpdb instance MUST fail closed
+            //    with zero SQL queries and ZERO fallback writes to WordPress option APIs.
+            foreach (['wp_options; DROP TABLE wp_users', '', null, 123] as $invalidTable) {
+                $mockDb->options = $invalidTable;
+                $mockDb->queries = [];
+                $nonce = 'unsafe_tbl_' . bin2hex(random_bytes(8));
+                $expectedKey = 'wcp_nonce_' . substr(hash('sha256', 'tbl_check|' . $nonce), 0, 40);
+
+                $this->assertFalse(
+                    AtomicNonceStore::consume('tbl_check', $nonce, 60),
+                    'Invalid $wpdb->options must fail closed instead of falling back to option APIs.'
+                );
+                $this->assertSame([], $mockDb->queries, 'Unsafe $wpdb->options table name must never be interpolated into SQL.');
+                $this->assertNull(
+                    get_option($expectedKey, null),
+                    'Invalid $wpdb->options must NOT fall back to get_option()/add_option().'
+                );
+                $this->assertNull(
+                    get_option(AtomicNonceStore::PRUNE_THROTTLE_KEY, null),
+                    'Invalid $wpdb->options must NOT fall back for prune throttle state.'
+                );
+                $this->assertSame(
+                    0,
+                    AtomicNonceStore::prune_expired_db_nonces($now + 120),
+                    'prune_expired_db_nonces() must fail closed cleanly on invalid $wpdb->options.'
+                );
+            }
+
+            // 2. Valid table identifier executes atomic INSERT statement and enforces replay rejection
             $mockDb->options = 'wp_options';
+            $mockDb->queries = [];
             $validNonce = 'valid_tbl_' . bin2hex(random_bytes(8));
             $this->assertTrue(AtomicNonceStore::consume('tbl_check', $validNonce, 60));
             $this->assertFalse(AtomicNonceStore::consume('tbl_check', $validNonce, 60));
             $this->assertNotEmpty($mockDb->queries);
             $this->assertStringContainsString('INSERT INTO wp_options', $mockDb->queries[0]);
+
+            // 3. Genuinely unavailable $wpdb (null) retains minimal unit-test option fallback
+            $GLOBALS['wpdb'] = null;
+            $fallbackNonce = 'fallback_tbl_' . bin2hex(random_bytes(8));
+            $fallbackKey = 'wcp_nonce_' . substr(hash('sha256', 'tbl_check|' . $fallbackNonce), 0, 40);
+            $this->assertTrue(AtomicNonceStore::consume('tbl_check', $fallbackNonce, 60));
+            $this->assertNotNull(get_option($fallbackKey, null));
+            $this->assertFalse(AtomicNonceStore::consume('tbl_check', $fallbackNonce, 60));
         } finally {
             $GLOBALS['wpdb'] = $origWpdb;
+            AtomicNonceStore::reset_prune_throttle();
         }
     }
 }

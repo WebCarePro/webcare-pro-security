@@ -98,7 +98,7 @@ final class BoundaryValidationRegressionTest extends TestCase
             'waf_block_sensitive_file_probes' => true,
         ];
 
-        // 1. Invalid HTTP_HOST containing path/tag characters must be ignored cleanly (no pattern corruption or false matches)
+        // 1. Invalid HTTP_HOST containing path/tag characters or whitespace padding must be ignored cleanly
         $_SERVER['HTTP_HOST'] = 'evil.com/<script>alert(1)</script>';
         $this->assertNull(
             ExploitSignatureEngine::check_sensitive_file_probe('/normal-page', $settings),
@@ -108,6 +108,14 @@ final class BoundaryValidationRegressionTest extends TestCase
             ExploitSignatureEngine::check_sensitive_file_probe('/evil.zip', $settings),
             'Invalid HTTP_HOST must not be partially sanitized into matching /evil.zip.'
         );
+
+        foreach ([' myshopsite.example ', 'myshopsite.example ', ' [::1]:8443'] as $paddedHost) {
+            $_SERVER['HTTP_HOST'] = $paddedHost;
+            $this->assertNull(
+                ExploitSignatureEngine::check_sensitive_file_probe('/myshopsite.zip', $settings),
+                'Whitespace-padded HTTP_HOST must be rejected without trimming: ' . $paddedHost
+            );
+        }
 
         // 2. Valid hostname with port still matches dynamic host-based backup archive probes
         $_SERVER['HTTP_HOST'] = 'MyShopSite.example:8443';

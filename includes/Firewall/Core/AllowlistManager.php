@@ -779,14 +779,14 @@ final class AllowlistManager {
 
     private static function verify_stripe_hmac(string $secret, string $raw_body, int $tolerance_seconds): bool {
         $sig_header = self::read_cryptographic_header('HTTP_STRIPE_SIGNATURE', 1024);
-        if ($sig_header === '' || preg_match('/^[a-zA-Z0-9_=,\s]+$/', $sig_header) !== 1) {
+        if ($sig_header === '' || preg_match('/^[a-zA-Z0-9_=,]+$/', $sig_header) !== 1) {
             return false;
         }
 
         $timestamp = 0;
         $signatures = [];
         foreach (explode(',', $sig_header) as $part) {
-            $kv = explode('=', trim($part), 2);
+            $kv = explode('=', $part, 2);
             if (count($kv) === 2) {
                 if ($kv[0] === 't' && ctype_digit($kv[1])) {
                     $timestamp = (int) $kv[1];
