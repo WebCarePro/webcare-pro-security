@@ -268,9 +268,9 @@ export const DoctorRescueCenter = ({ apiRequest }: DoctorRescueCenterProps) => {
               borderRadius: '8px',
               fontSize: '13px',
               fontWeight: 600,
-              background: actionNotice.type === 'success' ? 'var(--webcare-status-safe-soft)' : 'var(--webcare-status-danger-soft)',
-              color: actionNotice.type === 'success' ? 'var(--webcare-status-safe)' : 'var(--webcare-status-danger)',
-              border: `1px solid ${actionNotice.type === 'success' ? 'var(--webcare-status-safe-border)' : 'var(--webcare-status-danger-border)'}`,
+              background: actionNotice.type === 'success' ? 'var(--webcare-status-clean-soft)' : 'var(--webcare-status-critical-soft)',
+              color: actionNotice.type === 'success' ? 'var(--webcare-status-clean)' : 'var(--webcare-status-critical)',
+              border: `1px solid ${actionNotice.type === 'success' ? 'var(--webcare-status-clean-border)' : 'var(--webcare-status-critical-border)'}`,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
@@ -327,9 +327,9 @@ export const DoctorRescueCenter = ({ apiRequest }: DoctorRescueCenterProps) => {
                     fontWeight: 700,
                     padding: '2px 8px',
                     borderRadius: '9999px',
-                    background: isSafeModeActive ? 'var(--webcare-status-warn-soft)' : 'var(--webcare-status-safe-soft)',
-                    color: isSafeModeActive ? 'var(--webcare-status-warn)' : 'var(--webcare-status-safe)',
-                    border: `1px solid ${isSafeModeActive ? 'var(--webcare-status-warn-border)' : 'var(--webcare-status-safe-border)'}`,
+                    background: isSafeModeActive ? 'var(--webcare-status-warn-soft)' : 'var(--webcare-status-clean-soft)',
+                    color: isSafeModeActive ? 'var(--webcare-status-warn)' : 'var(--webcare-status-clean)',
+                    border: `1px solid ${isSafeModeActive ? 'var(--webcare-status-warn-border)' : 'var(--webcare-status-clean-border)'}`,
                   }}
                 >
                   {isSafeModeActive ? `Active · ${formatSeconds(safeModeSeconds)} Remaining` : 'Strict Protection Active'}
@@ -427,7 +427,7 @@ export const DoctorRescueCenter = ({ apiRequest }: DoctorRescueCenterProps) => {
                   style={{
                     fontSize: '20px',
                     fontWeight: 900,
-                    color: report.score >= 85 ? 'var(--webcare-status-safe)' : (report.score >= 60 ? 'var(--webcare-status-warn)' : 'var(--webcare-status-danger)'),
+                    color: report.score >= 85 ? 'var(--webcare-status-clean)' : (report.score >= 60 ? 'var(--webcare-status-warn)' : 'var(--webcare-status-critical)'),
                   }}
                 >
                   {report.score}%
@@ -449,9 +449,9 @@ export const DoctorRescueCenter = ({ apiRequest }: DoctorRescueCenterProps) => {
             style={{
               padding: '14px',
               borderRadius: '8px',
-              background: 'var(--webcare-status-danger-soft)',
-              color: 'var(--webcare-status-danger)',
-              border: '1px solid var(--webcare-status-danger-border)',
+              background: 'var(--webcare-status-critical-soft)',
+              color: 'var(--webcare-status-critical)',
+              border: '1px solid var(--webcare-status-critical-border)',
               fontSize: '13px',
               fontWeight: 600,
             }}
@@ -472,37 +472,45 @@ export const DoctorRescueCenter = ({ apiRequest }: DoctorRescueCenterProps) => {
                     padding: '14px 18px',
                     borderRadius: '10px',
                     background: 'var(--webcare-bg-surface)',
-                    border: `1px solid ${isPass ? 'var(--webcare-border-standard)' : (isWarn ? 'var(--webcare-status-warn-border)' : 'var(--webcare-status-danger-border)')}`,
+                    border: `1px solid ${isPass ? 'var(--webcare-border-standard)' : (isWarn ? 'var(--webcare-status-warn-border)' : 'var(--webcare-status-critical-border)')}`,
                     display: 'flex',
                     alignItems: 'flex-start',
                     justifyContent: 'space-between',
                     gap: '14px',
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', flex: 1 }}>
                     <div style={{ marginTop: '2px', flexShrink: 0 }}>
-                      {isPass && <CheckCircle2 size={18} color="var(--webcare-status-safe)" />}
+                      {isPass && <CheckCircle2 size={18} color="var(--webcare-status-clean)" />}
                       {isWarn && <AlertTriangle size={18} color="var(--webcare-status-warn)" />}
-                      {!isPass && !isWarn && <XCircle size={18} color="var(--webcare-status-danger)" />}
+                      {!isPass && !isWarn && <XCircle size={18} color="var(--webcare-status-critical)" />}
                     </div>
 
-                    <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
                         <span style={{ fontSize: '13.5px', fontWeight: 700, color: 'var(--webcare-text-title)' }}>
                           {check.title}
                         </span>
                         <span
+                          className={`webcare-badge-pill ${
+                            isPass
+                              ? 'webcare-badge-clean'
+                              : (isWarn ? 'webcare-badge-warn' : 'webcare-badge-danger')
+                          }`}
                           style={{
-                            fontSize: '10.5px',
-                            fontWeight: 700,
-                            padding: '1px 6px',
-                            borderRadius: '4px',
-                            textTransform: 'uppercase',
-                            background: isPass ? 'var(--webcare-status-safe-soft)' : (isWarn ? 'var(--webcare-status-warn-soft)' : 'var(--webcare-status-danger-soft)'),
-                            color: isPass ? 'var(--webcare-status-safe)' : (isWarn ? 'var(--webcare-status-warn)' : 'var(--webcare-status-danger)'),
+                            fontSize: '11px',
+                            fontWeight: 800,
+                            letterSpacing: '0.05em',
+                            padding: '3px 10px',
+                            boxShadow: isPass
+                              ? '0 1px 3px rgba(16, 185, 129, 0.15)'
+                              : (isWarn ? '0 1px 3px rgba(245, 158, 11, 0.15)' : '0 1px 3px rgba(239, 68, 68, 0.15)'),
                           }}
                         >
-                          {check.status}
+                          {isPass && <CheckCircle2 size={12} strokeWidth={2.5} />}
+                          {isWarn && <AlertTriangle size={12} strokeWidth={2.5} />}
+                          {!isPass && !isWarn && <XCircle size={12} strokeWidth={2.5} />}
+                          {check.status.toUpperCase()}
                         </span>
                       </div>
 
