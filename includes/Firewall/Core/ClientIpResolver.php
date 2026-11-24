@@ -136,7 +136,9 @@ class ClientIpResolver {
 
         // If origin secret is configured, require matching header via timing-attack safe comparison
         if ($cf_trusted && $cf_origin_secret !== '') {
-            $incoming_secret = (string) ($_SERVER['HTTP_X_ORIGIN_SECRET'] ?? $_SERVER['HTTP_CF_ORIGIN_SECRET'] ?? '');
+            $incoming_secret = isset($_SERVER['HTTP_X_ORIGIN_SECRET'])
+                ? sanitize_text_field(wp_unslash((string) $_SERVER['HTTP_X_ORIGIN_SECRET']))
+                : (isset($_SERVER['HTTP_CF_ORIGIN_SECRET']) ? sanitize_text_field(wp_unslash((string) $_SERVER['HTTP_CF_ORIGIN_SECRET'])) : '');
             if ($incoming_secret === '' || !hash_equals($cf_origin_secret, $incoming_secret)) {
                 $cf_trusted = false;
             }
@@ -246,7 +248,9 @@ class ClientIpResolver {
      * @return bool True if CIDRs were refreshed, false otherwise.
      */
     public static function refresh_cloudflare_cidrs(): bool {
+        // phpcs:ignore PluginCheck.CodeAnalysis.Offloading.OffloadedContent -- Official Cloudflare plain-text Anycast CIDR IP list endpoint, not an offloaded asset
         $v4_res = wp_safe_remote_get('https://www.cloudflare.com/ips-v4', ['timeout' => 5]);
+        // phpcs:ignore PluginCheck.CodeAnalysis.Offloading.OffloadedContent -- Official Cloudflare plain-text Anycast CIDR IP list endpoint, not an offloaded asset
         $v6_res = wp_safe_remote_get('https://www.cloudflare.com/ips-v6', ['timeout' => 5]);
 
         if (is_wp_error($v4_res) || is_wp_error($v6_res)) {

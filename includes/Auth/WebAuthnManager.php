@@ -738,7 +738,7 @@ class WebAuthnManager {
         $default_remember = class_exists(\WebCareProScanner\System\SettingsManager::class)
             ? (bool) \WebCareProScanner\System\SettingsManager::get('webauthn_remember_session', false)
             : false;
-        $remember = (bool) apply_filters('webauthn_remember_session', $default_remember, $matched_user_id);
+        $remember = (bool) apply_filters('webcareproscan_webauthn_remember_session', $default_remember, $matched_user_id);
         wp_set_auth_cookie($matched_user_id, $remember);
 
         // Notify plugins and hooks

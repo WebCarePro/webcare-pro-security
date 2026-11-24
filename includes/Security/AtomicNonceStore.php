@@ -68,11 +68,10 @@ final class AtomicNonceStore {
         $expires_at = $now + $ttl;
 
         if ($wpdb instanceof \wpdb && !empty($wpdb->options)) {
-            $options_table = $wpdb->options;
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
             $affected = $wpdb->query(
                 $wpdb->prepare(
-                    "INSERT INTO {$options_table} (option_name, option_value, autoload)
+                    "INSERT INTO {$wpdb->options} (option_name, option_value, autoload)
                      VALUES (%s, %s, 'no')
                      ON DUPLICATE KEY UPDATE
                        option_value = IF(CAST(option_value AS UNSIGNED) < %d, VALUES(option_value), option_value)",
@@ -131,11 +130,10 @@ final class AtomicNonceStore {
 
         global $wpdb;
         if ($wpdb instanceof \wpdb && !empty($wpdb->options)) {
-            $options_table = $wpdb->options;
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
             $affected = $wpdb->query(
                 $wpdb->prepare(
-                    "INSERT INTO {$options_table} (option_name, option_value, autoload)
+                    "INSERT INTO {$wpdb->options} (option_name, option_value, autoload)
                      VALUES (%s, %s, 'no')
                      ON DUPLICATE KEY UPDATE
                        option_value = IF(CAST(option_value AS UNSIGNED) < %d, VALUES(option_value), option_value)",
@@ -179,7 +177,6 @@ final class AtomicNonceStore {
 
         global $wpdb;
         if ($wpdb instanceof \wpdb && !empty($wpdb->options)) {
-            $options_table = $wpdb->options;
             $like_prefix = method_exists($wpdb, 'esc_like')
                 ? $wpdb->esc_like('wcp_nonce_') . '%'
                 : 'wcp_nonce\\_%';
@@ -188,7 +185,7 @@ final class AtomicNonceStore {
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
             $deleted = $wpdb->query(
                 $wpdb->prepare(
-                    "DELETE FROM {$options_table}
+                    "DELETE FROM {$wpdb->options}
                      WHERE option_name LIKE %s
                        AND option_name NOT IN (%s, %s)
                        AND option_value REGEXP '^[0-9]+$'

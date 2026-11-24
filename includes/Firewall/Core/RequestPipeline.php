@@ -221,6 +221,7 @@ final class RequestPipeline {
             $ctx_for_rescue = isset($ctx) && $ctx instanceof RequestContext ? $ctx : RequestContext::from_globals();
             if (self::is_read_only_rescue_request($ctx_for_rescue)) {
                 self::$last_terminated_status = 200;
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Operational rescue notice when WAF exception boundary activates
                 @error_log('[WebCare RequestPipeline] Permitting read-only rescue admin console access after pipeline exception: ' . $e->getMessage());
                 return;
             }
@@ -232,6 +233,7 @@ final class RequestPipeline {
                 header('HTTP/1.1 503 Service Unavailable');
             }
             if (self::$throw_on_exit_in_tests && defined('WEBCAREPROSCAN_TESTING') && WEBCAREPROSCAN_TESTING) {
+                // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Previous Throwable passed internally to RuntimeException
                 throw new \RuntimeException('RequestPipeline terminated fail-closed with HTTP 503.', 503, $e);
             }
             exit;

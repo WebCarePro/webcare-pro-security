@@ -759,7 +759,9 @@ final class AllowlistManager {
     }
 
     private static function verify_stripe_hmac(string $secret, string $raw_body, int $tolerance_seconds): bool {
-        $sig_header = (string) ($_SERVER['HTTP_STRIPE_SIGNATURE'] ?? '');
+        $sig_header = isset($_SERVER['HTTP_STRIPE_SIGNATURE'])
+            ? sanitize_text_field(wp_unslash((string) $_SERVER['HTTP_STRIPE_SIGNATURE']))
+            : '';
         if ($sig_header === '') {
             return false;
         }
@@ -806,7 +808,9 @@ final class AllowlistManager {
     }
 
     private static function verify_shopify_hmac(string $secret, string $raw_body, int $tolerance_seconds): bool {
-        $header = (string) ($_SERVER['HTTP_X_SHOPIFY_HMAC_SHA256'] ?? '');
+        $header = isset($_SERVER['HTTP_X_SHOPIFY_HMAC_SHA256'])
+            ? sanitize_text_field(wp_unslash((string) $_SERVER['HTTP_X_SHOPIFY_HMAC_SHA256']))
+            : '';
         if ($header === '') {
             return false;
         }
@@ -831,7 +835,9 @@ final class AllowlistManager {
     }
 
     private static function verify_github_hmac(string $secret, string $raw_body, int $tolerance_seconds): bool {
-        $header = (string) ($_SERVER['HTTP_X_HUB_SIGNATURE_256'] ?? '');
+        $header = isset($_SERVER['HTTP_X_HUB_SIGNATURE_256'])
+            ? sanitize_text_field(wp_unslash((string) $_SERVER['HTTP_X_HUB_SIGNATURE_256']))
+            : '';
         if ($header === '' || !str_starts_with($header, 'sha256=')) {
             return false;
         }
@@ -859,7 +865,9 @@ final class AllowlistManager {
      * timestamp or delivery-ID replay header unless paired with static IP/CIDR pinning.
      */
     private static function verify_generic_hmac(string $secret, string $raw_body): bool {
-        $header = trim((string) ($_SERVER['HTTP_X_SIGNATURE_SHA256'] ?? $_SERVER['HTTP_X_WEBHOOK_SIGNATURE'] ?? ''));
+        $header = isset($_SERVER['HTTP_X_SIGNATURE_SHA256'])
+            ? trim(sanitize_text_field(wp_unslash((string) $_SERVER['HTTP_X_SIGNATURE_SHA256'])))
+            : (isset($_SERVER['HTTP_X_WEBHOOK_SIGNATURE']) ? trim(sanitize_text_field(wp_unslash((string) $_SERVER['HTTP_X_WEBHOOK_SIGNATURE']))) : '');
         if ($header === '') {
             return false;
         }

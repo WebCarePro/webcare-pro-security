@@ -42,7 +42,7 @@ final class StrictCborDecoder {
         $result = self::parse_item($data, $offset, $length, 0);
 
         if ($offset < $length) {
-            throw new InvalidArgumentException(sprintf('Extraneous trailing bytes after CBOR item at offset %d/%d.', $offset, $length));
+            throw new InvalidArgumentException(sprintf('Extraneous trailing bytes after CBOR item at offset %1$s/%2$s.', esc_html((string) $offset), esc_html((string) $length)));
         }
 
         return $result;
@@ -60,7 +60,7 @@ final class StrictCborDecoder {
      */
     private static function parse_item(string $data, int &$offset, int $length, int $depth): mixed {
         if ($depth > self::MAX_DEPTH) {
-            throw new InvalidArgumentException(sprintf('CBOR recursion depth exceeded limit of %d.', self::MAX_DEPTH));
+            throw new InvalidArgumentException(sprintf('CBOR recursion depth exceeded limit of %s.', esc_html((string) self::MAX_DEPTH)));
         }
 
         if ($offset >= $length) {
@@ -85,7 +85,7 @@ final class StrictCborDecoder {
             3 => self::read_utf8_string($data, $offset, $length, $value), // Text string
             4 => self::read_array($data, $offset, $length, $value, $depth), // Array
             5 => self::read_map($data, $offset, $length, $value, $depth), // Map
-            default => throw new InvalidArgumentException(sprintf('Unsupported CBOR major type: %d.', $major_type)),
+            default => throw new InvalidArgumentException(sprintf('Unsupported CBOR major type: %s.', esc_html((string) $major_type))),
         };
     }
 
@@ -109,7 +109,7 @@ final class StrictCborDecoder {
             25 => 2,
             26 => 4,
             27 => 8,
-            default => throw new InvalidArgumentException(sprintf('Invalid CBOR additional information: %d.', $additional)),
+            default => throw new InvalidArgumentException(sprintf('Invalid CBOR additional information: %s.', esc_html((string) $additional))),
         };
 
         if ($offset + $bytes_to_read > $length) {
@@ -198,7 +198,7 @@ final class StrictCborDecoder {
 
             $key_str = (string) $key;
             if (isset($seen_keys[$key_str])) {
-                throw new InvalidArgumentException(sprintf('Duplicate key "%s" detected in CBOR map (RFC 8949 violation).', $key_str));
+                throw new InvalidArgumentException(sprintf('Duplicate key "%s" detected in CBOR map (RFC 8949 violation).', esc_html($key_str)));
             }
             $seen_keys[$key_str] = true;
 

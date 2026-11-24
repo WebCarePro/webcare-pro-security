@@ -571,12 +571,14 @@ class SettingsManager {
 
             if (!$existed) {
                 try {
+                    // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- Core WordPress option lifecycle hook dispatched strictly post-COMMIT
                     do_action("add_option_{$option}", $option, $new_value);
                 } catch (\Throwable $e) {
                     // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
                     @error_log('[WebCare SettingsManager] Post-commit add_option_' . $option . ' listener error: ' . $e->getMessage());
                 }
                 try {
+                    // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- Core WordPress option lifecycle hook dispatched strictly post-COMMIT
                     do_action('added_option', $option, $new_value);
                 } catch (\Throwable $e) {
                     // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
@@ -584,12 +586,14 @@ class SettingsManager {
                 }
             } elseif ($old_value !== $new_value) {
                 try {
+                    // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- Core WordPress option lifecycle hook dispatched strictly post-COMMIT
                     do_action("update_option_{$option}", $old_value, $new_value, $option);
                 } catch (\Throwable $e) {
                     // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
                     @error_log('[WebCare SettingsManager] Post-commit update_option_' . $option . ' listener error: ' . $e->getMessage());
                 }
                 try {
+                    // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- Core WordPress option lifecycle hook dispatched strictly post-COMMIT
                     do_action('updated_option', $option, $old_value, $new_value);
                 } catch (\Throwable $e) {
                     // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
@@ -794,11 +798,13 @@ class SettingsManager {
             return false;
         }
 
+        $sentinel = '__webcare_tx_backup_unset__';
         $backup = [];
         foreach ($touched_options as $tk) {
+            $prior_val = get_option($tk, $sentinel);
             $backup[$tk] = [
-                'existed' => isset($GLOBALS['wp_mock_options']) && array_key_exists($tk, $GLOBALS['wp_mock_options']),
-                'value'   => $GLOBALS['wp_mock_options'][$tk] ?? null,
+                'existed' => ($prior_val !== $sentinel),
+                'value'   => ($prior_val !== $sentinel) ? $prior_val : null,
             ];
         }
 
@@ -809,13 +815,11 @@ class SettingsManager {
                 (self::$inside_tx_before_commit_hook)($lock_token);
             }
             if (!$ok || !self::renew_mutation_lock($lock_token)) {
-                if (isset($GLOBALS['wp_mock_options']) && is_array($GLOBALS['wp_mock_options'])) {
-                    foreach ($backup as $tk => $entry) {
-                        if ($entry['existed']) {
-                            $GLOBALS['wp_mock_options'][$tk] = $entry['value'];
-                        } else {
-                            unset($GLOBALS['wp_mock_options'][$tk]);
-                        }
+                foreach ($backup as $tk => $entry) {
+                    if ($entry['existed']) {
+                        update_option($tk, $entry['value'], false);
+                    } else {
+                        delete_option($tk);
                     }
                 }
                 return false;
