@@ -670,9 +670,9 @@ class RescueAssistantManager {
             ? \WebCareProScanner\Firewall\Core\WafVaultManager::get_preload_allow_path()
             : (defined('WP_CONTENT_DIR') ? WP_CONTENT_DIR : ABSPATH . 'wp-content') . '/webcare-waf/.rescue_allow.json';
         if (!self::write_marker_file($preload_file, (string) wp_json_encode($preload_allow))) {
-            // Compensate network option by restoring original array and verifying read-back
-            $restored          = self::update_preboot_option(self::OPTION_TRUSTED_ACTIONS, $original_trusted);
-            $rollback_verified = $restored || (self::get_preboot_option(self::OPTION_TRUSTED_ACTIONS, []) === $original_trusted);
+            // Compensate network option by restoring original array and verifying read-back unconditionally
+            self::update_preboot_option(self::OPTION_TRUSTED_ACTIONS, $original_trusted);
+            $rollback_verified = (self::get_preboot_option(self::OPTION_TRUSTED_ACTIONS, []) === $original_trusted);
 
             if (!$rollback_verified) {
                 if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
