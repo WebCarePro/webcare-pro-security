@@ -314,7 +314,15 @@ final class CompiledStackManifest {
             ];
         }
 
-        @chmod($target_file, 0600);
+        @chmod($target_file, 0644);
+        if (function_exists('posix_getpwnam')) {
+            $web_user = @posix_getpwnam('www-data');
+            if (is_array($web_user) && isset($web_user['uid'], $web_user['gid'])) {
+                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chown, WordPress.WP.AlternativeFunctions.file_system_operations_chgrp
+                @chown($target_file, (int) $web_user['uid']);
+                @chgrp($target_file, (int) $web_user['gid']);
+            }
+        }
         // phpcs:enable
 
         // Store HMAC signature with fail-closed key derivation

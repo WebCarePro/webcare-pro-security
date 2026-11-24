@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-24T22:07:52.481Z",
+  "generated_at": "2026-11-24T22:17:30.138Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -388,8 +388,8 @@
       "size": 6855
     },
     "includes/Core/CompiledStackManifest.php": {
-      "sha256": "d9f1a28227c3f13ba164b724b1dad4f1160ce788762044233253dd7bfa7803da",
-      "size": 25723
+      "sha256": "682a333421678215d49820aace5ff6f02dcaaa663925965bb3fb45c01906a75c",
+      "size": 26216
     },
     "includes/Core/ModuleRegistry.php": {
       "sha256": "0ecddd5325ff7b92d552f29054ef2d549181a8cfa00f175864e1c7494a5ff828",
@@ -704,8 +704,8 @@
       "size": 15973
     },
     "includes/Firewall/MicroWafCompiler.php": {
-      "sha256": "b707ef44c4eecb9fc6e2d73c32e314912316d72a423053066ab5b503f319cb41",
-      "size": 107196
+      "sha256": "f7b5edd724b1eb1c9a5852f4157df81800bb60ccb1c0cea1cf356bba14e4bd7a",
+      "size": 108987
     },
     "includes/Firewall/NextGen/CheckoutSkimmerSentinel.php": {
       "sha256": "452eab2134888a51f5e9d0473cf90ba0ff4650055e3d46256efdf4f8b5e42a69",

@@ -378,8 +378,19 @@ class MicroWafCompiler {
         }
         // phpcs:enable
 
+        // Ensure web-server readable permissions (0644) so PHP-FPM / Apache can execute auto_prepend_file without permission errors
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod
-        @chmod($compiled_file, 0600);
+        @chmod($compiled_file, 0644);
+
+        // When running under CLI (e.g. root or CI), align ownership to web server user if available
+        if (function_exists('posix_getpwnam')) {
+            $web_user = @posix_getpwnam('www-data');
+            if (is_array($web_user) && isset($web_user['uid'], $web_user['gid'])) {
+                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chown, WordPress.WP.AlternativeFunctions.file_system_operations_chgrp
+                @chown($compiled_file, (int) $web_user['uid']);
+                @chgrp($compiled_file, (int) $web_user['gid']);
+            }
+        }
 
         // Reset OPcache if available for the compiled file
         if (function_exists('opcache_invalidate')) {
@@ -1561,7 +1572,17 @@ class MicroWafCompiler {
         // phpcs:enable
 
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod
-        @chmod($caf_file, 0600);
+        @chmod($caf_file, 0644);
+
+        // When running under CLI, align ownership to web server user if available
+        if (function_exists('posix_getpwnam')) {
+            $web_user = @posix_getpwnam('www-data');
+            if (is_array($web_user) && isset($web_user['uid'], $web_user['gid'])) {
+                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chown, WordPress.WP.AlternativeFunctions.file_system_operations_chgrp
+                @chown($caf_file, (int) $web_user['uid']);
+                @chgrp($caf_file, (int) $web_user['gid']);
+            }
+        }
 
         // Detached HMAC-SHA256 signature wrapped in executable PHP protection
         $salt = self::get_caf_auth_key();
@@ -1572,7 +1593,16 @@ class MicroWafCompiler {
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
         file_put_contents($sig_file, $sig_code, LOCK_EX);
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod
-        @chmod($sig_file, 0600);
+        @chmod($sig_file, 0644);
+
+        if (function_exists('posix_getpwnam')) {
+            $web_user = @posix_getpwnam('www-data');
+            if (is_array($web_user) && isset($web_user['uid'], $web_user['gid'])) {
+                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chown, WordPress.WP.AlternativeFunctions.file_system_operations_chgrp
+                @chown($sig_file, (int) $web_user['uid']);
+                @chgrp($sig_file, (int) $web_user['gid']);
+            }
+        }
 
         if (function_exists('opcache_invalidate')) {
             opcache_invalidate($caf_file, true);
