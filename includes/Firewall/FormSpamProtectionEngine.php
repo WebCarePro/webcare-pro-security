@@ -368,22 +368,6 @@ class FormSpamProtectionEngine {
 
                 if ($decrypted && strpos($decrypted, '|') !== false) {
                     list($timestamp_str, $token_ip) = explode('|', $decrypted, 2);
-
-                    // Bind token to resolved client IP if both are non-empty
-                    if ($token_ip !== '' && $client_ip !== '' && !hash_equals($token_ip, $client_ip)) {
-                        self::record_spam_drop('token_ip_mismatch', $form_source, $client_ip);
-                        return new \WP_Error('webcare_spam_invalid_gate', __('Security token validation failed. Please refresh the page and try again.', 'webcare-pro-security'));
-                    }
-
-                    // Prevent token replay via AtomicNonceStore if available
-                    if (class_exists('\\WebCareProScanner\\Security\\AtomicNonceStore')) {
-                        $nonce_id = 'form_spam_' . hash('sha256', $decrypted);
-                        if (!\WebCareProScanner\Security\AtomicNonceStore::consume($nonce_id, 604800)) {
-                            self::record_spam_drop('replayed_time_gate', $form_source, $client_ip);
-                            return new \WP_Error('webcare_spam_replayed_token', __('Form session has already been used. Please refresh the page and try again.', 'webcare-pro-security'));
-                        }
-                    }
-
                     $rendered_at = (int) $timestamp_str;
                     $elapsed = time() - $rendered_at;
                     $min_seconds = max(1, $settings['form_min_interaction_seconds']);

@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-24T22:35:03.165Z",
+  "generated_at": "2026-11-24T22:40:02.635Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -320,8 +320,8 @@
       "size": 98269
     },
     "includes/Content/BlockDirectiveSanitizer.php": {
-      "sha256": "9d833fd8b8eeb8f12c467c90909df85b05f0e12639067364ee5b388e0baabec0",
-      "size": 23835
+      "sha256": "1ad065ded5d977f09adc0e1cbd769701b3611599db4f14a0134d719508ad36b4",
+      "size": 23461
     },
     "includes/Content/CommentScanner.php": {
       "sha256": "2c5ef2fa1e790d4322ef874c599361ca5b8db5fc055cfe63d97e92776f6ff04f",
@@ -680,8 +680,8 @@
       "size": 241307
     },
     "includes/Firewall/FormSpamProtectionEngine.php": {
-      "sha256": "e5a8fc3040c9f9b3ecfb31d371352107d0e0aa50e993fab32efca737047360ee",
-      "size": 34177
+      "sha256": "01ce4fd7120697331a487d8c5625fe20acd4ee69f8314baca01f2f90e9586e45",
+      "size": 33008
     },
     "includes/Firewall/GhostRouteTrap.php": {
       "sha256": "a623c29589eda7f5f4bfdb8a597ddd94ff83170b1c26151cd5967ad3ff607500",
@@ -704,7 +704,7 @@
       "size": 15973
     },
     "includes/Firewall/MicroWafCompiler.php": {
-      "sha256": "0478ed8febae9cadef06523ffce9623ceb0aba4be77e6bfe61e8caa9e088c7cb",
+      "sha256": "e145e9e6be3fcd69f262a484e3d74ace893eea3b410712a919e5973fdbcef443",
       "size": 110173
     },
     "includes/Firewall/NextGen/CheckoutSkimmerSentinel.php": {
@@ -744,8 +744,8 @@
       "size": 39707
     },
     "includes/Firewall/RescueAssistantManager.php": {
-      "sha256": "166f80bce2ceb41f5a637bcd9bb8a66211ec7870ac4ea2184d87015dc84c55e7",
-      "size": 60011
+      "sha256": "20e86ea06114625bb540d8052ddfa4052942802d2e200a1d0e9dcae0186bf6eb",
+      "size": 61353
     },
     "includes/Firewall/ServerSecurityEngine.php": {
       "sha256": "0c945023326b76a57e3aeaff1bb1854a9d8ae8dec1b29f0b46f2b3ee0239ab40",

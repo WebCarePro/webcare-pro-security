@@ -1,4 +1,9 @@
 ﻿v:0.0.1 - 2026-11-25
+- Multisite Preboot Authorization, Network State & Cached Form Compatibility:
+  * `FormSpamProtectionEngine`: Restored full-page cache compatibility by removing single-use `AtomicNonceStore::consume()` and strict `token_ip` mismatch rejection on shared cached `webcare_time_gate` tokens.
+  * `MicroWafCompiler::compile()`: Enforced Network Admin (`manage_network_options`) authorization across all Multisite blogs including the main site (preserving WP-CLI and Cron exceptions).
+  * `RescueAssistantManager`: Centralized `OPTION_PAUSED_UNTIL` and `OPTION_TRUSTED_ACTIONS` into network-wide options (`get_site_option`/`update_site_option`/`delete_site_option` on Multisite) to match shared preboot filesystem artifacts.
+  * `BlockDirectiveSanitizer::filter_post_content_directives()`: Moved automated block-directive sanitization logging from `WebCareActivityLogger` to `AuditLogger::log_operational()`.
 - Notification Defaults Update:
   * Enabled default email notifications for `redirect_hack_detected`, `redirect_hack_auto_healed`, `auth_admin_login`, `auth_admin_password_reset`, and `auth_application_password_created`.
   * Disabled default email notifications for `supply_chain_gatekeeper_blocked`, `ai_defense_prompt_injection`, and `forensics_reinfection_resurrection`.

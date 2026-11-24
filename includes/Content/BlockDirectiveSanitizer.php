@@ -115,23 +115,13 @@ class BlockDirectiveSanitizer {
             $data['post_content'] = wp_slash($audit_result['content']);
             self::$neutralized_count += count($audit_result['threats']);
 
-            // Log security incident
-            if (class_exists('\\WebCareProScanner\\System\\WebCareActivityLogger')) {
-                WebCareActivityLogger::log(
-                    'gutenberg_block_directive_neutralized',
-                    'firewall',
-                    'high',
-                    [
-                        'description' => sprintf(
-                            /* translators: %1$d: post ID, %2$d: threat count */
-                            __('Neutralized %2$d hostile Interactivity API directive(s) in Post #%1$d.', 'webcare-pro-security'),
-                            $post_id,
-                            count($audit_result['threats'])
-                        ),
-                        'post_id'     => $post_id,
-                        'threats'     => $audit_result['threats'],
-                    ]
-                );
+            // Log automated security event to operational forensic audit log (not admin activity log)
+            if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                \WebCareProScanner\System\AuditLogger::log_operational('gutenberg_block_directive_neutralized', [
+                    'post_id' => $post_id,
+                    'threats' => $audit_result['threats'],
+                    'count'   => count($audit_result['threats']),
+                ]);
             }
         }
 

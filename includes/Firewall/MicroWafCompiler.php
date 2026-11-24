@@ -199,7 +199,7 @@ class MicroWafCompiler {
 
     public static function compile(?string $chained_file = null): array {
         $switched_to_main = false;
-        if (function_exists('is_multisite') && is_multisite() && function_exists('is_main_site') && !is_main_site()) {
+        if (function_exists('is_multisite') && is_multisite()) {
             $is_privileged_context = (defined('WP_CLI') && WP_CLI)
                 || (function_exists('wp_doing_cron') && wp_doing_cron())
                 || current_user_can('manage_network_options');
@@ -209,7 +209,7 @@ class MicroWafCompiler {
                     'message' => __('Preboot Micro-WAF compilation is network-wide and restricted to Network Admins.', 'webcare-pro-security'),
                 ];
             }
-            if (function_exists('switch_to_blog') && function_exists('get_main_site_id')) {
+            if (function_exists('is_main_site') && !is_main_site() && function_exists('switch_to_blog') && function_exists('get_main_site_id')) {
                 switch_to_blog((int) get_main_site_id());
                 $switched_to_main = true;
             }

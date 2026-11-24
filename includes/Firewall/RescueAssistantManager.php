@@ -124,7 +124,7 @@ class RescueAssistantManager {
      * Check whether strict WAF blocking is currently paused for the 15-minute troubleshooting window.
      */
     public static function is_strict_paused(): bool {
-        $until = (int) get_option(self::OPTION_PAUSED_UNTIL, 0);
+        $until = (int) self::get_preboot_option(self::OPTION_PAUSED_UNTIL, 0);
         if ($until > time()) {
             return true;
         }
@@ -138,7 +138,7 @@ class RescueAssistantManager {
      * Return structured countdown & pause state for UI banners and header badges.
      */
     public static function get_pause_status(): array {
-        $until     = (int) get_option(self::OPTION_PAUSED_UNTIL, 0);
+        $until     = (int) self::get_preboot_option(self::OPTION_PAUSED_UNTIL, 0);
         $now       = time();
         $is_paused = ($until > $now);
         if ($until > 0 && !$is_paused) {
@@ -152,6 +152,36 @@ class RescueAssistantManager {
             'seconds_remaining' => $is_paused ? max(0, $until - $now) : 0,
             'rearm_at_gmt'      => $is_paused ? gmdate('Y-m-d H:i:s', $until) : null,
         ];
+    }
+
+    /**
+     * Read network-wide preboot option (site option on Multisite, regular option on single-site).
+     */
+    private static function get_preboot_option(string $key, mixed $default = false): mixed {
+        if (function_exists('is_multisite') && is_multisite() && function_exists('get_site_option')) {
+            return get_site_option($key, $default);
+        }
+        return get_option($key, $default);
+    }
+
+    /**
+     * Update network-wide preboot option (site option on Multisite, regular option on single-site).
+     */
+    private static function update_preboot_option(string $key, mixed $value): bool {
+        if (function_exists('is_multisite') && is_multisite() && function_exists('update_site_option')) {
+            return (bool) update_site_option($key, $value);
+        }
+        return (bool) update_option($key, $value, false);
+    }
+
+    /**
+     * Delete network-wide preboot option (site option on Multisite, regular option on single-site).
+     */
+    private static function delete_preboot_option(string $key): bool {
+        if (function_exists('is_multisite') && is_multisite() && function_exists('delete_site_option')) {
+            return (bool) delete_site_option($key);
+        }
+        return (bool) delete_option($key);
     }
 
     /**
@@ -180,7 +210,7 @@ class RescueAssistantManager {
             return new \WP_Error('waf_safe_mode_write_failed', __('Failed to write Safe Mode marker file to storage.', 'webcare-pro-security'));
         }
 
-        update_option(self::OPTION_PAUSED_UNTIL, $until, false);
+        self::update_preboot_option(self::OPTION_PAUSED_UNTIL, $until);
 
         wp_clear_scheduled_hook(self::CRON_REARM_HOOK);
         wp_schedule_single_event($until, self::CRON_REARM_HOOK);
@@ -217,7 +247,7 @@ class RescueAssistantManager {
         if (!self::can_manage_preboot_policy()) {
             return ['success' => false, 'message' => __('Only Network Admins (or site administrators on single-site) can resume the preboot firewall.', 'webcare-pro-security')];
         }
-        delete_option(self::OPTION_PAUSED_UNTIL);
+        self::delete_preboot_option(self::OPTION_PAUSED_UNTIL);
         wp_clear_scheduled_hook(self::CRON_REARM_HOOK);
 
         $marker = self::get_marker_path();
@@ -270,7 +300,7 @@ class RescueAssistantManager {
      * Retrieve permanently trusted actions saved via "Trust & Allow This Action Permanently".
      */
     public static function get_trusted_actions(): array {
-        $list = get_option(self::OPTION_TRUSTED_ACTIONS, []);
+        $list = self::get_preboot_option(self::OPTION_TRUSTED_ACTIONS, []);
         return is_array($list) ? array_values($list) : [];
     }
 
@@ -552,7 +582,7 @@ class RescueAssistantManager {
                 'label'      => $label ?: ($value ?: $rule_id),
                 'created_at' => gmdate('c'),
             ];
-            update_option(self::OPTION_TRUSTED_ACTIONS, $trusted, false);
+            self::update_preboot_option(self::OPTION_TRUSTED_ACTIONS, $trusted);
         }
 
         // Sync compact marker file for 0ms Preload Micro-WAF
