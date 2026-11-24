@@ -37,17 +37,19 @@ class CloudflareIpListSynchronizer {
      * Increment monotonic per-IP generation token (preventing stale queued bans from applying after unban).
      *
      * Protected inside the atomic mutation boundary to eliminate race conditions.
+     * Returns false if mutex acquisition fails or option persistence fails (never returns fabricated generation).
      *
      * @param string $ip
-     * @return int New generation number
+     * @return int|false New generation number on success, false on failure
      */
-    public static function increment_ip_generation(string $ip): int {
+    public static function increment_ip_generation(string $ip): int|false {
         $ip = trim($ip);
         if ($ip === '') {
-            return 1;
+            return false;
         }
-        $next_gen = 1;
-        self::mutate_ban_queue(static function (array $queue) use ($ip, &$next_gen): array {
+
+        $assigned_gen = null;
+        $success = self::mutate_ban_queue(static function (array $queue) use ($ip, &$assigned_gen): ?array {
             $generations = get_option(self::OPTION_IP_GENERATIONS, []);
             $generations = is_array($generations) ? $generations : [];
             $current = (int) ($generations[$ip] ?? 0);
@@ -57,12 +59,17 @@ class CloudflareIpListSynchronizer {
                 $generations = array_slice($generations, -1000, null, true);
             }
             if (!self::save_verified_option(self::OPTION_IP_GENERATIONS, $generations)) {
-                return $queue;
+                return null;
             }
+            $assigned_gen = $next_gen;
             return $queue;
         });
 
-        return $next_gen;
+        if (!$success || $assigned_gen === null) {
+            return false;
+        }
+
+        return $assigned_gen;
     }
 
     /**
@@ -608,7 +615,13 @@ class CloudflareIpListSynchronizer {
 
             if (!$persisted) {
                 // Compensate/Rollback OPTION_IP_GENERATIONS to previous state if queue persistence failed
-                self::save_verified_option(self::OPTION_IP_GENERATIONS, $prev_generations);
+                $rolled_back = self::save_verified_option(self::OPTION_IP_GENERATIONS, $prev_generations);
+                if (!$rolled_back && class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                    \WebCareProScanner\System\AuditLogger::log_operational('cf_queue_compensation_failed', [
+                        'error'     => 'Failed to reconcile OPTION_IP_GENERATIONS after queue persistence failure',
+                        'timestamp' => time(),
+                    ]);
+                }
                 return false;
             }
 

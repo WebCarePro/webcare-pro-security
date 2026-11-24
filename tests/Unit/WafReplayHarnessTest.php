@@ -670,12 +670,13 @@ class WafReplayHarnessTest extends TestCase {
         add_option($mutex_key, $lock_val, '', 'no');
 
         $blocked_ip = '203.0.113.143';
+        $blocked_initial_gen = CloudflareIpListSynchronizer::get_ip_generation($blocked_ip);
         $orig_queue = get_option(CloudflareIpListSynchronizer::OPTION_BAN_QUEUE, []);
         $fail_res = CloudflareIpListSynchronizer::queue_ip_ban($blocked_ip, 'Contention test ban', 86400);
 
         $this->assertSame('enqueue_failed', $fail_res['cf_sync_state'], 'Failure must propagate as enqueue_failed when lock cannot be acquired');
         $this->assertNull($fail_res['operation_id'], 'Operation ID must be null on failure');
-        $this->assertSame(0, CloudflareIpListSynchronizer::get_ip_generation($blocked_ip), 'Generation must remain unchanged when mutex acquisition fails');
+        $this->assertSame($blocked_initial_gen, CloudflareIpListSynchronizer::get_ip_generation($blocked_ip), 'Generation must remain unchanged when mutex acquisition fails');
         $this->assertSame($orig_queue, get_option(CloudflareIpListSynchronizer::OPTION_BAN_QUEUE, []), 'Queue must remain unchanged when mutex acquisition fails');
 
         delete_option($mutex_key);
@@ -711,6 +712,54 @@ class WafReplayHarnessTest extends TestCase {
         } finally {
             unset($GLOBALS['wp_mock_update_option_failures'][CloudflareIpListSynchronizer::OPTION_BAN_QUEUE]);
         }
+
+        // Case D2: Failure-injection where both queue persistence AND rollback compensation fail
+        // Verifies operational logging of cf_queue_compensation_failed and clean failure propagation
+        $fail_ip_comp = '203.0.113.147';
+        $logged_comp_events = [];
+        \WebCareProScanner\System\AuditLogger::$operational_log_hook = static function ($event, $details) use (&$logged_comp_events) {
+            $logged_comp_events[] = $event;
+        };
+
+        $GLOBALS['wp_mock_update_option_failures'][CloudflareIpListSynchronizer::OPTION_BAN_QUEUE] = true;
+        // After first generation write, simulate storage failure during rollback compensation as well
+        $GLOBALS['wp_mock_update_option_failures'][CloudflareIpListSynchronizer::OPTION_IP_GENERATIONS] = false;
+
+        try {
+            $comp_fail_res = CloudflareIpListSynchronizer::queue_ip_ban($fail_ip_comp, 'Double fail test', 86400);
+            $this->assertSame('enqueue_failed', $comp_fail_res['cf_sync_state']);
+            $this->assertNull($comp_fail_res['operation_id']);
+        } finally {
+            unset($GLOBALS['wp_mock_update_option_failures'][CloudflareIpListSynchronizer::OPTION_BAN_QUEUE]);
+            unset($GLOBALS['wp_mock_update_option_failures'][CloudflareIpListSynchronizer::OPTION_IP_GENERATIONS]);
+            \WebCareProScanner\System\AuditLogger::$operational_log_hook = null;
+        }
+
+        // Case E: increment_ip_generation() failure propagation (mutex contention & persistence failure)
+        $inc_ip = '203.0.113.146';
+        $inc_initial_gen = CloudflareIpListSynchronizer::get_ip_generation($inc_ip);
+
+        // Subcase E1: Mutex contention causes increment_ip_generation to return false
+        add_option($mutex_key, $lock_val, '', 'no');
+        $inc_contention_res = CloudflareIpListSynchronizer::increment_ip_generation($inc_ip);
+        $this->assertFalse($inc_contention_res, 'increment_ip_generation must return false when mutex acquisition fails');
+        $this->assertSame($inc_initial_gen, CloudflareIpListSynchronizer::get_ip_generation($inc_ip), 'Generation must not change on lock failure');
+        delete_option($mutex_key);
+
+        // Subcase E2: Persistence failure causes increment_ip_generation to return false
+        $GLOBALS['wp_mock_update_option_failures'][CloudflareIpListSynchronizer::OPTION_IP_GENERATIONS] = true;
+        try {
+            $inc_fail_res = CloudflareIpListSynchronizer::increment_ip_generation($inc_ip);
+            $this->assertFalse($inc_fail_res, 'increment_ip_generation must return false when option persistence fails');
+            $this->assertSame($inc_initial_gen, CloudflareIpListSynchronizer::get_ip_generation($inc_ip), 'Generation must remain unchanged on persistence failure');
+        } finally {
+            unset($GLOBALS['wp_mock_update_option_failures'][CloudflareIpListSynchronizer::OPTION_IP_GENERATIONS]);
+        }
+
+        // Subcase E3: Normal generation increment success
+        $inc_success_res = CloudflareIpListSynchronizer::increment_ip_generation($inc_ip);
+        $this->assertSame($inc_initial_gen + 1, $inc_success_res, 'increment_ip_generation must return the incremented generation on success');
+        $this->assertSame($inc_initial_gen + 1, CloudflareIpListSynchronizer::get_ip_generation($inc_ip));
     }
 
     /**
@@ -830,5 +879,15 @@ class WafReplayHarnessTest extends TestCase {
 
         $this->assertContains('waf_logs_purge_intent', $audited_events, 'Must record waf_logs_purge_intent before deleting files');
         $this->assertContains('waf_logs_purged', $audited_events, 'Must record waf_logs_purged after successful deletion');
+
+        // Test that clear_all_logs() refuses to purge when audit write fails
+        $orig_custom_log_dir = \WebCareProScanner\System\AuditLogger::$custom_log_dir;
+        \WebCareProScanner\System\AuditLogger::$custom_log_dir = '/proc/nonexistent_webcare_readonly_path';
+        try {
+            $refused = WafFileLogger::clear_all_logs();
+            $this->assertFalse($refused, 'clear_all_logs must return false and refuse to purge if audit intent write cannot be confirmed');
+        } finally {
+            \WebCareProScanner\System\AuditLogger::$custom_log_dir = $orig_custom_log_dir;
+        }
     }
 }

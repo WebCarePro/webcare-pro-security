@@ -73,7 +73,7 @@ class AuditLogger {
         add_action('_core_updated_successfully', [$this, 'log_core_update']);
     }
 
-    private function write_log($event_type, $message, bool $skip_activity_bridge = false) {
+    private function write_log($event_type, $message, bool $skip_activity_bridge = false): bool {
         $timestamp = gmdate('Y-m-d H:i:s');
         $raw_ip = class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine')
             ? \WebCareProScanner\Firewall\FirewallEngine::get_client_ip()
@@ -94,12 +94,14 @@ class AuditLogger {
             @file_put_contents($this->log_file, "<?php http_response_code(403); exit('WebCare Pro Security: Direct access forbidden.'); ?>\n", LOCK_EX);
         }
 
-        @file_put_contents($this->log_file, $log_entry, FILE_APPEND | LOCK_EX);
+        $res = @file_put_contents($this->log_file, $log_entry, FILE_APPEND | LOCK_EX);
 
         // Enterprise Activity Log Bridge: Forward into cryptographic hash-chained activity log ledger (unless explicitly skipped)
         if (!$skip_activity_bridge) {
             self::bridge_to_webcare_activity_logger($event_type, $message);
         }
+
+        return ($res !== false);
     }
 
     /**
@@ -311,11 +313,12 @@ class AuditLogger {
      *
      * @param string $event_type
      * @param string|array $message
+     * @return bool True if log was successfully written to disk
      */
-    public static function log_event($event_type, $message) {
+    public static function log_event($event_type, $message): bool {
         $instance = new self();
         $instance->ensure_log_directory();
-        $instance->write_log($event_type, $message);
+        return $instance->write_log($event_type, $message);
     }
 
     /**
@@ -324,22 +327,27 @@ class AuditLogger {
      *
      * @param string       $event_type
      * @param array|string $details
+     * @return bool True if log was successfully written to disk
      */
-    public static function log_operational(string $event_type, array|string $details): void {
+    public static function log_operational(string $event_type, array|string $details): bool {
         if (is_callable(self::$operational_log_hook)) {
             call_user_func(self::$operational_log_hook, $event_type, $details);
         }
 
         $instance = new self();
         $instance->ensure_log_directory();
-        $instance->write_log($event_type, $details, true);
+        return $instance->write_log($event_type, $details, true);
     }
 
     /**
      * Alias for log_event
+     *
+     * @param string $event_type
+     * @param string|array $message
+     * @return bool True if log was successfully written to disk
      */
-    public static function log($event_type, $message) {
-        self::log_event($event_type, $message);
+    public static function log($event_type, $message): bool {
+        return self::log_event($event_type, $message);
     }
 }
 
