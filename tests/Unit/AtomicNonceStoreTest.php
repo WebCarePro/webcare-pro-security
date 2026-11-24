@@ -128,4 +128,90 @@ final class AtomicNonceStoreTest extends TestCase
         $this->assertGreaterThanOrEqual($now + AtomicNonceStore::MIN_TTL - 1, $storedMinExpires);
         $this->assertLessThanOrEqual(time() + AtomicNonceStore::MIN_TTL + 2, $storedMinExpires);
     }
+
+    public function testOpportunisticBoundedPruningRemovesExpiredUnrelatedNoncesAndProtectsActiveNonces(): void
+    {
+        global $wpdb;
+        $origWpdb = $wpdb ?? null;
+        $mockDb = new \wpdb();
+        $mockDb->options = 'wp_options';
+        $GLOBALS['wpdb'] = $mockDb;
+
+        try {
+            $GLOBALS['wp_mock_options'] = [];
+            delete_transient(AtomicNonceStore::PRUNE_THROTTLE_KEY);
+            $now = time();
+
+            // Seed 65 expired unrelated nonce rows (exceeding PRUNE_BATCH_LIMIT = 50)
+            $expiredKeys = [];
+            for ($i = 0; $i < 65; $i++) {
+                $k = 'wcp_nonce_' . str_pad(dechex($i + 1), 40, '0', STR_PAD_LEFT);
+                $expiredKeys[] = $k;
+                update_option($k, (string) ($now - 120), false);
+            }
+
+            // Seed 2 active unexpired unrelated nonce rows + 1 non-nonce option
+            $activeKey1 = 'wcp_nonce_' . str_repeat('a', 40);
+            $activeKey2 = 'wcp_nonce_' . str_repeat('b', 40);
+            update_option($activeKey1, (string) ($now + 300), false);
+            update_option($activeKey2, (string) ($now + 5), false);
+            update_option('webcareproscan_unrelated_setting', '1', false);
+
+            // Consume a fresh nonce -> triggers throttled bounded prune (removes at most 50 expired rows)
+            $freshNonce = 'fresh_delivery_' . bin2hex(random_bytes(8));
+            $freshKey = 'wcp_nonce_' . substr(hash('sha256', 'wh_github|' . $freshNonce), 0, 40);
+            $this->assertTrue(AtomicNonceStore::consume('wh_github', $freshNonce, 300));
+
+            // Newly claimed nonce + active nonces + non-nonce option MUST remain intact
+            $this->assertNotFalse(get_option($freshKey, false), 'Newly claimed nonce must never be deleted by cleanup.');
+            $this->assertNotFalse(get_option($activeKey1, false), 'Unexpired nonce #1 must remain protected.');
+            $this->assertNotFalse(get_option($activeKey2, false), 'Unexpired nonce #2 must remain protected.');
+            $this->assertSame('1', get_option('webcareproscan_unrelated_setting'));
+
+            // Exactly 15 expired rows remain because batch size is capped at PRUNE_BATCH_LIMIT (50)
+            $remainingExpired = 0;
+            foreach ($expiredKeys as $ek) {
+                if (get_option($ek, null) !== null) {
+                    $remainingExpired++;
+                }
+            }
+            $this->assertSame(15, $remainingExpired, 'Cleanup must be bounded to PRUNE_BATCH_LIMIT (50) rows per run.');
+
+            // Immediate subsequent consume within throttle window (60s) must NOT run another DELETE query
+            $queryCountBefore = count($mockDb->queries);
+            $secondNonce = 'second_delivery_' . bin2hex(random_bytes(8));
+            $this->assertTrue(AtomicNonceStore::consume('wh_github', $secondNonce, 300));
+            $this->assertSame(
+                $queryCountBefore + 1,
+                count($mockDb->queries),
+                'Throttled consume must execute only the atomic INSERT without running DELETE on every request.'
+            );
+            $remainingAfterThrottle = 0;
+            foreach ($expiredKeys as $ek) {
+                if (get_option($ek, null) !== null) {
+                    $remainingAfterThrottle++;
+                }
+            }
+            $this->assertSame(15, $remainingAfterThrottle, 'Throttle must skip opportunistic pruning until window expires.');
+
+            // Once throttle transient expires, next consume prunes the remaining 15 expired rows while keeping active ones
+            delete_transient(AtomicNonceStore::PRUNE_THROTTLE_KEY);
+            $thirdNonce = 'third_delivery_' . bin2hex(random_bytes(8));
+            $this->assertTrue(AtomicNonceStore::consume('wh_github', $thirdNonce, 300));
+
+            $remainingFinal = 0;
+            foreach ($expiredKeys as $ek) {
+                if (get_option($ek, null) !== null) {
+                    $remainingFinal++;
+                }
+            }
+            $this->assertSame(0, $remainingFinal, 'Remaining expired rows must be pruned once throttle window elapses.');
+            $this->assertNotFalse(get_option($freshKey, false));
+            $this->assertNotFalse(get_option($activeKey1, false));
+            $this->assertNotFalse(get_option($activeKey2, false));
+        } finally {
+            $GLOBALS['wpdb'] = $origWpdb;
+            delete_transient(AtomicNonceStore::PRUNE_THROTTLE_KEY);
+        }
+    }
 }

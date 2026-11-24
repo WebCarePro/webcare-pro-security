@@ -13,9 +13,13 @@ final class SettingsUndoAtomicityTest extends TestCase
         parent::setUp();
         delete_option(SettingsManager::OPTION_KEY);
         delete_option(SettingsManager::OPTION_SNAPSHOTS_KEY);
+        delete_option(SettingsManager::OPTION_MUTATION_LOCK);
+        delete_option(SettingsManager::OPTION_REVISION_KEY);
+        SettingsManager::$interleave_before_undo_pop_hook = null;
         unset(
             $GLOBALS['wp_mock_update_option_failures'][SettingsManager::OPTION_KEY],
-            $GLOBALS['wp_mock_update_option_failures'][SettingsManager::OPTION_SNAPSHOTS_KEY]
+            $GLOBALS['wp_mock_update_option_failures'][SettingsManager::OPTION_SNAPSHOTS_KEY],
+            $GLOBALS['wp_mock_update_option_failures'][SettingsManager::OPTION_REVISION_KEY]
         );
         remove_all_filters('pre_option_' . SettingsManager::OPTION_KEY);
         remove_all_filters('webcareproscan_settings');
@@ -25,9 +29,13 @@ final class SettingsUndoAtomicityTest extends TestCase
     {
         delete_option(SettingsManager::OPTION_KEY);
         delete_option(SettingsManager::OPTION_SNAPSHOTS_KEY);
+        delete_option(SettingsManager::OPTION_MUTATION_LOCK);
+        delete_option(SettingsManager::OPTION_REVISION_KEY);
+        SettingsManager::$interleave_before_undo_pop_hook = null;
         unset(
             $GLOBALS['wp_mock_update_option_failures'][SettingsManager::OPTION_KEY],
-            $GLOBALS['wp_mock_update_option_failures'][SettingsManager::OPTION_SNAPSHOTS_KEY]
+            $GLOBALS['wp_mock_update_option_failures'][SettingsManager::OPTION_SNAPSHOTS_KEY],
+            $GLOBALS['wp_mock_update_option_failures'][SettingsManager::OPTION_REVISION_KEY]
         );
         remove_all_filters('pre_option_' . SettingsManager::OPTION_KEY);
         remove_all_filters('webcareproscan_settings');
@@ -179,5 +187,71 @@ final class SettingsUndoAtomicityTest extends TestCase
         $this->assertArrayHasKey('warning', $res);
         $this->assertSame('Settings restored, but snapshot history could not be updated.', $res['warning']);
         $this->assertSame('learning', SettingsManager::get_settings()['waf_mode']);
+    }
+
+    public function testMutationLockPreventsConcurrentSaveAndUndoContention(): void
+    {
+        SettingsManager::save_settings(['waf_mode' => 'learning']);
+        SettingsManager::save_settings(['waf_mode' => 'enabled']);
+
+        // Simulate active unexpired lock held by another administrator process
+        add_option(SettingsManager::OPTION_MUTATION_LOCK, 'other_admin_holder|' . (time() + 15), '', 'no');
+
+        $concurrentSave = SettingsManager::save_settings(['waf_mode' => 'disabled']);
+        $this->assertFalse($concurrentSave, 'save_settings() must fail closed when another admin holds the active mutation lock.');
+
+        $concurrentUndo = SettingsManager::undo_last_settings();
+        $this->assertFalse($concurrentUndo['success'], 'undo_last_settings() must abort when another admin holds the active mutation lock.');
+        $this->assertSame('lock_contention', $concurrentUndo['code'] ?? '');
+        $this->assertCount(1, SettingsManager::get_settings_snapshots(), 'Snapshot stack must remain untouched under lock contention.');
+        $this->assertSame('enabled', SettingsManager::get_settings()['waf_mode']);
+
+        // Expired stale lock must be automatically reclaimed on next undo
+        update_option(SettingsManager::OPTION_MUTATION_LOCK, 'stale_holder|' . (time() - 5), false);
+        $reclaimedUndo = SettingsManager::undo_last_settings();
+        $this->assertTrue($reclaimedUndo['success'], 'Expired mutation lock must be reclaimed cleanly.');
+        $this->assertSame('learning', SettingsManager::get_settings()['waf_mode']);
+    }
+
+    public function testConcurrentInterleavingBeforeSnapshotPopAbortsOverwriteAndPreservesNewerHistory(): void
+    {
+        // Step 1: Save state A ('learning'), then state A2 ('enabled') -> Snapshot stack has [A ('learning')]
+        SettingsManager::save_settings(['waf_mode' => 'learning', 'login_max_retries' => 5]);
+        SettingsManager::save_settings(['waf_mode' => 'enabled', 'login_max_retries' => 5]);
+        $this->assertCount(1, SettingsManager::get_settings_snapshots());
+
+        // Step 2: Simulate an interleaved concurrent admin save (settings B: 'disabled', login_max_retries: 3)
+        // occurring right after undo restores & verifies A, before undo attempts to write its popped snapshot stack.
+        SettingsManager::$interleave_before_undo_pop_hook = static function (): void {
+            // Simulate lock expiration/external concurrent write saving settings B and recording a new snapshot
+            SettingsManager::save_settings(
+                ['waf_mode' => 'disabled', 'login_max_retries' => 3],
+                true,
+                $ignored,
+                true
+            );
+        };
+
+        $res = SettingsManager::undo_last_settings();
+
+        $this->assertFalse($res['success'], 'Undo must detect concurrent revision/head modification and refuse to overwrite snapshot stack.');
+        $this->assertSame('concurrent_modification', $res['code'] ?? '');
+
+        // Active settings B MUST remain intact
+        $liveSettings = SettingsManager::get_settings();
+        $this->assertSame('disabled', $liveSettings['waf_mode']);
+        $this->assertSame(3, $liveSettings['login_max_retries']);
+
+        // Newer snapshot recorded by Admin B + earlier snapshot A MUST both remain preserved in order!
+        $snapshotsAfter = SettingsManager::get_settings_snapshots();
+        $this->assertCount(2, $snapshotsAfter, 'Undo must NOT overwrite newer snapshot history recorded by concurrent admin save.');
+        $this->assertGreaterThan(
+            (int) ($snapshotsAfter[1]['revision'] ?? 0),
+            (int) ($snapshotsAfter[0]['revision'] ?? 0),
+            'Newest snapshot head must retain the higher monotonic revision from the concurrent save.'
+        );
+        $this->assertNotSame($snapshotsAfter[0]['id'] ?? '', $snapshotsAfter[1]['id'] ?? '');
+        $this->assertSame('learning', $snapshotsAfter[0]['settings']['waf_mode']);
+        $this->assertSame('learning', $snapshotsAfter[1]['settings']['waf_mode']);
     }
 }

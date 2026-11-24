@@ -24,6 +24,9 @@ final class AtomicNonceStore {
     private const TABLE_NAME = 'webcareproscan_atomic_nonces';
     public const MIN_TTL = 5;
     public const MAX_TTL = 86400;
+    public const PRUNE_BATCH_LIMIT = 50;
+    public const PRUNE_THROTTLE_SECONDS = 60;
+    public const PRUNE_THROTTLE_KEY = 'wcp_nonce_prune_last_run';
 
     /**
      * Atomically consume a nonce.
@@ -66,6 +69,7 @@ final class AtomicNonceStore {
 
         if ($wpdb instanceof \wpdb && !empty($wpdb->options)) {
             $options_table = $wpdb->options;
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
             $affected = $wpdb->query(
                 $wpdb->prepare(
                     "INSERT INTO {$options_table} (option_name, option_value, autoload)
@@ -79,7 +83,11 @@ final class AtomicNonceStore {
             );
 
             // 1 = fresh row inserted, 2 = expired row updated, 0 = unexpired row unmodified
-            return $affected === 1 || $affected === 2;
+            $claimed = ($affected === 1 || $affected === 2);
+            if ($claimed) {
+                self::maybe_prune_expired_db_nonces($now, $key);
+            }
+            return $claimed;
         }
 
         // Fallback if $wpdb is unavailable (e.g. unit test minimal mock environment)
@@ -90,9 +98,97 @@ final class AtomicNonceStore {
                 return false; // Still active
             }
             // Expired, update
-            return update_option($key, (string) $expires_at, false);
+            $claimed = update_option($key, (string) $expires_at, false);
+        } else {
+            $claimed = add_option($key, (string) $expires_at, '', 'no');
         }
 
-        return add_option($key, (string) $expires_at, '', 'no');
+        if ($claimed) {
+            self::maybe_prune_expired_db_nonces($now, $key);
+        }
+
+        return $claimed;
+    }
+
+    /**
+     * Throttled opportunistic cleanup of expired wcp_nonce_% database rows.
+     * Runs at most once every PRUNE_THROTTLE_SECONDS (60s) and removes up to PRUNE_BATCH_LIMIT (50) expired rows.
+     */
+    private static function maybe_prune_expired_db_nonces(int $now, string $exclude_key = ''): void {
+        if (get_transient(self::PRUNE_THROTTLE_KEY) !== false) {
+            return;
+        }
+
+        set_transient(self::PRUNE_THROTTLE_KEY, $now, self::PRUNE_THROTTLE_SECONDS);
+        self::prune_expired_db_nonces($now, $exclude_key, self::PRUNE_BATCH_LIMIT);
+    }
+
+    /**
+     * Execute bounded cleanup of expired wcp_nonce_% option rows while strictly protecting
+     * unexpired rows and any newly claimed $exclude_key.
+     *
+     * @param int    $now         Current UNIX timestamp.
+     * @param string $exclude_key Active nonce option_name to explicitly exclude from deletion.
+     * @param int    $limit       Maximum expired rows to prune in a single batch (clamped 1..500).
+     * @return int Number of expired rows deleted.
+     */
+    public static function prune_expired_db_nonces(int $now, string $exclude_key = '', int $limit = self::PRUNE_BATCH_LIMIT): int {
+        $limit = max(1, min(500, $limit));
+
+        global $wpdb;
+        if ($wpdb instanceof \wpdb && !empty($wpdb->options)) {
+            $options_table = $wpdb->options;
+            $like_prefix = method_exists($wpdb, 'esc_like')
+                ? $wpdb->esc_like('wcp_nonce_') . '%'
+                : 'wcp_nonce\\_%';
+            $protected_key = $exclude_key !== '' ? $exclude_key : self::PRUNE_THROTTLE_KEY;
+
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            $deleted = $wpdb->query(
+                $wpdb->prepare(
+                    "DELETE FROM {$options_table}
+                     WHERE option_name LIKE %s
+                       AND option_name NOT IN (%s, %s)
+                       AND option_value REGEXP '^[0-9]+$'
+                       AND CAST(option_value AS UNSIGNED) > 0
+                       AND CAST(option_value AS UNSIGNED) < %d
+                     LIMIT %d",
+                    $like_prefix,
+                    self::PRUNE_THROTTLE_KEY,
+                    $protected_key,
+                    $now,
+                    $limit
+                )
+            );
+
+            return is_int($deleted) ? max(0, $deleted) : 0;
+        }
+
+        // Minimal mock environment fallback (when $wpdb->options is not active in unit tests)
+        if (!isset($GLOBALS['wp_mock_options']) || !is_array($GLOBALS['wp_mock_options'])) {
+            return 0;
+        }
+
+        $deleted = 0;
+        foreach (array_keys($GLOBALS['wp_mock_options']) as $opt_name) {
+            if ($deleted >= $limit) {
+                break;
+            }
+            $opt_key = (string) $opt_name;
+            if (!str_starts_with($opt_key, 'wcp_nonce_') || $opt_key === self::PRUNE_THROTTLE_KEY || $opt_key === $exclude_key) {
+                continue;
+            }
+            $raw_val = $GLOBALS['wp_mock_options'][$opt_key] ?? null;
+            if (!is_int($raw_val) && !(is_string($raw_val) && ctype_digit($raw_val))) {
+                continue;
+            }
+            $exp = (int) $raw_val;
+            if ($exp > 0 && $exp < $now) {
+                delete_option($opt_key);
+                $deleted++;
+            }
+        }
+
+        return $deleted;
     }
 }

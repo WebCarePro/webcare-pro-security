@@ -23,6 +23,21 @@ final class AllowlistManager {
     private const SUPPORTED_HMAC_PROVIDERS = ['stripe', 'shopify', 'github', 'generic_sha256'];
 
     /**
+     * Test seam allowing unit tests to simulate RequestBodyReader unavailability without unloading classes.
+     */
+    public static bool $force_body_reader_unavailable_for_tests = false;
+
+    /**
+     * Check whether the bounded RequestBodyReader is available.
+     */
+    private static function is_bounded_body_reader_available(): bool {
+        if (self::$force_body_reader_unavailable_for_tests) {
+            return false;
+        }
+        return class_exists(RequestBodyReader::class);
+    }
+
+    /**
      * Return canonical supported cryptographic webhook HMAC providers.
      *
      * @return list<string>
@@ -365,16 +380,15 @@ final class AllowlistManager {
                     continue; // Missing, unreadable, or undecryptable SecretVault entry -> fail closed
                 }
 
-                // Read bounded body stream via RequestBodyReader (enforce fail-closed if truncated or unreadable)
-                if (class_exists(RequestBodyReader::class)) {
-                    if (RequestBodyReader::is_truncated() || RequestBodyReader::has_read_failed()) {
-                        continue; // Truncated or failed body stream cannot validly verify cryptographic HMAC
-                    }
-                    $raw_body = RequestBodyReader::get_bounded_body();
-                } else {
-                    // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
-                    $raw_body = (string) file_get_contents('php://input');
+                // Read bounded body stream strictly via RequestBodyReader (never fall back to unbounded php://input).
+                // Fail closed if RequestBodyReader is unavailable, truncated, or unreadable.
+                if (!self::is_bounded_body_reader_available()) {
+                    continue;
                 }
+                if (RequestBodyReader::is_truncated() || RequestBodyReader::has_read_failed()) {
+                    continue; // Truncated or failed body stream cannot validly verify cryptographic HMAC
+                }
+                $raw_body = RequestBodyReader::get_bounded_body();
 
                 $tolerance = isset($rule['webhook_replay_window_sec'])
                     ? max(30, min(900, (int) $rule['webhook_replay_window_sec']))

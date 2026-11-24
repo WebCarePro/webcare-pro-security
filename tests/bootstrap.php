@@ -790,11 +790,21 @@ if (!class_exists('WP_REST_Response')) {
 
 // Mock minimal wpdb class if not loaded
 if (!class_exists('wpdb')) {
+    #[\AllowDynamicProperties]
     class wpdb {
         public string $prefix = 'wp_';
         public array $queries = [];
         public array $mock_tables = [];
         public $mock_get_var_callback = null;
+
+        public function esc_like(string $text): string {
+            return addcslashes($text, '_%\\');
+        }
+
+        public function get_col(string $query): array {
+            $this->queries[] = $query;
+            return [];
+        }
 
         public function prepare(string $query, ...$args): string {
             return vsprintf(str_replace(['%s', '%d'], ["'%s'", '%d'], $query), $args);
@@ -853,6 +863,50 @@ if (!class_exists('wpdb')) {
 
         public function query(string $query) {
             $this->queries[] = $query;
+
+            if (!empty($this->options)) {
+                // Simulate AtomicNonceStore INSERT ... ON DUPLICATE KEY UPDATE against $GLOBALS['wp_mock_options']
+                if (preg_match("/INSERT\s+INTO\s+\S+\s*\(\s*option_name\s*,\s*option_value\s*,\s*autoload\s*\)\s*VALUES\s*\('([^']+)',\s*'([^']+)',\s*'no'\)\s*ON\s+DUPLICATE\s+KEY\s+UPDATE\s*option_value\s*=\s*IF\(CAST\(option_value\s+AS\s+UNSIGNED\)\s*<\s*(\d+)/is", $query, $m)) {
+                    $optKey = $m[1];
+                    $newVal = $m[2];
+                    $nowTs  = (int) $m[3];
+                    if (!isset($GLOBALS['wp_mock_options'][$optKey])) {
+                        $GLOBALS['wp_mock_options'][$optKey] = $newVal;
+                        return 1;
+                    }
+                    $curExp = (int) $GLOBALS['wp_mock_options'][$optKey];
+                    if ($curExp < $nowTs) {
+                        $GLOBALS['wp_mock_options'][$optKey] = $newVal;
+                        return 2;
+                    }
+                    return 0;
+                }
+
+                // Simulate AtomicNonceStore bounded DELETE ... LIMIT against $GLOBALS['wp_mock_options']
+                if (preg_match("/DELETE\s+FROM\s+\S+\s+WHERE\s+option_name\s+LIKE\s+'[^']+'\s+AND\s+option_name\s+NOT\s+IN\s*\('([^']+)',\s*'([^']+)'\).*CAST\(option_value\s+AS\s+UNSIGNED\)\s*<\s*(\d+)\s+LIMIT\s+(\d+)/is", $query, $dm)) {
+                    $excl1  = $dm[1];
+                    $excl2  = $dm[2];
+                    $nowTs  = (int) $dm[3];
+                    $limitN = (int) $dm[4];
+                    $deleted = 0;
+                    foreach (array_keys($GLOBALS['wp_mock_options'] ?? []) as $optName) {
+                        if ($deleted >= $limitN) {
+                            break;
+                        }
+                        $k = (string) $optName;
+                        if (!str_starts_with($k, 'wcp_nonce_') || $k === $excl1 || $k === $excl2) {
+                            continue;
+                        }
+                        $v = $GLOBALS['wp_mock_options'][$k] ?? null;
+                        if ((is_int($v) || (is_string($v) && ctype_digit($v))) && (int) $v > 0 && (int) $v < $nowTs) {
+                            unset($GLOBALS['wp_mock_options'][$k]);
+                            $deleted++;
+                        }
+                    }
+                    return $deleted;
+                }
+            }
+
             return 1;
         }
 

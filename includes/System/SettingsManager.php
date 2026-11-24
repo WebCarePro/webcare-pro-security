@@ -10,13 +10,90 @@ class SettingsManager {
     const OPTION_NAME = self::OPTION_KEY;
     const OPTION_SNAPSHOTS_KEY = 'webcareproscan_settings_snapshots';
     const OPTION_SNAPSHOTS = self::OPTION_SNAPSHOTS_KEY;
+    const OPTION_MUTATION_LOCK = 'webcareproscan_settings_mutex';
+    const OPTION_REVISION_KEY = 'webcareproscan_settings_revision';
     const CRON_HOOK = 'webcareproscan_scheduled_scan_event';
     const MAX_SNAPSHOTS = 10;
+    private const MUTATION_LOCK_TTL = 15;
 
     /**
      * Tracks whether SecretVault persistence failed while sanitizing targeted allowlist rules.
      */
     private static bool $last_webhook_secret_store_failed = false;
+
+    /**
+     * Tracks whether the current execution stack frame holds OPTION_MUTATION_LOCK.
+     */
+    private static bool $holds_mutation_lock = false;
+
+    /**
+     * Optional test seam invoked immediately before undo_last_settings() pops OPTION_SNAPSHOTS_KEY
+     * to deterministically test concurrent administrative interleavings.
+     *
+     * @var callable|null
+     */
+    public static $interleave_before_undo_pop_hook = null;
+
+    /**
+     * Acquire shared atomic settings mutation lock to serialize concurrent save_settings() and undo_last_settings().
+     */
+    public static function acquire_mutation_lock(): ?string {
+        $token = bin2hex(random_bytes(8));
+
+        for ($attempt = 0; $attempt < 3; $attempt++) {
+            $now = time();
+            $lock_payload = $token . '|' . ($now + self::MUTATION_LOCK_TTL);
+            if (add_option(self::OPTION_MUTATION_LOCK, $lock_payload, '', 'no')) {
+                self::$holds_mutation_lock = true;
+                return $token;
+            }
+
+            if (function_exists('wp_cache_delete')) {
+                wp_cache_delete(self::OPTION_MUTATION_LOCK, 'options');
+            }
+            $existing = get_option(self::OPTION_MUTATION_LOCK, '');
+            if (is_string($existing) && str_contains($existing, '|')) {
+                $parts = explode('|', $existing, 2);
+                $expires_at = (int) ($parts[1] ?? 0);
+                if ($expires_at > 0 && $expires_at < $now) {
+                    delete_option(self::OPTION_MUTATION_LOCK);
+                    continue;
+                }
+            } elseif ($existing === '' || $existing === false) {
+                continue;
+            }
+
+            if (!defined('WEBCAREPROSCAN_TESTING') || !WEBCAREPROSCAN_TESTING) {
+                usleep(25000);
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Release shared atomic settings mutation lock if still owned by $token.
+     */
+    public static function release_mutation_lock(?string $token): void {
+        if ($token === null || $token === '') {
+            return;
+        }
+        if (function_exists('wp_cache_delete')) {
+            wp_cache_delete(self::OPTION_MUTATION_LOCK, 'options');
+        }
+        $existing = get_option(self::OPTION_MUTATION_LOCK, '');
+        if (is_string($existing) && str_starts_with($existing, $token . '|')) {
+            delete_option(self::OPTION_MUTATION_LOCK);
+        }
+        self::$holds_mutation_lock = false;
+    }
+
+    /**
+     * Return current monotonic settings revision counter.
+     */
+    public static function get_settings_revision(): int {
+        return max(0, (int) get_option(self::OPTION_REVISION_KEY, 0));
+    }
 
     /**
      * Non-secret boolean/policy setting keys whose names include words like 'password' or 'secrets'
@@ -840,12 +917,39 @@ class SettingsManager {
      * Save settings with sanitization and hook updates.
      * Returns false if option persistence or SecretVault storage fails.
      *
-     * @param array<string, mixed> $input
-     * @param bool                 $record_snapshot
+     * @param array<string, mixed>      $input
+     * @param bool                      $record_snapshot
+     * @param array<string, mixed>|null $out_clean
+     * @param bool                      $caller_holds_lock
+     * @return array<string, mixed>|false
+     */
+    public static function save_settings(array $input, bool $record_snapshot = true, ?array &$out_clean = null, bool $caller_holds_lock = false): array|false {
+        $lock_token = null;
+        if (!$caller_holds_lock && !self::$holds_mutation_lock) {
+            $lock_token = self::acquire_mutation_lock();
+            if ($lock_token === null) {
+                return false;
+            }
+        }
+
+        try {
+            return self::save_settings_locked($input, $record_snapshot, $out_clean);
+        } finally {
+            if ($lock_token !== null) {
+                self::release_mutation_lock($lock_token);
+            }
+        }
+    }
+
+    /**
+     * Internal lock-protected settings persistence and snapshot recording implementation.
+     *
+     * @param array<string, mixed>      $input
+     * @param bool                      $record_snapshot
      * @param array<string, mixed>|null $out_clean
      * @return array<string, mixed>|false
      */
-    public static function save_settings(array $input, bool $record_snapshot = true, ?array &$out_clean = null): array|false {
+    private static function save_settings_locked(array $input, bool $record_snapshot = true, ?array &$out_clean = null): array|false {
         self::$last_webhook_secret_store_failed = false;
 
         $sentinel = '__webcare_option_unset__';
@@ -1435,9 +1539,15 @@ class SettingsManager {
             return false;
         }
 
+        // Advance monotonic settings revision counter inside the shared mutation lock
+        $next_revision = self::get_settings_revision() + 1;
+        if (!update_option(self::OPTION_REVISION_KEY, $next_revision, false)) {
+            return false;
+        }
+
         // Record a secret-stripped snapshot of the prior settings ONLY AFTER persistence succeeds
         if ($record_snapshot && !empty($diff)) {
-            self::record_settings_snapshot($current);
+            self::record_settings_snapshot($current, $next_revision);
         }
 
         // Synchronize Cron Schedule
@@ -1869,8 +1979,9 @@ class SettingsManager {
      * Capped at MAX_SNAPSHOTS (10).
      *
      * @param array $settings
+     * @param int   $revision
      */
-    public static function record_settings_snapshot(array $settings): void {
+    public static function record_settings_snapshot(array $settings, int $revision = 0): void {
         $safe_settings = self::strip_secrets($settings);
         if (empty($safe_settings)) {
             return;
@@ -1881,8 +1992,10 @@ class SettingsManager {
             $snapshots = [];
         }
 
-        // Prepend newest snapshot
+        // Prepend newest snapshot with unique ID and revision metadata for concurrency fencing
         array_unshift($snapshots, [
+            'id'        => 'snap_' . bin2hex(random_bytes(8)),
+            'revision'  => $revision > 0 ? $revision : self::get_settings_revision(),
             'timestamp' => time(),
             'user'      => function_exists('wp_get_current_user') ? (wp_get_current_user()->user_login ?? 'system') : 'system',
             'settings'  => $safe_settings,
@@ -1894,6 +2007,37 @@ class SettingsManager {
         }
 
         update_option(self::OPTION_SNAPSHOTS_KEY, $snapshots, false);
+    }
+
+    /**
+     * Compute a deterministic fingerprint of a snapshot entry for compare-and-swap head verification.
+     *
+     * @param array<string, mixed> $snapshot
+     */
+    private static function compute_snapshot_fingerprint(array $snapshot): string {
+        $id = (string) ($snapshot['id'] ?? '');
+        $rev = (int) ($snapshot['revision'] ?? 0);
+        $ts = (int) ($snapshot['timestamp'] ?? 0);
+        $settings = is_array($snapshot['settings'] ?? null) ? self::canonicalize_for_fingerprint($snapshot['settings']) : [];
+        return hash('sha256', $id . '|' . $rev . '|' . $ts . '|' . wp_json_encode($settings));
+    }
+
+    /**
+     * Normalize associative key ordering recursively for deterministic snapshot fingerprinting.
+     *
+     * @param array<mixed> $data
+     * @return array<mixed>
+     */
+    private static function canonicalize_for_fingerprint(array $data): array {
+        if (!array_is_list($data)) {
+            ksort($data);
+        }
+        foreach ($data as $k => $v) {
+            if (is_array($v)) {
+                $data[$k] = self::canonicalize_for_fingerprint($v);
+            }
+        }
+        return $data;
     }
 
     /**
@@ -1984,164 +2128,215 @@ class SettingsManager {
      * @return array<string, mixed>
      */
     public static function undo_last_settings(): array {
-        $snapshots = self::get_settings_snapshots();
-        if (empty($snapshots)) {
+        $lock_token = self::acquire_mutation_lock();
+        if ($lock_token === null) {
             return [
                 'success'             => false,
-                'message'             => __('No previous settings snapshot available to undo.', 'webcare-pro-security'),
+                'code'                => 'lock_contention',
+                'message'             => __('Another settings update is currently in progress. Please try again.', 'webcare-pro-security'),
                 'settings'            => self::get_settings(),
-                'snapshots_remaining' => 0,
+                'snapshots_remaining' => count(self::get_settings_snapshots()),
             ];
         }
 
-        // Peek at the most recent snapshot without popping it yet (two-phase verified undo)
-        $target_snapshot = $snapshots[0];
-        $restored_subset = $target_snapshot['settings'] ?? [];
-        if (!is_array($restored_subset) || empty($restored_subset)) {
-            // Snapshot was corrupted; discard corrupted entry safely
-            array_shift($snapshots);
-            update_option(self::OPTION_SNAPSHOTS_KEY, $snapshots, false);
-            return [
-                'success'             => false,
-                'message'             => __('Corrupted settings snapshot encountered.', 'webcare-pro-security'),
-                'settings'            => self::get_settings(),
-                'snapshots_remaining' => count($snapshots),
-            ];
-        }
-
-        // Preserve current active secrets
-        $current = get_option(self::OPTION_KEY, []);
-        if (!is_array($current)) {
-            $current = [];
-        }
-
-        $active_secrets = [];
-        foreach (self::SECRET_KEYS as $secret_key) {
-            if (isset($current[$secret_key])) {
-                $active_secrets[$secret_key] = $current[$secret_key];
+        try {
+            if (function_exists('wp_cache_delete')) {
+                wp_cache_delete(self::OPTION_SNAPSHOTS_KEY, 'options');
+                wp_cache_delete(self::OPTION_REVISION_KEY, 'options');
             }
-        }
 
-        // Merge restored non-secret settings with active secrets
-        $merged_restoration = array_merge($restored_subset, $active_secrets);
+            $snapshots = self::get_settings_snapshots();
+            if (empty($snapshots)) {
+                return [
+                    'success'             => false,
+                    'message'             => __('No previous settings snapshot available to undo.', 'webcare-pro-security'),
+                    'settings'            => self::get_settings(),
+                    'snapshots_remaining' => 0,
+                ];
+            }
 
-        // Phase 1: Apply restoration via save_settings() without mutating snapshot history yet
-        $expected_clean = null;
-        $saved = self::save_settings($merged_restoration, false, $expected_clean);
-        if ($saved === false || (function_exists('is_wp_error') && is_wp_error($saved)) || !is_array($saved) || !is_array($expected_clean)) {
-            return [
-                'success'             => false,
-                'message'             => __('Settings undo failed: unable to persist restored settings.', 'webcare-pro-security'),
-                'settings'            => self::get_settings(),
-                'snapshots_remaining' => count($snapshots),
-            ];
-        }
+            // Peek at the most recent snapshot without popping it yet (two-phase verified + fenced undo)
+            $initial_snapshot_count = count($snapshots);
+            $target_snapshot = is_array($snapshots[0]) ? $snapshots[0] : [];
+            $expected_head_fp = self::compute_snapshot_fingerprint($target_snapshot);
+            $restored_subset = $target_snapshot['settings'] ?? [];
+            if (!is_array($restored_subset) || empty($restored_subset)) {
+                // Snapshot was corrupted; discard corrupted entry safely
+                array_shift($snapshots);
+                update_option(self::OPTION_SNAPSHOTS_KEY, $snapshots, false);
+                return [
+                    'success'             => false,
+                    'message'             => __('Corrupted settings snapshot encountered.', 'webcare-pro-security'),
+                    'settings'            => self::get_settings(),
+                    'snapshots_remaining' => count($snapshots),
+                ];
+            }
 
-        // Phase 2: Clear options cache and read back persisted state via get_option() and get_settings()
-        if (function_exists('wp_cache_delete')) {
-            wp_cache_delete(self::OPTION_KEY, 'options');
-        }
+            // Preserve current active secrets
+            $current = get_option(self::OPTION_KEY, []);
+            if (!is_array($current)) {
+                $current = [];
+            }
 
-        $raw_persisted = get_option(self::OPTION_KEY, []);
-        $read_back = self::get_settings();
-        if (!is_array($raw_persisted) || empty($raw_persisted) || !is_array($read_back) || empty($read_back)) {
-            return [
-                'success'             => false,
-                'message'             => __('Settings undo verification failed: unable to read back restored state.', 'webcare-pro-security'),
-                'settings'            => is_array($read_back) ? $read_back : [],
-                'snapshots_remaining' => count($snapshots),
-            ];
-        }
-
-        // Verify EVERY non-secret key in the expected sanitized restored payload (including nested arrays & missing keys)
-        // and confirm live secrets remain intact in raw storage.
-        $verification_failed = false;
-        foreach ($expected_clean as $ek => $ev) {
-            if (in_array($ek, self::SECRET_KEYS, true)) {
-                $expected_secret = $active_secrets[$ek] ?? $ev;
-                if (!array_key_exists($ek, $raw_persisted) || $raw_persisted[$ek] !== $expected_secret) {
-                    $verification_failed = true;
-                    break;
+            $active_secrets = [];
+            foreach (self::SECRET_KEYS as $secret_key) {
+                if (isset($current[$secret_key])) {
+                    $active_secrets[$secret_key] = $current[$secret_key];
                 }
-                continue;
             }
 
-            if (!array_key_exists($ek, $raw_persisted) || !array_key_exists($ek, $read_back)) {
-                $verification_failed = true;
-                break;
+            // Merge restored non-secret settings with active secrets
+            $merged_restoration = array_merge($restored_subset, $active_secrets);
+
+            // Phase 1: Apply restoration via save_settings() under the held mutation lock without mutating snapshot history yet
+            $expected_clean = null;
+            $saved = self::save_settings($merged_restoration, false, $expected_clean, true);
+            if ($saved === false || (function_exists('is_wp_error') && is_wp_error($saved)) || !is_array($saved) || !is_array($expected_clean)) {
+                return [
+                    'success'             => false,
+                    'message'             => __('Settings undo failed: unable to persist restored settings.', 'webcare-pro-security'),
+                    'settings'            => self::get_settings(),
+                    'snapshots_remaining' => count($snapshots),
+                ];
             }
 
-            if (!self::values_canonical_equal($ev, $raw_persisted[$ek]) || !self::values_canonical_equal($ev, $read_back[$ek])) {
-                $verification_failed = true;
-                break;
-            }
-        }
+            $expected_undo_revision = self::get_settings_revision();
 
-        // Also ensure no non-secret key present in the snapshot's restored_subset is missing or mismatched
-        if (!$verification_failed) {
-            foreach ($restored_subset as $rk => $rv) {
-                $rk_str = (string) $rk;
-                if (in_array($rk_str, self::SECRET_KEYS, true) || str_starts_with($rk_str, 'has_') || $rk_str === 'activity_log_settings') {
-                    continue;
-                }
-                if (!array_key_exists($rk_str, $raw_persisted) || !array_key_exists($rk_str, $read_back)) {
-                    $verification_failed = true;
-                    break;
-                }
-                if (!array_key_exists($rk_str, $expected_clean)) {
-                    if (!self::values_canonical_equal($rv, $raw_persisted[$rk_str]) || !self::values_canonical_equal($rv, $read_back[$rk_str])) {
+            // Phase 2: Clear options cache and read back persisted state via get_option() and get_settings()
+            if (function_exists('wp_cache_delete')) {
+                wp_cache_delete(self::OPTION_KEY, 'options');
+            }
+
+            $raw_persisted = get_option(self::OPTION_KEY, []);
+            $read_back = self::get_settings();
+            if (!is_array($raw_persisted) || empty($raw_persisted) || !is_array($read_back) || empty($read_back)) {
+                return [
+                    'success'             => false,
+                    'message'             => __('Settings undo verification failed: unable to read back restored state.', 'webcare-pro-security'),
+                    'settings'            => is_array($read_back) ? $read_back : [],
+                    'snapshots_remaining' => count($snapshots),
+                ];
+            }
+
+            // Verify EVERY non-secret key in the expected sanitized restored payload (including nested arrays & missing keys)
+            // and confirm live secrets remain intact in raw storage.
+            $verification_failed = false;
+            foreach ($expected_clean as $ek => $ev) {
+                if (in_array($ek, self::SECRET_KEYS, true)) {
+                    $expected_secret = $active_secrets[$ek] ?? $ev;
+                    if (!array_key_exists($ek, $raw_persisted) || $raw_persisted[$ek] !== $expected_secret) {
                         $verification_failed = true;
                         break;
                     }
+                    continue;
+                }
+
+                if (!array_key_exists($ek, $raw_persisted) || !array_key_exists($ek, $read_back)) {
+                    $verification_failed = true;
+                    break;
+                }
+
+                if (!self::values_canonical_equal($ev, $raw_persisted[$ek]) || !self::values_canonical_equal($ev, $read_back[$ek])) {
+                    $verification_failed = true;
+                    break;
                 }
             }
-        }
 
-        if ($verification_failed) {
+            // Also ensure no non-secret key present in the snapshot's restored_subset is missing or mismatched
+            if (!$verification_failed) {
+                foreach ($restored_subset as $rk => $rv) {
+                    $rk_str = (string) $rk;
+                    if (in_array($rk_str, self::SECRET_KEYS, true) || str_starts_with($rk_str, 'has_') || $rk_str === 'activity_log_settings') {
+                        continue;
+                    }
+                    if (!array_key_exists($rk_str, $raw_persisted) || !array_key_exists($rk_str, $read_back)) {
+                        $verification_failed = true;
+                        break;
+                    }
+                    if (!array_key_exists($rk_str, $expected_clean)) {
+                        if (!self::values_canonical_equal($rv, $raw_persisted[$rk_str]) || !self::values_canonical_equal($rv, $read_back[$rk_str])) {
+                            $verification_failed = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if ($verification_failed) {
+                return [
+                    'success'             => false,
+                    'message'             => __('Settings undo verification failed: restored settings mismatch.', 'webcare-pro-security'),
+                    'settings'            => $read_back,
+                    'snapshots_remaining' => count($snapshots),
+                ];
+            }
+
+            // Optional test hook to simulate concurrent interleaving right before popping snapshot history
+            if (is_callable(self::$interleave_before_undo_pop_hook)) {
+                (self::$interleave_before_undo_pop_hook)();
+            }
+
+            // Phase 3: Revision & Snapshot-Head Fencing before popping OPTION_SNAPSHOTS_KEY
+            if (function_exists('wp_cache_delete')) {
+                wp_cache_delete(self::OPTION_SNAPSHOTS_KEY, 'options');
+                wp_cache_delete(self::OPTION_REVISION_KEY, 'options');
+            }
+
+            $live_revision = self::get_settings_revision();
+            $live_snapshots = self::get_settings_snapshots();
+            $head_intact = !empty($live_snapshots)
+                && count($live_snapshots) === $initial_snapshot_count
+                && is_array($live_snapshots[0])
+                && self::compute_snapshot_fingerprint($live_snapshots[0]) === $expected_head_fp;
+
+            if ($live_revision !== $expected_undo_revision || !$head_intact) {
+                return [
+                    'success'             => false,
+                    'code'                => 'concurrent_modification',
+                    'message'             => __('Concurrent settings modification detected during undo; newer snapshot history was preserved.', 'webcare-pro-security'),
+                    'settings'            => self::get_settings(),
+                    'snapshots_remaining' => count($live_snapshots),
+                ];
+            }
+
+            $remaining_snapshots = $live_snapshots;
+            array_shift($remaining_snapshots);
+            $snapshot_updated = update_option(self::OPTION_SNAPSHOTS_KEY, $remaining_snapshots, false);
+            if (!$snapshot_updated) {
+                $warn_msg = __('Settings restored, but snapshot history could not be updated.', 'webcare-pro-security');
+                return [
+                    'success'             => false,
+                    'warning'             => $warn_msg,
+                    'message'             => $warn_msg,
+                    'settings'            => $read_back,
+                    'snapshots_remaining' => count($live_snapshots),
+                ];
+            }
+
+            if (class_exists('\\WebCareProScanner\\System\\WebCareActivityLogger')) {
+                $formatted_time = function_exists('date_i18n')
+                    ? date_i18n('Y-m-d H:i:s', $target_snapshot['timestamp'] ?? time())
+                    : gmdate('Y-m-d H:i:s', $target_snapshot['timestamp'] ?? time());
+                \WebCareProScanner\System\WebCareActivityLogger::notice(
+                    'settings_undo_applied',
+                    'settings',
+                    [
+                        'description'         => sprintf('Reverted settings to snapshot from %s.', $formatted_time),
+                        'snapshot_time'       => $target_snapshot['timestamp'] ?? time(),
+                        'snapshots_remaining' => count($remaining_snapshots),
+                    ]
+                );
+            }
+
             return [
-                'success'             => false,
-                'message'             => __('Settings undo verification failed: restored settings mismatch.', 'webcare-pro-security'),
+                'success'             => true,
+                'message'             => __('Settings successfully reverted to the previous snapshot.', 'webcare-pro-security'),
                 'settings'            => $read_back,
-                'snapshots_remaining' => count($snapshots),
+                'snapshots_remaining' => count($remaining_snapshots),
             ];
+        } finally {
+            self::release_mutation_lock($lock_token);
         }
-
-        // Phase 3: Verification passed! Pop the snapshot from stack and explicitly check update_option() result
-        $remaining_snapshots = $snapshots;
-        array_shift($remaining_snapshots);
-        $snapshot_updated = update_option(self::OPTION_SNAPSHOTS_KEY, $remaining_snapshots, false);
-        if (!$snapshot_updated) {
-            $warn_msg = __('Settings restored, but snapshot history could not be updated.', 'webcare-pro-security');
-            return [
-                'success'             => false,
-                'warning'             => $warn_msg,
-                'message'             => $warn_msg,
-                'settings'            => $read_back,
-                'snapshots_remaining' => count($snapshots),
-            ];
-        }
-
-        if (class_exists('\\WebCareProScanner\\System\\WebCareActivityLogger')) {
-            $formatted_time = function_exists('date_i18n')
-                ? date_i18n('Y-m-d H:i:s', $target_snapshot['timestamp'] ?? time())
-                : gmdate('Y-m-d H:i:s', $target_snapshot['timestamp'] ?? time());
-            \WebCareProScanner\System\WebCareActivityLogger::notice(
-                'settings_undo_applied',
-                'settings',
-                [
-                    'description'         => sprintf('Reverted settings to snapshot from %s.', $formatted_time),
-                    'snapshot_time'       => $target_snapshot['timestamp'] ?? time(),
-                    'snapshots_remaining' => count($remaining_snapshots),
-                ]
-            );
-        }
-
-        return [
-            'success'             => true,
-            'message'             => __('Settings successfully reverted to the previous snapshot.', 'webcare-pro-security'),
-            'settings'            => $read_back,
-            'snapshots_remaining' => count($remaining_snapshots),
-        ];
     }
 
     /**

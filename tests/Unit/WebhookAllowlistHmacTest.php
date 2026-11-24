@@ -239,4 +239,56 @@ final class WebhookAllowlistHmacTest extends TestCase
         ]);
         $this->assertFalse($saveResult, 'SettingsManager::save_settings() must abort and return false when SecretVault persistence fails.');
     }
+
+    public function testUnavailableRequestBodyReaderFailsClosedWithoutUnboundedInputFallback(): void
+    {
+        $secret = 'whsec_bounded_reader_required';
+        $ref = 'wcp_wh_sec_reader_req';
+        $this->assertTrue(AllowlistManager::store_webhook_secret($ref, $secret));
+
+        $body = '{"id":"evt_reader_check","type":"charge.succeeded"}';
+        RequestBodyReader::$mock_raw_body = $body;
+
+        $now = time();
+        $sig = hash_hmac('sha256', "{$now}.{$body}", $secret);
+        $_SERVER['HTTP_STRIPE_SIGNATURE'] = "t={$now},v1={$sig}";
+
+        $rules = [[
+            'id'                        => 'rule_stripe_reader_unavailable',
+            'name'                      => 'Stripe Bounded Reader Guard',
+            'enabled'                   => true,
+            'endpoints'                 => ['/wp-json/stripe/v1/webhook'],
+            'methods'                   => ['POST'],
+            'webhook_hmac_provider'     => 'stripe',
+            'webhook_secret_ref'        => $ref,
+            'webhook_replay_window_sec' => 300,
+        ]];
+
+        AllowlistManager::$force_body_reader_unavailable_for_tests = true;
+        try {
+            $matched = AllowlistManager::match_targeted_allowlist_rule(
+                '/wp-json/stripe/v1/webhook',
+                'Stripe/1.0',
+                '198.51.100.25',
+                'POST',
+                $rules
+            );
+            $this->assertNull(
+                $matched,
+                'HMAC allowlist verification must fail closed when RequestBodyReader is unavailable rather than reading php://input directly.'
+            );
+        } finally {
+            AllowlistManager::$force_body_reader_unavailable_for_tests = false;
+        }
+
+        // Confirm the exact same signed request succeeds once RequestBodyReader is available again
+        $matchedAfterRestore = AllowlistManager::match_targeted_allowlist_rule(
+            '/wp-json/stripe/v1/webhook',
+            'Stripe/1.0',
+            '198.51.100.25',
+            'POST',
+            $rules
+        );
+        $this->assertIsArray($matchedAfterRestore, 'Rule must match normally when bounded RequestBodyReader is available.');
+    }
 }

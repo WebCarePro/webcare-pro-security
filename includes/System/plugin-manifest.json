@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-24T17:48:18.370Z",
+  "generated_at": "2026-11-24T18:08:04.520Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -556,8 +556,8 @@
       "size": 38405
     },
     "includes/Firewall/Core/AllowlistManager.php": {
-      "sha256": "b0df0598ef4b280c4ede146a9e590ec5d15f989c75817c12b0d248ebcd414dd8",
-      "size": 38861
+      "sha256": "644812d6d77ab10e6152988084251e8e7b53f4b4cd777c9297cb3a9d5b536b42",
+      "size": 39281
     },
     "includes/Firewall/Core/AlwaysOnCoreGuard.php": {
       "sha256": "93d6dd5202eb28df13d535dbcb47642e36a6a311bc7607888227982bd72ab592",
@@ -952,8 +952,8 @@
       "size": 4314
     },
     "includes/Security/AtomicNonceStore.php": {
-      "sha256": "2abf3577c51dc7ee3f2a81b4b6c78e06cee757f27561ee15e54fa25ebbe8a2f0",
-      "size": 3764
+      "sha256": "4f5b3997496df873ec1ff81bc2856565f7ecfc2d4f801c0800c44fdde9516885",
+      "size": 7768
     },
     "includes/Security/AttackSimulationEngine.php": {
       "sha256": "c1700b535f0dc9721d16962083be9b95a24d5c32c4055afc7b0abf59aba26685",
@@ -1080,8 +1080,8 @@
       "size": 24882
     },
     "includes/System/SettingsManager.php": {
-      "sha256": "339bd3a206a0a9cde47d1758d5004abe0f5b986356c79ba6114d5192dbd0fbd6",
-      "size": 141550
+      "sha256": "caf0a4bbe2167d13c6fe0e654138d59989dd2f950dac291099c0ba89f1f4a2c8",
+      "size": 150260
     },
     "includes/System/SystemDoctor.php": {
       "sha256": "f6956025a87cb8c33e3ea16306581d29ce95005f5e3b1f9654ccd1427cb9df59",
