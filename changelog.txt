@@ -6,7 +6,14 @@
   * Canonical Telemetry: Enforced canonical `WAF-XMLRPC-DISABLED` rule identifier across XML-RPC guards and immutable telemetry records (`decision`, `enforcement_outcome`, `cf_operation_id`, `cf_sync_state`).
   * Identity Defense Hardening: Short-circuited forbidden username honeypot traps (`WAF-FORBIDDEN-USERNAME-TRAP`) before WordPress user enumeration or `WAF-AUTH-FAILED` logging with 2-hit 24h auto-ban escalation.
   * Durable Cloudflare Sync Queue: Implemented monotonic per-IP generation fencing (`get_ip_generation`, `increment_ip_generation`) to invalidate stale queued bans after admin unbans, exponential backoff with jitter, dead-letter tracking, and append-only forensic sync events.
-  * Executable Replay Harness: Created `WafReplayHarnessTest.php` with 6 automated tests validating reliability, atomic strikes, honeypots, telemetry, and generation-fenced Cloudflare queue operations.
+  * Executable Replay Harness: Created `WafReplayHarnessTest.php` with automated tests validating reliability, atomic strikes, honeypots, telemetry, and generation-fenced Cloudflare queue operations.
+- WAF Intelligence Master Plan — Phase 2 Official Crawler Registry & Subnet Swarm Guard:
+  * Hardened Pull-Only Official Crawler Registry: Created `OfficialCrawlerRegistry.php` providing background-only daily synchronization of public JSON IP feeds (Googlebot, Bingbot, OpenAI, DuckDuckGo) with strict host allowlisting, 5s timeout, 512 KB response limit, JSON schema & CIDR validation, max 5,000 CIDRs/feed, and fail-safe static fallback preservation (Anthropic, OpenAI, Applebot, DuckDuckBot).
+  * Crawler Identity & Browser Integrity Decoupling: Exempted verified search and AI crawlers from client-only browser integrity penalties (`missing_sec_fetch_on_https`, `zero_asset_high_velocity`) while strictly preserving confirmed exploit and sensitive-file blocks.
+  * Metadata Route Grace: Added DNS-timeout grace for read-only `/robots.txt` and `/sitemap*.xml` routes in `BotReconDefense::inspect_bot()` to eliminate false positives on genuine crawlers during DNS lookup timeouts.
+  * Subnet Swarm Guard: Created `SubnetSwarmGuard.php` providing multi-level bounded rolling counters across Individual IP, `/24` or `/48`, and broader crawler family prefixes (e.g. `114.119.0.0/16` PetalBot) for rate limiting (`WAF-SUBNET-SWARM-THROTTLE`, 429 Retry-After: 120) and commercial crawler policy presets (`allow`, `throttle`, `block`) without ever auto-blocking broad subnets.
+  * Strict Data-Model Namespace Separation: Fully isolated public crawler swarm counters (`webcare_crawler_swarm_*`) from sensitive-file recon counters (`webcare_recon_swarm_*`).
+  * Replay Harness Expansion: Extended `WafReplayHarnessTest.php` with Groups 5 & 6 covering verified crawlers, feed validation, static fallbacks, and multi-level subnet counter isolation.
 
 v:0.0.1 - 2026-11-23
 - Initial Release (v0.0.1):

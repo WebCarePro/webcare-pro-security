@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-24T10:41:58.111Z",
+  "generated_at": "2026-11-24T10:47:53.902Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -504,8 +504,8 @@
       "size": 39822
     },
     "includes/Firewall/BotReconDefense.php": {
-      "sha256": "60533cf6747671774b46d59a65fb53cabeb9fe49b97947617806a5700ffbc963",
-      "size": 45814
+      "sha256": "7b939aa8ab8f0d13f4ed8ae099ec70c2092b6645ecbabb22eded471d54aa4ac9",
+      "size": 47416
     },
     "includes/Firewall/CAF/AdaptiveFirewallAdvisor.php": {
       "sha256": "5fde5663d500479c70da12c8692487403427d91a30d846dc7aaeb54c693e2949",
@@ -595,6 +595,10 @@
       "sha256": "5311d50c893eb02ff3a5551fd4959ad5b768c4b7ef94cca59eaabbcc44be772c",
       "size": 23121
     },
+    "includes/Firewall/Core/SubnetSwarmGuard.php": {
+      "sha256": "da19d1198bf92d8903a22c1210f81c1f5d1b209ffdd9c19cba090c585bbe6ed9",
+      "size": 9974
+    },
     "includes/Firewall/Core/TransientRateLimiter.php": {
       "sha256": "de991c3bc93c52ba0cf204b6ab0622759894feb1b23cbe22c9463c263f0f0d95",
       "size": 10110
@@ -644,8 +648,8 @@
       "size": 16339
     },
     "includes/Firewall/Evaluators/AiAgentBehaviorEvaluator.php": {
-      "sha256": "121bc442373dc01aff82280b35a0575c1aa76a43ac3913f7bb47171ddc0bf599",
-      "size": 17030
+      "sha256": "534509eca61634862103b6d12e196b259b567791953ed959d960e468c3a4ddbc",
+      "size": 17295
     },
     "includes/Firewall/Evaluators/AuthAndAjaxSurfaceEvaluator.php": {
       "sha256": "7d35d431a67665e42711f32dffc871e38941502ca63033e9b289433368ac4141",
@@ -714,6 +718,10 @@
     "includes/Firewall/NextGen/UpgraderDeltaSentinel.php": {
       "sha256": "6fb903f1e5f4f42372718156306b49c49f52eef97d3826a09d95e17c5bd70da6",
       "size": 14036
+    },
+    "includes/Firewall/OfficialCrawlerRegistry.php": {
+      "sha256": "c124041816e929f41889083eda86821b69f11627f3d70884113cfbc552ad11bc",
+      "size": 15333
     },
     "includes/Firewall/OutboundEgressFirewall.php": {
       "sha256": "8008bde9a39d32de8d0beecbadb3ee039c45e035398b5dcf116dd13b70893716",

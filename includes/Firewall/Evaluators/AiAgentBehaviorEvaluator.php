@@ -129,6 +129,11 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
                 }
             }
         }
+        if (class_exists('\\WebCareProScanner\\Firewall\\OfficialCrawlerRegistry')) {
+            if (\WebCareProScanner\Firewall\OfficialCrawlerRegistry::get_verified_crawler_identity($ctx->ip, $ua) !== null) {
+                return null;
+            }
+        }
 
         // Calculate heuristic risk score
         $risk_score = 0;

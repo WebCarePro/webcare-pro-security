@@ -228,27 +228,47 @@ class BotReconDefense {
 
         // 3. Check Fake Search Engine & Cloud SEO Crawler Spoofing
         if (!empty($settings['waf_block_fake_bots'])) {
+            $is_metadata_crawl_path = false;
+            $req_uri = isset($_SERVER['REQUEST_URI']) ? (string) $_SERVER['REQUEST_URI'] : '';
+            $path_only = strtolower((string) (wp_parse_url($req_uri, PHP_URL_PATH) ?: $req_uri));
+            if ($path_only === '/robots.txt' || str_starts_with($path_only, '/sitemap') && (str_ends_with($path_only, '.xml') || str_ends_with($path_only, '.xml.gz'))) {
+                $is_metadata_crawl_path = true;
+            }
+
             if ($claimed_search !== null) {
                 $is_genuine = self::verify_search_bot_reverse_dns($client_ip, $claimed_search);
                 if (!$is_genuine) {
-                    return [
-                        'id'          => 'BOT-FAKE-CRAWLER-SPOOF',
-                        'name'        => 'Fake Search Engine Crawler Spoofing Detected (' . ucfirst($claimed_search) . ')',
-                        'category'    => 'Bot Recon Defense',
-                        'match_type'  => 'Reverse DNS Verification Failure',
-                        'match_value' => 'IP: ' . $client_ip . ' claiming UA: ' . substr($user_agent, 0, 100),
-                    ];
+                    // Grace: If requesting read-only /robots.txt or /sitemap*.xml and reverse DNS times out (empty hostname),
+                    // give grace instead of false-blocking genuine bots undergoing DNS lag.
+                    // Only flag spoofers if DNS resolution explicitly returned a conflicting PTR or on non-metadata crawl routes.
+                    $hostname = @gethostbyaddr($client_ip);
+                    $has_conflicting_ptr = (!empty($hostname) && $hostname !== $client_ip);
+
+                    if (!$is_metadata_crawl_path || $has_conflicting_ptr) {
+                        return [
+                            'id'          => 'BOT-FAKE-CRAWLER-SPOOF',
+                            'name'        => 'Fake Search Engine Crawler Spoofing Detected (' . ucfirst($claimed_search) . ')',
+                            'category'    => 'Bot Recon Defense',
+                            'match_type'  => 'Reverse DNS Verification Failure',
+                            'match_value' => 'IP: ' . $client_ip . ' claiming UA: ' . substr($user_agent, 0, 100),
+                        ];
+                    }
                 }
             } elseif ($claimed_seo !== null) {
                 $is_genuine = self::verify_search_bot_reverse_dns($client_ip, $claimed_seo);
                 if (!$is_genuine) {
-                    return [
-                        'id'          => 'BOT-FAKE-CRAWLER-SPOOF',
-                        'name'        => 'Fake SEO Crawler Spoofing Detected (' . ucfirst($claimed_seo) . ')',
-                        'category'    => 'Bot Recon Defense',
-                        'match_type'  => 'Reverse DNS Verification Failure',
-                        'match_value' => 'IP: ' . $client_ip . ' claiming UA: ' . substr($user_agent, 0, 100),
-                    ];
+                    $hostname = @gethostbyaddr($client_ip);
+                    $has_conflicting_ptr = (!empty($hostname) && $hostname !== $client_ip);
+
+                    if (!$is_metadata_crawl_path || $has_conflicting_ptr) {
+                        return [
+                            'id'          => 'BOT-FAKE-CRAWLER-SPOOF',
+                            'name'        => 'Fake SEO Crawler Spoofing Detected (' . ucfirst($claimed_seo) . ')',
+                            'category'    => 'Bot Recon Defense',
+                            'match_type'  => 'Reverse DNS Verification Failure',
+                            'match_value' => 'IP: ' . $client_ip . ' claiming UA: ' . substr($user_agent, 0, 100),
+                        ];
+                    }
                 }
             }
             // Desktop spiders (Screaming Frog, Sitebulb) run from local user IPs, so they don't have fixed PTR records;
@@ -440,6 +460,12 @@ class BotReconDefense {
      * Check if client IP belongs to official verified search crawler CIDR ranges.
      */
     public static function is_search_bot_in_official_cidrs(string $ip, string $bot_key): bool {
+        if (class_exists('\\WebCareProScanner\\Firewall\\OfficialCrawlerRegistry')) {
+            if (OfficialCrawlerRegistry::is_ip_in_crawler_cidrs($ip, $bot_key)) {
+                return true;
+            }
+        }
+
         $cidrs = self::CRAWLER_CIDR_RANGES[$bot_key] ?? [];
         if (empty($cidrs)) {
             return false;
