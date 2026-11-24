@@ -745,11 +745,11 @@ class CloudflareSlotOptimizer {
 
         $combined = '(' . implode(' or ', $sqli_clauses) . ') or (' . implode(' or ', $lfi_clauses) . ') or (' . implode(' or ', $enum_clauses) . ')';
 
-        // Strict storefront WooCommerce exemption only (never exempt arbitrary /wc-api or /paypal URLs from SQLi/LFI protection)
+        // Strict storefront WooCommerce exemption only (never exempt arbitrary /wc-api, /paypal URLs, or entire ASNs from SQLi/LFI protection)
         if ($has_woo) {
-            return '(not (starts_with(http.request.uri.path, "/wp-json/wc/store/") or ip.geoip.asnum in {17012})) and (' . $combined . ')';
+            return '(not starts_with(http.request.uri.path, "/wp-json/wc/store/")) and (' . $combined . ')';
         }
 
-        return '(not (ip.geoip.asnum in {17012})) and (' . $combined . ')';
+        return $combined;
     }
 }

@@ -1,4 +1,11 @@
 ﻿v:0.0.1 - 2026-11-25
+- Post-Audit Hardening & Multisite Preboot Isolation:
+  * Multisite Preboot WAF Policy Isolation: Restricted `MicroWafCompiler::compile()`, `RescueAssistantManager::pause_strict_firewall_15m()`, `resume_strict_firewall()`, and `trust_and_allow_action()` to Network Admins (`manage_network_options`) on Multisite, and ensured main-site settings context during compilation.
+  * `BlockDirectiveSanitizer::filter_post_content_directives()`: Fixed `WebCareActivityLogger::log()` 4th-argument `array $details` signature so modified-content logging never throws a `TypeError`.
+  * `CrashGuard` Safe Mode Expiry & DLP Redaction: Added 15-minute `OPTION_SAFE_MODE_UNTIL` expiry in `handle_fatal_shutdown()` and updated `extract_code_context()` to inspect the assembled snippet as a whole via `ResponseDlpSentinel::inspect_and_redact()` reading `safe_body` (catching multiline PEM private keys).
+  * `CloudflareSlotOptimizer::compile_rule4_sqli_lfi_expression()`: Removed unconditional `ip.geoip.asnum in {17012}` ASN exemption from Rule 4 SQLi/LFI protection.
+  * `SettingsManager`: Added explicit `'cron_cve_audit_enabled' => true` default and aligned `reset_defaults()` activity log `retention_days` to `7`.
+  * `FormSpamProtectionEngine`: Added `token_ip` binding against resolved client IP and one-time token consumption via `AtomicNonceStore`.
 - Official Domain & Contact Synchronization:
   * Replaced all occurrences of `webcarespro.com` with official domain `webcarepro.dev` across all PHP entry headers, notifications, incident reports, drill User-Agents, React pages (`AboutServicesPage`, `SettingsPage`, `WafLogsPage`, `WelcomeModal`, `exportUtils`), and documentation (`README.md`, `SECURITY.md`, `features.md`).
 - Enterprise Security Hardening, WAF/RASP/Edge Bypass Remediation & Architecture Pass (Phases 1-6):

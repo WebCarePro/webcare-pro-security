@@ -196,9 +196,10 @@ class CrashGuard {
             'datetime'    => gmdate('Y-m-d H:i:s') . ' GMT',
         ]);
 
-        // 1. Immediately flag Safe Mode for NEXT requests and record in archive
+        // 1. Immediately flag Safe Mode for NEXT requests (with 15-minute expiry) and record in archive
         update_option(self::OPTION_LAST_INCIDENT, $incident, false);
         update_option(self::OPTION_SAFE_MODE, true, false);
+        update_option(self::OPTION_SAFE_MODE_UNTIL, $now + 900, false);
         self::archive_incident($incident);
 
         // 2. Check multi-strike threshold (3 crashes in 5 minutes)
@@ -351,7 +352,7 @@ class CrashGuard {
 
         $has_dlp = class_exists('\\WebCareProScanner\\Firewall\\NextGen\\ResponseDlpSentinel');
 
-        $snippet = [];
+        $raw_lines = [];
         for ($i = $start_line; $i <= $end_line; $i++) {
             $raw_line = rtrim($lines[$i - 1], "\r\n");
             // Redact inline secrets/constants/tokens before persisting or rendering snippet
@@ -365,17 +366,31 @@ class CrashGuard {
                 '$1[REDACTED]$2',
                 $raw_line
             );
-            if ($has_dlp) {
-                $dlp_res = \WebCareProScanner\Firewall\NextGen\ResponseDlpSentinel::inspect_and_redact($raw_line, true);
-                if (!empty($dlp_res['leaked']) && isset($dlp_res['redacted'])) {
-                    $raw_line = (string) $dlp_res['redacted'];
+            $raw_lines[$i] = $raw_line;
+        }
+
+        // Run ResponseDlpSentinel over the assembled snippet as a whole so multiline secrets (e.g. PEM keys) are caught
+        if ($has_dlp && !empty($raw_lines)) {
+            $joined  = implode("\n", $raw_lines);
+            $dlp_res = \WebCareProScanner\Firewall\NextGen\ResponseDlpSentinel::inspect_and_redact($joined, true);
+            if (!empty($dlp_res['leaked']) && isset($dlp_res['safe_body'])) {
+                $redacted_lines = explode("\n", (string) $dlp_res['safe_body']);
+                $idx = 0;
+                foreach ($raw_lines as $line_num => $_) {
+                    if (isset($redacted_lines[$idx])) {
+                        $raw_lines[$line_num] = $redacted_lines[$idx];
+                    }
+                    $idx++;
                 }
             }
-            $is_error = ($i === $target_line);
+        }
+
+        $snippet = [];
+        foreach ($raw_lines as $i => $raw_line) {
             $snippet[] = [
                 'line_num' => $i,
                 'content'  => $raw_line,
-                'is_error' => $is_error,
+                'is_error' => ($i === $target_line),
             ];
         }
 

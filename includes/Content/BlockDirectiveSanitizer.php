@@ -121,15 +121,15 @@ class BlockDirectiveSanitizer {
                     'gutenberg_block_directive_neutralized',
                     'firewall',
                     'high',
-                    sprintf(
-                        /* translators: %1$d: post ID, %2$d: threat count */
-                        __('Neutralized %2$d hostile Interactivity API directive(s) in Post #%1$d.', 'webcare-pro-security'),
-                        $post_id,
-                        count($audit_result['threats'])
-                    ),
                     [
-                        'post_id' => $post_id,
-                        'threats' => $audit_result['threats'],
+                        'description' => sprintf(
+                            /* translators: %1$d: post ID, %2$d: threat count */
+                            __('Neutralized %2$d hostile Interactivity API directive(s) in Post #%1$d.', 'webcare-pro-security'),
+                            $post_id,
+                            count($audit_result['threats'])
+                        ),
+                        'post_id'     => $post_id,
+                        'threats'     => $audit_result['threats'],
                     ]
                 );
             }

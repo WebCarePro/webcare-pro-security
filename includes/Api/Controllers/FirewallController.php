@@ -712,7 +712,15 @@ final class FirewallController extends AbstractApiController {
         if (!class_exists('\\WebCareProScanner\\Firewall\\RescueAssistantManager')) {
             return new \WP_REST_Response(['success' => false, 'message' => __('Rescue Assistant unavailable.', 'webcare-pro-security')], 500);
         }
-        return new \WP_REST_Response(\WebCareProScanner\Firewall\RescueAssistantManager::pause_strict_firewall_15m(), 200);
+        $res = \WebCareProScanner\Firewall\RescueAssistantManager::pause_strict_firewall_15m();
+        if (is_wp_error($res)) {
+            return new \WP_REST_Response([
+                'success' => false,
+                'message' => $res->get_error_message(),
+                'code'    => $res->get_error_code(),
+            ], 403);
+        }
+        return new \WP_REST_Response($res, 200);
     }
 
     /**

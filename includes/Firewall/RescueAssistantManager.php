@@ -155,11 +155,21 @@ class RescueAssistantManager {
     }
 
     /**
+     * Check whether the current user can mutate network-wide preboot WAF policy.
+     */
+    private static function can_manage_preboot_policy(): bool {
+        if (function_exists('is_multisite') && is_multisite()) {
+            return current_user_can('manage_network_options');
+        }
+        return current_user_can('manage_options');
+    }
+
+    /**
      * Pause strict WAF enforcement for 15 minutes (Monitor-Only Test Mode with automatic cron re-arm).
      */
     public static function pause_strict_firewall_15m(): array|\WP_Error {
-        if (!current_user_can('manage_options')) {
-            return new \WP_Error('waf_safe_mode_unauthorized', __('Only administrators can activate Safe Mode.', 'webcare-pro-security'));
+        if (!self::can_manage_preboot_policy()) {
+            return new \WP_Error('waf_safe_mode_unauthorized', __('Only Network Admins (or site administrators on single-site) can activate Safe Mode.', 'webcare-pro-security'));
         }
 
         $until = time() + (15 * MINUTE_IN_SECONDS);
@@ -204,6 +214,9 @@ class RescueAssistantManager {
      * Resume strict WAF enforcement immediately or when the 15-minute timer expires.
      */
     public static function resume_strict_firewall(): array {
+        if (!self::can_manage_preboot_policy()) {
+            return ['success' => false, 'message' => __('Only Network Admins (or site administrators on single-site) can resume the preboot firewall.', 'webcare-pro-security')];
+        }
         delete_option(self::OPTION_PAUSED_UNTIL);
         wp_clear_scheduled_hook(self::CRON_REARM_HOOK);
 
@@ -465,6 +478,9 @@ class RescueAssistantManager {
      * Persist a permanent trusted-action exemption + unblock client IP if provided.
      */
     public static function trust_and_allow_action(array $params): array {
+        if (function_exists('is_multisite') && is_multisite() && !current_user_can('manage_network_options')) {
+            return ['success' => false, 'message' => __('Only Network Admins can modify preboot allowlists on Multisite.', 'webcare-pro-security')];
+        }
         $type      = sanitize_key($params['type'] ?? 'uri');
         $value     = sanitize_text_field(trim((string) ($params['value'] ?? '')));
         $rule_id   = sanitize_text_field(trim((string) ($params['rule_id'] ?? '')));

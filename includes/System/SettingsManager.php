@@ -1203,6 +1203,7 @@ class SettingsManager {
 
             // 18. Centralized Cron & Task Automation Control
             'cron_waf_log_prune_enabled'         => true,
+            'cron_cve_audit_enabled'             => true,
             'cron_domain_reputation_enabled'     => false, // Opt-in required for automated DNSBL & SSL reputation audits
             'cron_redirect_canary_enabled'       => true,
             'cron_reinfection_watchdog_enabled'  => true,
@@ -2359,6 +2360,7 @@ class SettingsManager {
         // 19. Centralized Cron & Task Automation Control
         $cron_bool_keys = [
             'cron_waf_log_prune_enabled',
+            'cron_cve_audit_enabled',
             'cron_domain_reputation_enabled',
             'cron_redirect_canary_enabled',
             'cron_reinfection_watchdog_enabled',
@@ -2867,7 +2869,7 @@ class SettingsManager {
             $next_revision = $baseline_revision + 1;
             $default_retention_days = (int) ($defaults['waf_log_retention_days'] ?? 60);
             $default_act_settings = [
-                'retention_days'     => 30,
+                'retention_days'     => 7,
                 'tamper_webhook_url' => '',
             ];
             $touched = [
