@@ -1,4 +1,7 @@
 ﻿v:0.0.1 - 2026-11-25
+- Plugin Compatibility & Conflict Checker (Settings Page):
+  * Added read-only `PluginConflictChecker` (`includes/System/PluginConflictChecker.php`) and `POST /system/conflict-check` REST endpoint (`SystemController::run_conflict_check()`) to detect overlapping security/2FA/login/cache plugins and `auto_prepend_file` collisions without modifying third-party settings.
+  * Added `PluginConflictCheckerCard` (`src/components/PluginConflictCheckerCard.tsx`) to Settings -> Doctor & Rescue Center with calm, plain-English explanations and direct settings links.
 - RescueAssistantManager Cron Re-Arm & Option Persistence Hardening:
   * Separated internal `cron_rearm_strict_firewall()` WP-Cron callback from `resume_strict_firewall()` so Multisite scheduled Safe Mode re-arm succeeds without an authenticated Network Admin session while protecting against stale cron events (`$until > time()`).
   * Added explicit network-option persistence verification in `pause_strict_firewall_15m()` and `trust_and_allow_action()` before publishing or retaining shared preboot filesystem artifacts.

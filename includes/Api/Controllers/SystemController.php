@@ -35,6 +35,12 @@ final class SystemController extends AbstractApiController {
             'permission_callback' => $permission,
         ]);
 
+        register_rest_route($namespace, '/system/conflict-check', [
+            'methods'             => 'POST',
+            'callback'            => [self::class, 'run_conflict_check'],
+            'permission_callback' => $permission,
+        ]);
+
         register_rest_route($namespace, '/telemetry/snapshot', [
             'methods'             => 'GET',
             'callback'            => [self::class, 'get_telemetry_snapshot'],
@@ -376,6 +382,20 @@ final class SystemController extends AbstractApiController {
             ], 500);
         }
         return new \WP_REST_Response(['success' => true, 'bundle' => $bundle], 200);
+    }
+
+    /**
+     * Run read-only Plugin Compatibility & Conflict Check.
+     */
+    public static function run_conflict_check(\WP_REST_Request $request): \WP_REST_Response {
+        if (!class_exists(\WebCareProScanner\System\PluginConflictChecker::class)) {
+            return new \WP_REST_Response([
+                'success' => false,
+                'message' => __('Plugin conflict checker is unavailable.', 'webcare-pro-security'),
+            ], 500);
+        }
+
+        return new \WP_REST_Response(\WebCareProScanner\System\PluginConflictChecker::run_check(), 200);
     }
 
     /**

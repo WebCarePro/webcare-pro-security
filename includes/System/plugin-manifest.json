@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-24T22:51:24.811Z",
+  "generated_at": "2026-11-24T23:09:12.319Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -92,7 +92,7 @@
       "size": 26394
     },
     "build/index.asset.php": {
-      "sha256": "90d21454ed68c79764f70b4f1c80831bcc296df3a64785a9f2954a09a74229b7",
+      "sha256": "4442bcdea1731964b87d8ea93fbb999234a9c028464ff8bf5417b5402e72d284",
       "size": 174
     },
     "build/index.css": {
@@ -100,8 +100,8 @@
       "size": 26389
     },
     "build/index.js": {
-      "sha256": "a93d03b0a939634a4ac7a3bb19232e05cc4b2d793964b61d61160bece4cc59b5",
-      "size": 3009584
+      "sha256": "320a418473b89889efb8e7e75592a29c5ef76e979ea1e852bba614cd2a72b94a",
+      "size": 3014599
     },
     "build/modular-waf.asset.php": {
       "sha256": "de4d960ba35c0ce5c104ef0572a1d37a6f201993cd61c4e2d3ba5826e1d0287e",
@@ -124,7 +124,7 @@
       "size": 26394
     },
     "build/scan.asset.php": {
-      "sha256": "2d193b4cf3dd275df79fe53834e93ddd90d9d62610e1e35f018a1505d40a6cb4",
+      "sha256": "40d9f652b3f891a739a39e3cd5e75e0e15226d7bae3f8d11d13c322129f1d387",
       "size": 174
     },
     "build/scan.css": {
@@ -132,16 +132,16 @@
       "size": 26389
     },
     "build/scan.js": {
-      "sha256": "7def4d2cf174941e129f6d551c9a49c634f27099e0fec38b4f4fa86e3b7571ad",
-      "size": 3001311
+      "sha256": "011628d708984da63732083da3e7cdd60d5ea43c9feb42c756967112784f4682",
+      "size": 3006326
     },
     "build/settings.asset.php": {
-      "sha256": "bcedb1203e1b7afbf7bc9229c35f31d951eba88bb2457215504fbc7965c68bde",
+      "sha256": "af29c77707cc808e61e5545c7aa194578c6f9db2541f9b121af66de9ce9d015d",
       "size": 163
     },
     "build/settings.js": {
-      "sha256": "ff4c25b77914ce1114cbcdf9771ec5ad72b4395dfcfa89be82941427b47f23b7",
-      "size": 479972
+      "sha256": "18c11c9687f41de2066b1b394d4322c9319eba0775831376c9fe4b59f9059b98",
+      "size": 484982
     },
     "build/vault.asset.php": {
       "sha256": "e77fa65293821d21e981cd2bf1fde1d116347d386bf80b0a173802150dafd368",
@@ -240,8 +240,8 @@
       "size": 299413
     },
     "includes/Api/Controllers/SystemController.php": {
-      "sha256": "80825b162ad1df8253e63facf631757b4958483854f34c3fdaea2764d5673480",
-      "size": 111131
+      "sha256": "bb56c588a80105672b84cf0b83347e898acc979e14f7e98b8cc7ef2916dffaa6",
+      "size": 111959
     },
     "includes/Api/CronRoutes.php": {
       "sha256": "6235e1c35a4a7eb1193b3bafb04dbab636661dcf5094ab9245a694fa367dbc60",
@@ -1070,6 +1070,10 @@
     "includes/System/Cron/CronRegistry.php": {
       "sha256": "421cf638604e798bbabed44342a86dd862c123c21225d39972c8126ee2bfb66d",
       "size": 28176
+    },
+    "includes/System/PluginConflictChecker.php": {
+      "sha256": "2bb4dc65bf99437ff88531d613fc243170b8ca6307271b2f381f544cddbb13ce",
+      "size": 11033
     },
     "includes/System/PulseHealthCheck.php": {
       "sha256": "074d2d5369b0be288bc49b85349e9bcd638571461b8f00c24d2694cdedafc284",

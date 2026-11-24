@@ -53,6 +53,7 @@ import {
 import { MCPAgentServiceCard } from './components/MCPAgentServiceCard';
 import { EmergencyContainmentCard } from './components/EmergencyContainmentCard';
 import { DoctorRescueCenter } from './components/DoctorRescueCenter';
+import { PluginConflictCheckerCard } from './components/PluginConflictCheckerCard';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { UnsavedChangesBar } from './components/ui/UnsavedChangesBar';
 import { useWorkspaceMode } from './hooks/useWorkspaceMode';
@@ -2056,7 +2057,10 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
           TAB 0: DOCTOR & RESCUE CENTER
           ========================================================================= */}
       {activeSubTab === 'troubleshooter' && (
-        <DoctorRescueCenter apiRequest={apiRequest} />
+        <>
+          <DoctorRescueCenter apiRequest={apiRequest} />
+          <PluginConflictCheckerCard apiRequest={apiRequest} />
+        </>
       )}
 
       {/* =========================================================================
