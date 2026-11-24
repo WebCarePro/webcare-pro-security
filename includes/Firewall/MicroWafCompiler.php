@@ -413,8 +413,9 @@ class MicroWafCompiler {
         if (function_exists('posix_getpwnam')) {
             $web_user = @posix_getpwnam('www-data');
             if (is_array($web_user) && isset($web_user['uid'], $web_user['gid'])) {
-                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chown, WordPress.WP.AlternativeFunctions.file_system_operations_chgrp
+                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chown
                 @chown($compiled_file, (int) $web_user['uid']);
+                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chgrp
                 @chgrp($compiled_file, (int) $web_user['gid']);
             }
         }
@@ -1605,8 +1606,9 @@ class MicroWafCompiler {
         if (function_exists('posix_getpwnam')) {
             $web_user = @posix_getpwnam('www-data');
             if (is_array($web_user) && isset($web_user['uid'], $web_user['gid'])) {
-                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chown, WordPress.WP.AlternativeFunctions.file_system_operations_chgrp
+                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chown
                 @chown($caf_file, (int) $web_user['uid']);
+                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chgrp
                 @chgrp($caf_file, (int) $web_user['gid']);
             }
         }
@@ -1625,8 +1627,9 @@ class MicroWafCompiler {
         if (function_exists('posix_getpwnam')) {
             $web_user = @posix_getpwnam('www-data');
             if (is_array($web_user) && isset($web_user['uid'], $web_user['gid'])) {
-                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chown, WordPress.WP.AlternativeFunctions.file_system_operations_chgrp
+                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chown
                 @chown($sig_file, (int) $web_user['uid']);
+                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chgrp
                 @chgrp($sig_file, (int) $web_user['gid']);
             }
         }
