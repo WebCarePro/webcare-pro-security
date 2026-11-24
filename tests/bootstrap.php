@@ -797,6 +797,7 @@ if (!class_exists('wpdb')) {
         public array $mock_tables = [];
         public $mock_get_var_callback = null;
         public array $tx_undo_stack = [];
+        public ?string $mock_options_engine = 'InnoDB';
 
         private function record_tx_option_undo(string $optKey): void {
             if (empty($this->tx_undo_stack)) {
@@ -853,6 +854,10 @@ if (!class_exists('wpdb')) {
                 return ($this->mock_get_var_callback)($query);
             }
             if (!empty($this->options)) {
+                if (preg_match("/SELECT\s+ENGINE\s+FROM\s+information_schema\.TABLES\s+WHERE/is", $query)) {
+                    return $this->mock_options_engine;
+                }
+
                 // SELECT option_value FROM wp_options WHERE option_name = '...' AND option_value LIKE '...%' AND CAST(SUBSTRING_INDEX(option_value, '|', -1) AS UNSIGNED) >= N [LIMIT 1] [FOR UPDATE]
                 if (preg_match("/SELECT\s+option_value\s+FROM\s+\S+\s+WHERE\s+option_name\s*=\s*'((?:\\\\'|[^'])+)'\s+AND\s+option_value\s+LIKE\s+'((?:\\\\'|[^'])*)%'\s+AND\s+CAST\(SUBSTRING_INDEX\(option_value,\s*'\|',\s*-1\)\s+AS\s+UNSIGNED\)\s*>=\s*(\d+)/is", $query, $lm)) {
                     $optKey = str_replace("\\'", "'", $lm[1]);
@@ -1140,18 +1145,6 @@ if (!function_exists('apply_filters')) {
     }
 }
 
-if (!function_exists('wp_next_scheduled')) {
-    function wp_next_scheduled(string $hook, array $args = []): int|false {
-        return false;
-    }
-}
-
-if (!function_exists('wp_schedule_single_event')) {
-    function wp_schedule_single_event(int $timestamp, string $hook, array $args = [], bool $wp_error = false): bool {
-        return true;
-    }
-}
-
 if (!function_exists('rest_ensure_response')) {
     function rest_ensure_response(mixed $response): mixed {
         return $response;
@@ -1185,8 +1178,29 @@ if (!function_exists('did_action')) {
     }
 }
 
+$GLOBALS['wp_mock_actions'] = [];
+
+if (!function_exists('add_action')) {
+    function add_action(string $hook_name, callable $callback, int $priority = 10, int $accepted_args = 1): bool {
+        $GLOBALS['wp_mock_actions'][$hook_name][] = $callback;
+        return true;
+    }
+}
+
+if (!function_exists('remove_all_actions')) {
+    function remove_all_actions(string $hook_name, $priority = false): bool {
+        unset($GLOBALS['wp_mock_actions'][$hook_name]);
+        return true;
+    }
+}
+
 if (!function_exists('do_action')) {
     function do_action(string $hook_name, ...$args): void {
+        if (!empty($GLOBALS['wp_mock_actions'][$hook_name])) {
+            foreach ($GLOBALS['wp_mock_actions'][$hook_name] as $cb) {
+                $cb(...$args);
+            }
+        }
     }
 }
 
@@ -1199,18 +1213,6 @@ if (!function_exists('is_plugin_active')) {
 if (!function_exists('wp_is_writable')) {
     function wp_is_writable(string $path): bool {
         return is_writable($path);
-    }
-}
-
-if (!function_exists('wp_clear_scheduled_hook')) {
-    function wp_clear_scheduled_hook(string $hook, array $args = []): int {
-        return 0;
-    }
-}
-
-if (!function_exists('wp_schedule_single_event')) {
-    function wp_schedule_single_event(int $timestamp, string $hook, array $args = [], bool $wp_error = false): bool {
-        return true;
     }
 }
 
@@ -1407,6 +1409,16 @@ if (!function_exists('wp_next_scheduled')) {
     }
 }
 
+if (!function_exists('wp_get_schedule')) {
+    function wp_get_schedule(string $hook, array $args = []): string|false {
+        if (!isset($GLOBALS['wp_mock_cron'][$hook])) {
+            return false;
+        }
+        $rec = $GLOBALS['wp_mock_cron'][$hook]['recurrence'] ?? false;
+        return is_string($rec) ? $rec : false;
+    }
+}
+
 if (!function_exists('wp_unschedule_event')) {
     function wp_unschedule_event(int $timestamp, string $hook, array $args = []): bool {
         unset($GLOBALS['wp_mock_cron'][$hook]);
@@ -1416,8 +1428,9 @@ if (!function_exists('wp_unschedule_event')) {
 
 if (!function_exists('wp_clear_scheduled_hook')) {
     function wp_clear_scheduled_hook(string $hook, array $args = []): int|false {
+        $had = isset($GLOBALS['wp_mock_cron'][$hook]);
         unset($GLOBALS['wp_mock_cron'][$hook]);
-        return 1;
+        return $had ? 1 : 0;
     }
 }
 

@@ -15,6 +15,10 @@ final class SettingsUndoAtomicityTest extends TestCase
         delete_option(SettingsManager::OPTION_SNAPSHOTS_KEY);
         delete_option(SettingsManager::OPTION_MUTATION_LOCK);
         delete_option(SettingsManager::OPTION_REVISION_KEY);
+        delete_option('webcareproscan_activity_log_settings');
+        delete_option(\WebCareProScanner\Firewall\WafFileLogger::RETENTION_OPTION);
+        $GLOBALS['wp_mock_cron'] = [];
+        SettingsManager::reset_storage_engine_cache();
         SettingsManager::$stale_lock_observed_hook = null;
         SettingsManager::$before_persist_settings_hook = null;
         SettingsManager::$after_renewal_before_write_hook = null;
@@ -27,6 +31,10 @@ final class SettingsUndoAtomicityTest extends TestCase
         );
         remove_all_filters('pre_option_' . SettingsManager::OPTION_KEY);
         remove_all_filters('webcareproscan_settings');
+        remove_all_actions('added_option');
+        remove_all_actions('updated_option');
+        remove_all_actions('add_option_' . SettingsManager::OPTION_KEY);
+        remove_all_actions('update_option_' . SettingsManager::OPTION_KEY);
     }
 
     protected function tearDown(): void
@@ -35,11 +43,19 @@ final class SettingsUndoAtomicityTest extends TestCase
         delete_option(SettingsManager::OPTION_SNAPSHOTS_KEY);
         delete_option(SettingsManager::OPTION_MUTATION_LOCK);
         delete_option(SettingsManager::OPTION_REVISION_KEY);
+        delete_option('webcareproscan_activity_log_settings');
+        delete_option(\WebCareProScanner\Firewall\WafFileLogger::RETENTION_OPTION);
+        $GLOBALS['wp_mock_cron'] = [];
+        SettingsManager::reset_storage_engine_cache();
         SettingsManager::$stale_lock_observed_hook = null;
         SettingsManager::$before_persist_settings_hook = null;
         SettingsManager::$after_renewal_before_write_hook = null;
         SettingsManager::$inside_tx_before_commit_hook = null;
         SettingsManager::$interleave_before_undo_pop_hook = null;
+        remove_all_actions('added_option');
+        remove_all_actions('updated_option');
+        remove_all_actions('add_option_' . SettingsManager::OPTION_KEY);
+        remove_all_actions('update_option_' . SettingsManager::OPTION_KEY);
         unset(
             $GLOBALS['wp_mock_update_option_failures'][SettingsManager::OPTION_KEY],
             $GLOBALS['wp_mock_update_option_failures'][SettingsManager::OPTION_SNAPSHOTS_KEY],
@@ -678,6 +694,154 @@ final class SettingsUndoAtomicityTest extends TestCase
             $this->assertFalse($undoRes['success'], 'Mid-transaction lease expiry during Phase 3 snapshot pop must ROLLBACK.');
             $this->assertSame('lock_lost', $undoRes['code'] ?? '');
             $this->assertCount(1, SettingsManager::get_settings_snapshots(), 'Rolled-back Phase 3 pop must preserve snapshot entry.');
+        } finally {
+            $GLOBALS['wpdb'] = $origWpdb;
+        }
+    }
+
+    public function testNonInnoDbAndInconclusiveStorageEngineFailsClosedWithZeroWrites(): void
+    {
+        global $wpdb;
+        $origWpdb = $wpdb ?? null;
+        $mockDb = new \wpdb();
+        $mockDb->options = 'wp_options';
+        $GLOBALS['wpdb'] = $mockDb;
+
+        try {
+            // Seed baseline state under verified InnoDB
+            $mockDb->mock_options_engine = 'InnoDB';
+            SettingsManager::reset_storage_engine_cache();
+            $this->assertIsArray(SettingsManager::save_settings(['waf_mode' => 'learning']));
+            $this->assertIsArray(SettingsManager::save_settings(['waf_mode' => 'enabled']));
+            $baselineRev = SettingsManager::get_settings_revision();
+            $this->assertCount(1, SettingsManager::get_settings_snapshots());
+
+            // Test both non-InnoDB ('MyISAM') and inconclusive/unavailable (null) engines
+            foreach (['MyISAM', null] as $badEngine) {
+                $mockDb->mock_options_engine = $badEngine;
+                SettingsManager::reset_storage_engine_cache();
+
+                $this->assertFalse(SettingsManager::is_options_table_innodb());
+
+                $saveRes = SettingsManager::save_settings(['waf_mode' => 'disabled']);
+                $this->assertFalse($saveRes, 'save_settings() must fail closed on non-InnoDB or unverified engine.');
+
+                $undoRes = SettingsManager::undo_last_settings();
+                $this->assertFalse($undoRes['success'], 'undo_last_settings() must fail closed on non-InnoDB or unverified engine.');
+
+                $resetRes = SettingsManager::reset_defaults();
+                $this->assertFalse($resetRes, 'reset_defaults() must fail closed on non-InnoDB or unverified engine.');
+
+                SettingsManager::record_settings_snapshot(['waf_mode' => 'disabled']);
+
+                // Verify zero writes occurred to settings, revision, or snapshot stack
+                $this->assertSame('enabled', SettingsManager::get_settings()['waf_mode']);
+                $this->assertSame($baselineRev, SettingsManager::get_settings_revision());
+                $this->assertCount(1, SettingsManager::get_settings_snapshots());
+            }
+        } finally {
+            SettingsManager::reset_storage_engine_cache();
+            $GLOBALS['wpdb'] = $origWpdb;
+        }
+    }
+
+    public function testResetDefaultsResetsSecondaryOptionsAndSynchronizesCron(): void
+    {
+        global $wpdb;
+        $origWpdb = $wpdb ?? null;
+        $mockDb = new \wpdb();
+        $mockDb->options = 'wp_options';
+        $GLOBALS['wpdb'] = $mockDb;
+
+        try {
+            $saved = SettingsManager::save_settings([
+                'waf_mode'                           => 'disabled',
+                'waf_log_retention_days'             => 180,
+                'schedule_enabled'                   => true,
+                'schedule_frequency'                 => 'hourly',
+                'cron_domain_reputation_enabled'     => true,
+                'cron_task_schedules'                => [
+                    'webcareproscan_domain_reputation_daily_check' => 'twicedaily',
+                ],
+                'activity_log_settings'              => [
+                    'retention_days'     => 90,
+                    'tamper_webhook_url' => 'https://hooks.example.com/tamper',
+                ],
+            ]);
+            $this->assertIsArray($saved);
+            $this->assertSame(180, (int) get_option(\WebCareProScanner\Firewall\WafFileLogger::RETENTION_OPTION));
+            $this->assertSame(90, (int) (get_option('webcareproscan_activity_log_settings', [])['retention_days'] ?? 0));
+            $this->assertNotFalse(wp_next_scheduled(SettingsManager::CRON_HOOK));
+            if (class_exists(\WebCareProScanner\System\Cron\CronControlCenter::class)) {
+                $this->assertNotFalse(wp_next_scheduled('webcareproscan_domain_reputation_daily_check'));
+            }
+
+            $reset = SettingsManager::reset_defaults();
+            $this->assertIsArray($reset);
+            $this->assertSame('enabled', $reset['waf_mode']);
+            $this->assertSame(60, (int) $reset['waf_log_retention_days']);
+            $this->assertSame(60, (int) get_option(\WebCareProScanner\Firewall\WafFileLogger::RETENTION_OPTION));
+            $this->assertSame(
+                ['retention_days' => 30, 'tamper_webhook_url' => ''],
+                get_option('webcareproscan_activity_log_settings')
+            );
+            $this->assertFalse(
+                wp_next_scheduled(SettingsManager::CRON_HOOK),
+                'reset_defaults() must synchronize cron schedules to match default schedule_enabled = false.'
+            );
+            if (class_exists(\WebCareProScanner\System\Cron\CronControlCenter::class)) {
+                $this->assertFalse(
+                    wp_next_scheduled('webcareproscan_domain_reputation_daily_check'),
+                    'reset_defaults() must also unschedule opt-in cron tasks via CronControlCenter::sync_all_from_settings().'
+                );
+            }
+        } finally {
+            $GLOBALS['wpdb'] = $origWpdb;
+        }
+    }
+
+    public function testPostCommitOptionLifecycleNotificationsFireOnlyAfterCommitAndIsolateListenerExceptions(): void
+    {
+        global $wpdb;
+        $origWpdb = $wpdb ?? null;
+        $mockDb = new \wpdb();
+        $mockDb->options = 'wp_options';
+        $GLOBALS['wpdb'] = $mockDb;
+
+        try {
+            $events = [];
+            add_action('added_option', static function (string $option) use (&$events): void {
+                $events[] = 'added:' . $option;
+            }, 10, 2);
+            add_action('updated_option', static function (string $option) use (&$events): void {
+                $events[] = 'updated:' . $option;
+            }, 10, 3);
+
+            // 1. Initial save commits -> added_option fires post-commit
+            $this->assertIsArray(SettingsManager::save_settings(['waf_mode' => 'enabled']));
+            $this->assertContains('added:' . SettingsManager::OPTION_KEY, $events);
+
+            // 2. Rolled-back transaction must fire ZERO option lifecycle notifications
+            $events = [];
+            SettingsManager::$inside_tx_before_commit_hook = static function (string $txToken): void {
+                SettingsManager::$inside_tx_before_commit_hook = null;
+                update_option(SettingsManager::OPTION_MUTATION_LOCK, $txToken . '|' . (time() - 5), false);
+            };
+            $this->assertFalse(SettingsManager::save_settings(['waf_mode' => 'disabled']));
+            $this->assertSame([], $events, 'Rolled-back transaction must not fire post-commit option notifications.');
+
+            // 3. Throwing listener must NOT turn an already-committed save into a false failure
+            add_action('update_option_' . SettingsManager::OPTION_KEY, static function (): void {
+                throw new \RuntimeException('Simulated third-party option listener crash');
+            }, 10, 3);
+
+            $committedDespiteListenerCrash = SettingsManager::save_settings(['waf_mode' => 'learning']);
+            $this->assertIsArray(
+                $committedDespiteListenerCrash,
+                'Listener exception after COMMIT must not convert a committed settings save into a false persistence failure.'
+            );
+            $this->assertSame('learning', $committedDespiteListenerCrash['waf_mode']);
+            $this->assertContains('updated:' . SettingsManager::OPTION_KEY, $events);
         } finally {
             $GLOBALS['wpdb'] = $origWpdb;
         }

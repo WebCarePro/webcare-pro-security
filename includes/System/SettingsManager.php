@@ -22,6 +22,57 @@ class SettingsManager {
     private static bool $last_webhook_secret_store_failed = false;
 
     /**
+     * Cached InnoDB storage-engine verification result for $wpdb->options.
+     */
+    private static ?bool $options_table_is_innodb = null;
+
+    /**
+     * Tracks option writes staged inside the currently open fenced transaction for post-commit notifications.
+     *
+     * @var array<string, array{existed: bool, old_value: mixed, new_value: mixed}>|null
+     */
+    private static ?array $active_tx_writes = null;
+
+    /**
+     * Reset cached storage-engine verification state (used for deterministic test isolation).
+     */
+    public static function reset_storage_engine_cache(): void {
+        self::$options_table_is_innodb = null;
+    }
+
+    /**
+     * Verify that $wpdb->options uses the InnoDB storage engine before relying on
+     * transactional SELECT ... FOR UPDATE row locking and ROLLBACK semantics.
+     * Fails closed (returns false) if the engine is non-InnoDB, unavailable, or inconclusive.
+     */
+    public static function is_options_table_innodb(): bool {
+        if (self::$options_table_is_innodb !== null) {
+            return self::$options_table_is_innodb;
+        }
+
+        global $wpdb;
+        if (!($wpdb instanceof \wpdb) || empty($wpdb->options)) {
+            return false;
+        }
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $engine = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT ENGINE
+                 FROM information_schema.TABLES
+                 WHERE TABLE_SCHEMA = DATABASE()
+                   AND TABLE_NAME = %s
+                 LIMIT 1",
+                $wpdb->options
+            )
+        );
+
+        $is_innodb = is_string($engine) && strcasecmp(trim($engine), 'InnoDB') === 0;
+        self::$options_table_is_innodb = $is_innodb;
+        return $is_innodb;
+    }
+
+    /**
      * Optional test seam invoked immediately after acquire_mutation_lock() observes an expired lock
      * and right before compare_and_delete_mutation_lock() runs, to test two-contender stale-lock races.
      *
@@ -345,10 +396,28 @@ class SettingsManager {
 
     /**
      * Upsert an option row directly inside an active InnoDB transaction without prematurely mutating wp_cache.
+     * Records pre-commit state into $active_tx_writes so standard WordPress option hooks can fire safely post-COMMIT.
      */
     private static function transactional_upsert_option(string $option, mixed $value, string $autoload = 'no'): bool {
         global $wpdb;
         if ($wpdb instanceof \wpdb && !empty($wpdb->options)) {
+            if (is_array(self::$active_tx_writes) && !array_key_exists($option, self::$active_tx_writes)) {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+                $prior_raw = $wpdb->get_var(
+                    $wpdb->prepare(
+                        "SELECT option_value FROM {$wpdb->options} WHERE option_name = %s LIMIT 1",
+                        $option
+                    )
+                );
+                self::$active_tx_writes[$option] = [
+                    'existed'   => ($prior_raw !== null),
+                    'old_value' => ($prior_raw !== null) ? maybe_unserialize($prior_raw) : null,
+                    'new_value' => $value,
+                ];
+            } elseif (is_array(self::$active_tx_writes)) {
+                self::$active_tx_writes[$option]['new_value'] = $value;
+            }
+
             $serialized = (string) maybe_serialize($value);
             $autoload_val = ($autoload === 'yes' || $autoload === true) ? 'yes' : 'no';
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
@@ -371,10 +440,68 @@ class SettingsManager {
 
         $sentinel = '__webcare_tx_unset__';
         $existing = get_option($option, $sentinel);
-        if ($existing !== $sentinel && $existing === $value && empty($GLOBALS['wp_mock_update_option_failures'][$option])) {
+        $existed = ($existing !== $sentinel);
+        if (is_array(self::$active_tx_writes)) {
+            if (!array_key_exists($option, self::$active_tx_writes)) {
+                self::$active_tx_writes[$option] = [
+                    'existed'   => $existed,
+                    'old_value' => $existed ? $existing : null,
+                    'new_value' => $value,
+                ];
+            } else {
+                self::$active_tx_writes[$option]['new_value'] = $value;
+            }
+        }
+        if ($existed && $existing === $value && empty($GLOBALS['wp_mock_update_option_failures'][$option])) {
             return true;
         }
         return update_option($option, $value, ($autoload === 'yes' || $autoload === true));
+    }
+
+    /**
+     * Dispatch controlled post-commit WordPress option lifecycle hooks without allowing
+     * listener exceptions to turn an already-committed transaction into a false failure.
+     *
+     * @param array<string, array{existed: bool, old_value: mixed, new_value: mixed}> $committed_writes
+     */
+    private static function dispatch_post_commit_option_notifications(array $committed_writes): void {
+        if (empty($committed_writes) || !function_exists('do_action')) {
+            return;
+        }
+
+        foreach ($committed_writes as $option => $meta) {
+            $existed   = !empty($meta['existed']);
+            $old_value = $meta['old_value'] ?? null;
+            $new_value = $meta['new_value'] ?? null;
+
+            if (!$existed) {
+                try {
+                    do_action("add_option_{$option}", $option, $new_value);
+                } catch (\Throwable $e) {
+                    // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+                    @error_log('[WebCare SettingsManager] Post-commit add_option_' . $option . ' listener error: ' . $e->getMessage());
+                }
+                try {
+                    do_action('added_option', $option, $new_value);
+                } catch (\Throwable $e) {
+                    // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+                    @error_log('[WebCare SettingsManager] Post-commit added_option listener error: ' . $e->getMessage());
+                }
+            } elseif ($old_value !== $new_value) {
+                try {
+                    do_action("update_option_{$option}", $old_value, $new_value, $option);
+                } catch (\Throwable $e) {
+                    // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+                    @error_log('[WebCare SettingsManager] Post-commit update_option_' . $option . ' listener error: ' . $e->getMessage());
+                }
+                try {
+                    do_action('updated_option', $option, $old_value, $new_value);
+                } catch (\Throwable $e) {
+                    // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+                    @error_log('[WebCare SettingsManager] Post-commit updated_option listener error: ' . $e->getMessage());
+                }
+            }
+        }
     }
 
     /**
@@ -432,12 +559,19 @@ class SettingsManager {
 
         global $wpdb;
         if ($wpdb instanceof \wpdb && !empty($wpdb->options)) {
+            // Fail closed if $wpdb->options is not verified InnoDB (never silently fall back to non-transactional writes)
+            if (!self::is_options_table_innodb()) {
+                return false;
+            }
+
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
             if ($wpdb->query('START TRANSACTION') === false) {
                 return false;
             }
 
             $committed = false;
+            $committed_writes = [];
+            self::$active_tx_writes = [];
             try {
                 $now = time();
                 $like_prefix = $wpdb->esc_like($lock_token . '|') . '%';
@@ -542,7 +676,9 @@ class SettingsManager {
                     return false;
                 }
                 $committed = true;
+                $committed_writes = is_array(self::$active_tx_writes) ? self::$active_tx_writes : [];
             } finally {
+                self::$active_tx_writes = null;
                 if (!$committed) {
                     // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
                     @$wpdb->query('ROLLBACK');
@@ -551,6 +687,7 @@ class SettingsManager {
 
             $all_keys = array_values(array_unique(array_merge([self::OPTION_MUTATION_LOCK], $touched_options)));
             self::flush_committed_option_caches($all_keys);
+            self::dispatch_post_commit_option_notifications($committed_writes);
             return true;
         }
 
@@ -570,23 +707,30 @@ class SettingsManager {
             ];
         }
 
-        $ok = ($operation() === true);
-        if ($ok && is_callable(self::$inside_tx_before_commit_hook)) {
-            (self::$inside_tx_before_commit_hook)($lock_token);
-        }
-        if (!$ok || !self::renew_mutation_lock($lock_token)) {
-            if (isset($GLOBALS['wp_mock_options']) && is_array($GLOBALS['wp_mock_options'])) {
-                foreach ($backup as $tk => $entry) {
-                    if ($entry['existed']) {
-                        $GLOBALS['wp_mock_options'][$tk] = $entry['value'];
-                    } else {
-                        unset($GLOBALS['wp_mock_options'][$tk]);
+        self::$active_tx_writes = [];
+        try {
+            $ok = ($operation() === true);
+            if ($ok && is_callable(self::$inside_tx_before_commit_hook)) {
+                (self::$inside_tx_before_commit_hook)($lock_token);
+            }
+            if (!$ok || !self::renew_mutation_lock($lock_token)) {
+                if (isset($GLOBALS['wp_mock_options']) && is_array($GLOBALS['wp_mock_options'])) {
+                    foreach ($backup as $tk => $entry) {
+                        if ($entry['existed']) {
+                            $GLOBALS['wp_mock_options'][$tk] = $entry['value'];
+                        } else {
+                            unset($GLOBALS['wp_mock_options'][$tk]);
+                        }
                     }
                 }
+                return false;
             }
-            return false;
+            $committed_writes = is_array(self::$active_tx_writes) ? self::$active_tx_writes : [];
+        } finally {
+            self::$active_tx_writes = null;
         }
 
+        self::dispatch_post_commit_option_notifications($committed_writes);
         return true;
     }
 
@@ -2530,7 +2674,17 @@ class SettingsManager {
             }
 
             $next_revision = $baseline_revision + 1;
-            $touched = [self::OPTION_KEY, self::OPTION_REVISION_KEY];
+            $default_retention_days = (int) ($defaults['waf_log_retention_days'] ?? 60);
+            $default_act_settings = [
+                'retention_days'     => 30,
+                'tamper_webhook_url' => '',
+            ];
+            $touched = [
+                self::OPTION_KEY,
+                \WebCareProScanner\Firewall\WafFileLogger::RETENTION_OPTION,
+                'webcareproscan_activity_log_settings',
+                self::OPTION_REVISION_KEY,
+            ];
             if (!empty($safe_snapshot_settings)) {
                 $touched[] = self::OPTION_SNAPSHOTS_KEY;
             }
@@ -2538,8 +2692,14 @@ class SettingsManager {
             $committed = self::execute_fenced_transaction(
                 $lock_token,
                 $baseline_revision,
-                static function () use ($defaults, $next_revision, $safe_snapshot_settings): bool {
+                static function () use ($defaults, $default_retention_days, $default_act_settings, $next_revision, $safe_snapshot_settings): bool {
                     if (!self::transactional_upsert_option(self::OPTION_KEY, $defaults, 'no')) {
+                        return false;
+                    }
+                    if (!self::transactional_upsert_option(\WebCareProScanner\Firewall\WafFileLogger::RETENTION_OPTION, $default_retention_days, 'no')) {
+                        return false;
+                    }
+                    if (!self::transactional_upsert_option('webcareproscan_activity_log_settings', $default_act_settings, 'no')) {
                         return false;
                     }
                     if (!self::transactional_upsert_option(self::OPTION_REVISION_KEY, $next_revision, 'no')) {
@@ -2574,6 +2734,9 @@ class SettingsManager {
             }
 
             self::sync_cron_schedule($defaults);
+            if (class_exists('\\WebCareProScanner\\System\\Cron\\CronControlCenter') && !\WebCareProScanner\System\Cron\CronControlCenter::$syncing_from_cron_center) {
+                \WebCareProScanner\System\Cron\CronControlCenter::sync_all_from_settings($defaults);
+            }
             return self::get_settings();
         } finally {
             self::release_mutation_lock($lock_token);
