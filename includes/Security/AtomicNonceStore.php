@@ -36,38 +36,54 @@ final class AtomicNonceStore {
             return false;
         }
 
-        $key = 'webcare_nonce_' . md5($namespace . ':' . $nonce);
+        // 1. Key Derivation (SHA-256):
+        $key = 'wcp_nonce_' . substr(hash('sha256', $namespace . '|' . $nonce), 0, 40);
         $group = 'webcare_nonces';
 
-        // 1. If persistent/external object cache is active, wp_cache_add is atomic across concurrent threads
+        // 2. If persistent/external object cache is active, wp_cache_add is atomic across concurrent threads
         if (wp_using_ext_object_cache()) {
-            return (bool) wp_cache_add($key, time(), $group, $ttl);
+            return (bool) wp_cache_add($key, 1, $group, $ttl);
         }
 
-        // 2. Direct database atomic consumption using transient/options table
-        // We use add_option() with autoload='no'. In WordPress, add_option() executes:
-        // INSERT INTO wp_options (option_name, option_value, autoload) VALUES (...)
-        // Under MySQL/InnoDB, option_name is UNIQUE, making add_option strictly atomic.
-        // If two concurrent threads attempt to add the same option, exactly one succeeds and returns true;
-        // the other fails (duplicate key) and returns false.
-        $transient_name = '_transient_' . $key;
-        $timeout_name   = '_transient_timeout_' . $key;
-        $expires        = time() + $ttl;
+        // 3. Single-Statement Atomic DB Fallback (Zero Multi-Step Race)
+        // Store a single expiry-bearing row in $wpdb->options (option_name has a UNIQUE index).
+        // Using INSERT ... ON DUPLICATE KEY UPDATE:
+        // - Insert succeeds (returns 1 affected row) if fresh nonce -> claimed.
+        // - If duplicate key exists, updates expiry ONLY IF previous value has expired (returns 2 affected rows) -> claimed.
+        // - If duplicate key exists and is unexpired, no update occurs (returns 0 affected rows) -> replay rejected.
+        global $wpdb;
+        $now = time();
+        $expires_at = $now + $ttl;
 
-        // Clean up expired entry if it exists to allow reuse after TTL expires
-        $existing_timeout = (int) get_option($timeout_name, 0);
-        if ($existing_timeout > 0 && $existing_timeout < time()) {
-            delete_option($transient_name);
-            delete_option($timeout_name);
+        if ($wpdb instanceof \wpdb && !empty($wpdb->options)) {
+            $options_table = $wpdb->options;
+            $affected = $wpdb->query(
+                $wpdb->prepare(
+                    "INSERT INTO {$options_table} (option_name, option_value, autoload)
+                     VALUES (%s, %s, 'no')
+                     ON DUPLICATE KEY UPDATE
+                       option_value = IF(CAST(option_value AS UNSIGNED) < %d, VALUES(option_value), option_value)",
+                    $key,
+                    (string) $expires_at,
+                    $now
+                )
+            );
+
+            // 1 = fresh row inserted, 2 = expired row updated, 0 = unexpired row unmodified
+            return $affected === 1 || $affected === 2;
         }
 
-        // Atomically claim the nonce via add_option
-        $claimed = add_option($transient_name, 1, '', 'no');
-        if (!$claimed) {
-            return false;
+        // Fallback if $wpdb is unavailable (e.g. unit test minimal mock environment)
+        $existing = get_option($key, null);
+        if ($existing !== null) {
+            $existing_expires = (int) $existing;
+            if ($existing_expires >= $now) {
+                return false; // Still active
+            }
+            // Expired, update
+            return update_option($key, (string) $expires_at, false);
         }
 
-        add_option($timeout_name, $expires, '', 'no');
-        return true;
+        return add_option($key, (string) $expires_at, '', 'no');
     }
 }

@@ -140,7 +140,7 @@ final class ScanBackgroundWorker {
         }
 
         // Advance scan by running background step
-        $result = self::run_background_step(false);
+        $result = self::run_background_step(false, $scan_id);
         wp_send_json_success($result);
     }
 
@@ -177,10 +177,11 @@ final class ScanBackgroundWorker {
     /**
      * WP-Cron Worker: advances an active running scan in the background when no browser is polling.
      *
-     * @param bool $bypass_idle_check If true, ignores browser idle wait and processes a batch immediately.
+     * @param bool     $bypass_idle_check If true, ignores browser idle wait and processes a batch immediately.
+     * @param int|null $expected_scan_id  Optional expected scan ID for strict loopback token binding.
      * @return array<string, mixed> Execution status report.
      */
-    public static function run_background_step(bool $bypass_idle_check = false): array {
+    public static function run_background_step(bool $bypass_idle_check = false, ?int $expected_scan_id = null): array {
         global $wpdb;
 
         $locked_id = ScanLock::get_locked_scan_id();
@@ -189,6 +190,16 @@ final class ScanBackgroundWorker {
             return [
                 'status'  => 'skipped',
                 'summary' => __('No active scan lock held.', 'webcare-pro-security'),
+            ];
+        }
+
+        // Strict loopback scan ID binding enforcement:
+        // Guarantees token cannot advance a different scan if lock changed
+        if ($expected_scan_id !== null && $locked_id !== $expected_scan_id) {
+            return [
+                'success' => false,
+                'status'  => 'scan_id_mismatch',
+                'message' => __('Active scan ID no longer matches loopback token.', 'webcare-pro-security'),
             ];
         }
 

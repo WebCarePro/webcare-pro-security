@@ -333,25 +333,39 @@ class ResponseDlpSentinel implements SecurityModuleInterface {
     }
 
     /**
+     * Optional mock/custom headers list used in testing environments.
+     *
+     * @var array<string>|null
+     */
+    public static ?array $custom_headers_list = null;
+
+    /**
      * Output buffer callback inspecting HTML/text guest responses.
      * Inlines redaction without serving 403s or banning visitors.
      */
     public static function filter_guest_output_buffer(string $buffer): string {
         // Fast-path bypass for binary, attachment, SSE, or compressed streams
-        if (function_exists('headers_list')) {
-            foreach (headers_list() as $header_line) {
-                $hl = strtolower($header_line);
-                if (
-                    str_contains($hl, 'content-disposition:') && str_contains($hl, 'attachment')
-                    || str_contains($hl, 'content-type: text/event-stream')
-                    || str_contains($hl, 'content-type: application/octet-stream')
-                    || str_contains($hl, 'content-type: video/')
-                    || str_contains($hl, 'content-type: audio/')
-                    || str_contains($hl, 'content-encoding: gzip')
-                    || str_contains($hl, 'content-encoding: br')
-                ) {
-                    return $buffer;
-                }
+        $active_headers = self::$custom_headers_list ?? (function_exists('headers_list') ? headers_list() : []);
+        foreach ($active_headers as $header_line) {
+            $hl = strtolower($header_line);
+            if (
+                (str_contains($hl, 'content-disposition:') && str_contains($hl, 'attachment'))
+                || str_contains($hl, 'content-type: text/event-stream')
+                || str_contains($hl, 'content-type: application/octet-stream')
+                || str_contains($hl, 'content-type: application/pdf')
+                || str_contains($hl, 'content-type: application/zip')
+                || str_contains($hl, 'content-type: video/')
+                || str_contains($hl, 'content-type: audio/')
+                || str_contains($hl, 'content-type: image/')
+                || str_contains($hl, 'content-type: font/')
+                || (str_contains($hl, 'content-encoding:') && (
+                    str_contains($hl, 'gzip')
+                    || str_contains($hl, 'br')
+                    || str_contains($hl, 'deflate')
+                    || str_contains($hl, 'zstd')
+                ))
+            ) {
+                return $buffer;
             }
         }
 

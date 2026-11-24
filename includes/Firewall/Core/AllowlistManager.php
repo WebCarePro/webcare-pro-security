@@ -320,11 +320,32 @@ final class AllowlistManager {
             }
 
             // Cryptographic Webhook HMAC Signature Verification
-            $webhook_secret = trim((string) ($rule['webhook_secret'] ?? ''));
-            if ($webhook_secret !== '') {
-                $raw_body = (string) file_get_contents('php://input');
-                $provider = strtolower(trim((string) ($rule['webhook_provider'] ?? 'generic')));
-                if (!self::verify_webhook_hmac($provider, $webhook_secret, $raw_body)) {
+            $webhook_provider = strtolower(trim((string) ($rule['webhook_hmac_provider'] ?? $rule['webhook_provider'] ?? 'none')));
+            $secret_ref = trim((string) ($rule['webhook_secret_ref'] ?? ''));
+            $legacy_secret = trim((string) ($rule['webhook_secret'] ?? ''));
+
+            $webhook_secret = '';
+            if ($secret_ref !== '') {
+                $webhook_secret = (string) self::get_webhook_secret_by_ref($secret_ref);
+            } elseif ($legacy_secret !== '') {
+                $webhook_secret = $legacy_secret;
+            }
+
+            if ($webhook_secret !== '' && $webhook_provider !== 'none') {
+                // Read bounded body stream via RequestBodyReader (enforce fail-closed if truncated)
+                if (class_exists(RequestBodyReader::class) && RequestBodyReader::is_truncated()) {
+                    continue; // Truncated body cannot validly verify cryptographic HMAC
+                }
+
+                $raw_body = class_exists(RequestBodyReader::class)
+                    ? RequestBodyReader::get_bounded_body()
+                    : (string) file_get_contents('php://input');
+
+                $tolerance = isset($rule['webhook_replay_window_sec'])
+                    ? max(30, min(900, (int) $rule['webhook_replay_window_sec']))
+                    : 300;
+
+                if (!self::verify_webhook_hmac($webhook_provider, $webhook_secret, $raw_body, $tolerance)) {
                     continue; // Cryptographic HMAC verification failed
                 }
             }
@@ -565,6 +586,63 @@ final class AllowlistManager {
 
         // Pre-authenticated / unauthenticated traffic: strictly prohibited from bypassing critical exploits or confirmed exploit signatures
         return !$is_critical_exploit && ($full_bypass || $rule_bypass);
+    }
+
+    /**
+     * Resolve and decrypt webhook secret by vault reference.
+     */
+    public static function get_webhook_secret_by_ref(string $secret_ref): string {
+        if ($secret_ref === '') {
+            return '';
+        }
+        $vault = get_option('webcareproscan_vault_webhook_secrets', []);
+        if (!is_array($vault) || empty($vault[$secret_ref])) {
+            return '';
+        }
+
+        $encrypted = (string) $vault[$secret_ref];
+        if (class_exists(\WebCareProScanner\Security\SecretVault::class)) {
+            return (string) \WebCareProScanner\Security\SecretVault::decrypt($encrypted);
+        }
+        return $encrypted;
+    }
+
+    /**
+     * Store and encrypt a webhook secret in dedicated SecretVault storage under an opaque ref.
+     */
+    public static function store_webhook_secret(string $secret_ref, string $plaintext_secret): void {
+        if ($secret_ref === '') {
+            return;
+        }
+        $vault = get_option('webcareproscan_vault_webhook_secrets', []);
+        if (!is_array($vault)) {
+            $vault = [];
+        }
+
+        if ($plaintext_secret === '') {
+            unset($vault[$secret_ref]);
+        } else {
+            $encrypted = class_exists(\WebCareProScanner\Security\SecretVault::class)
+                ? \WebCareProScanner\Security\SecretVault::encrypt($plaintext_secret)
+                : $plaintext_secret;
+            $vault[$secret_ref] = $encrypted;
+        }
+
+        update_option('webcareproscan_vault_webhook_secrets', $vault, false);
+    }
+
+    /**
+     * Delete a webhook secret reference from SecretVault storage.
+     */
+    public static function delete_webhook_secret_by_ref(string $secret_ref): void {
+        if ($secret_ref === '') {
+            return;
+        }
+        $vault = get_option('webcareproscan_vault_webhook_secrets', []);
+        if (is_array($vault) && isset($vault[$secret_ref])) {
+            unset($vault[$secret_ref]);
+            update_option('webcareproscan_vault_webhook_secrets', $vault, false);
+        }
     }
 
     /**

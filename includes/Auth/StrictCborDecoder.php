@@ -157,10 +157,19 @@ final class StrictCborDecoder {
      */
     private static function read_utf8_string(string $data, int &$offset, int $length, int $byte_len): string {
         $str = self::read_bytes($data, $offset, $length, $byte_len);
-        if (!mb_check_encoding($str, 'UTF-8')) {
+        if (!self::is_valid_utf8($str)) {
             throw new InvalidArgumentException('CBOR text string contains invalid UTF-8 sequence.');
         }
         return $str;
+    }
+
+    /**
+     * mbstring-safe UTF-8 validity checker with preg_match fallback.
+     */
+    private static function is_valid_utf8(string $s): bool {
+        return function_exists('mb_check_encoding')
+            ? mb_check_encoding($s, 'UTF-8')
+            : (preg_match('//u', $s) === 1);
     }
 
     /**

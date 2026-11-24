@@ -196,11 +196,10 @@ final class RequestPipeline {
                 // Tier 3: Telemetry/logging failures must never abort request execution
             }
 
-            // Tier 4: Outer exception boundary - allow /wp-admin/ rescue to prevent permanent admin lockout
-            $req_uri = isset($_SERVER['REQUEST_URI']) ? (string) $_SERVER['REQUEST_URI'] : '';
-            $is_admin_rescue = str_contains($req_uri, '/wp-admin/') || str_contains($req_uri, 'wp-login.php');
-            if ($is_admin_rescue) {
-                @error_log('[WebCare RequestPipeline] Permitting rescue admin access after pipeline exception: ' . $e->getMessage());
+            // Tier 4: Outer exception boundary - strictly permit read-only admin console rescue to prevent permanent admin lockout
+            $ctx_for_rescue = isset($ctx) && $ctx instanceof RequestContext ? $ctx : RequestContext::from_globals();
+            if (self::is_read_only_rescue_request($ctx_for_rescue)) {
+                @error_log('[WebCare RequestPipeline] Permitting read-only rescue admin console access after pipeline exception: ' . $e->getMessage());
                 return;
             }
 
@@ -213,6 +212,70 @@ final class RequestPipeline {
         } finally {
             self::$is_processing = false;
         }
+    }
+
+    /**
+     * Strict read-only rescue validation.
+     * Never permits POST, PUT, PATCH, DELETE, or mutating/login endpoints like
+     * admin-ajax.php, admin-post.php, options.php, or wp-login.php.
+     *
+     * @param RequestContext $ctx
+     * @return bool
+     */
+    public static function is_read_only_rescue_request(RequestContext $ctx): bool {
+        // 1. Strict HTTP method: GET or HEAD only
+        $method = strtoupper($ctx->method);
+        if ($method !== 'GET' && $method !== 'HEAD') {
+            return false;
+        }
+
+        $uri = $ctx->uri;
+        $path = (string) (wp_parse_url($uri, PHP_URL_PATH) ?? $uri);
+
+        // 2. Explicitly reject mutating scripts and login endpoints
+        $forbidden_endpoints = [
+            'admin-ajax.php',
+            'admin-post.php',
+            'options.php',
+            'wp-login.php',
+            'async-upload.php',
+            'plugins.php',
+            'plugin-install.php',
+            'update.php',
+            'update-core.php',
+        ];
+        foreach ($forbidden_endpoints as $forbidden) {
+            if (str_contains($path, $forbidden)) {
+                return false;
+            }
+        }
+
+        // 3. Must be an authenticated administrator
+        $is_admin = class_exists(FirewallEngine::class)
+            ? FirewallEngine::is_authenticated_administrator()
+            : (function_exists('current_user_can') && current_user_can('manage_options'));
+
+        if (!$is_admin) {
+            return false;
+        }
+
+        // 4. Allowed rescue endpoints:
+        // A. Canonical admin console: /wp-admin/admin.php with page in allowed rescue pages
+        if (str_ends_with($path, '/wp-admin/admin.php') || str_ends_with($path, '/wp-admin/')) {
+            $page = $_GET['page'] ?? '';
+            if (is_string($page) && in_array($page, ['webcare-pro-security', 'webcare-pro-firewall', 'webcare-pro-settings'], true)) {
+                return true;
+            }
+        }
+
+        // B. Canonical read-only REST rescue routes
+        if (str_contains($path, '/wp-json/webcare-pro-security/v1/rescue/status')
+            || str_contains($path, '/wp-json/webcare-pro-security/v1/system/doctor')
+        ) {
+            return true;
+        }
+
+        return false;
     }
 
     /**

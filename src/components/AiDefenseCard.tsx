@@ -1103,10 +1103,15 @@ export const AiDefenseCard = ({
                       <th style={{ padding: '10px 14px' }}>Initiating Component (Backtrace)</th>
                       <th style={{ padding: '10px 14px' }}>Threat Category</th>
                       <th style={{ padding: '10px 14px' }}>Action</th>
+                      <th style={{ padding: '10px 14px', textAlign: 'right' }}>Controls</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {egressData.recent_events.map((e: any) => (
+                    {egressData.recent_events.map((e: any) => {
+                      const isApproved = (egressData?.settings?.approved_third_party_webhooks || []).some(
+                        (w: any) => w.url_prefix === e.url && w.plugin_slug === (e.caller?.slug || '')
+                      );
+                      return (
                       <tr key={e.id} style={{ borderBottom: '1px solid var(--webcare-border-std, #e2e8f0)' }}>
                         <td style={{ padding: '10px 14px', fontSize: '11px', color: 'var(--webcare-text-muted, #64748b)' }}>
                           {e.timestamp}
@@ -1159,8 +1164,51 @@ export const AiDefenseCard = ({
                             {e.action?.toUpperCase()}
                           </span>
                         </td>
+                        <td style={{ padding: '10px 14px', textAlign: 'right' }}>
+                          {e.caller?.slug && e.url && (
+                            isApproved ? (
+                              <button
+                                type="button"
+                                className="webcare-btn-micro"
+                                style={{ background: '#fee2e2', color: '#b91c1c', border: '1px solid #fca5a5', padding: '3px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 600 }}
+                                onClick={() => {
+                                  const currentWebhooks = egressData?.settings?.approved_third_party_webhooks || [];
+                                  const updated = currentWebhooks.filter(
+                                    (w: any) => !(w.url_prefix === e.url && w.plugin_slug === e.caller.slug)
+                                  );
+                                  handleSaveEgressSettings({
+                                    ...egressData?.settings,
+                                    approved_third_party_webhooks: updated
+                                  });
+                                }}
+                              >
+                                Revoke
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                className="webcare-btn-micro"
+                                style={{ background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', padding: '3px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 600 }}
+                                onClick={() => {
+                                  const currentWebhooks = egressData?.settings?.approved_third_party_webhooks || [];
+                                  const updated = [
+                                    ...currentWebhooks,
+                                    { url_prefix: e.url, plugin_slug: e.caller.slug }
+                                  ];
+                                  handleSaveEgressSettings({
+                                    ...egressData?.settings,
+                                    approved_third_party_webhooks: updated
+                                  });
+                                }}
+                              >
+                                Approve
+                              </button>
+                            )
+                          )}
+                        </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

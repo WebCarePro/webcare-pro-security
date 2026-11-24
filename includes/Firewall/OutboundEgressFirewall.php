@@ -338,12 +338,35 @@ class OutboundEgressFirewall {
             }
         }
 
+        $approved_webhooks = [];
+        if (isset($settings['approved_third_party_webhooks']) && is_array($settings['approved_third_party_webhooks'])) {
+            foreach ($settings['approved_third_party_webhooks'] as $entry) {
+                if (!is_array($entry)) {
+                    continue;
+                }
+                $prefix = trim((string) ($entry['url_prefix'] ?? ''));
+                $slug   = strtolower(trim(sanitize_key($entry['plugin_slug'] ?? '')));
+                if ($prefix === '' || $slug === '') {
+                    continue;
+                }
+                $parsed = wp_parse_url($prefix);
+                if (!is_array($parsed) || ($parsed['scheme'] ?? '') !== 'https' || empty($parsed['host'])) {
+                    continue;
+                }
+                $approved_webhooks[] = [
+                    'url_prefix'  => esc_url_raw($prefix),
+                    'plugin_slug' => $slug,
+                ];
+            }
+        }
+
         $updated = [
-            'mode'                 => $mode,
-            'block_ssrf_metadata'  => !empty($settings['block_ssrf_metadata']),
-            'block_exfil_webhooks' => !empty($settings['block_exfil_webhooks']),
-            'block_suspicious_tld' => !empty($settings['block_suspicious_tld']),
-            'allowed_hosts'        => array_values(array_unique($allowed_hosts)),
+            'mode'                          => $mode,
+            'block_ssrf_metadata'           => !empty($settings['block_ssrf_metadata']),
+            'block_exfil_webhooks'          => !empty($settings['block_exfil_webhooks']),
+            'block_suspicious_tld'          => !empty($settings['block_suspicious_tld']),
+            'allowed_hosts'                 => array_values(array_unique($allowed_hosts)),
+            'approved_third_party_webhooks' => $approved_webhooks,
         ];
 
         $final = array_merge($current, $updated);
@@ -682,17 +705,53 @@ class OutboundEgressFirewall {
             return true;
         }
 
-        // 4. Approved third-party webhooks allowlist (scoped by exact webhook URL prefix + originating plugin slug)
+        // 4. Approved third-party webhooks allowlist (scoped by exact HTTPS origin + path boundary + originating plugin slug)
         $approved_third_party = is_array($settings['approved_third_party_webhooks'] ?? null) ? $settings['approved_third_party_webhooks'] : [];
         $caller_slug = strtolower(trim((string) ($caller['slug'] ?? '')));
-        foreach ($approved_third_party as $entry) {
-            if (!is_array($entry)) {
-                continue;
-            }
-            $prefix = strtolower(trim((string) ($entry['url_prefix'] ?? '')));
-            $entry_slug = strtolower(trim((string) ($entry['plugin_slug'] ?? '')));
-            if ($prefix !== '' && (str_starts_with($clean_target_url, $prefix) || $clean_target_url === $prefix)) {
-                if ($entry_slug === '' || $entry_slug === $caller_slug) {
+        $target_parsed = wp_parse_url($clean_target_url);
+
+        if (is_array($target_parsed) && ($target_parsed['scheme'] ?? '') === 'https' && !empty($target_parsed['host'])) {
+            $target_host = strtolower($target_parsed['host']);
+            $target_port = (int) ($target_parsed['port'] ?? 443);
+            $target_path = '/' . ltrim((string) ($target_parsed['path'] ?? ''), '/');
+
+            foreach ($approved_third_party as $entry) {
+                if (!is_array($entry)) {
+                    continue;
+                }
+                $prefix = trim((string) ($entry['url_prefix'] ?? ''));
+                $entry_slug = strtolower(trim((string) ($entry['plugin_slug'] ?? '')));
+
+                // Empty plugin_slug or empty url_prefix is rejected
+                if ($prefix === '' || $entry_slug === '') {
+                    continue;
+                }
+
+                // Caller slug must strictly match approved plugin slug
+                if ($caller_slug !== $entry_slug) {
+                    continue;
+                }
+
+                $prefix_parsed = wp_parse_url($prefix);
+                if (!is_array($prefix_parsed) || ($prefix_parsed['scheme'] ?? '') !== 'https' || empty($prefix_parsed['host'])) {
+                    continue;
+                }
+
+                // Scheme must be https, host exact case-insensitive match, port match
+                $prefix_host = strtolower($prefix_parsed['host']);
+                $prefix_port = (int) ($prefix_parsed['port'] ?? 443);
+                if ($target_host !== $prefix_host || $target_port !== $prefix_port) {
+                    continue;
+                }
+
+                // Path boundary match: either identical, prefix has no path / root path, or targets starts with prefix path as directory boundary
+                $prefix_path = '/' . ltrim((string) ($prefix_parsed['path'] ?? ''), '/');
+                if ($prefix_path === '/' || $target_path === $prefix_path) {
+                    return true;
+                }
+
+                $prefix_path_dir = str_ends_with($prefix_path, '/') ? $prefix_path : $prefix_path . '/';
+                if (str_starts_with($target_path, $prefix_path_dir)) {
                     return true;
                 }
             }

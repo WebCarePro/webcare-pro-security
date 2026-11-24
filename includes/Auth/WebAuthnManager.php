@@ -358,10 +358,10 @@ class WebAuthnManager {
 
         $auth_cred_id_raw = substr($auth_data, 55, $cred_id_len);
         $client_cred_id_raw = self::base64url_decode($credential_id);
-        if ($client_cred_id_raw !== '' && !hash_equals($auth_cred_id_raw, $client_cred_id_raw)) {
+        if ($client_cred_id_raw === '' || $auth_cred_id_raw === '' || !hash_equals($auth_cred_id_raw, $client_cred_id_raw)) {
             return [
                 'success' => false,
-                'message' => __('Credential ID mismatch between authData and client payload.', 'webcare-pro-security'),
+                'message' => __('Credential ID verification failed.', 'webcare-pro-security'),
             ];
         }
 
@@ -735,7 +735,11 @@ class WebAuthnManager {
             ];
         }
 
-        wp_set_auth_cookie($matched_user_id, (bool) apply_filters('webauthn_remember_session', true, $matched_user_id));
+        $default_remember = class_exists(\WebCareProScanner\System\SettingsManager::class)
+            ? (bool) \WebCareProScanner\System\SettingsManager::get('webauthn_remember_session', false)
+            : false;
+        $remember = (bool) apply_filters('webauthn_remember_session', $default_remember, $matched_user_id);
+        wp_set_auth_cookie($matched_user_id, $remember);
 
         // Notify plugins and hooks
         // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- Standard WordPress core login hook invocation

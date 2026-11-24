@@ -264,6 +264,7 @@ class SettingsManager {
             'login_lockout_duration'             => 15,
             'session_sentinel_enabled'           => true,
             'session_block_concurrent'           => false,
+            'webauthn_remember_session'          => false, // Remember WebAuthn passkey session via secure persistent auth cookie
 
             // 11. DevSecOps Chat & Automation Webhooks (Slack, Discord, ClickUp, Asana, Zapier, Make, n8n)
             'slack_enabled'                      => false,
@@ -557,8 +558,9 @@ class SettingsManager {
                 'required_headers' => is_array($rule['required_headers'] ?? null)
                     ? array_values(array_filter(array_map('sanitize_text_field', $rule['required_headers'])))
                     : array_values(array_filter(array_map('sanitize_text_field', explode("\n", str_replace("\r", "", (string) ($rule['required_headers'] ?? '')))))),
-                'webhook_provider' => sanitize_key($rule['webhook_provider'] ?? ''),
-                'webhook_secret'   => sanitize_text_field($rule['webhook_secret'] ?? ''),
+                'webhook_hmac_provider' => sanitize_key($rule['webhook_hmac_provider'] ?? $rule['webhook_provider'] ?? 'none'),
+                'webhook_replay_window_sec' => max(30, min(900, (int) ($rule['webhook_replay_window_sec'] ?? 300))),
+                'webhook_secret_ref' => sanitize_key($rule['webhook_secret_ref'] ?? ''),
                 'allow_unpinned_headers' => !empty($rule['allow_unpinned_headers']),
                 'methods'          => is_array($rule['methods'] ?? null)
                     ? array_values(array_filter(array_map('sanitize_text_field', $rule['methods'])))
@@ -578,9 +580,18 @@ class SettingsManager {
                 continue; // Skip invalid, match-all empty allowlist rule
             }
 
+            // If plaintext secret is supplied, store in SecretVault and link via webhook_secret_ref
+            $raw_secret = trim((string) ($rule['webhook_secret'] ?? ''));
+            if ($raw_secret !== '') {
+                $ref = $clean_rule['webhook_secret_ref'] !== '' ? $clean_rule['webhook_secret_ref'] : 'wcp_wh_sec_' . $clean_rule['id'];
+                \WebCareProScanner\Firewall\Core\AllowlistManager::store_webhook_secret($ref, $raw_secret);
+                $clean_rule['webhook_secret_ref'] = $ref;
+            }
+
             // Security Hardening: Header-only rules without endpoint/IP/host pinning or cryptographic secret require explicit acknowledgment
             $is_unpinned = empty($clean_rule['ip_addresses']) && empty($clean_rule['hostnames']) && empty($clean_rule['asns']);
-            $has_headers_only = !empty($clean_rule['required_headers']) && $is_unpinned && empty($clean_rule['webhook_secret']);
+            $has_secret = !empty($clean_rule['webhook_secret_ref']);
+            $has_headers_only = !empty($clean_rule['required_headers']) && $is_unpinned && !$has_secret;
             if ($has_headers_only && empty($clean_rule['allow_unpinned_headers'])) {
                 continue; // Reject unpinned header-only rule without explicit user acknowledgment
             }
@@ -1090,6 +1101,7 @@ class SettingsManager {
         $clean['login_lockout_duration']    = max(1, min(1440, (int) ($merged['login_lockout_duration'] ?? 15)));
         $clean['session_sentinel_enabled']  = !empty($merged['session_sentinel_enabled']);
         $clean['session_block_concurrent']  = !empty($merged['session_block_concurrent']);
+        $clean['webauthn_remember_session'] = !empty($merged['webauthn_remember_session']);
 
 
         // 11. DevSecOps Chat & Automation Webhooks (Slack, Discord, ClickUp, Asana, Zapier, Make, n8n - Encrypted with SecretVault)
@@ -1279,8 +1291,8 @@ class SettingsManager {
         // 15. Custom Scan Engine Options
         if (isset($input['custom_scan_options']) && is_array($input['custom_scan_options'])) {
             $clean['custom_scan_options'] = self::sanitize_custom_scan_options($input['custom_scan_options']);
-        } elseif (isset($current['custom_scan_options']) && is_array($current['custom_scan_options'])) {
-            $clean['custom_scan_options'] = $current['custom_scan_options'];
+        } elseif (isset($merged['custom_scan_options']) && is_array($merged['custom_scan_options'])) {
+            $clean['custom_scan_options'] = self::sanitize_custom_scan_options($merged['custom_scan_options']);
         } else {
             $clean['custom_scan_options'] = self::get_default_custom_scan_options();
         }
@@ -1722,16 +1734,57 @@ class SettingsManager {
     }
 
     /**
-     * Strip all secret and credential keys from a settings array.
+     * Recursively strip all secret and credential keys from a settings array or serialized JSON string.
+     * Guarantees zero raw secrets persist at any nesting depth.
      *
      * @param array $settings
      * @return array
      */
     public static function strip_secrets(array $settings): array {
-        foreach (self::SECRET_KEYS as $secret_key) {
-            unset($settings[$secret_key]);
+        return self::recursively_strip_secrets($settings);
+    }
+
+    /**
+     * Helper for recursive secret stripping.
+     *
+     * @param array $data
+     * @return array
+     */
+    private static function recursively_strip_secrets(array $data): array {
+        $secret_regex = '/(?:secret|token|password|api_key|private_key|passphrase)/i';
+        $safe_meta_regex = '/(?:_ref|_enabled|_mode|_window|_ttl|_created_at)$/i';
+
+        $clean = [];
+        foreach ($data as $key => $val) {
+            $key_str = (string) $key;
+
+            // Direct match against top-level SECRET_KEYS
+            if (in_array($key_str, self::SECRET_KEYS, true)) {
+                continue;
+            }
+
+            // Heuristic match for credential names, excluding safe metadata keys
+            if (preg_match($secret_regex, $key_str) === 1 && preg_match($safe_meta_regex, $key_str) === 0) {
+                continue;
+            }
+
+            if (is_array($val)) {
+                $clean[$key] = self::recursively_strip_secrets($val);
+            } elseif (is_string($val) && json_validate($val)) {
+                // Native PHP 8.3 json_validate
+                $decoded = json_decode($val, true);
+                if (is_array($decoded)) {
+                    $stripped_decoded = self::recursively_strip_secrets($decoded);
+                    $clean[$key] = wp_json_encode($stripped_decoded);
+                } else {
+                    $clean[$key] = $val;
+                }
+            } else {
+                $clean[$key] = $val;
+            }
         }
-        return $settings;
+
+        return $clean;
     }
 
     /**
@@ -1793,12 +1846,13 @@ class SettingsManager {
             ];
         }
 
-        // Pop the most recent snapshot
-        $target_snapshot = array_shift($snapshots);
-        update_option(self::OPTION_SNAPSHOTS_KEY, $snapshots, false);
-
+        // Peek at the most recent snapshot without popping it yet (two-phase verified undo)
+        $target_snapshot = $snapshots[0];
         $restored_subset = $target_snapshot['settings'] ?? [];
         if (!is_array($restored_subset) || empty($restored_subset)) {
+            // Snapshot was corrupted; discard corrupted entry safely
+            array_shift($snapshots);
+            update_option(self::OPTION_SNAPSHOTS_KEY, $snapshots, false);
             return [
                 'success'             => false,
                 'message'             => __('Corrupted settings snapshot encountered.', 'webcare-pro-security'),
@@ -1823,8 +1877,52 @@ class SettingsManager {
         // Merge restored non-secret settings with active secrets
         $merged_restoration = array_merge($restored_subset, $active_secrets);
 
-        // Apply restoration
+        // Apply restoration via save_settings()
         $saved = self::save_settings($merged_restoration);
+
+        // Phase 2: Read-back verification. Ensure update succeeded and DB reflects restored values
+        $verification_read = get_option(self::OPTION_KEY, []);
+        if (!is_array($verification_read) || empty($verification_read)) {
+            return [
+                'success'             => false,
+                'message'             => __('Settings undo verification failed: unable to read back restored state.', 'webcare-pro-security'),
+                'settings'            => self::get_settings(),
+                'snapshots_remaining' => count($snapshots),
+            ];
+        }
+
+        // Verify non-secret restored scalar and core setting keys match
+        $core_mismatch = false;
+        foreach ($restored_subset as $rk => $rv) {
+            if (in_array($rk, self::SECRET_KEYS, true) || is_array($rv)) {
+                continue;
+            }
+            if (isset($verification_read[$rk])) {
+                $actual = $verification_read[$rk];
+                if (is_bool($rv)) {
+                    if ((bool) $actual !== $rv) {
+                        $core_mismatch = true;
+                        break;
+                    }
+                } elseif ((string) $actual !== (string) $rv) {
+                    $core_mismatch = true;
+                    break;
+                }
+            }
+        }
+
+        if ($core_mismatch) {
+            return [
+                'success'             => false,
+                'message'             => __('Settings undo verification failed: restored settings mismatch.', 'webcare-pro-security'),
+                'settings'            => self::get_settings(),
+                'snapshots_remaining' => count($snapshots),
+            ];
+        }
+
+        // Verification succeeded! Now safely pop the snapshot from stack and persist
+        array_shift($snapshots);
+        update_option(self::OPTION_SNAPSHOTS_KEY, $snapshots, false);
 
         if (class_exists('\\WebCareProScanner\\System\\WebCareActivityLogger')) {
             $formatted_time = function_exists('date_i18n')
