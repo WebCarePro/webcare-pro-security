@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-24T18:50:16.339Z",
+  "generated_at": "2026-11-24T18:55:11.165Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -700,8 +700,8 @@
       "size": 15973
     },
     "includes/Firewall/MicroWafCompiler.php": {
-      "sha256": "8d3e5dabc2110cff4929fc2a9b4a732bdd7f8abbfdbd4530ebbadda4fe824576",
-      "size": 106675
+      "sha256": "ce0b1e1a6dde00a433f5dac7b0d2e54fad68a70346495b983f872e1e4dc94b9c",
+      "size": 106686
     },
     "includes/Firewall/NextGen/CheckoutSkimmerSentinel.php": {
       "sha256": "452eab2134888a51f5e9d0473cf90ba0ff4650055e3d46256efdf4f8b5e42a69",

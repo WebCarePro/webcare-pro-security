@@ -692,11 +692,14 @@ class MicroWafCompiler {
         $out .= "            return '/' . trim(\$route, '/');\n";
         $out .= "        };\n";
         $out .= "        foreach ([\$uri, (string) (\$_SERVER['PATH_INFO'] ?? ''), (string) (\$_SERVER['PHP_SELF'] ?? '')] as \$path_candidate) { \$normalized_candidate = \$normalize_preload_path(\$path_candidate); if (\$normalized_candidate !== '/' && !in_array(\$normalized_candidate, \$request_path_candidates, true)) { \$request_path_candidates[] = \$normalized_candidate; } }\n";
+        $out .= "        \$raw_clean_path = \$request_path_candidates[0] ?? \$normalize_preload_path(\$uri);\n";
+        $out .= "        foreach (\$request_path_candidates as \$candidate_path) { if (preg_match('#(?:/wp-json/|admin-ajax\\.php|admin-post\\.php|xmlrpc\\.php|/wp-admin/)#', \$candidate_path)) { \$raw_clean_path = \$candidate_path; break; } }\n";
+        $out .= "        \$mod_clean_uri = (string) \$raw_clean_path;\n";
         $out .= "        \$preload_body_text = '';\n";
         $out .= "        \$preload_body_budget = 65536;\n";
         $out .= "        \$preload_body_truncated = false;\n";
         $out .= "        // Direct-access PHP scripts (outside WordPress front controller / wp-admin) require admin auth to bypass preload inspection\n";
-        $out .= "        \$is_direct_script_target = (bool) preg_match('/\\.(?:php[3-8]?|phtml)$/i', \$mod_clean_uri) && !preg_match('#(?:index\\.php|/wp-admin/|wp-login\\.php|wp-cron\\.php|xmlrpc\\.php)#i', \$mod_clean_uri);\n";
+        $out .= "        \$is_direct_script_target = (bool) preg_match('/\\.(?:php[3-8]?|phtml)$/i', \$mod_clean_uri) && !preg_match('#(?:^/index\\.php|/wp-admin/|wp-login\\.php|wp-cron\\.php|xmlrpc\\.php)#i', \$mod_clean_uri);\n";
         $out .= "        \$auth_bypass_body = \$is_direct_script_target ? \$mod_is_admin_user : \$mod_has_login_cookie;\n";
         $out .= "        // Authenticated sessions defer POST/JSON body inspection to post-boot WordPress runtime WAF where editor capabilities are known\n";
         $out .= "        if (!\$auth_bypass_body && in_array(\$mod_req_method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {\n";
@@ -732,9 +735,6 @@ class MicroWafCompiler {
         $out .= "        if (strpos(\$target_text, '%') !== false) {\n";
         $out .= "            \$target_text .= ' ' . urldecode(\$target_text);\n";
         $out .= "        }\n";
-        $out .= "        \$raw_clean_path = \$request_path_candidates[0] ?? \$normalize_preload_path(\$uri);\n";
-        $out .= "        foreach (\$request_path_candidates as \$candidate_path) { if (preg_match('#(?:/wp-json/|admin-ajax\\.php|admin-post\\.php|xmlrpc\\.php|/wp-admin/)#', \$candidate_path)) { \$raw_clean_path = \$candidate_path; break; } }\n";
-        $out .= "        \$mod_clean_uri = \$raw_clean_path;\n";
         $out .= "        \$mod_rest_q = isset(\$_GET['rest_route']) && is_string(\$_GET['rest_route']) ? \$normalize_preload_rest_route(\$_GET['rest_route']) : '';\n";
         $out .= "        \$mod_rest_q_match = strtolower(\$mod_rest_q);\n";
         $out .= "        \$url_whitelisted = false;\n";
