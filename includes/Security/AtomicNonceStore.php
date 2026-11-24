@@ -29,6 +29,18 @@ final class AtomicNonceStore {
     public const PRUNE_THROTTLE_KEY = 'wcp_nonce_prune_last_run';
 
     /**
+     * Resolve and validate the WordPress options table identifier from $wpdb->options.
+     */
+    private static function get_validated_options_table(): string {
+        global $wpdb;
+        if (!($wpdb instanceof \wpdb) || empty($wpdb->options) || !is_string($wpdb->options)) {
+            return '';
+        }
+        $table = $wpdb->options;
+        return preg_match('/^[A-Za-z0-9_]+$/', $table) === 1 ? $table : '';
+    }
+
+    /**
      * Atomically consume a nonce.
      *
      * @param string $namespace Logical grouping for the nonce (e.g. 'scan_tick', 'cf_flush').
@@ -67,11 +79,12 @@ final class AtomicNonceStore {
         $now = time();
         $expires_at = $now + $ttl;
 
-        if ($wpdb instanceof \wpdb && !empty($wpdb->options)) {
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $options_table = self::get_validated_options_table();
+        if ($options_table !== '') {
+            // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- $options_table is strictly validated as [A-Za-z0-9_]+ from $wpdb->options; all query values are prepared.
             $affected = $wpdb->query(
                 $wpdb->prepare(
-                    "INSERT INTO {$wpdb->options} (option_name, option_value, autoload)
+                    "INSERT INTO {$options_table} (option_name, option_value, autoload)
                      VALUES (%s, %s, 'no')
                      ON DUPLICATE KEY UPDATE
                        option_value = IF(CAST(option_value AS UNSIGNED) < %d, VALUES(option_value), option_value)",
@@ -80,6 +93,7 @@ final class AtomicNonceStore {
                     $now
                 )
             );
+            // phpcs:enable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
 
             // 1 = fresh row inserted, 2 = expired row updated, 0 = unexpired row unmodified
             $claimed = ($affected === 1 || $affected === 2);
@@ -129,11 +143,12 @@ final class AtomicNonceStore {
         $next_allowed = $now + self::PRUNE_THROTTLE_SECONDS;
 
         global $wpdb;
-        if ($wpdb instanceof \wpdb && !empty($wpdb->options)) {
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $options_table = self::get_validated_options_table();
+        if ($options_table !== '') {
+            // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- $options_table is strictly validated as [A-Za-z0-9_]+ from $wpdb->options; all query values are prepared.
             $affected = $wpdb->query(
                 $wpdb->prepare(
-                    "INSERT INTO {$wpdb->options} (option_name, option_value, autoload)
+                    "INSERT INTO {$options_table} (option_name, option_value, autoload)
                      VALUES (%s, %s, 'no')
                      ON DUPLICATE KEY UPDATE
                        option_value = IF(CAST(option_value AS UNSIGNED) < %d, VALUES(option_value), option_value)",
@@ -142,6 +157,7 @@ final class AtomicNonceStore {
                     $now
                 )
             );
+            // phpcs:enable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
             return ($affected === 1 || $affected === 2);
         }
 
@@ -176,16 +192,17 @@ final class AtomicNonceStore {
         $limit = max(1, min(500, $limit));
 
         global $wpdb;
-        if ($wpdb instanceof \wpdb && !empty($wpdb->options)) {
+        $options_table = self::get_validated_options_table();
+        if ($options_table !== '') {
             $like_prefix = method_exists($wpdb, 'esc_like')
                 ? $wpdb->esc_like('wcp_nonce_') . '%'
                 : 'wcp_nonce\\_%';
             $protected_key = $exclude_key !== '' ? $exclude_key : self::PRUNE_THROTTLE_KEY;
 
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- $options_table is strictly validated as [A-Za-z0-9_]+ from $wpdb->options; all query values are prepared.
             $deleted = $wpdb->query(
                 $wpdb->prepare(
-                    "DELETE FROM {$wpdb->options}
+                    "DELETE FROM {$options_table}
                      WHERE option_name LIKE %s
                        AND option_name NOT IN (%s, %s)
                        AND option_value REGEXP '^[0-9]+$'
@@ -199,6 +216,7 @@ final class AtomicNonceStore {
                     $limit
                 )
             );
+            // phpcs:enable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
 
             return is_int($deleted) ? max(0, $deleted) : 0;
         }

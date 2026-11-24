@@ -135,11 +135,22 @@ class ClientIpResolver {
         }
 
         // If origin secret is configured, require matching header via timing-attack safe comparison
+        // Unslash and validate byte bounds ONLY (preserve exact special / percent-encoded characters)
         if ($cf_trusted && $cf_origin_secret !== '') {
-            $incoming_secret = isset($_SERVER['HTTP_X_ORIGIN_SECRET'])
-                ? sanitize_text_field(wp_unslash((string) $_SERVER['HTTP_X_ORIGIN_SECRET']))
-                : (isset($_SERVER['HTTP_CF_ORIGIN_SECRET']) ? sanitize_text_field(wp_unslash((string) $_SERVER['HTTP_CF_ORIGIN_SECRET'])) : '');
-            if ($incoming_secret === '' || !hash_equals($cf_origin_secret, $incoming_secret)) {
+            $incoming_secret = '';
+            foreach (['HTTP_X_ORIGIN_SECRET', 'HTTP_CF_ORIGIN_SECRET'] as $secret_hdr_key) {
+                if (isset($_SERVER[$secret_hdr_key]) && is_string($_SERVER[$secret_hdr_key])) {
+                    // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Exact secret bytes are length/control-char validated without lossy sanitization before hash_equals()
+                    $candidate_secret = (string) wp_unslash($_SERVER[$secret_hdr_key]);
+                    if ($candidate_secret !== '') {
+                        $incoming_secret = $candidate_secret;
+                        break;
+                    }
+                }
+            }
+            $sec_len = strlen($incoming_secret);
+            $valid_secret_shape = ($sec_len > 0 && $sec_len <= 512 && preg_match('/[\x00-\x1F\x7F]/', $incoming_secret) !== 1);
+            if (!$valid_secret_shape || !hash_equals($cf_origin_secret, $incoming_secret)) {
                 $cf_trusted = false;
             }
         }

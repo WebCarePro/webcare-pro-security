@@ -256,7 +256,8 @@ class BotReconDefense {
         // 3. Check Fake Search Engine & Cloud SEO Crawler Spoofing
         if (!empty($settings['waf_block_fake_bots'])) {
             $is_metadata_crawl_path = false;
-            $req_uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash((string) $_SERVER['REQUEST_URI'])) : '';
+            // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Preserve raw percent-encoded URI until wp_parse_url()/path parser runs
+            $req_uri = (isset($_SERVER['REQUEST_URI']) && is_string($_SERVER['REQUEST_URI'])) ? (string) wp_unslash($_SERVER['REQUEST_URI']) : '';
             $path_only = strtolower((string) (wp_parse_url($req_uri, PHP_URL_PATH) ?: $req_uri));
             if ($path_only === '/robots.txt' || str_starts_with($path_only, '/sitemap') && (str_ends_with($path_only, '.xml') || str_ends_with($path_only, '.xml.gz'))) {
                 $is_metadata_crawl_path = true;

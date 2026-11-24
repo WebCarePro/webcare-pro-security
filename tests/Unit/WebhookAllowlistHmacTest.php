@@ -291,4 +291,72 @@ final class WebhookAllowlistHmacTest extends TestCase
         );
         $this->assertIsArray($matchedAfterRestore, 'Rule must match normally when bounded RequestBodyReader is available.');
     }
+
+    public function testStrictSignatureBoundaryValidationAcceptsValidFormatsAndRejectsMalformedOrDecoratedHeaders(): void
+    {
+        $secret = 'whsec_boundary_secret_!@#%';
+        $body = '{"event":"boundary_test","nonce":"' . bin2hex(random_bytes(4)) . '"}';
+        $now = time();
+
+        // 1. Stripe: valid decorated v0+v1 signature succeeds once; extra unknown/decorated/whitespace/control chars fail
+        $v1 = hash_hmac('sha256', "{$now}.{$body}", $secret);
+        $v0 = hash_hmac('sha256', "{$now}.legacy", $secret);
+        $_SERVER['HTTP_STRIPE_SIGNATURE'] = "t={$now},v1={$v1},v0={$v0}";
+        $this->assertTrue(AllowlistManager::verify_webhook_hmac('stripe', $secret, $body, 300));
+
+        $v1Fresh = hash_hmac('sha256', "{$now}.{$body}.2", $secret);
+        foreach ([
+            "t={$now},v1={$v1Fresh},extra=unexpected",
+            "t={$now},v1={$v1Fresh}\n",
+            "t={$now},v1=" . str_repeat('z', 64),
+            "t=abc,v1={$v1Fresh}",
+        ] as $badStripe) {
+            $_SERVER['HTTP_STRIPE_SIGNATURE'] = $badStripe;
+            $this->assertFalse(
+                AllowlistManager::verify_webhook_hmac('stripe', $secret, "{$body}.2", 300),
+                'Malformed/decorated Stripe header must be rejected: ' . $badStripe
+            );
+        }
+
+        // 2. Shopify: valid Base64 (preserving + / =) succeeds; leading/trailing whitespace or invalid length/charset rejected
+        // Choose body suffix yielding '+' or '/' in Base64 digest
+        $shopifyBody = $body;
+        $shopifySig = '';
+        for ($i = 0; $i < 100; $i++) {
+            $candBody = $body . ':' . $i;
+            $candSig = base64_encode(hash_hmac('sha256', $candBody, $secret, true));
+            if (str_contains($candSig, '+') || str_contains($candSig, '/')) {
+                $shopifyBody = $candBody;
+                $shopifySig = $candSig;
+                break;
+            }
+        }
+        $this->assertNotSame('', $shopifySig, 'Expected Base64 signature containing + or /.');
+        unset($_SERVER['HTTP_X_SHOPIFY_WEBHOOK_ID']);
+        $_SERVER['HTTP_X_SHOPIFY_HMAC_SHA256'] = $shopifySig;
+        $this->assertTrue(AllowlistManager::verify_webhook_hmac('shopify', $secret, $shopifyBody, 300));
+
+        foreach ([" {$shopifySig}", "{$shopifySig} ", "{$shopifySig};extra=1", 'not-valid-base64!'] as $badShopify) {
+            $_SERVER['HTTP_X_SHOPIFY_HMAC_SHA256'] = $badShopify;
+            $this->assertFalse(AllowlistManager::verify_webhook_hmac('shopify', $secret, $shopifyBody, 300));
+        }
+
+        // 3. GitHub & Generic: reject decorated/whitespace-padded signatures without silent trimming
+        $ghSig = 'sha256=' . hash_hmac('sha256', $body, $secret);
+        $_SERVER['HTTP_X_GITHUB_DELIVERY'] = 'deliv-' . bin2hex(random_bytes(8));
+        $_SERVER['HTTP_X_HUB_SIGNATURE_256'] = " {$ghSig}";
+        $this->assertFalse(AllowlistManager::verify_webhook_hmac('github', $secret, $body, 300));
+        $_SERVER['HTTP_X_HUB_SIGNATURE_256'] = "{$ghSig},v1=extra";
+        $this->assertFalse(AllowlistManager::verify_webhook_hmac('github', $secret, $body, 300));
+
+        $genHex = hash_hmac('sha256', $body, $secret);
+        $_SERVER['HTTP_X_SIGNATURE_SHA256'] = $genHex;
+        $this->assertTrue(AllowlistManager::verify_webhook_hmac('generic_sha256', $secret, $body, 300));
+        $_SERVER['HTTP_X_SIGNATURE_SHA256'] = "sha256={$genHex}";
+        $this->assertTrue(AllowlistManager::verify_webhook_hmac('generic_sha256', $secret, $body, 300));
+        foreach ([" {$genHex}", "{$genHex} ", "sha256={$genHex};extra=1", "{$genHex}\r\n"] as $badGeneric) {
+            $_SERVER['HTTP_X_SIGNATURE_SHA256'] = $badGeneric;
+            $this->assertFalse(AllowlistManager::verify_webhook_hmac('generic_sha256', $secret, $body, 300));
+        }
+    }
 }

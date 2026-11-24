@@ -218,4 +218,31 @@ final class AtomicNonceStoreTest extends TestCase
             AtomicNonceStore::reset_prune_throttle();
         }
     }
+
+    public function testValidatedOptionsTableIdentifierEnforcesSqlAndRejectsUnsafeNames(): void
+    {
+        global $wpdb;
+        $origWpdb = $wpdb ?? null;
+        $mockDb = new \wpdb();
+        $mockDb->options = 'wp_options; DROP TABLE wp_users';
+        $GLOBALS['wpdb'] = $mockDb;
+
+        try {
+            $nonce = 'unsafe_tbl_' . bin2hex(random_bytes(8));
+            // Unsafe $wpdb->options fails table validation and never interpolates into $mockDb->queries
+            $mockDb->queries = [];
+            AtomicNonceStore::consume('tbl_check', $nonce, 60);
+            $this->assertSame([], $mockDb->queries, 'Unsafe $wpdb->options table name must never be interpolated into SQL.');
+
+            // Valid table identifier executes atomic INSERT statement and enforces replay rejection
+            $mockDb->options = 'wp_options';
+            $validNonce = 'valid_tbl_' . bin2hex(random_bytes(8));
+            $this->assertTrue(AtomicNonceStore::consume('tbl_check', $validNonce, 60));
+            $this->assertFalse(AtomicNonceStore::consume('tbl_check', $validNonce, 60));
+            $this->assertNotEmpty($mockDb->queries);
+            $this->assertStringContainsString('INSERT INTO wp_options', $mockDb->queries[0]);
+        } finally {
+            $GLOBALS['wpdb'] = $origWpdb;
+        }
+    }
 }

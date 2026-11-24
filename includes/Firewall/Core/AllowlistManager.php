@@ -758,11 +758,28 @@ final class AllowlistManager {
         };
     }
 
+    /**
+     * Read and validate a raw cryptographic header from $_SERVER without lossy sanitization.
+     * Enforces unslashing, type, bounded byte length, and strict control-character rejection.
+     */
+    private static function read_cryptographic_header(string $server_key, int $max_len = 512): string {
+        if (!isset($_SERVER[$server_key]) || !is_string($_SERVER[$server_key])) {
+            return '';
+        }
+
+        // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Cryptographic header bytes are strictly validated below without lossy text rewriting
+        $val = (string) wp_unslash($_SERVER[$server_key]);
+        $len = strlen($val);
+        if ($len === 0 || $len > $max_len || preg_match('/[\x00-\x1F\x7F]/', $val) === 1) {
+            return '';
+        }
+
+        return $val;
+    }
+
     private static function verify_stripe_hmac(string $secret, string $raw_body, int $tolerance_seconds): bool {
-        $sig_header = isset($_SERVER['HTTP_STRIPE_SIGNATURE'])
-            ? sanitize_text_field(wp_unslash((string) $_SERVER['HTTP_STRIPE_SIGNATURE']))
-            : '';
-        if ($sig_header === '') {
+        $sig_header = self::read_cryptographic_header('HTTP_STRIPE_SIGNATURE', 1024);
+        if ($sig_header === '' || preg_match('/^[a-zA-Z0-9_=,\s]+$/', $sig_header) !== 1) {
             return false;
         }
 
@@ -771,11 +788,17 @@ final class AllowlistManager {
         foreach (explode(',', $sig_header) as $part) {
             $kv = explode('=', trim($part), 2);
             if (count($kv) === 2) {
-                if ($kv[0] === 't') {
+                if ($kv[0] === 't' && ctype_digit($kv[1])) {
                     $timestamp = (int) $kv[1];
-                } elseif ($kv[0] === 'v1' && $kv[1] !== '') {
-                    $signatures[] = $kv[1];
+                } elseif (preg_match('/^v\d+$/', $kv[0]) === 1 && preg_match('/^[a-fA-F0-9]{64}$/', $kv[1]) === 1) {
+                    if ($kv[0] === 'v1') {
+                        $signatures[] = $kv[1];
+                    }
+                } else {
+                    return false;
                 }
+            } else {
+                return false;
             }
         }
 
@@ -808,10 +831,8 @@ final class AllowlistManager {
     }
 
     private static function verify_shopify_hmac(string $secret, string $raw_body, int $tolerance_seconds): bool {
-        $header = isset($_SERVER['HTTP_X_SHOPIFY_HMAC_SHA256'])
-            ? sanitize_text_field(wp_unslash((string) $_SERVER['HTTP_X_SHOPIFY_HMAC_SHA256']))
-            : '';
-        if ($header === '') {
+        $header = self::read_cryptographic_header('HTTP_X_SHOPIFY_HMAC_SHA256', 128);
+        if ($header === '' || preg_match('/^[A-Za-z0-9+\/]{43}=$/', $header) !== 1) {
             return false;
         }
 
@@ -835,10 +856,8 @@ final class AllowlistManager {
     }
 
     private static function verify_github_hmac(string $secret, string $raw_body, int $tolerance_seconds): bool {
-        $header = isset($_SERVER['HTTP_X_HUB_SIGNATURE_256'])
-            ? sanitize_text_field(wp_unslash((string) $_SERVER['HTTP_X_HUB_SIGNATURE_256']))
-            : '';
-        if ($header === '' || !str_starts_with($header, 'sha256=')) {
+        $header = self::read_cryptographic_header('HTTP_X_HUB_SIGNATURE_256', 128);
+        if ($header === '' || preg_match('/^sha256=[a-fA-F0-9]{64}$/', $header) !== 1) {
             return false;
         }
 
@@ -865,10 +884,11 @@ final class AllowlistManager {
      * timestamp or delivery-ID replay header unless paired with static IP/CIDR pinning.
      */
     private static function verify_generic_hmac(string $secret, string $raw_body): bool {
-        $header = isset($_SERVER['HTTP_X_SIGNATURE_SHA256'])
-            ? trim(sanitize_text_field(wp_unslash((string) $_SERVER['HTTP_X_SIGNATURE_SHA256'])))
-            : (isset($_SERVER['HTTP_X_WEBHOOK_SIGNATURE']) ? trim(sanitize_text_field(wp_unslash((string) $_SERVER['HTTP_X_WEBHOOK_SIGNATURE']))) : '');
+        $header = self::read_cryptographic_header('HTTP_X_SIGNATURE_SHA256', 128);
         if ($header === '') {
+            $header = self::read_cryptographic_header('HTTP_X_WEBHOOK_SIGNATURE', 128);
+        }
+        if ($header === '' || preg_match('/^(?:sha256=)?[a-fA-F0-9]{64}$/', $header) !== 1) {
             return false;
         }
 

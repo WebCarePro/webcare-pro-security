@@ -221,8 +221,20 @@ final class RequestPipeline {
             $ctx_for_rescue = isset($ctx) && $ctx instanceof RequestContext ? $ctx : RequestContext::from_globals();
             if (self::is_read_only_rescue_request($ctx_for_rescue)) {
                 self::$last_terminated_status = 200;
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Operational rescue notice when WAF exception boundary activates
-                @error_log('[WebCare RequestPipeline] Permitting read-only rescue admin console access after pipeline exception: ' . $e->getMessage());
+                try {
+                    if (class_exists(\WebCareProScanner\System\AuditLogger::class)) {
+                        $rescue_path = (string) (wp_parse_url($ctx_for_rescue->uri, PHP_URL_PATH) ?? '/wp-admin/admin.php');
+                        \WebCareProScanner\System\AuditLogger::log_operational('waf_pipeline_rescue_boundary_invoked', [
+                            'exception_class' => sanitize_text_field(get_class($e)),
+                            'exception_code'  => (int) $e->getCode(),
+                            'rescue_method'   => sanitize_key($ctx_for_rescue->method),
+                            'rescue_path'     => sanitize_text_field($rescue_path),
+                            'timestamp_utc'   => gmdate('Y-m-d H:i:s'),
+                        ]);
+                    }
+                } catch (\Throwable) {
+                    // Rescue access and fail-safe diagnostics must never abort admin recovery
+                }
                 return;
             }
 

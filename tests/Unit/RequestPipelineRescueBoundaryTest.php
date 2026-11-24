@@ -264,12 +264,41 @@ final class RequestPipelineRescueBoundaryTest extends TestCase
         $this->assertSame(503, RequestPipeline::$last_terminated_status);
 
         // 2. /wp-admin/admin.php?page=webcare-pro-security&tab=rescue MUST succeed for authenticated admin
+        //    and record structured AuditLogger::log_operational() diagnostics without raw exception messages or activity ledger bridging
+        $capturedOps = [];
+        \WebCareProScanner\System\AuditLogger::$operational_log_hook = static function (string $event, $details) use (&$capturedOps): void {
+            $capturedOps[] = ['event' => $event, 'details' => $details];
+        };
+
         RequestPipeline::$last_terminated_status = null;
         $_SERVER['REQUEST_URI'] = '/wp-admin/admin.php?page=webcare-pro-security&tab=rescue';
         $_GET = ['page' => 'webcare-pro-security', 'tab' => 'rescue'];
 
-        RequestPipeline::process_incoming_request();
+        try {
+            RequestPipeline::process_incoming_request();
+        } finally {
+            \WebCareProScanner\System\AuditLogger::$operational_log_hook = null;
+        }
         $this->assertSame(200, RequestPipeline::$last_terminated_status, 'Clean read-only rescue tab must succeed for authenticated admin.');
+
+        $rescueEvents = array_values(array_filter(
+            $capturedOps,
+            static fn(array $row): bool => $row['event'] === 'waf_pipeline_rescue_boundary_invoked'
+        ));
+        $this->assertCount(1, $rescueEvents, 'Rescue boundary must emit structured AuditLogger::log_operational() telemetry.');
+        $details = $rescueEvents[0]['details'];
+        $this->assertIsArray($details);
+        $this->assertSame('RuntimeException', $details['exception_class'] ?? '');
+        $this->assertSame('/wp-admin/admin.php', $details['rescue_path'] ?? '');
+        $this->assertStringNotContainsString(
+            'Simulated mandatory evaluator crash',
+            (string) json_encode($details),
+            'Structured rescue operational telemetry must not expose raw exception messages.'
+        );
+        $this->assertFalse(
+            \WebCareProScanner\System\WebCareActivityLogger::has_action_logged('waf_pipeline_rescue_boundary_invoked'),
+            'Operational rescue diagnostic must remain outside WebCareActivityLogger admin ledger.'
+        );
     }
 
     public function test_permits_authenticated_admin_rest_doctor_rescue(): void
