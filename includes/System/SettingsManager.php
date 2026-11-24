@@ -1246,12 +1246,12 @@ class SettingsManager {
             'waf_virtual_patch_hit'     => ['email' => false, 'webhook' => false],
             'waf_server_rules_updated'  => ['email' => false, 'webhook' => false],
             'redirect_hack_detected'    => ['email' => true,  'webhook' => true],
-            'redirect_hack_auto_healed' => ['email' => false, 'webhook' => false],
+            'redirect_hack_auto_healed' => ['email' => true,  'webhook' => false],
 
             // Authentication & 2FA
-            'auth_admin_login'                  => ['email' => false, 'webhook' => false],
-            'auth_admin_password_reset'         => ['email' => false, 'webhook' => false],
-            'auth_application_password_created' => ['email' => false, 'webhook' => false],
+            'auth_admin_login'                  => ['email' => true,  'webhook' => false],
+            'auth_admin_password_reset'         => ['email' => true,  'webhook' => false],
+            'auth_application_password_created' => ['email' => true,  'webhook' => false],
             'auth_2fa_enabled'                  => ['email' => false, 'webhook' => false],
             'auth_2fa_disabled'                 => ['email' => false, 'webhook' => false],
             'auth_bruteforce_lockout'   => ['email' => false, 'webhook' => false],
@@ -1286,7 +1286,7 @@ class SettingsManager {
 
             // Supply-Chain Defense & SBOM
             'supply_chain_anchor_tampered'      => ['email' => false, 'webhook' => false],
-            'supply_chain_gatekeeper_blocked'   => ['email' => true,  'webhook' => true],
+            'supply_chain_gatekeeper_blocked'   => ['email' => false, 'webhook' => true],
             'supply_chain_gatekeeper_rollback'  => ['email' => false, 'webhook' => false],
             'supply_chain_risk_advisor_alert'   => ['email' => false, 'webhook' => false],
             'supply_chain_lockfile_cve'         => ['email' => false, 'webhook' => false],
@@ -1295,7 +1295,7 @@ class SettingsManager {
             // Behavioral WAF & Active Traps
             'behavioral_bot_trap_triggered'     => ['email' => false, 'webhook' => false],
             'behavioral_rate_limit_exceeded'    => ['email' => false, 'webhook' => false],
-            'ai_defense_prompt_injection'       => ['email' => true,  'webhook' => true],
+            'ai_defense_prompt_injection'       => ['email' => false, 'webhook' => true],
             'attack_drill_completed'            => ['email' => false, 'webhook' => false],
 
             // Zero-Trust Identity & Session Forensics
@@ -1304,7 +1304,7 @@ class SettingsManager {
             'auth_impossible_travel_flag'       => ['email' => true,  'webhook' => true],
 
             // Advanced Forensics, Vault & Quarantine
-            'forensics_reinfection_resurrection'=> ['email' => true,  'webhook' => true],
+            'forensics_reinfection_resurrection'=> ['email' => false, 'webhook' => true],
             'vault_secrets_rotated'             => ['email' => false, 'webhook' => false],
             'remediation_transaction_rollback'  => ['email' => false, 'webhook' => false],
 

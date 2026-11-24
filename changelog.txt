@@ -1,4 +1,7 @@
 ﻿v:0.0.1 - 2026-11-25
+- Notification Defaults Update:
+  * Enabled default email notifications for `redirect_hack_detected`, `redirect_hack_auto_healed`, `auth_admin_login`, `auth_admin_password_reset`, and `auth_application_password_created`.
+  * Disabled default email notifications for `supply_chain_gatekeeper_blocked`, `ai_defense_prompt_injection`, and `forensics_reinfection_resurrection`.
 - Post-Audit Hardening & Multisite Preboot Isolation:
   * Multisite Preboot WAF Policy Isolation: Restricted `MicroWafCompiler::compile()`, `RescueAssistantManager::pause_strict_firewall_15m()`, `resume_strict_firewall()`, and `trust_and_allow_action()` to Network Admins (`manage_network_options`) on Multisite, and ensured main-site settings context during compilation.
   * `BlockDirectiveSanitizer::filter_post_content_directives()`: Fixed `WebCareActivityLogger::log()` 4th-argument `array $details` signature so modified-content logging never throws a `TypeError`.
