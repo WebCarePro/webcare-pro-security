@@ -14,7 +14,7 @@ class SettingsManager {
     const OPTION_REVISION_KEY = 'webcareproscan_settings_revision';
     const CRON_HOOK = 'webcareproscan_scheduled_scan_event';
     const MAX_SNAPSHOTS = 10;
-    private const MUTATION_LOCK_TTL = 15;
+    public const MUTATION_LOCK_TTL = 60;
 
     /**
      * Tracks whether SecretVault persistence failed while sanitizing targeted allowlist rules.
@@ -22,9 +22,20 @@ class SettingsManager {
     private static bool $last_webhook_secret_store_failed = false;
 
     /**
-     * Tracks whether the current execution stack frame holds OPTION_MUTATION_LOCK.
+     * Optional test seam invoked immediately after acquire_mutation_lock() observes an expired lock
+     * and right before compare_and_delete_mutation_lock() runs, to test two-contender stale-lock races.
+     *
+     * @var callable|null
      */
-    private static bool $holds_mutation_lock = false;
+    public static $stale_lock_observed_hook = null;
+
+    /**
+     * Optional test seam invoked inside save_settings_locked() after sanitization completes and right
+     * before lease renewal/fencing and database persistence begin, to test long-running mutations.
+     *
+     * @var callable|null
+     */
+    public static $before_persist_settings_hook = null;
 
     /**
      * Optional test seam invoked immediately before undo_last_settings() pops OPTION_SNAPSHOTS_KEY
@@ -35,32 +46,161 @@ class SettingsManager {
     public static $interleave_before_undo_pop_hook = null;
 
     /**
-     * Acquire shared atomic settings mutation lock to serialize concurrent save_settings() and undo_last_settings().
+     * Read the raw uncached mutation lock payload ('<owner_token>|<expires_at>') directly from storage.
      */
-    public static function acquire_mutation_lock(): ?string {
-        $token = bin2hex(random_bytes(8));
+    private static function read_raw_mutation_lock(): string {
+        global $wpdb;
+        if ($wpdb instanceof \wpdb && !empty($wpdb->options)) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            $val = $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT option_value FROM {$wpdb->options} WHERE option_name = %s LIMIT 1",
+                    self::OPTION_MUTATION_LOCK
+                )
+            );
+            return is_string($val) ? $val : '';
+        }
 
-        for ($attempt = 0; $attempt < 3; $attempt++) {
-            $now = time();
-            $lock_payload = $token . '|' . ($now + self::MUTATION_LOCK_TTL);
-            if (add_option(self::OPTION_MUTATION_LOCK, $lock_payload, '', 'no')) {
-                self::$holds_mutation_lock = true;
-                return $token;
-            }
+        if (function_exists('wp_cache_delete')) {
+            wp_cache_delete(self::OPTION_MUTATION_LOCK, 'options');
+        }
+        $existing = get_option(self::OPTION_MUTATION_LOCK, '');
+        return is_string($existing) ? $existing : '';
+    }
 
+    /**
+     * Atomically delete OPTION_MUTATION_LOCK ONLY if its stored value still equals $expected_payload.
+     * Prevents concurrent stale-lock contenders or expired former owners from deleting a newer owner's lock.
+     */
+    public static function compare_and_delete_mutation_lock(string $expected_payload): bool {
+        if ($expected_payload === '') {
+            return false;
+        }
+
+        global $wpdb;
+        if ($wpdb instanceof \wpdb && !empty($wpdb->options)) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            $deleted = $wpdb->query(
+                $wpdb->prepare(
+                    "DELETE FROM {$wpdb->options} WHERE option_name = %s AND option_value = %s",
+                    self::OPTION_MUTATION_LOCK,
+                    $expected_payload
+                )
+            );
             if (function_exists('wp_cache_delete')) {
                 wp_cache_delete(self::OPTION_MUTATION_LOCK, 'options');
             }
-            $existing = get_option(self::OPTION_MUTATION_LOCK, '');
-            if (is_string($existing) && str_contains($existing, '|')) {
+            return ($deleted === 1);
+        }
+
+        if (self::read_raw_mutation_lock() !== $expected_payload) {
+            return false;
+        }
+        return delete_option(self::OPTION_MUTATION_LOCK);
+    }
+
+    /**
+     * Verify that $token still actively owns an unexpired mutation lock.
+     */
+    public static function verify_mutation_lock_owner(string $token): bool {
+        if ($token === '') {
+            return false;
+        }
+        $now = time();
+        $existing = self::read_raw_mutation_lock();
+        if ($existing === '' || !str_starts_with($existing, $token . '|')) {
+            return false;
+        }
+        $expires_at = (int) substr($existing, strlen($token) + 1);
+        return $expires_at >= $now;
+    }
+
+    /**
+     * Safely renew an active, unexpired mutation lock owned by $token via atomic compare-and-swap.
+     * Refuses renewal (returns false) if the lock has already expired or was acquired by another owner.
+     */
+    public static function renew_mutation_lock(string $token, int $ttl = self::MUTATION_LOCK_TTL): bool {
+        if ($token === '' || $ttl <= 0) {
+            return false;
+        }
+        $ttl = max(5, min(300, $ttl));
+        $now = time();
+        $existing = self::read_raw_mutation_lock();
+        if ($existing === '' || !str_starts_with($existing, $token . '|')) {
+            return false;
+        }
+
+        $expires_at = (int) substr($existing, strlen($token) + 1);
+        if ($expires_at < $now) {
+            // Lease already expired; refuse silent resurrection so stale owners fail closed.
+            return false;
+        }
+
+        $new_payload = $token . '|' . ($now + $ttl);
+        if ($new_payload === $existing) {
+            return true;
+        }
+
+        global $wpdb;
+        if ($wpdb instanceof \wpdb && !empty($wpdb->options)) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            $updated = $wpdb->query(
+                $wpdb->prepare(
+                    "UPDATE {$wpdb->options}
+                     SET option_value = %s
+                     WHERE option_name = %s
+                       AND option_value = %s",
+                    $new_payload,
+                    self::OPTION_MUTATION_LOCK,
+                    $existing
+                )
+            );
+            if (function_exists('wp_cache_delete')) {
+                wp_cache_delete(self::OPTION_MUTATION_LOCK, 'options');
+            }
+            return ($updated === 1);
+        }
+
+        if (self::read_raw_mutation_lock() !== $existing) {
+            return false;
+        }
+        return update_option(self::OPTION_MUTATION_LOCK, $new_payload, false);
+    }
+
+    /**
+     * Acquire shared atomic settings mutation lock to serialize concurrent save_settings() and undo_last_settings().
+     */
+    public static function acquire_mutation_lock(int $ttl = self::MUTATION_LOCK_TTL): ?string {
+        $ttl = max(5, min(300, $ttl));
+        $token = bin2hex(random_bytes(16));
+
+        for ($attempt = 0; $attempt < 3; $attempt++) {
+            $now = time();
+            $lock_payload = $token . '|' . ($now + $ttl);
+            if (add_option(self::OPTION_MUTATION_LOCK, $lock_payload, '', 'no')) {
+                return $token;
+            }
+
+            $existing = self::read_raw_mutation_lock();
+            if ($existing === '') {
+                continue;
+            }
+
+            if (str_contains($existing, '|')) {
                 $parts = explode('|', $existing, 2);
                 $expires_at = (int) ($parts[1] ?? 0);
                 if ($expires_at > 0 && $expires_at < $now) {
-                    delete_option(self::OPTION_MUTATION_LOCK);
-                    continue;
+                    if (is_callable(self::$stale_lock_observed_hook)) {
+                        (self::$stale_lock_observed_hook)($existing);
+                    }
+                    if (self::compare_and_delete_mutation_lock($existing)) {
+                        $reclaim_payload = $token . '|' . (time() + $ttl);
+                        if (add_option(self::OPTION_MUTATION_LOCK, $reclaim_payload, '', 'no')) {
+                            return $token;
+                        }
+                        continue;
+                    }
                 }
-            } elseif ($existing === '' || $existing === false) {
-                continue;
             }
 
             if (!defined('WEBCAREPROSCAN_TESTING') || !WEBCAREPROSCAN_TESTING) {
@@ -72,20 +212,16 @@ class SettingsManager {
     }
 
     /**
-     * Release shared atomic settings mutation lock if still owned by $token.
+     * Release shared atomic settings mutation lock ONLY if still owned by $token via compare-and-delete.
      */
     public static function release_mutation_lock(?string $token): void {
         if ($token === null || $token === '') {
             return;
         }
-        if (function_exists('wp_cache_delete')) {
-            wp_cache_delete(self::OPTION_MUTATION_LOCK, 'options');
+        $existing = self::read_raw_mutation_lock();
+        if ($existing !== '' && str_starts_with($existing, $token . '|')) {
+            self::compare_and_delete_mutation_lock($existing);
         }
-        $existing = get_option(self::OPTION_MUTATION_LOCK, '');
-        if (is_string($existing) && str_starts_with($existing, $token . '|')) {
-            delete_option(self::OPTION_MUTATION_LOCK);
-        }
-        self::$holds_mutation_lock = false;
     }
 
     /**
@@ -914,43 +1050,52 @@ class SettingsManager {
     }
 
     /**
-     * Save settings with sanitization and hook updates.
-     * Returns false if option persistence or SecretVault storage fails.
+     * Save settings with sanitization and hook updates under an exclusive, lease-renewed mutation lock.
+     * Returns false if lock acquisition, lock ownership verification, option persistence, or SecretVault storage fails.
      *
-     * @param array<string, mixed>      $input
-     * @param bool                      $record_snapshot
-     * @param array<string, mixed>|null $out_clean
-     * @param bool                      $caller_holds_lock
+     * @param array<string, mixed> $input
+     * @param bool                 $record_snapshot
      * @return array<string, mixed>|false
      */
-    public static function save_settings(array $input, bool $record_snapshot = true, ?array &$out_clean = null, bool $caller_holds_lock = false): array|false {
-        $lock_token = null;
-        if (!$caller_holds_lock && !self::$holds_mutation_lock) {
-            $lock_token = self::acquire_mutation_lock();
-            if ($lock_token === null) {
-                return false;
-            }
+    public static function save_settings(array $input, bool $record_snapshot = true): array|false {
+        $lock_token = self::acquire_mutation_lock();
+        if ($lock_token === null) {
+            return false;
         }
 
         try {
-            return self::save_settings_locked($input, $record_snapshot, $out_clean);
+            return self::save_settings_locked($input, $lock_token, $record_snapshot);
         } finally {
-            if ($lock_token !== null) {
-                self::release_mutation_lock($lock_token);
-            }
+            self::release_mutation_lock($lock_token);
         }
     }
 
     /**
-     * Internal lock-protected settings persistence and snapshot recording implementation.
+     * Internal lock-fenced settings persistence and snapshot recording implementation.
+     * Verifies and renews ownership of $lock_token at every persistence boundary so a stalled
+     * process whose lease expired can never overwrite settings, revisions, or snapshot history.
      *
      * @param array<string, mixed>      $input
+     * @param string                    $lock_token
      * @param bool                      $record_snapshot
      * @param array<string, mixed>|null $out_clean
      * @return array<string, mixed>|false
      */
-    private static function save_settings_locked(array $input, bool $record_snapshot = true, ?array &$out_clean = null): array|false {
+    private static function save_settings_locked(
+        array $input,
+        string $lock_token,
+        bool $record_snapshot = true,
+        ?array &$out_clean = null
+    ): array|false {
+        if (!self::renew_mutation_lock($lock_token)) {
+            return false;
+        }
+
         self::$last_webhook_secret_store_failed = false;
+
+        if (function_exists('wp_cache_delete')) {
+            wp_cache_delete(self::OPTION_KEY, 'options');
+        }
 
         $sentinel = '__webcare_option_unset__';
         $raw_existing = get_option(self::OPTION_KEY, $sentinel);
@@ -1234,7 +1379,6 @@ class SettingsManager {
         $valid_retention = [7, 14, 30, 60, 90, 180, 365, 0];
         $retention_val = (int) ($merged['waf_log_retention_days'] ?? 60);
         $clean['waf_log_retention_days'] = in_array($retention_val, $valid_retention, true) ? $retention_val : 60;
-        update_option(\WebCareProScanner\Firewall\WafFileLogger::RETENTION_OPTION, $clean['waf_log_retention_days'], false);
 
         // 9. Cloud Threat Intelligence & Community Blacklists
         $clean['threat_intel_enabled']               = !empty($merged['threat_intel_enabled']);
@@ -1478,17 +1622,17 @@ class SettingsManager {
             $clean['notification_events'] = self::get_default_notification_events();
         }
 
-        // 18. Activity & Audit Logs Configuration
+        // 18. Activity & Audit Logs Configuration (deferred until lock-fenced OPTION_KEY write succeeds)
+        $pending_act_settings = null;
         if (isset($input['activity_log_settings']) && is_array($input['activity_log_settings'])) {
             $ret_days = isset($input['activity_log_settings']['retention_days']) ? (int) $input['activity_log_settings']['retention_days'] : 30;
             if ($ret_days !== 0 && $ret_days < 7) {
                 $ret_days = 7; // Minimum 7-day forensic immutability
             }
-            $clean_act_settings = [
+            $pending_act_settings = [
                 'retention_days'      => $ret_days,
                 'tamper_webhook_url'  => isset($input['activity_log_settings']['tamper_webhook_url']) ? esc_url_raw($input['activity_log_settings']['tamper_webhook_url']) : '',
             ];
-            update_option('webcareproscan_activity_log_settings', $clean_act_settings, false);
         }
 
         // 19. Centralized Cron & Task Automation Control
@@ -1528,6 +1672,16 @@ class SettingsManager {
             return false;
         }
 
+        if (is_callable(self::$before_persist_settings_hook)) {
+            (self::$before_persist_settings_hook)($lock_token);
+        }
+
+        // Fence #1: Verify & renew lease ownership immediately before persisting settings.
+        // If our lease expired during slow sanitization/hooks or was reclaimed, abort with zero DB writes.
+        if (!self::renew_mutation_lock($lock_token)) {
+            return false;
+        }
+
         $out_clean = $clean;
 
         // Compute settings diff before persisting
@@ -1539,15 +1693,29 @@ class SettingsManager {
             return false;
         }
 
-        // Advance monotonic settings revision counter inside the shared mutation lock
+        update_option(\WebCareProScanner\Firewall\WafFileLogger::RETENTION_OPTION, $clean['waf_log_retention_days'], false);
+        if ($pending_act_settings !== null) {
+            update_option('webcareproscan_activity_log_settings', $pending_act_settings, false);
+        }
+
+        // Fence #2: Verify & renew lease ownership before advancing revision and recording snapshot history.
+        if (!self::renew_mutation_lock($lock_token)) {
+            return false;
+        }
+
+        if (function_exists('wp_cache_delete')) {
+            wp_cache_delete(self::OPTION_REVISION_KEY, 'options');
+        }
         $next_revision = self::get_settings_revision() + 1;
         if (!update_option(self::OPTION_REVISION_KEY, $next_revision, false)) {
             return false;
         }
 
-        // Record a secret-stripped snapshot of the prior settings ONLY AFTER persistence succeeds
+        // Record a secret-stripped snapshot of the prior settings ONLY AFTER persistence succeeds & lock remains held
         if ($record_snapshot && !empty($diff)) {
-            self::record_settings_snapshot($current, $next_revision);
+            if (!self::record_settings_snapshot_locked($current, $next_revision, $lock_token)) {
+                return false;
+            }
         }
 
         // Synchronize Cron Schedule
@@ -1908,13 +2076,27 @@ class SettingsManager {
     }
 
     /**
-     * Reset settings to factory defaults
+     * Reset settings to factory defaults under the shared settings mutation lock.
      */
     public static function reset_defaults(): array {
-        $defaults = self::get_defaults();
-        update_option(self::OPTION_KEY, $defaults, false);
-        self::sync_cron_schedule($defaults);
-        return self::get_settings();
+        $lock_token = self::acquire_mutation_lock();
+        if ($lock_token === null) {
+            return self::get_settings();
+        }
+
+        try {
+            if (!self::renew_mutation_lock($lock_token)) {
+                return self::get_settings();
+            }
+            $defaults = self::get_defaults();
+            update_option(self::OPTION_KEY, $defaults, false);
+            $next_revision = self::get_settings_revision() + 1;
+            update_option(self::OPTION_REVISION_KEY, $next_revision, false);
+            self::sync_cron_schedule($defaults);
+            return self::get_settings();
+        } finally {
+            self::release_mutation_lock($lock_token);
+        }
     }
 
     /**
@@ -1976,15 +2158,41 @@ class SettingsManager {
 
     /**
      * Record a snapshot of the current settings (excluding secrets) for Undo capability.
+     * Acquires the shared settings mutation lock when called standalone.
      * Capped at MAX_SNAPSHOTS (10).
      *
      * @param array $settings
      * @param int   $revision
      */
     public static function record_settings_snapshot(array $settings, int $revision = 0): void {
+        $lock_token = self::acquire_mutation_lock();
+        if ($lock_token === null) {
+            return;
+        }
+
+        try {
+            self::record_settings_snapshot_locked($settings, $revision, $lock_token);
+        } finally {
+            self::release_mutation_lock($lock_token);
+        }
+    }
+
+    /**
+     * Lock-fenced internal implementation of record_settings_snapshot().
+     * Refuses to write OPTION_SNAPSHOTS_KEY if $lock_token is no longer valid/unexpired.
+     */
+    private static function record_settings_snapshot_locked(array $settings, int $revision, string $lock_token): bool {
+        if (!self::renew_mutation_lock($lock_token)) {
+            return false;
+        }
+
         $safe_settings = self::strip_secrets($settings);
         if (empty($safe_settings)) {
-            return;
+            return true;
+        }
+
+        if (function_exists('wp_cache_delete')) {
+            wp_cache_delete(self::OPTION_SNAPSHOTS_KEY, 'options');
         }
 
         $snapshots = get_option(self::OPTION_SNAPSHOTS_KEY, []);
@@ -2006,7 +2214,11 @@ class SettingsManager {
             $snapshots = array_slice($snapshots, 0, self::MAX_SNAPSHOTS);
         }
 
-        update_option(self::OPTION_SNAPSHOTS_KEY, $snapshots, false);
+        if (!self::verify_mutation_lock_owner($lock_token)) {
+            return false;
+        }
+
+        return update_option(self::OPTION_SNAPSHOTS_KEY, $snapshots, false);
     }
 
     /**
@@ -2161,7 +2373,16 @@ class SettingsManager {
             $expected_head_fp = self::compute_snapshot_fingerprint($target_snapshot);
             $restored_subset = $target_snapshot['settings'] ?? [];
             if (!is_array($restored_subset) || empty($restored_subset)) {
-                // Snapshot was corrupted; discard corrupted entry safely
+                // Snapshot was corrupted; discard corrupted entry safely only while still holding the valid lock
+                if (!self::renew_mutation_lock($lock_token)) {
+                    return [
+                        'success'             => false,
+                        'code'                => 'lock_lost',
+                        'message'             => __('Settings mutation lock expired before corrupted snapshot could be removed.', 'webcare-pro-security'),
+                        'settings'            => self::get_settings(),
+                        'snapshots_remaining' => count($snapshots),
+                    ];
+                }
                 array_shift($snapshots);
                 update_option(self::OPTION_SNAPSHOTS_KEY, $snapshots, false);
                 return [
@@ -2188,9 +2409,9 @@ class SettingsManager {
             // Merge restored non-secret settings with active secrets
             $merged_restoration = array_merge($restored_subset, $active_secrets);
 
-            // Phase 1: Apply restoration via save_settings() under the held mutation lock without mutating snapshot history yet
+            // Phase 1: Apply restoration directly via private lock-aware save_settings_locked() without mutating snapshot history yet
             $expected_clean = null;
-            $saved = self::save_settings($merged_restoration, false, $expected_clean, true);
+            $saved = self::save_settings_locked($merged_restoration, $lock_token, false, $expected_clean);
             if ($saved === false || (function_exists('is_wp_error') && is_wp_error($saved)) || !is_array($saved) || !is_array($expected_clean)) {
                 return [
                     'success'             => false,
@@ -2276,7 +2497,8 @@ class SettingsManager {
                 (self::$interleave_before_undo_pop_hook)();
             }
 
-            // Phase 3: Revision & Snapshot-Head Fencing before popping OPTION_SNAPSHOTS_KEY
+            // Phase 3: Lease Renewal + Revision & Snapshot-Head Fencing before popping OPTION_SNAPSHOTS_KEY
+            $lock_still_owned = self::renew_mutation_lock($lock_token);
             if (function_exists('wp_cache_delete')) {
                 wp_cache_delete(self::OPTION_SNAPSHOTS_KEY, 'options');
                 wp_cache_delete(self::OPTION_REVISION_KEY, 'options');
@@ -2289,11 +2511,13 @@ class SettingsManager {
                 && is_array($live_snapshots[0])
                 && self::compute_snapshot_fingerprint($live_snapshots[0]) === $expected_head_fp;
 
-            if ($live_revision !== $expected_undo_revision || !$head_intact) {
+            if (!$lock_still_owned || $live_revision !== $expected_undo_revision || !$head_intact) {
                 return [
                     'success'             => false,
-                    'code'                => 'concurrent_modification',
-                    'message'             => __('Concurrent settings modification detected during undo; newer snapshot history was preserved.', 'webcare-pro-security'),
+                    'code'                => !$lock_still_owned && $live_revision === $expected_undo_revision && $head_intact
+                        ? 'lock_lost'
+                        : 'concurrent_modification',
+                    'message'             => __('Concurrent settings modification or lock expiration detected during undo; snapshot history was preserved.', 'webcare-pro-security'),
                     'settings'            => self::get_settings(),
                     'snapshots_remaining' => count($live_snapshots),
                 ];

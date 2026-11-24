@@ -112,15 +112,57 @@ final class AtomicNonceStore {
 
     /**
      * Throttled opportunistic cleanup of expired wcp_nonce_% database rows.
-     * Runs at most once every PRUNE_THROTTLE_SECONDS (60s) and removes up to PRUNE_BATCH_LIMIT (50) expired rows.
+     * Uses an atomic single-statement DB claim so concurrent requests cannot race into duplicate prunes;
+     * runs at most once every PRUNE_THROTTLE_SECONDS (60s) and removes up to PRUNE_BATCH_LIMIT (50) expired rows.
      */
     private static function maybe_prune_expired_db_nonces(int $now, string $exclude_key = ''): void {
-        if (get_transient(self::PRUNE_THROTTLE_KEY) !== false) {
+        if (!self::claim_prune_throttle($now)) {
             return;
         }
 
-        set_transient(self::PRUNE_THROTTLE_KEY, $now, self::PRUNE_THROTTLE_SECONDS);
         self::prune_expired_db_nonces($now, $exclude_key, self::PRUNE_BATCH_LIMIT);
+    }
+
+    /**
+     * Atomically claim the once-per-60-second opportunistic pruning slot.
+     */
+    private static function claim_prune_throttle(int $now): bool {
+        $next_allowed = $now + self::PRUNE_THROTTLE_SECONDS;
+
+        global $wpdb;
+        if ($wpdb instanceof \wpdb && !empty($wpdb->options)) {
+            $options_table = $wpdb->options;
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            $affected = $wpdb->query(
+                $wpdb->prepare(
+                    "INSERT INTO {$options_table} (option_name, option_value, autoload)
+                     VALUES (%s, %s, 'no')
+                     ON DUPLICATE KEY UPDATE
+                       option_value = IF(CAST(option_value AS UNSIGNED) < %d, VALUES(option_value), option_value)",
+                    self::PRUNE_THROTTLE_KEY,
+                    (string) $next_allowed,
+                    $now
+                )
+            );
+            return ($affected === 1 || $affected === 2);
+        }
+
+        $existing = get_option(self::PRUNE_THROTTLE_KEY, null);
+        if ($existing !== null) {
+            if ((int) $existing >= $now) {
+                return false;
+            }
+            return update_option(self::PRUNE_THROTTLE_KEY, (string) $next_allowed, false);
+        }
+        return add_option(self::PRUNE_THROTTLE_KEY, (string) $next_allowed, '', 'no');
+    }
+
+    /**
+     * Reset opportunistic pruning throttle state (used for deterministic test isolation).
+     */
+    public static function reset_prune_throttle(): void {
+        delete_option(self::PRUNE_THROTTLE_KEY);
+        delete_transient(self::PRUNE_THROTTLE_KEY);
     }
 
     /**

@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-24T18:15:49.594Z",
+  "generated_at": "2026-11-24T18:30:44.282Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -952,8 +952,8 @@
       "size": 4314
     },
     "includes/Security/AtomicNonceStore.php": {
-      "sha256": "4f5b3997496df873ec1ff81bc2856565f7ecfc2d4f801c0800c44fdde9516885",
-      "size": 7768
+      "sha256": "cb0a261f2325998d26c8883ba181a44d5c1a1e9730656dbda88f4b9f2cfdac7a",
+      "size": 9472
     },
     "includes/Security/AttackSimulationEngine.php": {
       "sha256": "c1700b535f0dc9721d16962083be9b95a24d5c32c4055afc7b0abf59aba26685",
@@ -1080,8 +1080,8 @@
       "size": 24882
     },
     "includes/System/SettingsManager.php": {
-      "sha256": "caf0a4bbe2167d13c6fe0e654138d59989dd2f950dac291099c0ba89f1f4a2c8",
-      "size": 150260
+      "sha256": "6d0f1ed7816c9000ff5ab8450aa6c68158d4fb39e89add42d41a668f7485fb91",
+      "size": 159120
     },
     "includes/System/SystemDoctor.php": {
       "sha256": "f6956025a87cb8c33e3ea16306581d29ce95005f5e3b1f9654ccd1427cb9df59",

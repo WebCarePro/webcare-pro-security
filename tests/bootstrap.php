@@ -815,6 +815,12 @@ if (!class_exists('wpdb')) {
             if (is_callable($this->mock_get_var_callback)) {
                 return ($this->mock_get_var_callback)($query);
             }
+            if (!empty($this->options) && preg_match("/SELECT\s+option_value\s+FROM\s+\S+\s+WHERE\s+option_name\s*=\s*'([^']+)'/is", $query, $sm)) {
+                $optKey = $sm[1];
+                return array_key_exists($optKey, $GLOBALS['wp_mock_options'] ?? [])
+                    ? (string) maybe_serialize($GLOBALS['wp_mock_options'][$optKey])
+                    : null;
+            }
             return null;
         }
 
@@ -904,6 +910,43 @@ if (!class_exists('wpdb')) {
                         }
                     }
                     return $deleted;
+                }
+
+                // Simulate atomic compare-and-delete: DELETE FROM wp_options WHERE option_name = '...' AND option_value = '...'
+                if (preg_match("/DELETE\s+FROM\s+\S+\s+WHERE\s+option_name\s*=\s*'([^']+)'\s+AND\s+option_value\s*=\s*'([^']*)'/is", $query, $cdm)) {
+                    $optKey = $cdm[1];
+                    $expVal = $cdm[2];
+                    if (array_key_exists($optKey, $GLOBALS['wp_mock_options'] ?? []) && (string) $GLOBALS['wp_mock_options'][$optKey] === $expVal) {
+                        unset($GLOBALS['wp_mock_options'][$optKey]);
+                        return 1;
+                    }
+                    return 0;
+                }
+
+                // Simulate atomic prefix compare-and-delete: DELETE FROM wp_options WHERE option_name = '...' AND option_value LIKE '...%'
+                if (preg_match("/DELETE\s+FROM\s+\S+\s+WHERE\s+option_name\s*=\s*'([^']+)'\s+AND\s+option_value\s+LIKE\s+'([^']*)%'/is", $query, $ldm)) {
+                    $optKey = $ldm[1];
+                    $prefix = stripslashes($ldm[2]);
+                    if (array_key_exists($optKey, $GLOBALS['wp_mock_options'] ?? []) && str_starts_with((string) $GLOBALS['wp_mock_options'][$optKey], $prefix)) {
+                        unset($GLOBALS['wp_mock_options'][$optKey]);
+                        return 1;
+                    }
+                    return 0;
+                }
+
+                // Simulate atomic compare-and-swap: UPDATE wp_options SET option_value = '...' WHERE option_name = '...' AND option_value = '...'
+                if (preg_match("/UPDATE\s+\S+\s+SET\s+option_value\s*=\s*'([^']*)'\s+WHERE\s+option_name\s*=\s*'([^']+)'\s+AND\s+option_value\s*=\s*'([^']*)'/is", $query, $um)) {
+                    $newVal = $um[1];
+                    $optKey = $um[2];
+                    $expVal = $um[3];
+                    if (array_key_exists($optKey, $GLOBALS['wp_mock_options'] ?? []) && (string) $GLOBALS['wp_mock_options'][$optKey] === $expVal) {
+                        if ($newVal === $expVal) {
+                            return 0;
+                        }
+                        $GLOBALS['wp_mock_options'][$optKey] = $newVal;
+                        return 1;
+                    }
+                    return 0;
                 }
             }
 
