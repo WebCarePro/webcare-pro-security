@@ -56,11 +56,33 @@ class CloudflareIpListSynchronizer {
             if (count($generations) > 2000) {
                 $generations = array_slice($generations, -1000, null, true);
             }
-            update_option(self::OPTION_IP_GENERATIONS, $generations, false);
+            if (!self::save_verified_option(self::OPTION_IP_GENERATIONS, $generations)) {
+                return $queue;
+            }
             return $queue;
         });
 
         return $next_gen;
+    }
+
+    /**
+     * Safely persist an option and verify it actually exists and matches in database/storage.
+     * Accounts for update_option returning false when value is identical/unchanged vs actual DB failure.
+     *
+     * @param string $option_name
+     * @param mixed  $value
+     * @return bool True if value is verified persisted in option store
+     */
+    public static function save_verified_option(string $option_name, mixed $value): bool {
+        $res = update_option($option_name, $value, false);
+        if ($res === true) {
+            return true;
+        }
+
+        // update_option returns false if the stored value is already strictly equal to the new value.
+        // Verify by reading back the option to distinguish between unchanged value vs storage failure.
+        $stored = get_option($option_name, null);
+        return ($stored === $value);
     }
 
     /**
@@ -193,18 +215,22 @@ class CloudflareIpListSynchronizer {
         $operation_id = 'cfop_' . bin2hex(random_bytes(8));
         $assigned_generation = null;
 
-        // Perform generation advancement AND queue insertion inside ONE shared mutex transaction
-        $success = self::mutate_ban_queue(static function (array $queue) use ($ip, $reason, $ttl, $operation_id, &$assigned_generation): array {
-            $generations = get_option(self::OPTION_IP_GENERATIONS, []);
-            $generations = is_array($generations) ? $generations : [];
+        // Perform generation advancement AND queue insertion inside ONE shared mutex transaction with verified persistence & compensation
+        $success = self::mutate_ban_queue(static function (array $queue) use ($ip, $reason, $ttl, $operation_id, &$assigned_generation): ?array {
+            $prev_generations = get_option(self::OPTION_IP_GENERATIONS, []);
+            $prev_generations = is_array($prev_generations) ? $prev_generations : [];
+
+            $generations = $prev_generations;
             $current = (int) ($generations[$ip] ?? 0);
             $next_gen = $current + 1;
             $generations[$ip] = $next_gen;
             if (count($generations) > 2000) {
                 $generations = array_slice($generations, -1000, null, true);
             }
-            update_option(self::OPTION_IP_GENERATIONS, $generations, false);
-            $assigned_generation = $next_gen;
+
+            if (!self::save_verified_option(self::OPTION_IP_GENERATIONS, $generations)) {
+                return null;
+            }
 
             $queue[$ip] = [
                 'ip'           => $ip,
@@ -219,6 +245,7 @@ class CloudflareIpListSynchronizer {
                 'generation'   => $next_gen,
             ];
 
+            $assigned_generation = $next_gen;
             return $queue;
         });
 
@@ -561,17 +588,30 @@ class CloudflareIpListSynchronizer {
             $queue = ($raw !== null && $raw !== '') ? maybe_unserialize($raw) : get_option(self::OPTION_BAN_QUEUE, []);
             $queue = is_array($queue) ? $queue : [];
 
+            $prev_generations = get_option(self::OPTION_IP_GENERATIONS, []);
+            $prev_queue = $queue;
+
             $queue = $callback($queue);
-            $queue = is_array($queue) ? $queue : [];
+            if ($queue === null || !is_array($queue)) {
+                return false;
+            }
 
             if (empty($queue)) {
                 delete_option(self::OPTION_BAN_QUEUE);
+                $persisted = (get_option(self::OPTION_BAN_QUEUE, null) === null);
             } else {
                 if (count($queue) > 500) {
                     $queue = array_slice($queue, -500, null, true);
                 }
-                update_option(self::OPTION_BAN_QUEUE, $queue, false);
+                $persisted = self::save_verified_option(self::OPTION_BAN_QUEUE, $queue);
             }
+
+            if (!$persisted) {
+                // Compensate/Rollback OPTION_IP_GENERATIONS to previous state if queue persistence failed
+                self::save_verified_option(self::OPTION_IP_GENERATIONS, $prev_generations);
+                return false;
+            }
+
             return true;
         } finally {
             if ($wpdb && isset($wpdb->options)) {
@@ -1221,19 +1261,24 @@ class CloudflareIpListSynchronizer {
         $unban_gen = null;
 
         // Monotonic per-IP generation increment AND pending batch queue eviction inside ONE shared mutex transaction
-        $queue_removed = self::mutate_ban_queue(static function (array $queue) use ($ip, &$unban_gen): array {
-            $generations = get_option(self::OPTION_IP_GENERATIONS, []);
-            $generations = is_array($generations) ? $generations : [];
+        $queue_removed = self::mutate_ban_queue(static function (array $queue) use ($ip, &$unban_gen): ?array {
+            $prev_generations = get_option(self::OPTION_IP_GENERATIONS, []);
+            $prev_generations = is_array($prev_generations) ? $prev_generations : [];
+
+            $generations = $prev_generations;
             $current = (int) ($generations[$ip] ?? 0);
             $next_gen = $current + 1;
             $generations[$ip] = $next_gen;
             if (count($generations) > 2000) {
                 $generations = array_slice($generations, -1000, null, true);
             }
-            update_option(self::OPTION_IP_GENERATIONS, $generations, false);
-            $unban_gen = $next_gen;
+
+            if (!self::save_verified_option(self::OPTION_IP_GENERATIONS, $generations)) {
+                return null;
+            }
 
             unset($queue[$ip]);
+            $unban_gen = $next_gen;
             return $queue;
         });
 

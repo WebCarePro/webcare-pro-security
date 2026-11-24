@@ -112,6 +112,9 @@ if (!function_exists('add_option')) {
 
 if (!function_exists('update_option')) {
     function update_option(string $option, $value, $autoload = null): bool {
+        if (!empty($GLOBALS['wp_mock_update_option_failures'][$option])) {
+            return false;
+        }
         $GLOBALS['wp_mock_options'][$option] = $value;
         return true;
     }

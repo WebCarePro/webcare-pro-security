@@ -664,22 +664,58 @@ class WafReplayHarnessTest extends TestCase {
         $this->assertSame($new_gen, $queue[$ip]['generation']);
 
         // Case B: Mutex lock contention / acquisition failure propagation
-        // Force mutex lock acquisition to fail by holding the transient lock
-        set_transient('webcare_cf_queue_mutex_lock', time() + 60, 60);
+        // Use real mutex option add_option('webcare_cf_queue_mutex', ...) as used by mutate_ban_queue()
+        $mutex_key = 'webcare_cf_queue_mutex';
+        $lock_val = 'external_holder|' . (time() + 60);
+        add_option($mutex_key, $lock_val, '', 'no');
 
         $blocked_ip = '203.0.113.143';
+        $orig_queue = get_option(CloudflareIpListSynchronizer::OPTION_BAN_QUEUE, []);
         $fail_res = CloudflareIpListSynchronizer::queue_ip_ban($blocked_ip, 'Contention test ban', 86400);
 
         $this->assertSame('enqueue_failed', $fail_res['cf_sync_state'], 'Failure must propagate as enqueue_failed when lock cannot be acquired');
         $this->assertNull($fail_res['operation_id'], 'Operation ID must be null on failure');
-        $this->assertSame(0, CloudflareIpListSynchronizer::get_ip_generation($blocked_ip), 'Generation must not advance when mutex acquisition fails');
+        $this->assertSame(0, CloudflareIpListSynchronizer::get_ip_generation($blocked_ip), 'Generation must remain unchanged when mutex acquisition fails');
+        $this->assertSame($orig_queue, get_option(CloudflareIpListSynchronizer::OPTION_BAN_QUEUE, []), 'Queue must remain unchanged when mutex acquisition fails');
 
-        delete_transient('webcare_cf_queue_mutex_lock');
+        delete_option($mutex_key);
+
+        // Case C: Failure-injection for OPTION_IP_GENERATIONS persistence failure
+        $fail_ip_gen = '203.0.113.144';
+        $prev_generations = get_option(CloudflareIpListSynchronizer::OPTION_IP_GENERATIONS, []);
+        $prev_queue = get_option(CloudflareIpListSynchronizer::OPTION_BAN_QUEUE, []);
+
+        $GLOBALS['wp_mock_update_option_failures'][CloudflareIpListSynchronizer::OPTION_IP_GENERATIONS] = true;
+        try {
+            $gen_fail_res = CloudflareIpListSynchronizer::queue_ip_ban($fail_ip_gen, 'Gen fail test', 86400);
+            $this->assertSame('enqueue_failed', $gen_fail_res['cf_sync_state']);
+            $this->assertNull($gen_fail_res['operation_id']);
+            $this->assertSame($prev_generations, get_option(CloudflareIpListSynchronizer::OPTION_IP_GENERATIONS, []), 'Generations must remain consistent on failure');
+            $this->assertSame($prev_queue, get_option(CloudflareIpListSynchronizer::OPTION_BAN_QUEUE, []), 'Queue must remain consistent on gen failure');
+        } finally {
+            unset($GLOBALS['wp_mock_update_option_failures'][CloudflareIpListSynchronizer::OPTION_IP_GENERATIONS]);
+        }
+
+        // Case D: Failure-injection for OPTION_BAN_QUEUE persistence failure with compensation
+        $fail_ip_queue = '203.0.113.145';
+        $prev_generations = get_option(CloudflareIpListSynchronizer::OPTION_IP_GENERATIONS, []);
+        $prev_queue = get_option(CloudflareIpListSynchronizer::OPTION_BAN_QUEUE, []);
+
+        $GLOBALS['wp_mock_update_option_failures'][CloudflareIpListSynchronizer::OPTION_BAN_QUEUE] = true;
+        try {
+            $queue_fail_res = CloudflareIpListSynchronizer::queue_ip_ban($fail_ip_queue, 'Queue fail test', 86400);
+            $this->assertSame('enqueue_failed', $queue_fail_res['cf_sync_state']);
+            $this->assertNull($queue_fail_res['operation_id']);
+            $this->assertSame($prev_generations, get_option(CloudflareIpListSynchronizer::OPTION_IP_GENERATIONS, []), 'Generations must be compensated back to previous state on queue failure');
+            $this->assertSame($prev_queue, get_option(CloudflareIpListSynchronizer::OPTION_BAN_QUEUE, []), 'Queue must remain consistent on queue persistence failure');
+        } finally {
+            unset($GLOBALS['wp_mock_update_option_failures'][CloudflareIpListSynchronizer::OPTION_BAN_QUEUE]);
+        }
     }
 
     /**
      * Regression Audit (P1-2): BehavioralCampaignEngine commits 1 local ban and queues 1 Cloudflare operation,
-     * and queues 0 operations when local safety checks reject the ban.
+     * asserts that IP generation advances exactly once, and queues 0 operations when local safety checks reject the ban.
      */
     public function testRegressionCampaignAutobanSingleCloudflareQueueAndExemptionSafety(): void {
         $settings = [
@@ -695,6 +731,7 @@ class WafReplayHarnessTest extends TestCase {
         $threat_ip = '198.51.100.245';
         \WebCareProScanner\Firewall\Core\BehavioralCampaignEngine::reset_bucket_for_testing($threat_ip);
         delete_option(CloudflareIpListSynchronizer::OPTION_BAN_QUEUE);
+        $initial_gen = CloudflareIpListSynchronizer::get_ip_generation($threat_ip);
 
         for ($i = 1; $i <= 5; $i++) {
             \WebCareProScanner\Firewall\Core\BehavioralCampaignEngine::record_probe($threat_ip, 'sensitive_file', "/exploit-path-{$i}.php");
@@ -705,12 +742,16 @@ class WafReplayHarnessTest extends TestCase {
         $this->assertArrayHasKey($threat_ip, $queue, 'Threat IP must be queued for Cloudflare sync exactly once');
         $this->assertCount(1, $queue, 'Queue must hold exactly 1 operation for the autoban');
 
+        $final_gen = CloudflareIpListSynchronizer::get_ip_generation($threat_ip);
+        $this->assertSame($initial_gen + 1, $final_gen, 'IP generation must advance exactly once during campaign autoban');
+
         // Case B: Whitelisted IP triggers probe -> local ban rejected -> 0 Cloudflare operations queued
         $white_ip = '198.51.100.246';
         \WebCareProScanner\Firewall\Core\BehavioralCampaignEngine::reset_bucket_for_testing($white_ip);
         $settings['waf_whitelisted_ips'] = $white_ip;
         update_option(SettingsManager::OPTION_KEY, $settings);
         delete_option(CloudflareIpListSynchronizer::OPTION_BAN_QUEUE);
+        $white_initial_gen = CloudflareIpListSynchronizer::get_ip_generation($white_ip);
 
         for ($i = 1; $i <= 5; $i++) {
             \WebCareProScanner\Firewall\Core\BehavioralCampaignEngine::record_probe($white_ip, 'sensitive_file', "/exploit-path-{$i}.php");
@@ -720,11 +761,13 @@ class WafReplayHarnessTest extends TestCase {
         $empty_queue = get_option(CloudflareIpListSynchronizer::OPTION_BAN_QUEUE, []);
         $this->assertArrayNotHasKey($white_ip, $empty_queue, 'Whitelisted IP must NEVER be queued in Cloudflare');
         $this->assertEmpty($empty_queue, 'Queue must remain empty when local ban is rejected');
+        $this->assertSame($white_initial_gen, CloudflareIpListSynchronizer::get_ip_generation($white_ip), 'Generation must not advance for rejected whitelisted IP');
     }
 
     /**
      * Regression Audit (P2): Identical deterministic campaign_id across repeated get_campaign_summaries calls,
-     * and WafFileLogger::delete_log() returns false to enforce raw forensic immutability.
+     * WafFileLogger::delete_log() returns false to enforce raw forensic immutability,
+     * and WafFileLogger::clear_all_logs() executes crash-resilient two-phase purge auditing.
      */
     public function testRegressionDeterministicCampaignIdAndForensicImmutability(): void {
         $ip = '198.51.100.248';
@@ -771,5 +814,21 @@ class WafReplayHarnessTest extends TestCase {
         // Immutability invariant: delete_log() must return false and not delete the raw record
         $del_result = WafFileLogger::delete_log($incident_id);
         $this->assertFalse($del_result, 'delete_log must return false to preserve raw WAF forensic immutability');
+
+        // Crash-resilient purge auditing: clear_all_logs() must record waf_logs_purge_intent before cleanup, and waf_logs_purged on completion
+        $audited_events = [];
+        \WebCareProScanner\System\AuditLogger::$operational_log_hook = static function ($event, $details) use (&$audited_events) {
+            $audited_events[] = $event;
+        };
+
+        try {
+            $purged = WafFileLogger::clear_all_logs();
+            $this->assertTrue($purged, 'clear_all_logs must return true on successful cleanup');
+        } finally {
+            \WebCareProScanner\System\AuditLogger::$operational_log_hook = null;
+        }
+
+        $this->assertContains('waf_logs_purge_intent', $audited_events, 'Must record waf_logs_purge_intent before deleting files');
+        $this->assertContains('waf_logs_purged', $audited_events, 'Must record waf_logs_purged after successful deletion');
     }
 }

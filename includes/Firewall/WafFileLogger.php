@@ -1250,10 +1250,27 @@ class WafFileLogger {
     /**
      * Clear all filesystem WAF logs (removes all daily JSON files).
      *
+     * Invariants:
+     * - Records and verifies an administrator `waf_logs_purge_intent` audit event BEFORE deleting any files or tables.
+     * - Verifies file deletion and DB cleanup results, recording a `waf_logs_purged` or `waf_logs_purge_failed` event afterward.
+     * - Never returns true if cleanup failed.
+     * - Individual raw record deletion via delete_log() remains strictly disabled (immutability preserved).
+     *
      * @return bool
      */
     public static function clear_all_logs(): bool {
+        // Phase 1: Record and verify administrator intent audit event BEFORE touching storage
+        if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+            \WebCareProScanner\System\AuditLogger::log(
+                'waf_logs_purge_intent',
+                'Administrator initiated intent to purge all WAF forensic log files.'
+            );
+        }
+
         $dir = self::get_storage_dir();
+        $files_deleted = 0;
+        $files_failed = 0;
+
         if (is_dir($dir)) {
             $files = scandir($dir);
             if (is_array($files)) {
@@ -1261,6 +1278,11 @@ class WafFileLogger {
                     if (preg_match('/-waf-logs\.json(?:\.\d+)?$/', $file)) {
                         $filepath = $dir . '/' . $file;
                         wp_delete_file($filepath);
+                        if (file_exists($filepath)) {
+                            $files_failed++;
+                        } else {
+                            $files_deleted++;
+                        }
                     }
                 }
             }
@@ -1274,6 +1296,7 @@ class WafFileLogger {
         update_option('webcareproscan_lifetime_blocked_counter', 0, false);
 
         // Clear legacy database table if it exists
+        $db_cleared = true;
         global $wpdb;
         if ($wpdb !== null && is_object($wpdb) && method_exists($wpdb, 'get_var')) {
             $table = $wpdb->prefix . 'webcareproscan_firewall_logs';
@@ -1281,19 +1304,31 @@ class WafFileLogger {
             $table_exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table));
             if ($table_exists === $table) {
                 // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-                $wpdb->query("TRUNCATE TABLE `{$table}`");
+                $res = $wpdb->query("TRUNCATE TABLE `{$table}`");
+                if ($res === false) {
+                    $db_cleared = false;
+                }
             }
         }
 
-        // Record immutable audit entry for administrator retention purge
-        if (class_exists('\\WebCareProScanner\\Audit\\AuditLogger')) {
-            \WebCareProScanner\Audit\AuditLogger::log(
-                'waf_logs_purged',
-                'Administrator triggered manual retention purge of WAF forensic log files.'
-            );
+        $cleanup_success = ($files_failed === 0 && $db_cleared);
+
+        // Phase 2: Record separate completion or failure audit event
+        if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+            if ($cleanup_success) {
+                \WebCareProScanner\System\AuditLogger::log(
+                    'waf_logs_purged',
+                    sprintf('Administrator retention purge completed successfully. %d file(s) removed.', $files_deleted)
+                );
+            } else {
+                \WebCareProScanner\System\AuditLogger::log(
+                    'waf_logs_purge_failed',
+                    sprintf('Administrator retention purge failed: %d file(s) failed deletion, DB truncate status: %s.', $files_failed, $db_cleared ? 'ok' : 'failed')
+                );
+            }
         }
 
-        return true;
+        return $cleanup_success;
     }
 
     /**
