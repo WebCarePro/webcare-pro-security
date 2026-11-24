@@ -178,7 +178,9 @@ class Plugin {
                     if (function_exists('posix_getpwnam')) {
                         $web_user = posix_getpwnam('www-data');
                         if (is_array($web_user) && isset($web_user['uid'], $web_user['gid'])) {
+                            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chown -- WP-CLI manifest ownership alignment for web server readability
                             @chown($res['path'], (int) $web_user['uid']);
+                            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chgrp -- WP-CLI manifest group alignment for web server readability
                             @chgrp($res['path'], (int) $web_user['gid']);
                         }
                     }

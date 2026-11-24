@@ -205,6 +205,7 @@ class MCPAgentService {
      *
      * @return bool
      */
+    // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Atomic InnoDB row-lock fencing requires uncached transactional SQL
     public static function is_transactional_storage_engine(): bool {
         if (self::$is_transactional_engine !== null) {
             return self::$is_transactional_engine;
@@ -231,6 +232,7 @@ class MCPAgentService {
         self::$is_transactional_engine = false;
         return false;
     }
+    // phpcs:enable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
 
     /**
      * Atomically mutate the staged-action ledger in the database under strict lease fencing.
@@ -244,6 +246,7 @@ class MCPAgentService {
      * @param callable $mutator     Callback receiving array $current_list, returning array $updated_list or array with 'list' and optional metadata
      * @return array{success: bool, error: string, list: array, meta?: array}
      */
+    // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Atomic InnoDB row-lock fencing requires uncached transactional SQL
     public static function mutate_ledger_fenced(string $owner_token, callable $mutator): array {
         if ($owner_token === '') {
             return ['success' => false, 'error' => 'Empty lock token.', 'list' => []];
@@ -526,6 +529,7 @@ class MCPAgentService {
             'meta'    => $meta,
         ];
     }
+    // phpcs:enable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
 
     /**
      * Check if a given owner token currently holds a valid, active ledger lease.
@@ -534,6 +538,7 @@ class MCPAgentService {
      * @param string $owner_token
      * @return bool True if the owner token matches the active, unexpired lock in DB
      */
+    // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Atomic InnoDB row-lock fencing requires uncached transactional SQL
     public static function is_lock_owner_valid(string $owner_token): bool {
         if ($owner_token === '') {
             return false;
@@ -567,6 +572,7 @@ class MCPAgentService {
 
         return false;
     }
+    // phpcs:enable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
 
     /**
      * Acquire atomic bounded database mutex lock for the staged action ledger.
@@ -576,6 +582,7 @@ class MCPAgentService {
      * @param int $timeout Max retry duration in seconds (default: 15)
      * @return string Owner token on success, or empty string on failure (fail closed)
      */
+    // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Atomic InnoDB row-lock fencing requires uncached transactional SQL
     public static function acquire_ledger_lock(int $timeout = 15): string {
         $owner_token = bin2hex(random_bytes(16));
         $start = time();
@@ -631,6 +638,7 @@ class MCPAgentService {
 
         return '';
     }
+    // phpcs:enable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
 
     /**
      * Release atomic staged action ledger lock with atomic owner-conditional database deletion
@@ -639,6 +647,7 @@ class MCPAgentService {
      * @param string $owner_token Token returned by acquire_ledger_lock()
      * @return bool True if released by owner, false otherwise
      */
+    // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Atomic InnoDB row-lock fencing requires uncached transactional SQL
     public static function release_ledger_lock(string $owner_token): bool {
         if ($owner_token === '') {
             return false;
@@ -684,6 +693,7 @@ class MCPAgentService {
 
         return false;
     }
+    // phpcs:enable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
 
     /**
      * Build map of all registered valid tools (core + dynamic ModuleRegistry).

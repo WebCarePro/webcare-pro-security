@@ -906,6 +906,8 @@ class FirewallEngine {
                 }
 
                 self::log_incident([
+                    'id'          => 'WAF-XMLRPC-DISABLED',
+                    'name'        => 'XML-RPC Access Prohibited',
                     'category'    => 'XML-RPC Disabled',
                     'description' => 'XML-RPC request blocked by administrator policy.',
                     'payload'     => 'xmlrpc.php invocation',
@@ -2588,6 +2590,13 @@ class FirewallEngine {
     }
 
     /**
+     * Flag indicating whether an active authentication request was blocked by forbidden username trap.
+     *
+     * @var bool
+     */
+    public static bool $honeypot_auth_blocked = false;
+
+    /**
      * Immediately Block IP of Users Trying to Sign in as Forbidden Usernames (Rule 3)
      */
     public static function check_forbidden_username_login($user, $username, $password) {
@@ -2628,6 +2637,13 @@ class FirewallEngine {
                 return $user;
             }
 
+            self::$honeypot_auth_blocked = true;
+
+            // Track IP-scoped, bounded, atomic honeypot attempts: 2 attempts within 10 minutes -> 24h local IP ban
+            $honeypot_hit_key = 'webcare_honeypot_hits_' . md5($client_ip);
+            $current_hits = (int) get_transient($honeypot_hit_key) + 1;
+            set_transient($honeypot_hit_key, $current_hits, 600);
+
             $honeypot_incident_id = 'WEBCARE-' . strtoupper(substr(md5($client_ip . microtime(true) . wp_rand()), 0, 8));
             self::log_incident([
                 'id'          => 'WAF-FORBIDDEN-USERNAME-TRAP',
@@ -2639,8 +2655,25 @@ class FirewallEngine {
                 'payload'     => "User: {$username} IP: {$client_ip}",
             ], 'blocked', $honeypot_incident_id);
 
+            if ($current_hits >= 2) {
+                // Auto-ban for 24 hours on 2 attempts within 10 minutes
+                if (class_exists('\\WebCareProScanner\\Firewall\\Core\\BlocklistRepository')) {
+                    \WebCareProScanner\Firewall\Core\BlocklistRepository::add_blocked_ip(
+                        $client_ip,
+                        sprintf('[WAF-FORBIDDEN-USERNAME-TRAP] Repeated forbidden username login attempts (%d within 10m)', $current_hits),
+                        86400,
+                        'WAF-FORBIDDEN-USERNAME-TRAP',
+                        'Forbidden Honeypot Username Attempt',
+                        'Identity Defense',
+                        $honeypot_incident_id,
+                        null,
+                        true
+                    );
+                }
+            }
+
             return new \WP_Error(
-                'incorrect_password',
+                'webcare_honeypot_username',
                 __('<strong>Error:</strong> The username or password you entered is incorrect.', 'webcare-pro-security')
             );
         }

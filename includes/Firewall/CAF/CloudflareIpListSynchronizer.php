@@ -28,8 +28,68 @@ class CloudflareIpListSynchronizer {
     public const OPTION_ACCOUNT_LIST_ID  = 'webcare_cf_account_list_id';
     public const OPTION_ACTIVE_EDGE_BANS = 'webcare_cf_active_edge_bans';
     public const OPTION_PENDING_OPERATIONS = 'webcare_cf_pending_operations';
+    public const OPTION_IP_GENERATIONS   = 'webcare_cf_ip_generations';
+    public const OPTION_SYNC_EVENTS      = 'webcare_cf_sync_events_log';
     public const LIST_NAME               = 'webcare_threat_blocklist';
     public const CRON_HOOK               = 'webcare_cloudflare_ip_sync_cron';
+
+    /**
+     * Increment monotonic per-IP generation token (preventing stale queued bans from applying after unban).
+     *
+     * @param string $ip
+     * @return int New generation number
+     */
+    public static function increment_ip_generation(string $ip): int {
+        $ip = trim($ip);
+        if ($ip === '') {
+            return 1;
+        }
+        $generations = get_option(self::OPTION_IP_GENERATIONS, []);
+        $generations = is_array($generations) ? $generations : [];
+        $current = (int) ($generations[$ip] ?? 0);
+        $next = $current + 1;
+        $generations[$ip] = $next;
+        if (count($generations) > 2000) {
+            $generations = array_slice($generations, -1000, null, true);
+        }
+        update_option(self::OPTION_IP_GENERATIONS, $generations, false);
+        return $next;
+    }
+
+    /**
+     * Get current monotonic generation number for an IP.
+     *
+     * @param string $ip
+     * @return int
+     */
+    public static function get_ip_generation(string $ip): int {
+        $ip = trim($ip);
+        if ($ip === '') {
+            return 1;
+        }
+        $generations = get_option(self::OPTION_IP_GENERATIONS, []);
+        if (!is_array($generations) || !isset($generations[$ip])) {
+            return 1;
+        }
+        return (int) $generations[$ip];
+    }
+
+    /**
+     * Append an immutable sync event to the forensic ledger.
+     *
+     * @param array $event
+     * @return void
+     */
+    public static function log_sync_event(array $event): void {
+        $events = get_option(self::OPTION_SYNC_EVENTS, []);
+        $events = is_array($events) ? $events : [];
+        $event['logged_at'] = time();
+        $events[] = $event;
+        if (count($events) > 500) {
+            $events = array_slice($events, -300);
+        }
+        update_option(self::OPTION_SYNC_EVENTS, $events, false);
+    }
 
     /**
      * In-memory queue of bans to push to Cloudflare at PHP shutdown (post-response).
@@ -117,15 +177,20 @@ class CloudflareIpListSynchronizer {
             return;
         }
 
+        $generation = self::increment_ip_generation($ip);
+        $operation_id = 'cfop_' . bin2hex(random_bytes(8));
+
         $entry = [
-            'ip'         => $ip,
-            'reason'     => substr(sanitize_text_field($reason), 0, 240),
-            'banned_at'  => time(),
-            'expires_at' => $ttl > 0 ? (time() + $ttl) : 0,
-            'status'     => 'pending',
-            'attempts'   => 0,
-            'next_retry' => 0,
-            'last_error' => '',
+            'ip'           => $ip,
+            'reason'       => substr(sanitize_text_field($reason), 0, 240),
+            'banned_at'    => time(),
+            'expires_at'   => $ttl > 0 ? (time() + $ttl) : 0,
+            'status'       => 'pending',
+            'attempts'     => 0,
+            'next_retry'   => 0,
+            'last_error'   => '',
+            'operation_id' => $operation_id,
+            'generation'   => $generation,
         ];
 
         // Always persist ban intent immediately to persistent queue under atomic spinlock (Finding 1.2)
@@ -135,6 +200,14 @@ class CloudflareIpListSynchronizer {
             $queue_count = count($queue);
             return $queue;
         });
+
+        self::log_sync_event([
+            'operation_id' => $operation_id,
+            'ip'           => $ip,
+            'type'         => 'ban_queued',
+            'generation'   => $generation,
+            'status'       => 'queued',
+        ]);
 
         // Burst limiter: Check how many instant bans were pushed in the current 10-second window
         $burst_key = 'webcare_cf_instant_burst';
@@ -629,6 +702,7 @@ class CloudflareIpListSynchronizer {
             $eligible_entries = [];
             $ineligible_entries = [];
 
+            $stale_ips_to_evict = [];
             foreach ($queue as $ip => $entry) {
                 if (!is_array($entry)) {
                     continue;
@@ -640,9 +714,26 @@ class CloudflareIpListSynchronizer {
                 $entry['next_retry'] = (int) ($entry['next_retry'] ?? 0);
                 $entry['last_error'] = (string) ($entry['last_error'] ?? '');
 
+                // Generation Fencing: Verify queued operation generation matches current IP generation
+                $current_gen = self::get_ip_generation($ip);
+                $entry_gen   = (int) ($entry['generation'] ?? 0);
+                if ($entry_gen > 0 && $entry_gen < $current_gen) {
+                    // Stale generation: this IP was unbanned or re-evaluated since this ban was enqueued
+                    $stale_ips_to_evict[] = $ip;
+                    self::log_sync_event([
+                        'operation_id' => $entry['operation_id'] ?? '',
+                        'ip'           => $ip,
+                        'type'         => 'ban_skipped_stale',
+                        'generation'   => $entry_gen,
+                        'current_gen'  => $current_gen,
+                        'status'       => 'skipped',
+                    ]);
+                    continue;
+                }
+
                 // Skip items that exceeded maximum attempts (5) or are waiting for exponential backoff
                 if ($entry['attempts'] >= 5) {
-                    $entry['status'] = 'failed';
+                    $entry['status'] = 'dead_letter';
                     $ineligible_entries[$ip] = $entry;
                     continue;
                 }
@@ -653,6 +744,15 @@ class CloudflareIpListSynchronizer {
                 }
 
                 $eligible_entries[$ip] = $entry;
+            }
+
+            if (!empty($stale_ips_to_evict)) {
+                self::mutate_ban_queue(static function (array $q) use ($stale_ips_to_evict): array {
+                    foreach ($stale_ips_to_evict as $sip) {
+                        unset($q[$sip]);
+                    }
+                    return $q;
+                });
             }
 
             if (empty($eligible_entries)) {
@@ -686,6 +786,16 @@ class CloudflareIpListSynchronizer {
 
             $synced_count = count($confirmed_ips);
 
+            foreach (array_keys($confirmed_ips) as $cip) {
+                $op_id = $eligible_entries[$cip]['operation_id'] ?? '';
+                self::log_sync_event([
+                    'operation_id' => $op_id,
+                    'ip'           => $cip,
+                    'type'         => 'ban_applied',
+                    'status'       => 'completed',
+                ]);
+            }
+
             // Safely mutate persistent queue under mutex without clobbering new concurrent entries (Finding 1.2)
             self::mutate_ban_queue(static function (array $queue) use ($confirmed_ips, $eligible_entries, $sync_result, $now): array {
                 // Drop confirmed synced items
@@ -693,15 +803,27 @@ class CloudflareIpListSynchronizer {
                     unset($queue[$cip]);
                 }
 
-                // Update unconfirmed/failed items with retry backoff
+                // Update unconfirmed/failed items with retry backoff with jitter
                 foreach ($eligible_entries as $ip => $entry) {
                     if (empty($confirmed_ips[$ip])) {
                         $attempts = ((int) ($entry['attempts'] ?? 0)) + 1;
                         $entry['attempts']   = $attempts;
                         $entry['last_error'] = (string) ($sync_result['error'] ?? 'Synchronization unconfirmed');
-                        $entry['status']     = ($attempts >= 5) ? 'failed' : 'retry';
-                        $entry['next_retry'] = $now + min(3600, 30 * (2 ** $attempts));
+                        $is_dead_letter      = ($attempts >= 5);
+                        $entry['status']     = $is_dead_letter ? 'dead_letter' : 'retry';
+                        $backoff_sec         = min(3600, 30 * (2 ** $attempts));
+                        $jitter              = wp_rand(0, 15);
+                        $entry['next_retry'] = $now + $backoff_sec + $jitter;
                         $queue[$ip] = $entry;
+
+                        self::log_sync_event([
+                            'operation_id' => $entry['operation_id'] ?? '',
+                            'ip'           => $ip,
+                            'type'         => $is_dead_letter ? 'ban_dead_letter' : 'ban_retry',
+                            'attempts'     => $attempts,
+                            'error'        => $entry['last_error'],
+                            'status'       => $entry['status'],
+                        ]);
                     }
                 }
 
@@ -1089,6 +1211,15 @@ class CloudflareIpListSynchronizer {
         if (empty($ip)) {
             return false;
         }
+
+        // Monotonic per-IP generation increment: invalidates any in-flight or pending queued bans for this IP
+        $unban_gen = self::increment_ip_generation($ip);
+        self::log_sync_event([
+            'ip'         => $ip,
+            'type'       => 'ip_unbanned_locally',
+            'generation' => $unban_gen,
+            'status'     => 'unbanned',
+        ]);
 
         // 1. Remove from in-memory shutdown queue if present
         if (isset(self::$shutdown_immediate_queue[$ip])) {

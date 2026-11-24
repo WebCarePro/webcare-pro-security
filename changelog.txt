@@ -1,4 +1,14 @@
-﻿v:0.0.1 - 2026-11-23
+﻿v:0.0.1 - 2026-11-24
+- WAF Intelligence Master Plan — Phase 1 Reliability & Durable Edge Sync:
+  * Early Lifecycle Reliability: Fixed null `$wp_query` crash (`Call to a member function get() on null`) on early `plugins_loaded` blocks by introducing `ViolationResponder::emit_standalone_block_html()`, eliminating 148 `WAF-PIPELINE-EXCEPTION` errors.
+  * Atomic Progressive Warning Escalation: Integrated atomic terminal strike escalation (4/4 threshold) upgrading warnings to blocked with local IP ban commitments (3,600s initial / 86,400s repeat within 24h).
+  * Exemption Boundaries: Strictly subordinated authenticated admin, crawler, and customer exemptions to confirmed exploit and sensitive-file block policies.
+  * Canonical Telemetry: Enforced canonical `WAF-XMLRPC-DISABLED` rule identifier across XML-RPC guards and immutable telemetry records (`decision`, `enforcement_outcome`, `cf_operation_id`, `cf_sync_state`).
+  * Identity Defense Hardening: Short-circuited forbidden username honeypot traps (`WAF-FORBIDDEN-USERNAME-TRAP`) before WordPress user enumeration or `WAF-AUTH-FAILED` logging with 2-hit 24h auto-ban escalation.
+  * Durable Cloudflare Sync Queue: Implemented monotonic per-IP generation fencing (`get_ip_generation`, `increment_ip_generation`) to invalidate stale queued bans after admin unbans, exponential backoff with jitter, dead-letter tracking, and append-only forensic sync events.
+  * Executable Replay Harness: Created `WafReplayHarnessTest.php` with 6 automated tests validating reliability, atomic strikes, honeypots, telemetry, and generation-fenced Cloudflare queue operations.
+
+v:0.0.1 - 2026-11-23
 - Initial Release (v0.0.1):
   * Clean v0.0.1 fresh-start baseline and release reset.
   * Calm, trust-building Overview Dashboard redesign featuring soothing breathing shield emblem, live peace-of-mind metrics, and 2-column protection layers grid.

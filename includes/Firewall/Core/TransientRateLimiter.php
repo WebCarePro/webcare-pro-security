@@ -214,13 +214,15 @@ final class TransientRateLimiter {
     public static function record_warning_strike(string $ip, int $max_strikes = 4, int $window_seconds = 900): array {
         $key = 'warning_strike:' . md5($ip);
         $res = self::check_rate_limit($key, $max_strikes, $window_seconds);
-        $strike = min($max_strikes, (int) $res['current']);
+        $count = (int) ($res['current'] ?? 0);
+        $strike = min($max_strikes, $count);
         $remaining = max(0, $max_strikes - $strike);
+        $is_terminal = ($count >= $max_strikes) || !$res['allowed'];
 
         return [
             'strike'             => $strike,
             'max_strikes'        => $max_strikes,
-            'is_terminal_ban'    => !$res['allowed'],
+            'is_terminal_ban'    => $is_terminal,
             'remaining_strikes'  => $remaining,
         ];
     }

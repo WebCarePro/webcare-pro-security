@@ -990,6 +990,118 @@ if (!function_exists('wp_send_json_success')) {
     }
 }
 
+if (!function_exists('wp_doing_ajax')) {
+    function wp_doing_ajax(): bool {
+        return defined('DOING_AJAX') && DOING_AJAX;
+    }
+}
+
+if (!function_exists('is_child_theme')) {
+    function is_child_theme(): bool {
+        return false;
+    }
+}
+
+if (!function_exists('get_bloginfo')) {
+    function get_bloginfo(string $show = '', string $filter = 'raw'): string {
+        if ($show === 'name') {
+            return 'WebCare Test Site';
+        }
+        return '';
+    }
+}
+
+if (!function_exists('esc_url')) {
+    function esc_url(string $url, ?array $protocols = null, string $_context = 'display'): string {
+        return htmlspecialchars($url, ENT_QUOTES, 'UTF-8');
+    }
+}
+
+if (!function_exists('sanitize_textarea_field')) {
+    function sanitize_textarea_field(string $str): string {
+        return trim(strip_tags($str));
+    }
+}
+
+if (!function_exists('wp_safe_remote_request')) {
+    function wp_safe_remote_request(string $url, array $args = []): array {
+        return [
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body'     => '{"success":true,"result":[]}',
+        ];
+    }
+}
+
+if (!function_exists('wp_remote_retrieve_response_code')) {
+    function wp_remote_retrieve_response_code($response): int {
+        return is_array($response) ? (int) ($response['response']['code'] ?? 200) : 200;
+    }
+}
+
+if (!function_exists('wp_remote_retrieve_body')) {
+    function wp_remote_retrieve_body($response): string {
+        return is_array($response) ? (string) ($response['body'] ?? '') : '';
+    }
+}
+
+if (!function_exists('wp_remote_retrieve_header')) {
+    function wp_remote_retrieve_header($response, string $header): string {
+        return is_array($response) ? (string) ($response['headers'][$header] ?? '') : '';
+    }
+}
+
+if (!function_exists('wp_schedule_event')) {
+    function wp_schedule_event(int $timestamp, string $recurrence, string $hook, array $args = []): bool {
+        $GLOBALS['wp_mock_cron'][$hook] = [
+            'timestamp'  => $timestamp,
+            'recurrence' => $recurrence,
+            'args'       => $args,
+        ];
+        return true;
+    }
+}
+
+if (!function_exists('wp_schedule_single_event')) {
+    function wp_schedule_single_event(int $timestamp, string $hook, array $args = []): bool {
+        $GLOBALS['wp_mock_cron'][$hook] = [
+            'timestamp'  => $timestamp,
+            'recurrence' => false,
+            'args'       => $args,
+        ];
+        return true;
+    }
+}
+
+if (!function_exists('wp_next_scheduled')) {
+    function wp_next_scheduled(string $hook, array $args = []): int|false {
+        return isset($GLOBALS['wp_mock_cron'][$hook]) ? (int) $GLOBALS['wp_mock_cron'][$hook]['timestamp'] : false;
+    }
+}
+
+if (!function_exists('wp_unschedule_event')) {
+    function wp_unschedule_event(int $timestamp, string $hook, array $args = []): bool {
+        unset($GLOBALS['wp_mock_cron'][$hook]);
+        return true;
+    }
+}
+
+if (!function_exists('wp_clear_scheduled_hook')) {
+    function wp_clear_scheduled_hook(string $hook, array $args = []): int|false {
+        unset($GLOBALS['wp_mock_cron'][$hook]);
+        return 1;
+    }
+}
+
+if (!function_exists('wp_get_schedules')) {
+    function wp_get_schedules(): array {
+        return [
+            'hourly'     => ['interval' => 3600, 'display' => 'Once Hourly'],
+            'twicedaily' => ['interval' => 43200, 'display' => 'Twice Daily'],
+            'daily'      => ['interval' => 86400, 'display' => 'Once Daily'],
+        ];
+    }
+}
+
 // Require target classes from plugin includes/
 $includesDir = __DIR__ . '/../includes';
 

@@ -418,14 +418,57 @@ final class ViolationResponder {
             $t('WebCare Pro Security Suite • Zero-Trust Perimeter Defense')
         );
 
-        // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-        wp_die($message, $t('403 Forbidden - Security Shield Block'), [
-            'response'  => 403,
-            'code'      => 'webcareproscan_access_denied',
-            'back_link' => false,
-        ]);
+        // Emit standalone 403 HTML page without invoking query-dependent hooks or wp_die()
+        self::emit_standalone_block_html($message, $t('403 Forbidden - Security Shield Block'), 403);
 
         return false;
+    }
+
+    /**
+     * Emit standalone HTML error page for blocked requests without triggering $wp_query or wp_die_handler.
+     *
+     * @param string $message Context-escaped HTML message content
+     * @param string $title Page title
+     * @param int $status_code HTTP response status code
+     * @return void
+     */
+    public static function emit_standalone_block_html(string $message, string $title = '403 Forbidden - Security Shield Block', int $status_code = 403): void {
+        if (!headers_sent()) {
+            if (function_exists('status_header')) {
+                status_header($status_code);
+            } else {
+                header("HTTP/1.1 {$status_code} Forbidden", true, $status_code);
+            }
+            header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+            header('Pragma: no-cache');
+            header('Expires: Thu, 01 Jan 1970 00:00:00 GMT');
+            header('X-Robots-Tag: noindex, nofollow, noarchive');
+            header('Content-Type: text/html; charset=utf-8');
+        }
+
+        // Test seam for unit test environments
+        if (defined('WEBCAREPROSCAN_TESTING') && WEBCAREPROSCAN_TESTING) {
+            echo $message;
+            return;
+        }
+
+        echo '<!DOCTYPE html>' . "\n";
+        echo '<html lang="en">' . "\n";
+        echo '<head>' . "\n";
+        echo '    <meta charset="utf-8">' . "\n";
+        echo '    <meta name="viewport" content="width=device-width, initial-scale=1.0">' . "\n";
+        echo '    <meta name="robots" content="noindex, nofollow, noarchive">' . "\n";
+        echo '    <title>' . esc_html($title) . '</title>' . "\n";
+        echo '    <style>' . "\n";
+        echo '        body { margin: 0; padding: 20px; background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif; }' . "\n";
+        echo '    </style>' . "\n";
+        echo '</head>' . "\n";
+        echo '<body>' . "\n";
+        // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Pre-sanitized and context-escaped HTML layout
+        echo $message;
+        echo "\n</body>" . "\n";
+        echo '</html>';
+        exit;
     }
 
     /**
@@ -841,8 +884,17 @@ final class ViolationResponder {
 
         // Evaluate progressive warning status and record single warning strike strictly when applicable
         $is_warning = self::is_progressive_warning_rule($rule, $settings);
+        $strike_terminal = false;
         if ($is_warning && !isset($rule['strike_info'])) {
             $rule['strike_info'] = \WebCareProScanner\Firewall\Core\TransientRateLimiter::record_warning_strike($client_ip, 4, 900);
+            if (!empty($rule['strike_info']['is_terminal_ban'])) {
+                $strike_terminal = true;
+                // Terminal warning strike reached: upgrade enforcement from warned to blocked
+                $is_warning = false;
+            }
+        } elseif (!empty($rule['strike_info']['is_terminal_ban'])) {
+            $strike_terminal = true;
+            $is_warning = false;
         }
 
         $incident_id = 'WEBCARE-' . strtoupper(substr(md5($client_ip . microtime(true) . wp_rand()), 0, 8));
@@ -871,8 +923,15 @@ final class ViolationResponder {
             $eligible_for_ip_ban = true;
             $rule_ban_ttl        = max(0, (int) ($rule['ban_ttl'] ?? 0));
             $effective_ban_ttl   = $rule_ban_ttl > 0 ? $rule_ban_ttl : 86400;
+        } elseif ($strike_terminal) {
+            // 3. Progressive Warning strike terminal ban (3600s first ban, 86400s repeat within 24h)
+            $repeat_key = 'webcare_strike_ban_repeat_' . md5($client_ip);
+            $is_repeat_ban = (bool) get_transient($repeat_key);
+            $effective_ban_ttl = $is_repeat_ban ? 86400 : 3600;
+            set_transient($repeat_key, 1, 86400);
+            $eligible_for_ip_ban = true;
         } else {
-            // 3. Heuristic detection: log and block individual request; zero automated IP bans
+            // 4. Heuristic detection: log and block individual request; zero automated IP bans
             $eligible_for_ip_ban = false;
         }
 
@@ -880,21 +939,32 @@ final class ViolationResponder {
         $cf_auto_sync_active = !empty($settings['cloudflare_enabled']) && !empty($settings['cloudflare_auto_sync_bans']);
         $rule_sync_cf        = $eligible_for_ip_ban && ($cf_auto_sync_active || !empty($rule['sync_cloudflare']));
 
-        // Critical safety invariant: An authenticated administrator's own IP address must NEVER be banned or added to waf_blocked_ips.
-        if ($is_admin_session || (function_exists('is_user_logged_in') && is_user_logged_in() && function_exists('current_user_can') && current_user_can('manage_options'))) {
-            $eligible_for_ip_ban = false;
+        // Exemption boundaries:
+        // Authenticated administrators, officially verified crawlers, and active shoppers are exempt ONLY from generic warning-strike auto-bans
+        // They are NEVER exempt from confirmed exploit or sensitive-file blocks.
+        $is_verified_crawler = false;
+        if (class_exists('\\WebCareProScanner\\Firewall\\BotReconDefense')) {
+            $raw_ua = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';
+            $is_verified_crawler = \WebCareProScanner\Firewall\BotReconDefense::is_genuine_search_engine($client_ip, $raw_ua);
         }
 
-        // Active shopper session & commerce protection: Never impose multi-hour/24h IP bans on verified customers or shared carrier CGNAT IPs
+        $is_admin_identity = $is_admin_session || (function_exists('is_user_logged_in') && is_user_logged_in() && function_exists('current_user_can') && current_user_can('manage_options'));
+
+        // Active shopper session & commerce protection
         $has_shopper_session = class_exists('\\WebCareProScanner\\Firewall\\Core\\CommerceSessionGuard')
             && (\WebCareProScanner\Firewall\Core\CommerceSessionGuard::has_active_shopper_session()
                 || \WebCareProScanner\Firewall\Core\CommerceSessionGuard::is_exempt_from_operational_ban());
 
-        if ($has_shopper_session) {
-            if ($tier !== FirewallEngine::TIER_CONFIRMED_EXPLOIT) {
-                // Heuristic or behavioral anomaly: block single request only, zero IP ban
+        if ($tier !== FirewallEngine::TIER_CONFIRMED_EXPLOIT && !str_contains($rule_id_str, 'SENSITIVE-FILE')) {
+            // Exempt only from generic warning-strike / heuristic bans
+            if ($is_admin_identity || $is_verified_crawler || $has_shopper_session) {
                 $eligible_for_ip_ban = false;
-            } else {
+            }
+        } else {
+            // Confirmed exploit or sensitive-file probe: administrator IP is protected from self-lockout, but shopper/crawler cannot bypass
+            if ($is_admin_identity) {
+                $eligible_for_ip_ban = false;
+            } elseif ($has_shopper_session) {
                 // Confirmed exploit on shopper session: cap cooldown to max 15 minutes instead of 24h
                 $effective_ban_ttl = min($effective_ban_ttl, 900);
             }

@@ -320,6 +320,10 @@ class WafFileLogger {
             'is_human_score'   => (class_exists(BotReconDefense::class) && BotReconDefense::has_valid_clearance_cookie($ip, $user_agent)) ? 95 : ($is_authenticated ? 90 : (stripos($user_agent, 'bot') !== false || stripos($user_agent, 'crawl') !== false ? 5 : 50)),
             'cf_sync_enabled'  => class_exists('\\WebCareProScanner\\System\\SettingsManager') ? (!empty(\WebCareProScanner\System\SettingsManager::get_settings()['cloudflare_enabled']) && !empty(\WebCareProScanner\System\SettingsManager::get_settings()['cloudflare_auto_sync_bans'])) : false,
             'cf_connected'     => class_exists('\\WebCareProScanner\\System\\SettingsManager') ? (!empty(\WebCareProScanner\System\SettingsManager::get_settings()['cloudflare_enabled']) && !empty(\WebCareProScanner\System\SettingsManager::get_settings()['has_cloudflare_key'])) : false,
+            'decision'             => !empty($rule['decision']) ? sanitize_key($rule['decision']) : (in_array($action, ['blocked', 'block'], true) ? 'block' : ($action === 'warned' ? 'warn' : ($action === 'challenged' ? 'challenge' : ($action === 'detected' ? 'allow' : sanitize_key($action))))),
+            'enforcement_outcome'  => !empty($rule['enforcement_outcome']) ? sanitize_key($rule['enforcement_outcome']) : (in_array($action, ['blocked', 'warned', 'challenged'], true) ? 'completed' : 'degraded'),
+            'cf_operation_id'      => !empty($rule['cf_operation_id']) ? sanitize_text_field($rule['cf_operation_id']) : null,
+            'cf_sync_state'        => !empty($rule['cf_sync_state']) ? sanitize_key($rule['cf_sync_state']) : ((class_exists('\\WebCareProScanner\\System\\SettingsManager') && !empty(\WebCareProScanner\System\SettingsManager::get_settings()['cloudflare_enabled']) && !empty(\WebCareProScanner\System\SettingsManager::get_settings()['cloudflare_auto_sync_bans'])) ? 'queued' : 'disabled'),
         ];
 
         self::append_record_to_file($incident_record);

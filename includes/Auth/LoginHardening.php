@@ -90,6 +90,16 @@ class LoginHardening {
      * @param \WP_Error|mixed|null  $error    The authentication failure error object if passed by core/plugins.
      */
     public static function record_failed_attempt(string $username, $error = null) {
+        // Short-circuit honeypot username blocks before running WP password check or logging WAF-AUTH-FAILED
+        if (class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine') && !empty(\WebCareProScanner\Firewall\FirewallEngine::$honeypot_auth_blocked)) {
+            \WebCareProScanner\Firewall\FirewallEngine::$honeypot_auth_blocked = false;
+            return;
+        }
+
+        if ($error instanceof \WP_Error && $error->get_error_code() === 'webcare_honeypot_username') {
+            return;
+        }
+
         $settings = SettingsManager::get_settings();
         if (empty($settings['login_hardening_enabled'])) {
             return;

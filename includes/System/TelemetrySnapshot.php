@@ -77,6 +77,10 @@ class TelemetrySnapshot {
         $waf_settings         = get_option('webcareproscan_waf_settings', []);
         $local_blocks_cnt     = count(array_filter(array_map('trim', explode("\n", (string) ($waf_settings['waf_blocked_ips'] ?? '')))));
 
+        $queue_pending_cnt    = count((array) get_option(\WebCareProScanner\Firewall\CAF\CloudflareIpListSynchronizer::OPTION_BAN_QUEUE, []));
+        $sync_events          = (array) get_option(\WebCareProScanner\Firewall\CAF\CloudflareIpListSynchronizer::OPTION_SYNC_EVENTS, []);
+        $last_sync_event      = !empty($sync_events) ? end($sync_events) : null;
+
         $powered_by_cf = $has_cf_ip_header || $has_cf_ray || $is_cf_ip || $is_cf_configured;
         $cf_mode_desc  = 'Direct Origin (No Cloudflare Detected)';
         if ($powered_by_cf) {
@@ -133,6 +137,8 @@ class TelemetrySnapshot {
                 'cf_edge_rules_count'       => $edge_rules_count,
                 'cf_active_edge_bans_count' => $active_edge_bans_cnt,
                 'local_active_blocks_count' => $local_blocks_cnt,
+                'cf_queue_pending_count'    => $queue_pending_cnt,
+                'cf_last_sync_event'        => $last_sync_event,
             ],
             'wordpress' => [
                 'core_version'        => $wp_version ?? 'Unknown',

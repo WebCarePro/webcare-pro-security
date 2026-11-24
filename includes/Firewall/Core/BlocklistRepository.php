@@ -25,8 +25,16 @@ final class BlocklistRepository {
 
     /**
      * Check if an IP is in the user-defined blocklist
+     *
+     * @param string $ip
+     * @param string|null $blocklist_str Optional blocklist string. If null, loads from SettingsManager.
+     * @return bool
      */
-    public static function is_ip_blocked(string $ip, string $blocklist_str): bool {
+    public static function is_ip_blocked(string $ip, ?string $blocklist_str = null): bool {
+        if ($blocklist_str === null) {
+            $settings = SettingsManager::get_settings();
+            $blocklist_str = (string) ($settings['waf_blocked_ips'] ?? '');
+        }
         return self::get_matching_blocked_entry($ip, $blocklist_str) !== null;
     }
 
