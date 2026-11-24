@@ -2026,6 +2026,17 @@ final class FirewallController extends AbstractApiController {
             ], 400);
         }
 
+        $caf_dir = defined('WEBCAREPROSCAN_PATH') ? WEBCAREPROSCAN_PATH . 'includes/Firewall/CAF/' : dirname(__DIR__, 2) . '/Firewall/CAF/';
+        if (!class_exists(\WebCareProScanner\Firewall\CAF\CloudflareSlotOptimizer::class) && file_exists($caf_dir . 'CloudflareSlotOptimizer.php')) {
+            require_once $caf_dir . 'CloudflareSlotOptimizer.php';
+        }
+        if (!class_exists(\WebCareProScanner\Firewall\CAF\CloudflareIpListSynchronizer::class) && file_exists($caf_dir . 'CloudflareIpListSynchronizer.php')) {
+            require_once $caf_dir . 'CloudflareIpListSynchronizer.php';
+        }
+        if (!class_exists(\WebCareProScanner\Firewall\CAF\OriginLoadCircuitBreaker::class) && file_exists($caf_dir . 'OriginLoadCircuitBreaker.php')) {
+            require_once $caf_dir . 'OriginLoadCircuitBreaker.php';
+        }
+
         $optimizer = new \WebCareProScanner\Firewall\CAF\CloudflareSlotOptimizer();
         $synchronizer = new \WebCareProScanner\Firewall\CAF\CloudflareIpListSynchronizer();
         $breaker = new \WebCareProScanner\Firewall\CAF\OriginLoadCircuitBreaker();
