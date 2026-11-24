@@ -890,14 +890,59 @@ final class SettingsUndoAtomicityTest extends TestCase
             $this->assertSame(42, (int) $GLOBALS['wp_mock_options'][SettingsManager::OPTION_REVISION_KEY]);
             $this->assertCount(1, $GLOBALS['wp_mock_options'][SettingsManager::OPTION_SNAPSHOTS_KEY]);
 
-            // 3. Ambiguous / empty table identity must also fail closed
-            $mockDb->options = '   ';
-            $this->assertFalse(SettingsManager::is_options_table_innodb());
+            // 3. Raw whitespace in identifier (including leading/trailing) must fail closed before trimming
+            foreach (['   ', ' wp_options', 'wp_options ', "wp_options\n"] as $invalidIdent) {
+                $mockDb->options = $invalidIdent;
+                $this->assertFalse(
+                    SettingsManager::is_options_table_innodb(),
+                    'Raw identifier containing whitespace must fail closed.'
+                );
+            }
 
             // 4. Switching back to Blog 1 (wp_options, InnoDB) continues to succeed
             $mockDb->options = 'wp_options';
             $this->assertTrue(SettingsManager::is_options_table_innodb());
             $this->assertGreaterThan(0, $blog1Rev);
+        } finally {
+            SettingsManager::reset_storage_engine_cache();
+            $GLOBALS['wpdb'] = $origWpdb;
+        }
+    }
+
+    public function testCaseDistinctTableIdentitiesDoNotCollideInEngineCache(): void
+    {
+        global $wpdb;
+        $origWpdb = $wpdb ?? null;
+        $mockDb = new \wpdb();
+        $mockDb->dbname = 'app_db';
+        $mockDb->options = 'wp_options';
+        $mockDb->mock_table_engines = [
+            'wp_options' => 'InnoDB',
+            'WP_OPTIONS' => 'MyISAM',
+        ];
+        $GLOBALS['wpdb'] = $mockDb;
+
+        try {
+            // 1. Lowercase table identity verified & cached as InnoDB
+            $this->assertTrue(SettingsManager::is_options_table_innodb());
+            $this->assertIsArray(SettingsManager::save_settings(['waf_mode' => 'learning']));
+
+            // 2. Switch to uppercase WP_OPTIONS (MyISAM on case-sensitive Linux MySQL) WITHOUT clearing cache
+            $mockDb->options = 'WP_OPTIONS';
+            $this->assertFalse(
+                SettingsManager::is_options_table_innodb(),
+                'Case-distinct table identity WP_OPTIONS must trigger fresh lookup and fail closed on MyISAM.'
+            );
+
+            $GLOBALS['wp_mock_options'][SettingsManager::OPTION_KEY] = ['waf_mode' => 'enabled'];
+            $GLOBALS['wp_mock_options'][SettingsManager::OPTION_REVISION_KEY] = 77;
+            $this->assertFalse(SettingsManager::save_settings(['waf_mode' => 'disabled']));
+            $this->assertSame('enabled', $GLOBALS['wp_mock_options'][SettingsManager::OPTION_KEY]['waf_mode']);
+            $this->assertSame(77, (int) $GLOBALS['wp_mock_options'][SettingsManager::OPTION_REVISION_KEY]);
+
+            // 3. Lowercase wp_options remains valid InnoDB
+            $mockDb->options = 'wp_options';
+            $this->assertTrue(SettingsManager::is_options_table_innodb());
         } finally {
             SettingsManager::reset_storage_engine_cache();
             $GLOBALS['wpdb'] = $origWpdb;

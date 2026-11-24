@@ -44,7 +44,22 @@ class SettingsManager {
     }
 
     /**
-     * Resolve a normalized identity key for the active $wpdb->options table, or null if ambiguous/invalid.
+     * Strip matching outer SQL backtick quoting without altering case or whitespace.
+     */
+    private static function unquote_sql_identifier(string $identifier): ?string {
+        $len = strlen($identifier);
+        if ($len >= 2 && $identifier[0] === '`' && $identifier[$len - 1] === '`') {
+            $identifier = substr($identifier, 1, -1);
+        }
+        if ($identifier === '' || str_contains($identifier, '`') || str_contains($identifier, "\0") || preg_match('/\s/', $identifier) === 1) {
+            return null;
+        }
+        return $identifier;
+    }
+
+    /**
+     * Resolve a case-preserving, normalized identity key for the active $wpdb->options table,
+     * or return null if the identifier is missing, contains whitespace, or is ambiguous.
      *
      * @return array{cache_key: string, table_name: string, schema_name: string|null}|null
      */
@@ -54,7 +69,7 @@ class SettingsManager {
             return null;
         }
 
-        $raw_table = trim($wpdb->options);
+        $raw_table = $wpdb->options;
         if ($raw_table === '' || str_contains($raw_table, "\0") || preg_match('/\s/', $raw_table) === 1) {
             return null;
         }
@@ -63,22 +78,40 @@ class SettingsManager {
         $table_name = $raw_table;
         if (str_contains($raw_table, '.')) {
             $parts = explode('.', $raw_table, 2);
-            $s_part = trim((string) ($parts[0] ?? ''), "` \t\r\n");
-            $t_part = trim((string) ($parts[1] ?? ''), "` \t\r\n");
-            if ($s_part === '' || $t_part === '' || str_contains($t_part, '.')) {
+            $s_part = self::unquote_sql_identifier((string) ($parts[0] ?? ''));
+            $t_part = self::unquote_sql_identifier((string) ($parts[1] ?? ''));
+            if ($s_part === null || $t_part === null || str_contains($t_part, '.')) {
                 return null;
             }
             $schema_name = $s_part;
             $table_name = $t_part;
+        } else {
+            $unquoted_table = self::unquote_sql_identifier($raw_table);
+            if ($unquoted_table === null) {
+                return null;
+            }
+            $table_name = $unquoted_table;
         }
 
-        $db_id = $schema_name
-            ?? ((isset($wpdb->dbname) && is_string($wpdb->dbname) && trim($wpdb->dbname) !== '')
-                ? trim($wpdb->dbname)
-                : '__default__');
+        $db_id = $schema_name;
+        if ($db_id === null) {
+            $raw_dbname = $wpdb->dbname ?? '';
+            if (!is_string($raw_dbname)) {
+                return null;
+            }
+            if ($raw_dbname === '') {
+                $db_id = '__default__';
+            } else {
+                $unquoted_db = self::unquote_sql_identifier($raw_dbname);
+                if ($unquoted_db === null) {
+                    return null;
+                }
+                $db_id = $unquoted_db;
+            }
+        }
 
         return [
-            'cache_key'   => strtolower($db_id . '|' . $table_name),
+            'cache_key'   => strlen($db_id) . ':' . $db_id . '|' . $table_name,
             'table_name'  => $table_name,
             'schema_name' => $schema_name,
         ];
