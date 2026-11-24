@@ -626,6 +626,7 @@ class RescueAssistantManager {
             }
         }
 
+        $original_trusted = $trusted;
         if (!$exists) {
             $trusted[] = [
                 'id'         => 'trust_' . substr(md5($key), 0, 8),
@@ -669,10 +670,25 @@ class RescueAssistantManager {
             ? \WebCareProScanner\Firewall\Core\WafVaultManager::get_preload_allow_path()
             : (defined('WP_CONTENT_DIR') ? WP_CONTENT_DIR : ABSPATH . 'wp-content') . '/webcare-waf/.rescue_allow.json';
         if (!self::write_marker_file($preload_file, (string) wp_json_encode($preload_allow))) {
-            // Compensate network option so stored state and preboot allowlist remain consistent
-            $rolled_back = $trusted;
-            unset($rolled_back[$key]);
-            self::update_preboot_option(self::OPTION_TRUSTED_ACTIONS, $rolled_back);
+            // Compensate network option by restoring original array and verifying read-back
+            $restored          = self::update_preboot_option(self::OPTION_TRUSTED_ACTIONS, $original_trusted);
+            $rollback_verified = $restored || (self::get_preboot_option(self::OPTION_TRUSTED_ACTIONS, []) === $original_trusted);
+
+            if (!$rollback_verified) {
+                if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                    \WebCareProScanner\System\AuditLogger::log_operational('waf_trust_preload_rollback_failed', [
+                        'user_id' => get_current_user_id(),
+                        'action'  => $key,
+                        'file'    => $preload_file,
+                    ]);
+                }
+
+                return [
+                    'success' => false,
+                    'code'    => 'preload_write_and_rollback_failed',
+                    'message' => __('Failed to publish preboot allowlist file and could not verify rollback of network options.', 'webcare-pro-security'),
+                ];
+            }
 
             if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
                 \WebCareProScanner\System\AuditLogger::log_operational('waf_trust_preload_write_failed', [
