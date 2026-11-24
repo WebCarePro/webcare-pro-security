@@ -796,6 +796,39 @@ if (!class_exists('wpdb')) {
         public array $queries = [];
         public array $mock_tables = [];
         public $mock_get_var_callback = null;
+        public array $tx_undo_stack = [];
+
+        private function record_tx_option_undo(string $optKey): void {
+            if (empty($this->tx_undo_stack)) {
+                return;
+            }
+            $topIdx = count($this->tx_undo_stack) - 1;
+            if (!array_key_exists($optKey, $this->tx_undo_stack[$topIdx])) {
+                $existed = array_key_exists($optKey, $GLOBALS['wp_mock_options'] ?? []);
+                $this->tx_undo_stack[$topIdx][$optKey] = [
+                    'existed' => $existed,
+                    'value'   => $existed ? $GLOBALS['wp_mock_options'][$optKey] : null,
+                ];
+            }
+        }
+
+        private function check_mock_option_failure(string $optKey, mixed $value): bool {
+            if (!isset($GLOBALS['wp_mock_update_option_failures'][$optKey])) {
+                return false;
+            }
+            $failVal = $GLOBALS['wp_mock_update_option_failures'][$optKey];
+            if (is_callable($failVal)) {
+                return ($failVal($optKey, $value) === true);
+            }
+            if (is_int($failVal)) {
+                if ($failVal > 0) {
+                    $GLOBALS['wp_mock_update_option_failures'][$optKey]--;
+                    return true;
+                }
+                return false;
+            }
+            return !empty($failVal);
+        }
 
         public function esc_like(string $text): string {
             return addcslashes($text, '_%\\');
@@ -807,7 +840,11 @@ if (!class_exists('wpdb')) {
         }
 
         public function prepare(string $query, ...$args): string {
-            return vsprintf(str_replace(['%s', '%d'], ["'%s'", '%d'], $query), $args);
+            $escapedArgs = array_map(
+                static fn($a) => is_string($a) ? str_replace("'", "\\'", $a) : $a,
+                $args
+            );
+            return vsprintf(str_replace(['%s', '%d'], ["'%s'", '%d'], $query), $escapedArgs);
         }
 
         public function get_var(string $query) {
@@ -815,11 +852,45 @@ if (!class_exists('wpdb')) {
             if (is_callable($this->mock_get_var_callback)) {
                 return ($this->mock_get_var_callback)($query);
             }
-            if (!empty($this->options) && preg_match("/SELECT\s+option_value\s+FROM\s+\S+\s+WHERE\s+option_name\s*=\s*'([^']+)'/is", $query, $sm)) {
-                $optKey = $sm[1];
-                return array_key_exists($optKey, $GLOBALS['wp_mock_options'] ?? [])
-                    ? (string) maybe_serialize($GLOBALS['wp_mock_options'][$optKey])
-                    : null;
+            if (!empty($this->options)) {
+                // SELECT option_value FROM wp_options WHERE option_name = '...' AND option_value LIKE '...%' AND CAST(SUBSTRING_INDEX(option_value, '|', -1) AS UNSIGNED) >= N [LIMIT 1] [FOR UPDATE]
+                if (preg_match("/SELECT\s+option_value\s+FROM\s+\S+\s+WHERE\s+option_name\s*=\s*'((?:\\\\'|[^'])+)'\s+AND\s+option_value\s+LIKE\s+'((?:\\\\'|[^'])*)%'\s+AND\s+CAST\(SUBSTRING_INDEX\(option_value,\s*'\|',\s*-1\)\s+AS\s+UNSIGNED\)\s*>=\s*(\d+)/is", $query, $lm)) {
+                    $optKey = str_replace("\\'", "'", $lm[1]);
+                    $prefix = stripslashes(str_replace("\\'", "'", $lm[2]));
+                    $minExp = (int) $lm[3];
+                    if (!array_key_exists($optKey, $GLOBALS['wp_mock_options'] ?? [])) {
+                        return null;
+                    }
+                    $rawVal = (string) maybe_serialize($GLOBALS['wp_mock_options'][$optKey]);
+                    if (!str_starts_with($rawVal, $prefix) || !str_contains($rawVal, '|')) {
+                        return null;
+                    }
+                    $exp = (int) substr((string) strrchr($rawVal, '|'), 1);
+                    return ($exp >= $minExp) ? $rawVal : null;
+                }
+
+                // SELECT option_value FROM wp_options WHERE option_name = '...' AND option_value = '...' AND CAST(SUBSTRING_INDEX(option_value, '|', -1) AS UNSIGNED) >= N [LIMIT 1] [FOR UPDATE]
+                if (preg_match("/SELECT\s+option_value\s+FROM\s+\S+\s+WHERE\s+option_name\s*=\s*'((?:\\\\'|[^'])+)'\s+AND\s+option_value\s*=\s*'((?:\\\\'|[^'])*)'\s+AND\s+CAST\(SUBSTRING_INDEX\(option_value,\s*'\|',\s*-1\)\s+AS\s+UNSIGNED\)\s*>=\s*(\d+)/is", $query, $em)) {
+                    $optKey = str_replace("\\'", "'", $em[1]);
+                    $expVal = str_replace("\\'", "'", $em[2]);
+                    $minExp = (int) $em[3];
+                    if (!array_key_exists($optKey, $GLOBALS['wp_mock_options'] ?? [])) {
+                        return null;
+                    }
+                    $rawVal = (string) maybe_serialize($GLOBALS['wp_mock_options'][$optKey]);
+                    if ($rawVal !== $expVal || !str_contains($rawVal, '|')) {
+                        return null;
+                    }
+                    $exp = (int) substr((string) strrchr($rawVal, '|'), 1);
+                    return ($exp >= $minExp) ? $rawVal : null;
+                }
+
+                if (preg_match("/SELECT\s+option_value\s+FROM\s+\S+\s+WHERE\s+option_name\s*=\s*'((?:\\\\'|[^'])+)'/is", $query, $sm)) {
+                    $optKey = str_replace("\\'", "'", $sm[1]);
+                    return array_key_exists($optKey, $GLOBALS['wp_mock_options'] ?? [])
+                        ? (string) maybe_serialize($GLOBALS['wp_mock_options'][$optKey])
+                        : null;
+                }
             }
             return null;
         }
@@ -870,22 +941,75 @@ if (!class_exists('wpdb')) {
         public function query(string $query) {
             $this->queries[] = $query;
 
+            $trimmedUpper = strtoupper(trim($query));
+            if ($trimmedUpper === 'START TRANSACTION') {
+                $this->tx_undo_stack[] = [];
+                return 1;
+            }
+            if ($trimmedUpper === 'COMMIT') {
+                if (!empty($this->tx_undo_stack)) {
+                    array_pop($this->tx_undo_stack);
+                }
+                return 1;
+            }
+            if ($trimmedUpper === 'ROLLBACK') {
+                if (!empty($this->tx_undo_stack)) {
+                    $undoFrame = array_pop($this->tx_undo_stack);
+                    foreach ($undoFrame as $optKey => $prior) {
+                        if ($prior['existed']) {
+                            $GLOBALS['wp_mock_options'][$optKey] = $prior['value'];
+                        } else {
+                            unset($GLOBALS['wp_mock_options'][$optKey]);
+                        }
+                    }
+                }
+                return 1;
+            }
+
             if (!empty($this->options)) {
-                // Simulate AtomicNonceStore INSERT ... ON DUPLICATE KEY UPDATE against $GLOBALS['wp_mock_options']
+                // Simulate INSERT IGNORE INTO wp_options (option_name, option_value, autoload) VALUES ('...', '...', 'no')
+                if (preg_match("/INSERT\s+IGNORE\s+INTO\s+\S+\s*\(\s*option_name\s*,\s*option_value\s*,\s*autoload\s*\)\s*VALUES\s*\('((?:\\\\'|[^'])+)',\s*'((?:\\\\'|[^'])*)',\s*'[^']*'\)/is", $query, $im)) {
+                    $optKey = str_replace("\\'", "'", $im[1]);
+                    $rawVal = str_replace("\\'", "'", $im[2]);
+                    if (array_key_exists($optKey, $GLOBALS['wp_mock_options'] ?? [])) {
+                        return 0;
+                    }
+                    $this->record_tx_option_undo($optKey);
+                    $GLOBALS['wp_mock_options'][$optKey] = maybe_unserialize($rawVal);
+                    return 1;
+                }
+
+                // Simulate AtomicNonceStore INSERT ... ON DUPLICATE KEY UPDATE option_value = IF(CAST(...) < N, ...)
                 if (preg_match("/INSERT\s+INTO\s+\S+\s*\(\s*option_name\s*,\s*option_value\s*,\s*autoload\s*\)\s*VALUES\s*\('([^']+)',\s*'([^']+)',\s*'no'\)\s*ON\s+DUPLICATE\s+KEY\s+UPDATE\s*option_value\s*=\s*IF\(CAST\(option_value\s+AS\s+UNSIGNED\)\s*<\s*(\d+)/is", $query, $m)) {
                     $optKey = $m[1];
                     $newVal = $m[2];
                     $nowTs  = (int) $m[3];
                     if (!isset($GLOBALS['wp_mock_options'][$optKey])) {
+                        $this->record_tx_option_undo($optKey);
                         $GLOBALS['wp_mock_options'][$optKey] = $newVal;
                         return 1;
                     }
                     $curExp = (int) $GLOBALS['wp_mock_options'][$optKey];
                     if ($curExp < $nowTs) {
+                        $this->record_tx_option_undo($optKey);
                         $GLOBALS['wp_mock_options'][$optKey] = $newVal;
                         return 2;
                     }
                     return 0;
+                }
+
+                // Simulate transactional_upsert_option INSERT INTO wp_options ... ON DUPLICATE KEY UPDATE option_value = '...', autoload = '...'
+                if (preg_match("/INSERT\s+INTO\s+\S+\s*\(\s*option_name\s*,\s*option_value\s*,\s*autoload\s*\)\s*VALUES\s*\('((?:\\\\'|[^'])+)',\s*'((?:\\\\'|[^'])*)',\s*'[^']*'\)\s*ON\s+DUPLICATE\s+KEY\s+UPDATE\s+option_value\s*=\s*'((?:\\\\'|[^'])*)',\s*autoload\s*=\s*'[^']*'/is", $query, $upm)) {
+                    $optKey = str_replace("\\'", "'", $upm[1]);
+                    $rawVal = str_replace("\\'", "'", $upm[2]);
+                    $parsedVal = maybe_unserialize($rawVal);
+                    if ($this->check_mock_option_failure($optKey, $parsedVal)) {
+                        return false;
+                    }
+                    $existed = array_key_exists($optKey, $GLOBALS['wp_mock_options'] ?? []);
+                    $this->record_tx_option_undo($optKey);
+                    $GLOBALS['wp_mock_options'][$optKey] = $parsedVal;
+                    return $existed ? 2 : 1;
                 }
 
                 // Simulate AtomicNonceStore bounded DELETE ... LIMIT against $GLOBALS['wp_mock_options']
@@ -905,6 +1029,7 @@ if (!class_exists('wpdb')) {
                         }
                         $v = $GLOBALS['wp_mock_options'][$k] ?? null;
                         if ((is_int($v) || (is_string($v) && ctype_digit($v))) && (int) $v > 0 && (int) $v < $nowTs) {
+                            $this->record_tx_option_undo($k);
                             unset($GLOBALS['wp_mock_options'][$k]);
                             $deleted++;
                         }
@@ -912,11 +1037,28 @@ if (!class_exists('wpdb')) {
                     return $deleted;
                 }
 
+                // Simulate SQL-expiry-enforced stale-lock compare-and-delete
+                if (preg_match("/DELETE\s+FROM\s+\S+\s+WHERE\s+option_name\s*=\s*'((?:\\\\'|[^'])+)'\s+AND\s+option_value\s*=\s*'((?:\\\\'|[^'])*)'\s+AND\s+CAST\(SUBSTRING_INDEX\(option_value,\s*'\|',\s*-1\)\s+AS\s+UNSIGNED\)\s*>\s*0\s+AND\s+CAST\(SUBSTRING_INDEX\(option_value,\s*'\|',\s*-1\)\s+AS\s+UNSIGNED\)\s*<\s*(\d+)/is", $query, $scdm)) {
+                    $optKey = str_replace("\\'", "'", $scdm[1]);
+                    $expVal = str_replace("\\'", "'", $scdm[2]);
+                    $maxExp = (int) $scdm[3];
+                    if (array_key_exists($optKey, $GLOBALS['wp_mock_options'] ?? []) && (string) $GLOBALS['wp_mock_options'][$optKey] === $expVal && str_contains($expVal, '|')) {
+                        $expTs = (int) substr((string) strrchr($expVal, '|'), 1);
+                        if ($expTs > 0 && $expTs < $maxExp) {
+                            $this->record_tx_option_undo($optKey);
+                            unset($GLOBALS['wp_mock_options'][$optKey]);
+                            return 1;
+                        }
+                    }
+                    return 0;
+                }
+
                 // Simulate atomic compare-and-delete: DELETE FROM wp_options WHERE option_name = '...' AND option_value = '...'
-                if (preg_match("/DELETE\s+FROM\s+\S+\s+WHERE\s+option_name\s*=\s*'([^']+)'\s+AND\s+option_value\s*=\s*'([^']*)'/is", $query, $cdm)) {
-                    $optKey = $cdm[1];
-                    $expVal = $cdm[2];
+                if (preg_match("/DELETE\s+FROM\s+\S+\s+WHERE\s+option_name\s*=\s*'((?:\\\\'|[^'])+)'\s+AND\s+option_value\s*=\s*'((?:\\\\'|[^'])*)'\s*$/is", $query, $cdm)) {
+                    $optKey = str_replace("\\'", "'", $cdm[1]);
+                    $expVal = str_replace("\\'", "'", $cdm[2]);
                     if (array_key_exists($optKey, $GLOBALS['wp_mock_options'] ?? []) && (string) $GLOBALS['wp_mock_options'][$optKey] === $expVal) {
+                        $this->record_tx_option_undo($optKey);
                         unset($GLOBALS['wp_mock_options'][$optKey]);
                         return 1;
                     }
@@ -924,25 +1066,44 @@ if (!class_exists('wpdb')) {
                 }
 
                 // Simulate atomic prefix compare-and-delete: DELETE FROM wp_options WHERE option_name = '...' AND option_value LIKE '...%'
-                if (preg_match("/DELETE\s+FROM\s+\S+\s+WHERE\s+option_name\s*=\s*'([^']+)'\s+AND\s+option_value\s+LIKE\s+'([^']*)%'/is", $query, $ldm)) {
-                    $optKey = $ldm[1];
-                    $prefix = stripslashes($ldm[2]);
+                if (preg_match("/DELETE\s+FROM\s+\S+\s+WHERE\s+option_name\s*=\s*'((?:\\\\'|[^'])+)'\s+AND\s+option_value\s+LIKE\s+'((?:\\\\'|[^'])*)%'/is", $query, $ldm)) {
+                    $optKey = str_replace("\\'", "'", $ldm[1]);
+                    $prefix = stripslashes(str_replace("\\'", "'", $ldm[2]));
                     if (array_key_exists($optKey, $GLOBALS['wp_mock_options'] ?? []) && str_starts_with((string) $GLOBALS['wp_mock_options'][$optKey], $prefix)) {
+                        $this->record_tx_option_undo($optKey);
                         unset($GLOBALS['wp_mock_options'][$optKey]);
                         return 1;
                     }
                     return 0;
                 }
 
+                // Simulate SQL-expiry-enforced compare-and-swap renewal: UPDATE wp_options SET option_value = '...' WHERE option_name = '...' AND option_value = '...' AND CAST(SUBSTRING_INDEX(...)) >= N
+                if (preg_match("/UPDATE\s+\S+\s+SET\s+option_value\s*=\s*'((?:\\\\'|[^'])*)'\s+WHERE\s+option_name\s*=\s*'((?:\\\\'|[^'])+)'\s+AND\s+option_value\s*=\s*'((?:\\\\'|[^'])*)'\s+AND\s+CAST\(SUBSTRING_INDEX\(option_value,\s*'\|',\s*-1\)\s+AS\s+UNSIGNED\)\s*>=\s*(\d+)/is", $query, $sum)) {
+                    $newVal = str_replace("\\'", "'", $sum[1]);
+                    $optKey = str_replace("\\'", "'", $sum[2]);
+                    $expVal = str_replace("\\'", "'", $sum[3]);
+                    $minExp = (int) $sum[4];
+                    if (array_key_exists($optKey, $GLOBALS['wp_mock_options'] ?? []) && (string) $GLOBALS['wp_mock_options'][$optKey] === $expVal && str_contains($expVal, '|')) {
+                        $curExp = (int) substr((string) strrchr($expVal, '|'), 1);
+                        if ($curExp >= $minExp && $newVal !== $expVal) {
+                            $this->record_tx_option_undo($optKey);
+                            $GLOBALS['wp_mock_options'][$optKey] = $newVal;
+                            return 1;
+                        }
+                    }
+                    return 0;
+                }
+
                 // Simulate atomic compare-and-swap: UPDATE wp_options SET option_value = '...' WHERE option_name = '...' AND option_value = '...'
-                if (preg_match("/UPDATE\s+\S+\s+SET\s+option_value\s*=\s*'([^']*)'\s+WHERE\s+option_name\s*=\s*'([^']+)'\s+AND\s+option_value\s*=\s*'([^']*)'/is", $query, $um)) {
-                    $newVal = $um[1];
-                    $optKey = $um[2];
-                    $expVal = $um[3];
+                if (preg_match("/UPDATE\s+\S+\s+SET\s+option_value\s*=\s*'((?:\\\\'|[^'])*)'\s+WHERE\s+option_name\s*=\s*'((?:\\\\'|[^'])+)'\s+AND\s+option_value\s*=\s*'((?:\\\\'|[^'])*)'\s*$/is", $query, $um)) {
+                    $newVal = str_replace("\\'", "'", $um[1]);
+                    $optKey = str_replace("\\'", "'", $um[2]);
+                    $expVal = str_replace("\\'", "'", $um[3]);
                     if (array_key_exists($optKey, $GLOBALS['wp_mock_options'] ?? []) && (string) $GLOBALS['wp_mock_options'][$optKey] === $expVal) {
                         if ($newVal === $expVal) {
                             return 0;
                         }
+                        $this->record_tx_option_undo($optKey);
                         $GLOBALS['wp_mock_options'][$optKey] = $newVal;
                         return 1;
                     }

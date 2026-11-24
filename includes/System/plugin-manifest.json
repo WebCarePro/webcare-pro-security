@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-24T18:30:44.282Z",
+  "generated_at": "2026-11-24T18:50:16.339Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -240,8 +240,8 @@
       "size": 297712
     },
     "includes/Api/Controllers/SystemController.php": {
-      "sha256": "45a6bc3da4ccb9c60fca791375f2dcea64eb74e819057ae3b2cb114d86a5b75b",
-      "size": 110197
+      "sha256": "d61e0a6dff6295c7d9a46591ee5ee90e4c16ce86978d23878b3f7bb0fbed65cb",
+      "size": 110525
     },
     "includes/Api/CronRoutes.php": {
       "sha256": "6235e1c35a4a7eb1193b3bafb04dbab636661dcf5094ab9245a694fa367dbc60",
@@ -1080,8 +1080,8 @@
       "size": 24882
     },
     "includes/System/SettingsManager.php": {
-      "sha256": "6d0f1ed7816c9000ff5ab8450aa6c68158d4fb39e89add42d41a668f7485fb91",
-      "size": 159120
+      "sha256": "f1afc093b3f2eb440c90ec2698ec222a6431b8d15f4e5e3063a9a6e95b6930fc",
+      "size": 182912
     },
     "includes/System/SystemDoctor.php": {
       "sha256": "f6956025a87cb8c33e3ea16306581d29ce95005f5e3b1f9654ccd1427cb9df59",

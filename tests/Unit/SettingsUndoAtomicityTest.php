@@ -17,6 +17,8 @@ final class SettingsUndoAtomicityTest extends TestCase
         delete_option(SettingsManager::OPTION_REVISION_KEY);
         SettingsManager::$stale_lock_observed_hook = null;
         SettingsManager::$before_persist_settings_hook = null;
+        SettingsManager::$after_renewal_before_write_hook = null;
+        SettingsManager::$inside_tx_before_commit_hook = null;
         SettingsManager::$interleave_before_undo_pop_hook = null;
         unset(
             $GLOBALS['wp_mock_update_option_failures'][SettingsManager::OPTION_KEY],
@@ -35,6 +37,8 @@ final class SettingsUndoAtomicityTest extends TestCase
         delete_option(SettingsManager::OPTION_REVISION_KEY);
         SettingsManager::$stale_lock_observed_hook = null;
         SettingsManager::$before_persist_settings_hook = null;
+        SettingsManager::$after_renewal_before_write_hook = null;
+        SettingsManager::$inside_tx_before_commit_hook = null;
         SettingsManager::$interleave_before_undo_pop_hook = null;
         unset(
             $GLOBALS['wp_mock_update_option_failures'][SettingsManager::OPTION_KEY],
@@ -489,6 +493,191 @@ final class SettingsUndoAtomicityTest extends TestCase
                 'Undo finally block must not delete contender\'s reclaimed lock.'
             );
             SettingsManager::release_mutation_lock($contenderToken);
+        } finally {
+            $GLOBALS['wpdb'] = $origWpdb;
+        }
+    }
+
+    public function testPostRenewalSuspensionBeforeProtectedWriteAbortsViaTransactionalForUpdateFence(): void
+    {
+        global $wpdb;
+        $origWpdb = $wpdb ?? null;
+        $mockDb = new \wpdb();
+        $mockDb->options = 'wp_options';
+        $GLOBALS['wpdb'] = $mockDb;
+
+        try {
+            // Baseline firewall settings
+            SettingsManager::save_settings([
+                'waf_mode'       => 'enabled',
+                'waf_block_sqli' => true,
+            ]);
+
+            $adminBRevision = 0;
+
+            // Exact P1 race simulation:
+            // 1. Process A completes sanitization and SUCCEEDS in renew_mutation_lock().
+            // 2. Process A is suspended AFTER renew_mutation_lock() and BEFORE writing OPTION_KEY.
+            // 3. Process A's renewed 60s lease expires while suspended.
+            // 4. Process B reclaims the lock and commits newer firewall settings ('enabled', waf_block_sqli = true, login_max_retries = 2).
+            // 5. Process A resumes into execute_fenced_transaction() -> SELECT ... FOR UPDATE rejects Process A,
+            //    executes ROLLBACK, and leaves Process B's firewall settings, revision, and snapshots 100% intact.
+            SettingsManager::$after_renewal_before_write_hook = static function (string $renewedTokenA) use (&$adminBRevision): void {
+                SettingsManager::$after_renewal_before_write_hook = null;
+
+                // Verify Process A's renewal had genuinely succeeded right before suspension
+                self::assertTrue(SettingsManager::verify_mutation_lock_owner($renewedTokenA));
+
+                // Simulate OS/PHP-FPM suspension exceeding the 60s lease
+                update_option(SettingsManager::OPTION_MUTATION_LOCK, $renewedTokenA . '|' . (time() - 5), false);
+
+                // Process B reclaims the lock and commits newer security-policy settings
+                $savedB = SettingsManager::save_settings([
+                    'waf_mode'          => 'enabled',
+                    'waf_block_sqli'    => true,
+                    'login_max_retries' => 2,
+                ]);
+                self::assertIsArray($savedB);
+                $adminBRevision = SettingsManager::get_settings_revision();
+            };
+
+            // Process A was attempting to weaken WAF ('disabled', waf_block_sqli = false)
+            $staleSaveA = SettingsManager::save_settings([
+                'waf_mode'          => 'disabled',
+                'waf_block_sqli'    => false,
+                'login_max_retries' => 15,
+            ]);
+
+            $this->assertFalse(
+                $staleSaveA,
+                'Process A suspended after lease renewal must be blocked by transactional SELECT ... FOR UPDATE fence.'
+            );
+
+            // Process B's active firewall configuration MUST NOT be overwritten by stale Process A
+            $live = SettingsManager::get_settings();
+            $this->assertSame('enabled', $live['waf_mode']);
+            $this->assertTrue($live['waf_block_sqli']);
+            $this->assertSame(2, $live['login_max_retries']);
+            $this->assertSame($adminBRevision, SettingsManager::get_settings_revision());
+            $this->assertCount(1, SettingsManager::get_settings_snapshots());
+        } finally {
+            $GLOBALS['wpdb'] = $origWpdb;
+        }
+    }
+
+    public function testMidTransactionLeaseExpiryBeforeCommitRollsBackAllUncommittedWrites(): void
+    {
+        global $wpdb;
+        $origWpdb = $wpdb ?? null;
+        $mockDb = new \wpdb();
+        $mockDb->options = 'wp_options';
+        $GLOBALS['wpdb'] = $mockDb;
+
+        try {
+            SettingsManager::save_settings([
+                'waf_mode'          => 'enabled',
+                'login_max_retries' => 4,
+            ]);
+            $baselineRev = SettingsManager::get_settings_revision();
+
+            // Simulate Process A stalling INSIDE the open transaction AFTER executing uncommitted SQL upserts
+            // and immediately BEFORE pre-COMMIT lease verification & COMMIT.
+            SettingsManager::$inside_tx_before_commit_hook = static function (string $txToken): void {
+                SettingsManager::$inside_tx_before_commit_hook = null;
+                update_option(SettingsManager::OPTION_MUTATION_LOCK, $txToken . '|' . (time() - 2), false);
+            };
+
+            $txExpiredResult = SettingsManager::save_settings([
+                'waf_mode'          => 'disabled',
+                'login_max_retries' => 20,
+            ]);
+
+            $this->assertFalse(
+                $txExpiredResult,
+                'Pre-COMMIT SQL lease check must ROLLBACK uncommitted settings, revision, and snapshot writes when lease expired mid-transaction.'
+            );
+
+            $live = SettingsManager::get_settings();
+            $this->assertSame('enabled', $live['waf_mode']);
+            $this->assertSame(4, $live['login_max_retries']);
+            $this->assertSame($baselineRev, SettingsManager::get_settings_revision());
+            $this->assertCount(0, SettingsManager::get_settings_snapshots());
+        } finally {
+            $GLOBALS['wpdb'] = $origWpdb;
+        }
+    }
+
+    public function testResetDefaultsIsProtectedByTransactionalForUpdateFenceAgainstPostRenewalExpiry(): void
+    {
+        global $wpdb;
+        $origWpdb = $wpdb ?? null;
+        $mockDb = new \wpdb();
+        $mockDb->options = 'wp_options';
+        $GLOBALS['wpdb'] = $mockDb;
+
+        try {
+            SettingsManager::save_settings([
+                'waf_mode'          => 'learning',
+                'login_max_retries' => 3,
+            ]);
+
+            // Process A starts reset_defaults(), renews its lease, then stalls past lease expiry while Process B saves custom settings
+            SettingsManager::$after_renewal_before_write_hook = static function (string $resetTokenA): void {
+                SettingsManager::$after_renewal_before_write_hook = null;
+                update_option(SettingsManager::OPTION_MUTATION_LOCK, $resetTokenA . '|' . (time() - 5), false);
+
+                $savedB = SettingsManager::save_settings([
+                    'waf_mode'          => 'disabled',
+                    'login_max_retries' => 2,
+                ]);
+                self::assertIsArray($savedB);
+            };
+
+            $resetRes = SettingsManager::reset_defaults();
+            $this->assertFalse($resetRes, 'Stale reset_defaults() must fail closed when lock expired after renewal.');
+
+            // Process B's custom settings must NOT be wiped back to factory defaults!
+            $live = SettingsManager::get_settings();
+            $this->assertSame('disabled', $live['waf_mode']);
+            $this->assertSame(2, $live['login_max_retries']);
+
+            // Legitimate uncontended reset_defaults() succeeds atomically and bumps revision
+            $revBeforeReset = SettingsManager::get_settings_revision();
+            $validReset = SettingsManager::reset_defaults();
+            $this->assertIsArray($validReset);
+            $this->assertSame('enabled', $validReset['waf_mode']);
+            $this->assertSame(5, $validReset['login_max_retries']);
+            $this->assertSame($revBeforeReset + 1, SettingsManager::get_settings_revision());
+        } finally {
+            $GLOBALS['wpdb'] = $origWpdb;
+        }
+    }
+
+    public function testUndoPhase3SnapshotPopMidTransactionExpiryRollsBackPop(): void
+    {
+        global $wpdb;
+        $origWpdb = $wpdb ?? null;
+        $mockDb = new \wpdb();
+        $mockDb->options = 'wp_options';
+        $GLOBALS['wpdb'] = $mockDb;
+
+        try {
+            SettingsManager::save_settings(['waf_mode' => 'learning']);
+            SettingsManager::save_settings(['waf_mode' => 'enabled']);
+            $this->assertCount(1, SettingsManager::get_settings_snapshots());
+
+            // Arm mid-transaction expiry hook ONLY during Phase 3 snapshot pop (after Phase 1 restore finishes)
+            SettingsManager::$interleave_before_undo_pop_hook = static function (): void {
+                SettingsManager::$inside_tx_before_commit_hook = static function (string $undoTxToken): void {
+                    SettingsManager::$inside_tx_before_commit_hook = null;
+                    update_option(SettingsManager::OPTION_MUTATION_LOCK, $undoTxToken . '|' . (time() - 3), false);
+                };
+            };
+
+            $undoRes = SettingsManager::undo_last_settings();
+            $this->assertFalse($undoRes['success'], 'Mid-transaction lease expiry during Phase 3 snapshot pop must ROLLBACK.');
+            $this->assertSame('lock_lost', $undoRes['code'] ?? '');
+            $this->assertCount(1, SettingsManager::get_settings_snapshots(), 'Rolled-back Phase 3 pop must preserve snapshot entry.');
         } finally {
             $GLOBALS['wpdb'] = $origWpdb;
         }

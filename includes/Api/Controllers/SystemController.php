@@ -1575,6 +1575,13 @@ final class SystemController extends AbstractApiController {
      */
     public static function reset_settings(\WP_REST_Request $request) {
         $defaults = \WebCareProScanner\System\SettingsManager::reset_defaults();
+        if ($defaults === false || !is_array($defaults)) {
+            return new \WP_Error(
+                'settings_reset_failed',
+                __('Unable to reset settings because another administrative settings update is in progress.', 'webcare-pro-security'),
+                ['status' => 409]
+            );
+        }
         return rest_ensure_response([
             'success'  => true,
             'message'  => __('Settings have been reset to factory defaults.', 'webcare-pro-security'),
