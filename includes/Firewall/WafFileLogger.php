@@ -1260,15 +1260,18 @@ class WafFileLogger {
      */
     public static function clear_all_logs(): bool {
         // Phase 1: Record and verify administrator intent audit event BEFORE touching storage
-        if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
-            $intent_recorded = \WebCareProScanner\System\AuditLogger::log(
-                'waf_logs_purge_intent',
-                'Administrator initiated intent to purge all WAF forensic log files.'
-            );
-            if (!$intent_recorded) {
-                // Refuse to proceed with purge if intent record cannot be confirmed
-                return false;
-            }
+        // Fail-closed invariant: If AuditLogger is unavailable or intent logging fails, strictly refuse to purge
+        if (!class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+            return false;
+        }
+
+        $intent_recorded = \WebCareProScanner\System\AuditLogger::log(
+            'waf_logs_purge_intent',
+            'Administrator initiated intent to purge all WAF forensic log files.'
+        );
+        if (!$intent_recorded) {
+            // Refuse to proceed with purge if intent record cannot be confirmed
+            return false;
         }
 
         $dir = self::get_storage_dir();

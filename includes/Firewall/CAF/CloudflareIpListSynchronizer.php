@@ -26,6 +26,7 @@ class CloudflareIpListSynchronizer {
     public const OPTION_BAN_QUEUE        = 'webcare_cf_pending_ban_queue';
     public const OPTION_TOKEN_SCOPE      = 'webcare_cf_token_scope';
     public const OPTION_ACCOUNT_LIST_ID  = 'webcare_cf_account_list_id';
+    public const OPTION_RECONCILIATION_FLAG = 'webcare_cf_compensation_reconciliation_needed';
     public const OPTION_ACTIVE_EDGE_BANS = 'webcare_cf_active_edge_bans';
     public const OPTION_PENDING_OPERATIONS = 'webcare_cf_pending_operations';
     public const OPTION_IP_GENERATIONS   = 'webcare_cf_ip_generations';
@@ -616,11 +617,15 @@ class CloudflareIpListSynchronizer {
             if (!$persisted) {
                 // Compensate/Rollback OPTION_IP_GENERATIONS to previous state if queue persistence failed
                 $rolled_back = self::save_verified_option(self::OPTION_IP_GENERATIONS, $prev_generations);
-                if (!$rolled_back && class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
-                    \WebCareProScanner\System\AuditLogger::log_operational('cf_queue_compensation_failed', [
-                        'error'     => 'Failed to reconcile OPTION_IP_GENERATIONS after queue persistence failure',
-                        'timestamp' => time(),
-                    ]);
+                if (!$rolled_back) {
+                    // Set a durable persistent reconciliation-needed marker in database
+                    update_option(self::OPTION_RECONCILIATION_FLAG, time(), false);
+                    if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                        \WebCareProScanner\System\AuditLogger::log_operational('cf_queue_compensation_failed', [
+                            'error'     => 'Failed to reconcile OPTION_IP_GENERATIONS after queue persistence failure',
+                            'timestamp' => time(),
+                        ]);
+                    }
                 }
                 return false;
             }

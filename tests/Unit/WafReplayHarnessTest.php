@@ -714,24 +714,37 @@ class WafReplayHarnessTest extends TestCase {
         }
 
         // Case D2: Failure-injection where both queue persistence AND rollback compensation fail
-        // Verifies operational logging of cf_queue_compensation_failed and clean failure propagation
+        // Verifies persistent reconciliation marker, operational logging of cf_queue_compensation_failed, and clean failure propagation
         $fail_ip_comp = '203.0.113.147';
         $logged_comp_events = [];
         \WebCareProScanner\System\AuditLogger::$operational_log_hook = static function ($event, $details) use (&$logged_comp_events) {
             $logged_comp_events[] = $event;
         };
 
+        delete_option(CloudflareIpListSynchronizer::OPTION_RECONCILIATION_FLAG);
+        $prev_gen_before_comp = CloudflareIpListSynchronizer::get_ip_generation($fail_ip_comp);
+
+        // Queue write fails unconditionally
         $GLOBALS['wp_mock_update_option_failures'][CloudflareIpListSynchronizer::OPTION_BAN_QUEUE] = true;
-        // After first generation write, simulate storage failure during rollback compensation as well
-        $GLOBALS['wp_mock_update_option_failures'][CloudflareIpListSynchronizer::OPTION_IP_GENERATIONS] = false;
+        // Generation write fails on rollback compensation (second write for this option in the transaction)
+        $gen_write_count = 0;
+        $GLOBALS['wp_mock_update_option_failures'][CloudflareIpListSynchronizer::OPTION_IP_GENERATIONS] = function () use (&$gen_write_count) {
+            $gen_write_count++;
+            // Allow 1st write (initial generation advance), fail 2nd write (rollback compensation)
+            return ($gen_write_count >= 2);
+        };
 
         try {
             $comp_fail_res = CloudflareIpListSynchronizer::queue_ip_ban($fail_ip_comp, 'Double fail test', 86400);
-            $this->assertSame('enqueue_failed', $comp_fail_res['cf_sync_state']);
+            $this->assertSame('enqueue_failed', $comp_fail_res['cf_sync_state'], 'Must report enqueue_failed on double failure');
             $this->assertNull($comp_fail_res['operation_id']);
+            $this->assertContains('cf_queue_compensation_failed', $logged_comp_events, 'Must emit cf_queue_compensation_failed operational event');
+            $this->assertNotEmpty(get_option(CloudflareIpListSynchronizer::OPTION_RECONCILIATION_FLAG), 'Must set persistent reconciliation marker');
+            $this->assertSame($prev_gen_before_comp + 1, CloudflareIpListSynchronizer::get_ip_generation($fail_ip_comp), 'Generation remains at uncompensated value when rollback fails');
         } finally {
             unset($GLOBALS['wp_mock_update_option_failures'][CloudflareIpListSynchronizer::OPTION_BAN_QUEUE]);
             unset($GLOBALS['wp_mock_update_option_failures'][CloudflareIpListSynchronizer::OPTION_IP_GENERATIONS]);
+            delete_option(CloudflareIpListSynchronizer::OPTION_RECONCILIATION_FLAG);
             \WebCareProScanner\System\AuditLogger::$operational_log_hook = null;
         }
 
@@ -880,12 +893,22 @@ class WafReplayHarnessTest extends TestCase {
         $this->assertContains('waf_logs_purge_intent', $audited_events, 'Must record waf_logs_purge_intent before deleting files');
         $this->assertContains('waf_logs_purged', $audited_events, 'Must record waf_logs_purged after successful deletion');
 
-        // Test that clear_all_logs() refuses to purge when audit write fails
+        // Test that clear_all_logs() refuses to purge and preserves all WAF log files when audit write fails
+        // First log a fresh incident to ensure at least one physical log file exists on disk
+        WafFileLogger::log_incident($rule, 'blocked');
+        $storage_dir = WafFileLogger::get_storage_dir();
+        $files_before = is_dir($storage_dir) ? array_values(array_filter(scandir($storage_dir), fn($f) => preg_match('/-waf-logs\.json(?:\.\d+)?$/', $f))) : [];
+        $this->assertNotEmpty($files_before, 'At least one WAF log file must exist before testing purge refusal');
+
         $orig_custom_log_dir = \WebCareProScanner\System\AuditLogger::$custom_log_dir;
         \WebCareProScanner\System\AuditLogger::$custom_log_dir = '/proc/nonexistent_webcare_readonly_path';
         try {
             $refused = WafFileLogger::clear_all_logs();
             $this->assertFalse($refused, 'clear_all_logs must return false and refuse to purge if audit intent write cannot be confirmed');
+            
+            // Assert that original WAF log files remain 100% untouched and preserved on refusal
+            $files_after = is_dir($storage_dir) ? array_values(array_filter(scandir($storage_dir), fn($f) => preg_match('/-waf-logs\.json(?:\.\d+)?$/', $f))) : [];
+            $this->assertSame($files_before, $files_after, 'All WAF log files must be preserved byte-for-byte on audit intent write refusal');
         } finally {
             \WebCareProScanner\System\AuditLogger::$custom_log_dir = $orig_custom_log_dir;
         }

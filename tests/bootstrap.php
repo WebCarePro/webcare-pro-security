@@ -112,8 +112,20 @@ if (!function_exists('add_option')) {
 
 if (!function_exists('update_option')) {
     function update_option(string $option, $value, $autoload = null): bool {
-        if (!empty($GLOBALS['wp_mock_update_option_failures'][$option])) {
-            return false;
+        if (isset($GLOBALS['wp_mock_update_option_failures'][$option])) {
+            $fail_val = $GLOBALS['wp_mock_update_option_failures'][$option];
+            if (is_callable($fail_val)) {
+                if ($fail_val($option, $value) === true) {
+                    return false;
+                }
+            } elseif (is_int($fail_val)) {
+                if ($fail_val > 0) {
+                    $GLOBALS['wp_mock_update_option_failures'][$option]--;
+                    return false;
+                }
+            } elseif (!empty($fail_val)) {
+                return false;
+            }
         }
         $GLOBALS['wp_mock_options'][$option] = $value;
         return true;
