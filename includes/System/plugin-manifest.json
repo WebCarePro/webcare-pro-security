@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-25T20:26:26.768Z",
+  "generated_at": "2026-11-25T20:30:58.316Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -516,8 +516,8 @@
       "size": 31579
     },
     "includes/Firewall/CAF/CloudflareIpListSynchronizer.php": {
-      "sha256": "0f2b27951a93c7f10f31cee1efa64630c4d4ef394fb48f99f5db4d99ed78f747",
-      "size": 93983
+      "sha256": "738f335e1ed080dbf6aa9f846ea3c6a2e9794eb5350950a84a9697b70d297975",
+      "size": 93986
     },
     "includes/Firewall/CAF/CloudflareSlotOptimizer.php": {
       "sha256": "211a3a5393f52af9ec2e47dda1c3edeebc9ed876dcdfa7d0469f5543511c1ac4",
@@ -616,8 +616,8 @@
       "size": 10110
     },
     "includes/Firewall/Core/ViolationResponder.php": {
-      "sha256": "320bd7170d5a1efe17d5ee82c47740522c308c5955f95ee3a2d3c1a3b3a2f353",
-      "size": 59396
+      "sha256": "238a4684e1c5e2281ee958ad54d4b5a0067765c6dd04673f94f0296a07c407eb",
+      "size": 59402
     },
     "includes/Firewall/Core/WafVaultManager.php": {
       "sha256": "2fb0cf3fbf763556f4192be032724cb7760a00acdd41246660ad4643a7e9f34c",
@@ -768,8 +768,8 @@
       "size": 21084
     },
     "includes/Firewall/WafFileLogger.php": {
-      "sha256": "48ff42c2f9e8fd458b858a557cc55fcb75c285371b5154e05000553690da04c7",
-      "size": 76636
+      "sha256": "015b132435d3583dbb02685b201abf8a1bd2e71494ce61cc3de7d634974910b3",
+      "size": 76705
     },
     "includes/Forensics/AttackChainEngine.php": {
       "sha256": "3bf4e688f9c42eecaa4cad29be378f2f116896ee497508d5874033d4ff31a5a9",

@@ -446,7 +446,7 @@ class CloudflareIpListSynchronizer {
             if (!is_dir($dir)) {
                 \WebCareProScanner\Firewall\WafFileLogger::ensure_directory_secured();
             }
-            if (is_dir($dir) && is_writable($dir)) {
+            if (is_dir($dir) && wp_is_writable($dir)) {
                 $stamp_file = $dir . '/cf-flush-debounce.stamp';
                 if (is_file($stamp_file)) {
                     // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents

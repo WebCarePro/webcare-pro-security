@@ -1514,13 +1514,15 @@ class WafFileLogger {
             return false;
         }
 
-        // Unit-test isolation compatibility when mock transient store is active
-        if (isset($GLOBALS['wp_mock_transients']) && is_array($GLOBALS['wp_mock_transients'])) {
-            if (!empty($GLOBALS['wp_mock_transients'][$cache_key])) {
-                return true;
+        // Unit-test isolation compatibility when running under WEBCAREPROSCAN_TESTING
+        if (defined('WEBCAREPROSCAN_TESTING') && WEBCAREPROSCAN_TESTING) {
+            if (function_exists('get_transient') && function_exists('set_transient')) {
+                if (get_transient($cache_key)) {
+                    return true;
+                }
+                set_transient($cache_key, 1, $ttl);
+                return false;
             }
-            $GLOBALS['wp_mock_transients'][$cache_key] = 1;
-            return false;
         }
 
         $now = time();

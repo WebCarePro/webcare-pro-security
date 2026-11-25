@@ -197,7 +197,7 @@ final class ViolationResponder {
 
         // Fast-exit ultra-lightweight 403 for already-banned scripted bots (USER-CUSTOM-IP-BLOCK)
         // to save CPU/RAM on shared hosting while Cloudflare Edge propagates the ban.
-        $raw_ua_fast = isset($_SERVER['HTTP_USER_AGENT']) ? trim((string) wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';
+        $raw_ua_fast = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';
         if (
             ($rule['id'] ?? '') === 'USER-CUSTOM-IP-BLOCK'
             && (!defined('WEBCAREPROSCAN_TESTING') || !WEBCAREPROSCAN_TESTING)
