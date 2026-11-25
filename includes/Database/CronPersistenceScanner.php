@@ -112,6 +112,10 @@ class CronPersistenceScanner {
                     continue;
                 }
 
+                if (str_starts_with($hook_name, 'webcareproscan_') || str_starts_with($hook_name, 'webcare_')) {
+                    continue;
+                }
+
                 $is_core_hook = in_array($hook_name, self::CORE_CRON_HOOKS, true);
 
                 foreach ($events as $event_sig => $event_data) {

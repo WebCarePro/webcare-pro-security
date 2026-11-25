@@ -228,6 +228,11 @@ class CoreIntegrity {
                         // Unknown directory or hidden .dot directory on WordPress root
                         // Note: Standard root directories include wp-admin, wp-includes, wp-content, and .well-known (RFC 5785 / ACME / Apple Pay)
                         if (!in_array($item_name_lower, ['wp-admin', 'wp-includes', 'wp-content'], true)) {
+                            // Skip sibling/nested WordPress installations inside a subdirectory (e.g. /wp1/, /staging/)
+                            if (\WebCareProScanner\Integrity\ChecksumProvider::is_nested_wordpress_install($full_item_path)) {
+                                continue;
+                            }
+
                             $is_dot_dir = str_starts_with($item_name, '.');
 
                             // Crawl unexpected directory to flag dropped backdoors / rogue scripts
@@ -244,6 +249,11 @@ class CoreIntegrity {
 
                                     $child_full_path = $child_item->getPathname();
                                     $normalized_child = str_replace('\\', '/', $child_full_path);
+
+                                    // Skip scanner internal storage / quarantine / node_modules / vcs directories at any depth
+                                    if (preg_match('#/(webcare-pro-security|webcare-pro-quarantine|webcare-vault|webcare-waf|webcare-quarantine|node_modules|\.git|\.svn)/#i', $normalized_child)) {
+                                        continue;
+                                    }
 
                                     if ($has_settings_manager && \WebCareProScanner\System\SettingsManager::is_path_excluded($normalized_child)) {
                                         continue;

@@ -53,6 +53,17 @@ class RogueAdminAnomalyDetector {
 
             if (!empty($hidden_users)) {
                 foreach ($hidden_users as $u) {
+                    $login = (string) ($u->user_login ?? '');
+                    $email = (string) ($u->user_email ?? '');
+                    $is_canary_meta = function_exists('get_user_meta') && !empty(get_user_meta((int) $u->ID, '_webcareproscan_is_canary', true));
+                    if (
+                        $is_canary_meta ||
+                        in_array($login, ['webcare_canary_admin', 'wcp_canary_admin'], true) ||
+                        preg_match('/^security-canary-[a-f0-9]+@invalid\.local$/i', $email)
+                    ) {
+                        continue;
+                    }
+
                     $findings[] = new Finding([
                         'engine'        => 'database-micro-anomaly',
                         'type'          => 'user_missing_capabilities',

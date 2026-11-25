@@ -3803,7 +3803,7 @@ final class ScanController extends AbstractApiController {
             }
 
             if (!empty($item['component_meta'])) {
-                if ($item['engine'] === 'wordpress-updates' || in_array($item['type'], ['outdated_plugin', 'outdated_theme', 'vulnerable_plugin', 'vulnerable_theme', 'outdated_core', 'vulnerable_core'], true)) {
+                if (($item['engine'] ?? '') === 'wordpress-updates' || in_array($item['type'] ?? '', ['outdated_plugin', 'outdated_theme', 'vulnerable_plugin', 'vulnerable_theme', 'outdated_core', 'vulnerable_core'], true)) {
                     // Outdated or vulnerable software update findings should preserve their descriptive update title
                     if ($item['type'] === 'vulnerable_plugin') {
                         $item['display_title'] = !empty($item['component_name']) 
@@ -3832,7 +3832,10 @@ final class ScanController extends AbstractApiController {
                     } else {
                         $item['display_title'] = __('Software Update Available', 'webcare-pro-security');
                     }
-                } elseif (!empty($item['component_meta']['classification'])) {
+                } elseif (
+                    !empty($item['component_meta']['classification']) &&
+                    in_array($item['type'] ?? '', ['plugin_checksums_unavailable', 'theme_checksums_unavailable'], true)
+                ) {
                     if (empty($item['display_title'])) {
                         $item['display_title'] = $item['component_meta']['classification'];
                     }
@@ -3872,13 +3875,19 @@ final class ScanController extends AbstractApiController {
                     'tampered_role_definition'       => __('Tampered Role Definition', 'webcare-pro-security'),
                     'orphaned_post_author'           => __('Orphaned Post Author', 'webcare-pro-security'),
                     'webshell_pattern'               => __('Webshell Signature Pattern', 'webcare-pro-security'),
+                    'polymorphic_taint_webshell'     => __('Polymorphic Taint Webshell / Code Injection', 'webcare-pro-security'),
                     'obfuscated_malware_payload'     => __('Obfuscated Malware Payload', 'webcare-pro-security'),
                     'suspicious_strings'             => __('Suspicious Remote Code Strings', 'webcare-pro-security'),
                     'obfuscation_detected'           => __('Code Obfuscation Detected', 'webcare-pro-security'),
                     'executable_in_uploads'          => __('Executable Script in Uploads Directory', 'webcare-pro-security'),
+                    'disguised_php_in_uploads'       => __('Disguised PHP Script in Uploads Directory', 'webcare-pro-security'),
+                    'double_extension_in_uploads'    => __('Double-Extension Executable in Uploads', 'webcare-pro-security'),
+                    'server_override_in_uploads'     => __('Server Config Override in Uploads', 'webcare-pro-security'),
                     'unsafe_permissions'             => __('Unsafe File Permissions', 'webcare-pro-security'),
                     'symlink_detected'               => __('Filesystem Symbolic Link', 'webcare-pro-security'),
                     'unknown_core_file'              => __('Unrecognized Core Directory File', 'webcare-pro-security'),
+                    'unknown_plugin_file'            => __('Unrecognized Plugin File', 'webcare-pro-security'),
+                    'unknown_theme_file'             => __('Unrecognized Theme File', 'webcare-pro-security'),
                     'unknown_wp_admin_file'          => __('Unrecognized WP-Admin File', 'webcare-pro-security'),
                     'unknown_wp_includes_file'       => __('Unrecognized WP-Includes File', 'webcare-pro-security'),
                     'modified_core_file'             => __('Modified WordPress Core File', 'webcare-pro-security'),

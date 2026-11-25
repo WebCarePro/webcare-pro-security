@@ -569,7 +569,18 @@ class PersistenceScanner {
             strpos($active_plugins_str, 'litespeed') !== false ||
             strpos($active_plugins_str, 'w3-total-cache') !== false ||
             strpos($active_plugins_str, 'wp-super-cache') !== false ||
-            strpos($active_plugins_str, 'wp-rocket') !== false
+            strpos($active_plugins_str, 'wp-rocket') !== false ||
+            strpos($active_plugins_str, 'speedycache') !== false ||
+            strpos($active_plugins_str, 'wp-fastest-cache') !== false ||
+            strpos($active_plugins_str, 'wp-optimize') !== false ||
+            strpos($active_plugins_str, 'breeze') !== false ||
+            strpos($active_plugins_str, 'hummingbird') !== false ||
+            strpos($active_plugins_str, 'sg-cachepress') !== false ||
+            strpos($active_plugins_str, 'nitropack') !== false ||
+            strpos($active_plugins_str, 'flying-press') !== false ||
+            strpos($active_plugins_str, 'cache-enabler') !== false ||
+            strpos($active_plugins_str, 'autoptimize') !== false ||
+            strpos($active_plugins_str, 'powered-cache') !== false
         );
 
         $has_db_plugin = (
@@ -684,12 +695,16 @@ class PersistenceScanner {
             $snippet = '';
 
             // 1. Direct PHP executable tags inside database option
+            $is_rss_feed_transient = (str_starts_with($name, '_site_transient_feed_') || str_starts_with($name, '_transient_feed_'));
             if (preg_match('/<\?(php|=|xml)/i', $val)) {
                 $reason = __('Embedded PHP executable tag found inside database option value.', 'webcare-pro-security');
                 $snippet = substr($val, 0, 160);
             }
-            // 2. Evaluators inside option string
-            elseif (preg_match('/(@?eval\s*\(|@?assert\s*\(|@?create_function\s*\(|@?passthru\s*\(|@?system\s*\()/i', $val)) {
+            // 2. Evaluators inside option string (require PHP syntax inside call to avoid prose false positives)
+            elseif (
+                !$is_rss_feed_transient &&
+                preg_match('/(?<![a-zA-Z0-9_])@?(?:eval|assert|create_function|passthru|system)\s*\(\s*(?:\$|[\'"]|@?[a-z_][a-z0-9_]*\s*\()/i', $val)
+            ) {
                 $reason = __('Direct dynamic evaluator execution construct detected in option value.', 'webcare-pro-security');
                 $snippet = substr($val, 0, 160);
             }
@@ -768,7 +783,7 @@ class PersistenceScanner {
             }
 
             foreach ($hooks as $hook => $schedules) {
-                if (in_array($hook, $core_safe_hooks, true)) {
+                if (in_array($hook, $core_safe_hooks, true) || str_starts_with($hook, 'webcareproscan_') || str_starts_with($hook, 'webcare_')) {
                     continue;
                 }
 
@@ -946,13 +961,26 @@ class PersistenceScanner {
                     $next_code = '';
                     for ($j = $i + 1; $j < min($count, $i + 25); $j++) {
                         $ntok = $tokens[$j];
-                        $next_code .= is_array($ntok) ? $ntok[1] : $ntok;
+                        $ntext = is_array($ntok) ? $ntok[1] : $ntok;
+                        if ($ntext === ';' || (is_array($ntok) && $ntok[0] === T_CLOSE_TAG)) {
+                            break;
+                        }
+                        $next_code .= $ntext;
                     }
 
-                    // Exempt official Redis object-cache drop-in from stealth loader false positive
+                    // Exempt official Redis object-cache and caching drop-ins including legitimate plugin .php loaders
                     $is_redis_dropin = (strpos($file_path, 'object-cache.php') !== false && preg_match('/\b(predis|redis)\b/i', $next_code));
+                    $is_cache_dropin_plugin = (
+                        strpos($file_path, 'advanced-cache.php') !== false &&
+                        preg_match('/\.php[\'"]/i', $next_code) &&
+                        !preg_match('#(?:[/\\\\\'"](?:uploads|tmp)[/\\\\]|\.(?:ico|png|jpe?g|gif|webp|txt|css|woff2?)[\'"])#i', $next_code)
+                    );
 
-                    if (!$is_redis_dropin && preg_match('/(uploads|cache|tmp|\.ico|\.png|\.jpg|\.txt|\.css|\.woff)/i', $next_code)) {
+                    if (
+                        !$is_redis_dropin &&
+                        !$is_cache_dropin_plugin &&
+                        preg_match('#(?:[/\\\\\'"](?:uploads|wp-content/cache|cache|tmp)[/\\\\]|\.(?:ico|png|jpe?g|gif|webp|txt|css|woff2?)[\'"])#i', $next_code)
+                    ) {
                         $result['is_malicious'] = true;
                         $result['reason'] = __('Stealth Loader: Drop-in or MU-plugin includes a hidden payload from uploads, cache, or disguised image file.', 'webcare-pro-security');
                         $result['snippet'] = substr($tok[1] . ' ' . $next_code, 0, 140);

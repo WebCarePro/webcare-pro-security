@@ -549,6 +549,29 @@ class ChecksumProvider {
      *   'actual'   => string
      * ]
      */
+    /**
+     * Check whether a directory is a separate nested/staging WordPress installation.
+     *
+     * @param string $dir_path
+     * @return bool
+     */
+    public static function is_nested_wordpress_install(string $dir_path): bool {
+        static $nested_wp_roots_cache = [];
+        $normalized = untrailingslashit(str_replace('\\', '/', $dir_path));
+        if ($normalized === '') {
+            return false;
+        }
+        if (!isset($nested_wp_roots_cache[$normalized])) {
+            $nested_wp_roots_cache[$normalized] = (
+                is_file($normalized . '/wp-load.php') &&
+                is_file($normalized . '/wp-includes/version.php') &&
+                is_dir($normalized . '/wp-admin') &&
+                is_dir($normalized . '/wp-content')
+            );
+        }
+        return $nested_wp_roots_cache[$normalized];
+    }
+
     public static function verify_core_file(string $file_path): array {
         if (!defined('ABSPATH')) {
             return ['status' => 'not_core'];
@@ -563,6 +586,11 @@ class ChecksumProvider {
 
         $rel_file = substr($norm_path, strlen($norm_abs));
 
+        // WebCare internal storage, logs, vaults, and quarantine are never WordPress core files
+        if (preg_match('#/(webcare-pro-security|webcare-pro-quarantine|webcare-vault|webcare-waf|webcare-quarantine)/#i', $norm_path)) {
+            return ['status' => 'ignored', 'rel_file' => $rel_file];
+        }
+
         // wp-content is NOT part of core
         if (strpos($rel_file, 'wp-content/') === 0) {
             return ['status' => 'not_core'];
@@ -572,6 +600,16 @@ class ChecksumProvider {
         $is_in_root     = (strpos($rel_file, '/') === false);
 
         if (!$is_in_core_dir && !$is_in_root) {
+            $first_slash = strpos($rel_file, '/');
+            if ($first_slash !== false) {
+                $top_dir = substr($rel_file, 0, $first_slash);
+                if (self::is_nested_wordpress_install(rtrim($norm_abs, '/') . '/' . $top_dir)) {
+                    return ['status' => 'not_core'];
+                }
+            }
+
+            $basename_lower = strtolower(basename($file_path));
+
             // 1. Exclude legitimate ACME / SSL Let's Encrypt validation and Apple Pay merchant domain association
             if (strpos($rel_file, '.well-known/') === 0) {
                 return ['status' => 'ignored', 'rel_file' => $rel_file];
@@ -580,13 +618,12 @@ class ChecksumProvider {
             // Web server configuration directories (e.g. conf/imagify.conf, conf/nginx.conf)
             if (strpos($rel_file, 'conf/') === 0) {
                 $ext = strtolower(pathinfo($file_path, PATHINFO_EXTENSION));
-                if (in_array($ext, ['conf', 'ini'], true) || (filesize($file_path) === 0 && in_array($basename_lower, ['index.php', 'index.html'], true))) {
+                if (in_array($ext, ['conf', 'ini'], true) || (is_file($file_path) && filesize($file_path) === 0 && in_array($basename_lower, ['index.php', 'index.html'], true))) {
                     return ['status' => 'ignored', 'rel_file' => $rel_file];
                 }
             }
 
             // 2. Ignore non-code files, images, or .htaccess access-control rules in non-standard root folders
-            $basename_lower = strtolower(basename($file_path));
             if ($basename_lower === '.htaccess') {
                 if (class_exists('\\WebCareProScanner\\System\\SettingsManager') && \WebCareProScanner\System\SettingsManager::is_safe_protective_htaccess($file_path)) {
                     return ['status' => 'ignored', 'rel_file' => $rel_file];

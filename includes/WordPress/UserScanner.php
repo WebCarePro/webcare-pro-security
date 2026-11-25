@@ -70,6 +70,28 @@ class UserScanner {
     ];
 
     /**
+     * Determine whether a database user record belongs to WebCare Pro's internal HoneyToken Canary trap.
+     *
+     * @param object $user_row Row containing ID, user_login, and user_email.
+     * @return bool
+     */
+    public static function is_canary_account(object $user_row): bool {
+        $login = (string) ($user_row->user_login ?? '');
+        $email = (string) ($user_row->user_email ?? '');
+        $uid   = (int) ($user_row->ID ?? 0);
+
+        if ($uid > 0 && function_exists('get_user_meta') && !empty(get_user_meta($uid, '_webcareproscan_is_canary', true))) {
+            return true;
+        }
+
+        if (in_array($login, ['webcare_canary_admin', 'wcp_canary_admin'], true)) {
+            return true;
+        }
+
+        return (bool) preg_match('/^security-canary-[a-f0-9]+@invalid\.local$/i', $email);
+    }
+
+    /**
      * Inspect users, administrator accounts, capabilities, password strength, and detect orphaned authors.
      *
      * @param string $scan_id
@@ -255,6 +277,10 @@ class UserScanner {
 
         if (!empty($hidden_users)) {
             foreach ($hidden_users as $u) {
+                if (self::is_canary_account($u)) {
+                    continue;
+                }
+
                 $findings[] = new Finding([
                     'engine'        => 'wordpress-users',
                     'type'          => 'user_missing_capabilities',

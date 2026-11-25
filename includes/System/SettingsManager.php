@@ -3588,20 +3588,27 @@ class SettingsManager {
             T_COMMENT,
             T_DOC_COMMENT,
             T_INLINE_HTML,
+            T_IF,
+            T_ELSE,
+            T_ELSEIF,
+            T_RETURN,
             T_EXIT,
             T_STRING,
+            T_NS_SEPARATOR,
             T_CONSTANT_ENCAPSED_STRING,
             T_LNUMBER,
             T_BOOLEAN_OR,
             T_BOOLEAN_AND,
+            T_LOGICAL_OR,
+            T_LOGICAL_AND,
             T_IS_IDENTICAL,
             T_IS_NOT_IDENTICAL,
             T_IS_EQUAL,
             T_IS_NOT_EQUAL,
         ];
 
-        $allowed_chars = ['(', ')', ';', ',', '!', ':', '{', '}'];
-        $allowed_function_names = ['header', 'http_response_code', 'defined', 'exit', 'die'];
+        $allowed_chars = ['(', ')', ';', ',', '!', ':', '{', '}', '@'];
+        $allowed_function_names = ['header', 'header_remove', 'http_response_code', 'status_header', 'defined', 'exit', 'die'];
 
         foreach ($tokens as $token) {
             if (is_array($token)) {
@@ -3628,7 +3635,7 @@ class SettingsManager {
                 // If identifier/string, verify it is only harmless exit/header/defined statements
                 if ($id === T_STRING) {
                     $lower = strtolower($text);
-                    if (!in_array($lower, $allowed_function_names, true) && !in_array($text, ['ABSPATH', 'WPINC'], true)) {
+                    if (!in_array($lower, $allowed_function_names, true) && !in_array($lower, ['true', 'false', 'null'], true) && !in_array($text, ['ABSPATH', 'WPINC'], true)) {
                         return false;
                     }
                 }
