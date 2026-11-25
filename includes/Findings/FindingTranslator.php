@@ -33,14 +33,25 @@ class FindingTranslator {
         $path   = $finding['file_path'] ?? '';
         $basename = basename($path);
 
-        // 1. Webshells & Backdoors
-        if (strpos($engine, 'malware') !== false || strpos($type, 'webshell') !== false || strpos($type, 'backdoor') !== false) {
+        // 1. Webshells, Backdoors & Disguised Upload Polyglots
+        if (strpos($engine, 'malware') !== false || strpos($engine, 'uploads') !== false || strpos($type, 'webshell') !== false || strpos($type, 'backdoor') !== false || strpos($type, 'suspected_file') !== false) {
             return [
                 /* translators: %s: file basename */
-                'what_is_this'        => sprintf(__('A suspicious script or backdoor (%s) was detected. It contains code commonly used by attackers to gain unauthorized remote control.', 'webcare-pro-security'), $basename),
-                'is_store_safe'       => __('Your payment gateways (Stripe/PayPal) process credit cards on isolated secure servers, but this file gives attackers server access and must be isolated immediately.', 'webcare-pro-security'),
+                'what_is_this'        => sprintf(__('A suspicious script, disguised upload polyglot, or backdoor (%s) was detected. It contains code or archive stubs commonly used by attackers to gain unauthorized control.', 'webcare-pro-security'), $basename),
+                'is_store_safe'       => __('Your payment gateways (Stripe/PayPal) process credit cards on isolated secure servers, but this file poses an execution risk and must be isolated immediately.', 'webcare-pro-security'),
                 'recommended_action'  => __('Move this file to Safe Quarantine. It will be immediately neutralized, and you can undo the quarantine in 1 click if needed.', 'webcare-pro-security'),
                 'action_button_label' => __('Quarantine File (1-Click Safe)', 'webcare-pro-security'),
+            ];
+        }
+
+        // 1b. Exposed Configuration Backups & Database Utilities
+        if ($type === 'exposed_config_backup' || $type === 'exposed_db_tool') {
+            return [
+                /* translators: %s: file basename */
+                'what_is_this'        => sprintf(__('An exposed configuration backup or standalone database utility (%s) was found in your public web root.', 'webcare-pro-security'), $basename),
+                'is_store_safe'       => __('Automated bots actively scan for backup copies of wp-config.php and database tools to harvest database credentials.', 'webcare-pro-security'),
+                'recommended_action'  => __('Isolate or delete this exposed backup/utility file immediately so visitors and bots cannot download it.', 'webcare-pro-security'),
+                'action_button_label' => __('Quarantine Exposed File', 'webcare-pro-security'),
             ];
         }
 

@@ -13,7 +13,7 @@ class UploadsScanner {
      * Dangerous executable and script extensions prohibited in media uploads.
      */
     private $executable_extensions = [
-        'php', 'php3', 'php4', 'php5', 'php7', 'php8', 'phtml', 'phar', 'inc', 'hphp', 'pht',
+        'php', 'php3', 'php4', 'php5', 'php7', 'php8', 'phtml', 'phar', 'inc', 'hphp', 'pht', 'suspected',
         'sh', 'bash', 'zsh', 'ksh', 'csh', 'pl', 'cgi', 'py', 'rb',
         'exe', 'bat', 'cmd', 'com', 'bin', 'elf', 'so', 'dll', 'vbs', 'wsf', 'scr',
         'jsp', 'asp', 'aspx'
@@ -163,7 +163,7 @@ class UploadsScanner {
                 }
 
                 // 3. Double extension check (e.g. image.php.jpg, photo.jpg.php, document.pdf.sh)
-                if (preg_match('/\.(php[0-9]?|phtml|phar|sh|bash|cgi|pl|py|exe)\.([a-z0-9]+)$/i', $lower_name, $m)) {
+                if (preg_match('/\.(php[0-9]?|phtml|pht|phar|suspected|sh|bash|cgi|pl|py|exe)\.([a-z0-9]+)$/i', $lower_name, $m)) {
                     $snippet = $this->extract_preview_snippet($real_path);
                     $findings[] = new Finding([
                         'engine'       => 'uploads-scanner',
@@ -398,18 +398,47 @@ class UploadsScanner {
         $detected_pattern = null;
         $snippet = '';
 
+        // 1a. Detect Phar archive compiler stub (__HALT_COMPILER) disguised inside media/document files (phar:// deserialization polyglot)
+        $phar_stub_pattern = '/\b__HALT_COMPILER\s*\(\s*\)/i';
+        if (preg_match($phar_stub_pattern, $header, $m_phar)) {
+            return new Finding([
+                'engine'       => 'uploads-scanner',
+                'type'         => 'phar_polyglot_in_uploads',
+                'severity'     => 'critical',
+                'confidence'   => 100,
+                'file_path'    => $real_path,
+                'code_snippet' => $this->extract_context_snippet($header, $m_phar[0]),
+                'description'  => "Media file '{$basename}' in uploads contains a PHP Phar archive stub (__HALT_COMPILER), enabling phar:// deserialization attacks.",
+                'evidence'     => "Found '__HALT_COMPILER()' Phar polyglot stub inside .{$ext} upload."
+            ]);
+        }
+
         if (preg_match($php_pattern, $header, $m)) {
             $detected_pattern = $m[0];
             $snippet = $this->extract_context_snippet($header, $m[0]);
         }
 
-        // 2. If file is larger than 8KB, check trailing 8KB (where attackers append webshells after JPEG \xFF\xD9 or PNG IEND)
+        // 2. If file is larger than 8KB, check trailing 8KB (where attackers append webshells or Phar stubs after JPEG \xFF\xD9 or PNG IEND)
         if (!$detected_pattern && $file_size > 8192) {
             $tail_offset = max(0, $file_size - 8192);
             $tail = @file_get_contents($real_path, false, null, $tail_offset, 8192);
-            if ($tail !== false && preg_match($php_pattern, $tail, $m)) {
-                $detected_pattern = $m[0];
-                $snippet = $this->extract_context_snippet($tail, $m[0]);
+            if ($tail !== false) {
+                if (preg_match($phar_stub_pattern, $tail, $m_phar_tail)) {
+                    return new Finding([
+                        'engine'       => 'uploads-scanner',
+                        'type'         => 'phar_polyglot_in_uploads',
+                        'severity'     => 'critical',
+                        'confidence'   => 100,
+                        'file_path'    => $real_path,
+                        'code_snippet' => $this->extract_context_snippet($tail, $m_phar_tail[0]),
+                        'description'  => "Media file '{$basename}' in uploads contains an appended PHP Phar archive stub (__HALT_COMPILER), enabling phar:// deserialization attacks.",
+                        'evidence'     => "Found trailing '__HALT_COMPILER()' Phar polyglot stub inside .{$ext} upload."
+                    ]);
+                }
+                if (preg_match($php_pattern, $tail, $m)) {
+                    $detected_pattern = $m[0];
+                    $snippet = $this->extract_context_snippet($tail, $m[0]);
+                }
             }
         }
 

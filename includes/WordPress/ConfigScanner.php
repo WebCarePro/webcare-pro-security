@@ -136,6 +136,55 @@ class ConfigScanner {
             }
         }
 
+        // 4. Audit Exposed wp-config.php Backup / Swap Copies & Standalone Database Utilities
+        $exposed_config_backups = [
+            'wp-config.php.bak',
+            'wp-config.bak',
+            'wp-config.old',
+            'wp-config.txt',
+            'wp-config.php~',
+            'wp-config.php.save',
+            'wp-config.php.orig',
+            'wp-config.php.swp',
+            '.wp-config.php.swp',
+            '.wp-config.php.swo',
+            '#wp-config.php#',
+        ];
+
+        foreach ($exposed_config_backups as $backup_name) {
+            $candidate = ABSPATH . $backup_name;
+            if (is_file($candidate) && is_readable($candidate) && (int) @filesize($candidate) > 0) {
+                $findings[] = new Finding([
+                    'engine'      => 'wordpress-config',
+                    'type'        => 'exposed_config_backup',
+                    'severity'    => 'critical',
+                    'confidence'  => 100,
+                    'file_path'   => $candidate,
+                    'description' => "Publicly accessible configuration backup or editor swap file '{$backup_name}' found in WordPress root. Attackers can download plaintext database credentials and authentication salts.",
+                    'evidence'    => "Exposed configuration backup file in ABSPATH: {$backup_name}"
+                ]);
+            }
+        }
+
+        $exposed_db_tools = [
+            'searchreplacedb2.php',
+            'adminer.php',
+        ];
+        foreach ($exposed_db_tools as $tool_name) {
+            $tool_path = ABSPATH . $tool_name;
+            if (is_file($tool_path) && is_readable($tool_path) && (int) @filesize($tool_path) > 0) {
+                $findings[] = new Finding([
+                    'engine'      => 'wordpress-config',
+                    'type'        => 'exposed_db_tool',
+                    'severity'    => 'high',
+                    'confidence'  => 95,
+                    'file_path'   => $tool_path,
+                    'description' => "Standalone database management utility '{$tool_name}' found in the public web root.",
+                    'evidence'    => "Exposed database utility script in ABSPATH: {$tool_name}"
+                ]);
+            }
+        }
+
         return $findings;
     }
 }

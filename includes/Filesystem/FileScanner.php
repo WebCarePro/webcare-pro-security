@@ -84,7 +84,7 @@ class FileScanner {
             if (!preg_match('#/(webcare-pro-security|webcare-pro-quarantine|webcare-vault|webcare-waf|webcare-quarantine)/#i', $norm_path) && !\WebCareProScanner\System\SettingsManager::is_path_excluded($norm_path)) {
                 $ext = strtolower(pathinfo($file_path, PATHINFO_EXTENSION));
                 $basename = strtolower(basename($file_path));
-                if (in_array($ext, ['php', 'php3', 'php4', 'php5', 'php7', 'php8', 'phtml', 'phar'], true)) {
+                if (in_array($ext, ['php', 'php3', 'php4', 'php5', 'php7', 'php8', 'phtml', 'pht', 'phar', 'suspected'], true)) {
                     // Check if harmless WordPress directory listing prevention placeholder
                     if (($basename === 'index.php' || $basename === 'index.html' || $basename === 'index.htm') && \WebCareProScanner\System\SettingsManager::is_safe_directory_index($file_path)) {
                         // Harmless directory silence placeholder, ignore
@@ -102,6 +102,20 @@ class FileScanner {
                         ]);
                     }
                 }
+            }
+        } else {
+            // 3b. Residual .suspected Malware Artifacts Outside Uploads
+            $non_upload_ext = strtolower(pathinfo($file_path, PATHINFO_EXTENSION));
+            if ($non_upload_ext === 'suspected') {
+                $findings[] = new Finding([
+                    'engine'      => 'filesystem',
+                    'type'        => 'quarantined_suspected_file',
+                    'severity'    => 'high',
+                    'confidence'  => 95,
+                    'file_path'   => $file_path,
+                    'description' => 'Residual .suspected file detected on disk. Often left behind when a compromised script is partially quarantined.',
+                    'evidence'    => 'File uses .suspected extension: ' . basename($file_path),
+                ]);
             }
         }
 

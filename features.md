@@ -143,12 +143,13 @@ Think of this as the digital cockpit and dashboard for your website's health. In
 Hackers frequently hide malicious code inside normal-looking images, fake plugins, or deeply nested folders. Our Deep Malware Detection Engine acts like an advanced airport X-ray scanner for your server. It reads through every file, checking for hacker tools, hidden backdoors, disguised file extensions (like a harmful script disguised as a photo), and sneaky database injections. It runs smoothly in small batches in the background so your site visitors never experience any slowdowns.
 
 ### ⚙️ Deep Technical Details & Architecture (For Developers & Engineers)
-- **Deep Heuristic PHP Code Analysis:** Scans files line-by-line for webshells, backdoors, Trojan droppers, and command execution stubs.
-  - Detects multi-layer obfuscation patterns: nested `eval()`, `base64_decode()`, `gzinflate()`, `str_rot13()`, `rawurldecode()`, and `chr()` concatenation.
-  - Analyzes dynamic variable function calls (e.g., `$$var()`, `$f = 'sys'.'tem'; $f()`).
-  - Detects hexadecimal and octal string encodings used to conceal exploit payloads.
-  - Detects spoofed image/GIF/PDF file headers containing executable PHP tags (e.g., `GIF89a; <?php`).
-  - Runtime signature fragmentation: dynamically constructs signatures in memory to prevent antivirus false-positives on the scanner itself.
+- **Deep Heuristic & AST Taint PHP Code Analysis:** Scans files for classic webshells, PHP 8.3+ eval-less backdoors, Trojan droppers, and command execution stubs with exact line-number pinpointing (`Jump to Line #`).
+  - Dual-stream IOC hashing: computes both raw SHA-256 and whitespace-normalized structural SHA-256 in 64 KB chunks to defeat re-indentation and CRLF/LF hash evasion.
+  - Static multi-layer de-obfuscation: safely unpacks nested `base64_decode()`, `gzinflate()`, `gzuncompress()`, `gzdecode()`, `hex2bin()`, `pack('H*', ...)`, `str_rot13()`, `rawurldecode()`, and `chr()` assembly without executing untrusted code.
+  - Source-to-sink AST taint tracking across PHP 8.3+ eval-less callback sinks (`ob_start`, `preg_replace_callback`, `spl_autoload_register`, `array_reduce`, `iterator_apply`), `FFI::cdef()` native C bindings, encrypted C2 tunnels (`openssl_decrypt`, `sodium_crypto_secretbox_open`), non-alphanumeric bitwise XOR invocations, `php://filter` chains, and interactive socket reverse shells.
+  - 2026–2027 AI-era threat signatures: detects Unicode Tag-Plane (`U+E0000`–`U+E007F`) invisible ASCII smuggling, Trojan-Source bidirectional overrides (`U+202E`), Search & AI Crawler (`GPTBot`, `ClaudeBot`, `PerplexityBot`, `Googlebot`) GEO doorway cloakers, Solana JSON-RPC C2, and DNS-over-HTTPS (DoH) TXT C2 loaders.
+  - Detects spoofed image/GIF/PDF file headers containing executable PHP tags (e.g., `GIF89a; <?php`), `__HALT_COMPILER()` Phar deserialization polyglots in `/uploads/`, residual `.suspected` malware artifacts, and exposed `wp-config.php` backup/swap leaks.
+  - Runtime signature fragmentation and scoped `pcre.backtrack_limit` ReDoS guards ensure shared-hosting stability and prevent host antivirus false-positives on the scanner itself.
 - **WordPress Core Cryptographic Integrity Engine:**
   - Directly queries the official WordPress.org Checksum API for the installed WordPress release.
   - Validates MD5 checksums for every file in `wp-admin`, `wp-includes`, and root directories.
