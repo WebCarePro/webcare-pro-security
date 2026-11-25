@@ -157,6 +157,8 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     nextScheduledHuman: '',
     alertsEnabled: false,
     alertEmail: '',
+    threatIntelEnabled: false,
+    aiAgentName: '',
   });
 
   useEffect(() => {
@@ -267,6 +269,27 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             nextHuman = `Next: ${ti.next_scheduled_wp}`;
           }
         }
+        const providerRaw = String(s.ai_provider || '').toLowerCase().trim();
+        const hasProviderKey =
+          (providerRaw === 'openai' && Boolean(s.openai_api_key || s.ai_api_key)) ||
+          ((providerRaw === 'anthropic' || providerRaw === 'claude') && Boolean(s.anthropic_api_key || s.ai_api_key)) ||
+          ((providerRaw === 'gemini' || providerRaw === 'google') && Boolean(s.gemini_api_key || s.ai_api_key)) ||
+          (providerRaw === 'deepseek' && Boolean(s.deepseek_api_key || s.ai_api_key)) ||
+          (providerRaw === 'openrouter' && Boolean(s.openrouter_api_key || s.ai_api_key)) ||
+          ((providerRaw === 'ollama' || providerRaw === 'local') && Boolean(s.ai_enabled));
+        const providerNames: Record<string, string> = {
+          openai: 'ChatGPT',
+          anthropic: 'Claude',
+          claude: 'Claude',
+          gemini: 'Gemini',
+          google: 'Gemini',
+          deepseek: 'DeepSeek',
+          openrouter: 'OpenRouter',
+          ollama: 'Local AI',
+          local: 'Local AI',
+        };
+        const resolvedAiAgent = hasProviderKey ? (providerNames[providerRaw] || providerRaw.toUpperCase()) : '';
+
         setScheduleInfo({
           loaded: true,
           enabled: Boolean(s.schedule_enabled),
@@ -274,6 +297,8 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
           nextScheduledHuman: nextHuman,
           alertsEnabled: Boolean(s.notification_master_enabled || s.email_alerts_enabled),
           alertEmail: String(s.alert_emails || ''),
+          threatIntelEnabled: Boolean(s.threat_intel_enabled),
+          aiAgentName: resolvedAiAgent,
         });
       })
       .catch(() => {
@@ -500,12 +525,10 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
 
   const cafActive = firewallStatus?.caf_enabled !== false && firewallStatus?.is_enabled !== false;
   const aiDefenseActive = firewallStatus?.ai_defense_enabled !== false && firewallStatus?.is_enabled !== false;
-  const aiIntelConfigured = Boolean(
-    firewallStatus?.ai_provider_configured ||
-    serverInfo?.ai_provider_configured ||
-    (window as any).webcareScannerSettings?.ai_provider_configured
-  );
-  const threatFeedsActive = Boolean(firewallStatus?.threat_intel_enabled);
+  const aiAgentName = scheduleInfo.aiAgentName;
+  const threatFeedsActive = scheduleInfo.loaded
+    ? scheduleInfo.threatIntelEnabled
+    : Boolean(firewallStatus?.threat_intel_enabled);
 
   const careLayers = [
     {
@@ -601,8 +624,8 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
       name: 'AI Cybersecurity Intelligence Engine',
       icon: Sparkles,
       iconColor: '#8b5cf6',
-      badge: aiIntelConfigured ? 'Connected' : 'Ready',
-      tone: aiIntelConfigured ? 'active' : 'neutral',
+      badge: aiAgentName ? aiAgentName : 'Not Configured',
+      tone: aiAgentName ? 'active' : 'neutral',
       desc: 'Optional on-demand AI forensic assistant that explains suspicious code in plain English when you ask.',
       href: urlAiIntelligence,
       linkText: 'AI Engine Settings',
