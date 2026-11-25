@@ -92,6 +92,9 @@ final class BehavioralCampaignEngine {
                 'vectors'               => [],
                 'total_probes'          => 0,
                 'bucket_overflow_count' => 0,
+                'ban_committed'         => false,
+                'cf_sync_state'         => null,
+                'cf_operation_id'       => null,
             ];
         }
 
@@ -111,8 +114,6 @@ final class BehavioralCampaignEngine {
                 $bucket['bucket_overflow_count'] = ((int) ($bucket['bucket_overflow_count'] ?? 0)) + 1;
             }
         }
-
-        self::save_bucket($transient_key, $bucket);
 
         $distinct_targets_count = count($bucket['targets']) + (int) ($bucket['bucket_overflow_count'] ?? 0);
         $vectors_count          = count($bucket['vectors']);
@@ -134,9 +135,25 @@ final class BehavioralCampaignEngine {
             $escalate = false;
         }
 
-        if ($escalate) {
-            self::commit_campaign_autoban($ip, sprintf('Automated reconnaissance campaign (%d targets, %d vectors)', $distinct_targets_count, $vectors_count));
+        $cf_sync_state   = isset($bucket['cf_sync_state']) ? (string) $bucket['cf_sync_state'] : null;
+        $cf_operation_id = isset($bucket['cf_operation_id']) ? (string) $bucket['cf_operation_id'] : null;
+
+        // Idempotent escalation latch: commit once per 60s campaign window, preserving retry if initial CF enqueue failed
+        if ($escalate && (empty($bucket['ban_committed']) || $cf_sync_state === 'enqueue_failed')) {
+            $commit_res = self::commit_campaign_autoban(
+                $ip,
+                sprintf('Automated reconnaissance campaign (%d targets, %d vectors)', $distinct_targets_count, $vectors_count)
+            );
+            if (!empty($commit_res['local_banned'])) {
+                $bucket['ban_committed'] = true;
+            }
+            $cf_sync_state             = $commit_res['cf_sync_state'];
+            $cf_operation_id           = $commit_res['cf_operation_id'];
+            $bucket['cf_sync_state']   = $cf_sync_state;
+            $bucket['cf_operation_id'] = $cf_operation_id;
         }
+
+        self::save_bucket($transient_key, $bucket);
 
         return [
             'escalate_ban'           => $escalate,
@@ -144,6 +161,8 @@ final class BehavioralCampaignEngine {
             'vectors_count'          => $vectors_count,
             'overflow_count'         => $overflow_count,
             'rule_id'                => $escalate ? self::RULE_ID_CAMPAIGN_AUTOBAN : null,
+            'cf_sync_state'          => $cf_sync_state,
+            'cf_operation_id'        => $cf_operation_id,
         ];
     }
 
@@ -154,37 +173,45 @@ final class BehavioralCampaignEngine {
      *
      * @param string $ip
      * @param string $reason
+     * @return array{local_banned: bool, cf_sync_state: string, cf_operation_id: ?string}
      */
-    public static function commit_campaign_autoban(string $ip, string $reason): void {
+    public static function commit_campaign_autoban(string $ip, string $reason): array {
         // Exemption checks: Admins, Whitelisted IPs, and Active Shoppers
         if (class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine') && \WebCareProScanner\Firewall\FirewallEngine::is_authenticated_administrator()) {
-            return;
+            return ['local_banned' => false, 'cf_sync_state' => 'not_queued', 'cf_operation_id' => null];
         }
 
         if (class_exists('\\WebCareProScanner\\Firewall\\Core\\AllowlistManager')) {
             $settings = \WebCareProScanner\System\SettingsManager::get_settings();
             if (\WebCareProScanner\Firewall\Core\AllowlistManager::is_ip_whitelisted($ip, (string) ($settings['waf_whitelisted_ips'] ?? ''))) {
-                return;
+                return ['local_banned' => false, 'cf_sync_state' => 'not_queued', 'cf_operation_id' => null];
             }
         }
 
         if (class_exists('\\WebCareProScanner\\Firewall\\Core\\CommerceSessionGuard')) {
             if (\WebCareProScanner\Firewall\Core\CommerceSessionGuard::has_active_shopper_session() || \WebCareProScanner\Firewall\Core\CommerceSessionGuard::is_exempt_from_operational_ban($ip)) {
-                return;
+                return ['local_banned' => false, 'cf_sync_state' => 'not_queued', 'cf_operation_id' => null];
             }
         }
 
         // Commit the local ban first without duplicate auto-queueing (sync_cloudflare: false)
         $local_banned = BlocklistRepository::block_ip($ip, $reason, 86400, false);
         if (!$local_banned) {
-            // Local safety guards (admin, allowlist, shopper) rejected the ban; do not queue CF ban
-            return;
+            // Local safety guards (admin, allowlist, shopper, Cloudflare edge) rejected the ban; do not queue CF ban
+            return ['local_banned' => false, 'cf_sync_state' => 'not_queued', 'cf_operation_id' => null];
         }
 
-        // Local ban succeeded: queue generation-fenced Cloudflare ban once
+        // Local ban succeeded: queue generation-fenced Cloudflare ban once and preserve operation result
+        $cf_res = ['cf_sync_state' => 'disabled', 'operation_id' => null];
         if (class_exists(CloudflareIpListSynchronizer::class)) {
-            CloudflareIpListSynchronizer::queue_ip_ban($ip, $reason, 86400);
+            $cf_res = CloudflareIpListSynchronizer::queue_ip_ban($ip, $reason, 86400);
         }
+
+        return [
+            'local_banned'    => true,
+            'cf_sync_state'   => (string) ($cf_res['cf_sync_state'] ?? 'disabled'),
+            'cf_operation_id' => !empty($cf_res['operation_id']) ? (string) $cf_res['operation_id'] : null,
+        ];
     }
 
     /**

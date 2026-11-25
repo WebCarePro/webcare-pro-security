@@ -150,11 +150,16 @@ class BotReconDefense {
         'facebookexternalhit' => false, // Leave Facebook unfrozen unless specified
     ];
 
+    public const CRON_HOOK_DNS_VERIFY = 'webcareproscan_verify_bot_dns_bg';
+    public const OPTION_DNS_QUEUE     = 'webcareproscan_bot_dns_queue';
+    private const MAX_DNS_QUEUE_SIZE  = 20;
+
     /**
-     * Initialize Dynamic robots.txt Hook
+     * Initialize Dynamic robots.txt Hook and Background Crawler DNS Verification Worker.
      */
     public static function init() {
         add_filter('robots_txt', [__CLASS__, 'filter_dynamic_robots_txt'], 10, 2);
+        add_action(self::CRON_HOOK_DNS_VERIFY, [__CLASS__, 'process_background_dns_queue']);
     }
 
     /**
@@ -257,53 +262,40 @@ class BotReconDefense {
             }
         }
 
-        // 3. Check Fake Search Engine & Cloud SEO Crawler Spoofing
+        // 3. Check Fake Search Engine & Cloud SEO Crawler Spoofing (Zero synchronous DNS on request path)
         if (!empty($settings['waf_block_fake_bots'])) {
             $is_metadata_crawl_path = false;
             // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Preserve raw percent-encoded URI until wp_parse_url()/path parser runs
             $req_uri = (isset($_SERVER['REQUEST_URI']) && is_string($_SERVER['REQUEST_URI'])) ? (string) wp_unslash($_SERVER['REQUEST_URI']) : '';
             $path_only = strtolower((string) (wp_parse_url($req_uri, PHP_URL_PATH) ?: $req_uri));
-            if ($path_only === '/robots.txt' || str_starts_with($path_only, '/sitemap') && (str_ends_with($path_only, '.xml') || str_ends_with($path_only, '.xml.gz'))) {
+            if ($path_only === '/robots.txt' || (str_starts_with($path_only, '/sitemap') && (str_ends_with($path_only, '.xml') || str_ends_with($path_only, '.xml.gz')))) {
                 $is_metadata_crawl_path = true;
             }
 
             if ($claimed_search !== null) {
-                $is_genuine = self::verify_search_bot_reverse_dns($client_ip, $claimed_search);
-                if (!$is_genuine) {
-                    // Grace: If requesting read-only /robots.txt or /sitemap*.xml and reverse DNS times out (empty hostname),
-                    // give grace instead of false-blocking genuine bots undergoing DNS lag.
-                    // Only flag spoofers if DNS resolution explicitly returned a conflicting PTR or on non-metadata crawl routes.
-                    $hostname = @gethostbyaddr($client_ip);
-                    $has_conflicting_ptr = (!empty($hostname) && $hostname !== $client_ip);
-
-                    if (!$is_metadata_crawl_path || $has_conflicting_ptr) {
-                        return [
-                            'id'          => 'BOT-FAKE-CRAWLER-SPOOF',
-                            'name'        => 'Fake Search Engine Crawler Spoofing Detected (' . ucfirst($claimed_search) . ')',
-                            'category'    => 'Bot Recon Defense',
-                            'match_type'  => 'Reverse DNS Verification Failure',
-                            'match_value' => 'IP: ' . $client_ip . ' claiming UA: ' . substr($user_agent, 0, 100),
-                        ];
-                    }
+                $dns_state = self::get_cached_bot_dns_state($client_ip, $claimed_search);
+                $has_authoritative_cidrs = in_array($claimed_search, ['googlebot', 'bingbot', 'applebot', 'duckduckbot'], true);
+                if ($dns_state === 'conflicting' || ($dns_state === 'unknown' && !$is_metadata_crawl_path && $has_authoritative_cidrs)) {
+                    return [
+                        'id'          => 'BOT-FAKE-CRAWLER-SPOOF',
+                        'name'        => 'Fake Search Engine Crawler Spoofing Detected (' . ucfirst($claimed_search) . ')',
+                        'description' => 'Fake Search Engine Crawler Spoofing Detected (' . ucfirst($claimed_search) . ')',
+                        'category'    => 'Bot Recon Defense',
+                        'match_type'  => 'Reverse DNS Verification Failure',
+                        'match_value' => 'IP: ' . $client_ip . ' claiming UA: ' . substr($user_agent, 0, 100),
+                    ];
                 }
             } elseif ($claimed_seo !== null) {
-                $is_genuine = self::verify_search_bot_reverse_dns($client_ip, $claimed_seo);
-                if (!$is_genuine) {
-                    $hostname = @gethostbyaddr($client_ip);
-                    $has_conflicting_ptr = (!empty($hostname) && $hostname !== $client_ip);
-
-                    // Distributed/cloud SEO crawlers (e.g. MJ12bot) may lack reverse PTR records or experience transient DNS timeouts.
-                    // Flag SEO crawler spoofing only when reverse DNS explicitly resolves to a conflicting non-vendor hostname.
-                    if ($has_conflicting_ptr && (!$is_metadata_crawl_path || $has_conflicting_ptr)) {
-                        return [
-                            'id'          => 'BOT-FAKE-CRAWLER-SPOOF',
-                            'name'        => 'Fake SEO Crawler Spoofing Detected (' . ucfirst($claimed_seo) . ')',
-                            'description' => 'Fake SEO Crawler Spoofing Detected (' . ucfirst($claimed_seo) . ')',
-                            'category'    => 'Bot Recon Defense',
-                            'match_type'  => 'Reverse DNS Verification Failure',
-                            'match_value' => 'IP: ' . $client_ip . ' claiming UA: ' . substr($user_agent, 0, 100),
-                        ];
-                    }
+                $dns_state = self::get_cached_bot_dns_state($client_ip, $claimed_seo);
+                if ($dns_state === 'conflicting') {
+                    return [
+                        'id'          => 'BOT-FAKE-CRAWLER-SPOOF',
+                        'name'        => 'Fake SEO Crawler Spoofing Detected (' . ucfirst($claimed_seo) . ')',
+                        'description' => 'Fake SEO Crawler Spoofing Detected (' . ucfirst($claimed_seo) . ')',
+                        'category'    => 'Bot Recon Defense',
+                        'match_type'  => 'Reverse DNS Verification Failure',
+                        'match_value' => 'IP: ' . $client_ip . ' claiming UA: ' . substr($user_agent, 0, 100),
+                    ];
                 }
             }
             // Desktop spiders (Screaming Frog, Sitebulb) run from local user IPs, so they don't have fixed PTR records;
@@ -466,41 +458,106 @@ class BotReconDefense {
     }
 
     /**
-     * Validate genuine search crawler via Reverse DNS (PTR) + Forward DNS (A/AAAA)
-     * with high-speed authoritative CIDR fallback for containerized/NAT environments.
-     * Caches verified/conflicting verdicts for 24h and transient empty PTR timeouts for 5m.
+     * Resolve cached tri-state crawler verification status without executing synchronous DNS on the request path.
+     *
+     * States:
+     * - 'verified': IP matches authoritative vendor CIDRs or previously passed background FCrDNS.
+     * - 'conflicting': Background FCrDNS confirmed a mismatched non-vendor PTR hostname.
+     * - 'unknown': Outside static CIDRs and not yet resolved (queued for bounded background WP-Cron lookup).
+     *
+     * @param string $ip
+     * @param string $bot_key
+     * @return string 'verified'|'conflicting'|'unknown'
      */
-    public static function verify_search_bot_reverse_dns(string $ip, string $bot_key): bool {
-        // Skip private or local IPs
+    public static function get_cached_bot_dns_state(string $ip, string $bot_key): string {
+        // Skip private or local IPs (never verified)
         if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
-            return false;
-        }
-
-        $transient_key = 'webcareproscan_bot_dns_' . md5($ip . '_' . $bot_key);
-        $cached = get_transient($transient_key);
-        if ($cached !== false) {
-            return ($cached === 'genuine');
+            return 'unknown';
         }
 
         $allowed_domains = self::SEARCH_BOTS[$bot_key] ?? self::SEO_BOTS[$bot_key] ?? [];
         if (empty($allowed_domains)) {
-            return false;
+            return 'unknown';
         }
-
-        $is_genuine = false;
-        $cache_ttl  = DAY_IN_SECONDS;
 
         // 1. Authoritative Vendor CIDR check first (zero DNS latency & zero timeout risk)
         if (self::is_search_bot_in_official_cidrs($ip, $bot_key)) {
-            $is_genuine = true;
+            return 'verified';
         }
 
-        // 2. Secondary Check: Forward-Confirmed Reverse DNS (FCrDNS) for IPv4 & IPv6 if not in static CIDRs
-        if (!$is_genuine) {
+        // 2. Check cached tri-state verdict (zero synchronous DNS on HTTP request path)
+        $transient_key = 'webcareproscan_bot_dns_v2_' . md5($ip . '_' . $bot_key);
+        $cached = get_transient($transient_key);
+        if (is_string($cached) && in_array($cached, ['verified', 'conflicting', 'unknown'], true)) {
+            return $cached;
+        }
+
+        // 3. Cache 'unknown' for 5 minutes and enqueue bounded background WP-Cron resolution
+        set_transient($transient_key, 'unknown', 300);
+        self::enqueue_background_dns_lookup($ip, $bot_key);
+
+        return 'unknown';
+    }
+
+    /**
+     * Enqueue an IP/bot pair for asynchronous background FCrDNS verification (strictly bounded queue).
+     */
+    private static function enqueue_background_dns_lookup(string $ip, string $bot_key): void {
+        $queue = get_option(self::OPTION_DNS_QUEUE, []);
+        if (!is_array($queue)) {
+            $queue = [];
+        }
+
+        $entry_key = md5($ip . '_' . $bot_key);
+        if (isset($queue[$entry_key]) || count($queue) >= self::MAX_DNS_QUEUE_SIZE) {
+            return;
+        }
+
+        $queue[$entry_key] = [
+            'ip'      => $ip,
+            'bot_key' => $bot_key,
+            'queued'  => time(),
+        ];
+        update_option(self::OPTION_DNS_QUEUE, $queue, false);
+
+        if (function_exists('wp_next_scheduled') && function_exists('wp_schedule_single_event')) {
+            if (!wp_next_scheduled(self::CRON_HOOK_DNS_VERIFY)) {
+                wp_schedule_single_event(time() + 10, self::CRON_HOOK_DNS_VERIFY);
+            }
+        }
+    }
+
+    /**
+     * Background WP-Cron worker that executes PTR + IPv4/IPv6 forward DNS verification
+     * and stores a bounded tri-state result ('verified', 'conflicting', or 'unknown').
+     */
+    public static function process_background_dns_queue(): void {
+        $queue = get_option(self::OPTION_DNS_QUEUE, []);
+        if (!is_array($queue) || empty($queue)) {
+            return;
+        }
+
+        // Clear queue atomically before processing to prevent overlapping worker loops
+        update_option(self::OPTION_DNS_QUEUE, [], false);
+
+        foreach ($queue as $item) {
+            if (!is_array($item) || empty($item['ip']) || empty($item['bot_key'])) {
+                continue;
+            }
+            $ip      = (string) $item['ip'];
+            $bot_key = (string) $item['bot_key'];
+            $allowed_domains = self::SEARCH_BOTS[$bot_key] ?? self::SEO_BOTS[$bot_key] ?? [];
+            if (empty($allowed_domains)) {
+                continue;
+            }
+
+            $transient_key = 'webcareproscan_bot_dns_v2_' . md5($ip . '_' . $bot_key);
+            $state = 'unknown';
+            $ttl   = 600;
+
             $hostname = @gethostbyaddr($ip);
             if (!empty($hostname) && $hostname !== $ip) {
                 $hostname_lower = strtolower(rtrim($hostname, '.'));
-
                 $domain_matches = false;
                 foreach ($allowed_domains as $domain) {
                     if ($hostname_lower === $domain || str_ends_with($hostname_lower, '.' . $domain)) {
@@ -510,17 +567,24 @@ class BotReconDefense {
                 }
 
                 if ($domain_matches && self::forward_dns_matches_ip($hostname, $ip)) {
-                    $is_genuine = true;
+                    $state = 'verified';
+                    $ttl   = DAY_IN_SECONDS;
+                } else {
+                    $state = 'conflicting';
+                    $ttl   = DAY_IN_SECONDS;
                 }
-            } else {
-                // Transient DNS timeout or missing PTR: use short 5-minute negative cache instead of 24h lockout
-                $cache_ttl = 300;
             }
+
+            set_transient($transient_key, $state, $ttl);
         }
+    }
 
-        set_transient($transient_key, $is_genuine ? 'genuine' : 'fake', $cache_ttl);
-
-        return $is_genuine;
+    /**
+     * Validate genuine search crawler using official CIDRs and cached background FCrDNS.
+     * Never performs synchronous DNS resolution on the request path, and never treats 'unknown' as verified.
+     */
+    public static function verify_search_bot_reverse_dns(string $ip, string $bot_key): bool {
+        return self::get_cached_bot_dns_state($ip, $bot_key) === 'verified';
     }
 
     /**

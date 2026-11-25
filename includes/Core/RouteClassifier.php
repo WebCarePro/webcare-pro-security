@@ -50,8 +50,8 @@ final class RouteClassifier {
             return RouteClass::GraphQL;
         }
 
-        // 5. Auth / Login & XML-RPC Entrypoints
-        if (str_contains($path, 'wp-login.php') || str_contains($path, 'wp-signup.php') || str_contains($path, 'xmlrpc.php')) {
+        // 5. Auth / Login & XML-RPC Entrypoints (bounded path-segment match for xmlrpc.php)
+        if (str_contains($path, 'wp-login.php') || str_contains($path, 'wp-signup.php') || preg_match('#(?:^|/)xmlrpc\.php(?:/|$)#', $path) === 1) {
             return RouteClass::AuthLogin;
         }
 

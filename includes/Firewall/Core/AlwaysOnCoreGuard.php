@@ -530,17 +530,22 @@ final class AlwaysOnCoreGuard implements WafEvaluatorInterface {
         if (!empty($settings['waf_block_sensitive_file_probes'])) {
             $sensitive_violation = ExploitSignatureEngine::check_sensitive_file_probe($request_uri, $settings, $skip_operational_heuristics);
             if ($sensitive_violation !== null) {
+                $camp_meta = [];
                 if (class_exists(BehavioralCampaignEngine::class) && $client_ip !== '') {
-                    BehavioralCampaignEngine::record_probe($client_ip, 'sensitive_file', $request_uri);
+                    $camp_res = BehavioralCampaignEngine::record_probe($client_ip, 'sensitive_file', $request_uri);
+                    if (!empty($camp_res['escalate_ban'])) {
+                        $camp_meta['cf_sync_state']   = $camp_res['cf_sync_state'] ?? null;
+                        $camp_meta['cf_operation_id'] = $camp_res['cf_operation_id'] ?? null;
+                    }
                 }
                 return new WafVerdict(
                     'block',
                     (string) ($sensitive_violation['id'] ?? 'WAF-SENSITIVE-FILE-PROBE'),
                     (string) ($sensitive_violation['description'] ?? 'Sensitive file access probe blocked.'),
-                    [
+                    array_merge([
                         'category'    => (string) ($sensitive_violation['category'] ?? 'Information Disclosure'),
                         'status_code' => 403,
-                    ]
+                    ], $camp_meta)
                 );
             }
         }
@@ -552,17 +557,22 @@ final class AlwaysOnCoreGuard implements WafEvaluatorInterface {
                 $is_jetpack_exempt = (class_exists('Jetpack') || defined('JETPACK__VERSION'))
                     && FirewallEngine::is_verified_jetpack_ip($client_ip);
                 if (!$is_jetpack_exempt) {
+                    $camp_meta = [];
                     if (class_exists(BehavioralCampaignEngine::class) && $client_ip !== '') {
-                        BehavioralCampaignEngine::record_probe($client_ip, 'xmlrpc_probe', $clean_xmlrpc_path);
+                        $camp_res = BehavioralCampaignEngine::record_probe($client_ip, 'xmlrpc_probe', $clean_xmlrpc_path);
+                        if (!empty($camp_res['escalate_ban'])) {
+                            $camp_meta['cf_sync_state']   = $camp_res['cf_sync_state'] ?? null;
+                            $camp_meta['cf_operation_id'] = $camp_res['cf_operation_id'] ?? null;
+                        }
                     }
                     return new WafVerdict(
                         'block',
                         'WAF-XMLRPC-DISABLED',
                         'XML-RPC services are disabled on this WordPress installation by WebCare Pro Security.',
-                        [
+                        array_merge([
                             'category'    => 'XML-RPC Disabled',
                             'status_code' => 403,
-                        ]
+                        ], $camp_meta)
                     );
                 }
             }

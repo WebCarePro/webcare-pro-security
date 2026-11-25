@@ -107,9 +107,16 @@ final class BlocklistRepository {
             return false;
         }
 
-        // Safety Guard 1b: Never ban an official Cloudflare Anycast Edge IP locally (prevents proxy self-DoS when real visitor IP trust is unconfigured)
-        if (!str_contains($ip, '/') && class_exists(ClientIpResolver::class) && ClientIpResolver::is_cloudflare_ip($ip)) {
-            return false;
+        // Safety Guard 1b: Never ban an official Cloudflare Anycast Edge IP or overlapping CIDR subnet locally
+        // (prevents proxy self-DoS when real visitor IP trust is unconfigured or a broad CIDR is added)
+        if (class_exists(ClientIpResolver::class)) {
+            if (str_contains($ip, '/')) {
+                if (ClientIpResolver::cidr_overlaps_cloudflare($ip)) {
+                    return false;
+                }
+            } elseif (ClientIpResolver::is_cloudflare_ip($ip)) {
+                return false;
+            }
         }
 
         // Safety Guard 2: Refuse to add current administrator's active IP or whitelisted IP to custom blocklist

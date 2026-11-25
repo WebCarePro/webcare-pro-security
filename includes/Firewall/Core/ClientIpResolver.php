@@ -314,6 +314,72 @@ class ClientIpResolver {
     }
 
     /**
+     * Check whether a candidate CIDR subnet overlaps any official Cloudflare Anycast IPv4/IPv6 CIDR range.
+     *
+     * @param string $cidr Candidate CIDR (e.g. '172.64.0.0/12' or '172.71.155.0/24')
+     * @return bool True if the CIDR overlaps any Cloudflare range (or is malformed).
+     */
+    public static function cidr_overlaps_cloudflare(string $cidr): bool {
+        $bounds_a = self::cidr_to_binary_bounds($cidr);
+        if ($bounds_a === null) {
+            return true; // Fail-closed on malformed CIDR
+        }
+
+        foreach (self::get_cloudflare_ip_ranges() as $cf_cidr) {
+            $bounds_b = self::cidr_to_binary_bounds($cf_cidr);
+            if ($bounds_b === null || $bounds_a['len'] !== $bounds_b['len']) {
+                continue;
+            }
+            if ($bounds_a['start'] <= $bounds_b['end'] && $bounds_b['start'] <= $bounds_a['end']) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Convert an IPv4 or IPv6 CIDR string into comparable packed binary start/end bounds.
+     *
+     * @return array{start: string, end: string, len: int}|null
+     */
+    private static function cidr_to_binary_bounds(string $cidr): ?array {
+        $parts = explode('/', trim($cidr), 2);
+        if (count($parts) !== 2 || !ctype_digit($parts[1])) {
+            return null;
+        }
+        $bin = @inet_pton($parts[0]);
+        if ($bin === false) {
+            return null;
+        }
+        $len      = strlen($bin);
+        $max_bits = $len * 8;
+        $prefix   = (int) $parts[1];
+        if ($prefix < 0 || $prefix > $max_bits) {
+            return null;
+        }
+
+        $mask = '';
+        $rem  = $prefix;
+        for ($i = 0; $i < $len; $i++) {
+            if ($rem >= 8) {
+                $mask .= "\xff";
+                $rem  -= 8;
+            } elseif ($rem > 0) {
+                $mask .= chr((0xff << (8 - $rem)) & 0xff);
+                $rem   = 0;
+            } else {
+                $mask .= "\x00";
+            }
+        }
+
+        $start = $bin & $mask;
+        $end   = $start | (~$mask);
+
+        return ['start' => $start, 'end' => $end, 'len' => $len];
+    }
+
+    /**
      * Asynchronously refresh official Cloudflare IPv4 and IPv6 CIDR lists from cloudflare.com.
      *
      * @return bool True if CIDRs were refreshed, false otherwise.

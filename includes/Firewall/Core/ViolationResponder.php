@@ -980,8 +980,10 @@ final class ViolationResponder {
         } else {
             $rule['decision'] = $is_warning ? 'warn' : 'block';
             $rule['enforcement_outcome'] = 'completed';
-            $rule['cf_operation_id'] = null;
-            $rule['cf_sync_state'] = 'disabled';
+            if (empty($rule['cf_sync_state'])) {
+                $rule['cf_operation_id'] = null;
+                $rule['cf_sync_state']   = $cf_auto_sync_active ? 'not_queued' : 'disabled';
+            }
         }
 
         self::log_incident($rule, $is_warning ? 'warned' : 'blocked', $incident_id);
