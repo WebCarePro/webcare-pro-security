@@ -215,6 +215,22 @@ class FileIntegrityMonitor {
         // Deep-enrich the sliced recent changes with component metadata, versions, permissions, and official integrity verification
         $changes = $this->enrich_changes($changes, $core_checksums, $custom_components);
 
+        // Reconcile high_risk_count and core_modified AFTER official WP.org checksum enrichment
+        // so bit-for-bit verified clean plugin files are never reported as High-Risk Alterations
+        $verified_high_risk = 0;
+        $verified_core_mod  = 0;
+        foreach ($changes as $enriched_item) {
+            $sev = (string) ($enriched_item['severity'] ?? 'info');
+            if ($sev === 'critical' || $sev === 'high') {
+                $verified_high_risk++;
+                if (($enriched_item['category'] ?? '') === 'core') {
+                    $verified_core_mod++;
+                }
+            }
+        }
+        $stats['high_risk_count'] = $verified_high_risk;
+        $stats['core_modified']   = $verified_core_mod;
+
         return [
             'stats'          => $stats,
             'total'          => $total_found,
