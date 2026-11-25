@@ -490,9 +490,13 @@ final class BehavioralCampaignEngine {
                 $next_cursor = (count($rows) < 25) ? 0 : $max_seen_id;
             }
 
-            $next_str = (string) $next_cursor;
+            $next_str         = (string) $next_cursor;
+            $cursor_persisted = true;
             if (!$has_cursor) {
-                add_option($cursor_option, $next_str, '', 'no');
+                $cursor_persisted = add_option($cursor_option, $next_str, '', 'no');
+                if ($cursor_persisted) {
+                    wp_cache_delete($cursor_option, 'options');
+                }
             } elseif ((string) $raw_cursor !== $next_str) {
                 // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Atomic CAS cursor update inside owner-fenced prune mutex
                 $updated = $wpdb->query(
@@ -503,9 +507,18 @@ final class BehavioralCampaignEngine {
                         (string) $raw_cursor
                     )
                 );
-                if ($updated === 1) {
+                $cursor_persisted = ($updated === 1);
+                if ($cursor_persisted) {
                     wp_cache_delete($cursor_option, 'options');
                 }
+            }
+
+            if (!$cursor_persisted && class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                \WebCareProScanner\System\AuditLogger::log_operational('campaign_prune_cursor_write_failed', [
+                    'prev_cursor' => $last_id,
+                    'next_cursor' => $next_cursor,
+                    'timestamp'   => $now,
+                ]);
             }
         } finally {
             self::release_campaign_lock($prune_lock_option, $prune_lock_token);

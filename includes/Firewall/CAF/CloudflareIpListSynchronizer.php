@@ -286,15 +286,28 @@ class CloudflareIpListSynchronizer {
             }
 
             if ($idempotency_key !== null && $idempotency_key !== '') {
+                $prev_ledger_snapshot    = get_option(self::OPTION_IDEMPOTENCY_LEDGER, []);
+                $prev_ledger_snapshot    = is_array($prev_ledger_snapshot) ? $prev_ledger_snapshot : [];
                 $ledger[$idempotency_key] = [
                     'operation_id' => $operation_id,
                     'generation'   => $next_gen,
                     'expires_at'   => $now + DAY_IN_SECONDS,
                 ];
                 if (!self::save_verified_option(self::OPTION_IDEMPOTENCY_LEDGER, $ledger)) {
-                    // Compensate generation increment before aborting queue write
-                    if (!self::save_verified_option(self::OPTION_IP_GENERATIONS, $prev_generations)) {
-                        self::save_verified_option(self::OPTION_RECONCILIATION_FLAG, time());
+                    // Compensate BOTH generation increment AND idempotency ledger before aborting queue write
+                    $rolled_gen    = self::save_verified_option(self::OPTION_IP_GENERATIONS, $prev_generations);
+                    $rolled_ledger = self::save_verified_option(self::OPTION_IDEMPOTENCY_LEDGER, $prev_ledger_snapshot);
+                    if (!$rolled_gen || !$rolled_ledger) {
+                        $marker_persisted = self::save_verified_option(self::OPTION_RECONCILIATION_FLAG, time());
+                        if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                            \WebCareProScanner\System\AuditLogger::log_operational('cf_queue_compensation_failed', [
+                                'error'              => 'Failed to restore generations or idempotency ledger after ledger write failure',
+                                'rolled_back_gen'    => $rolled_gen,
+                                'rolled_back_ledger' => $rolled_ledger,
+                                'marker_persisted'   => $marker_persisted,
+                                'timestamp'          => time(),
+                            ]);
+                        }
                     }
                     return null;
                 }
