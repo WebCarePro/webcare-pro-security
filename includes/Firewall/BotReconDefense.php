@@ -263,19 +263,12 @@ class BotReconDefense {
         }
 
         // 3. Check Fake Search Engine & Cloud SEO Crawler Spoofing (Zero synchronous DNS on request path)
+        // Treat 'unknown' strictly as pending verification (never verified, never auto-blocked as spoofing).
+        // Block as BOT-FAKE-CRAWLER-SPOOF only when background FCrDNS has confirmed a 'conflicting' PTR/forward-DNS verdict.
         if (!empty($settings['waf_block_fake_bots'])) {
-            $is_metadata_crawl_path = false;
-            // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Preserve raw percent-encoded URI until wp_parse_url()/path parser runs
-            $req_uri = (isset($_SERVER['REQUEST_URI']) && is_string($_SERVER['REQUEST_URI'])) ? (string) wp_unslash($_SERVER['REQUEST_URI']) : '';
-            $path_only = strtolower((string) (wp_parse_url($req_uri, PHP_URL_PATH) ?: $req_uri));
-            if ($path_only === '/robots.txt' || (str_starts_with($path_only, '/sitemap') && (str_ends_with($path_only, '.xml') || str_ends_with($path_only, '.xml.gz')))) {
-                $is_metadata_crawl_path = true;
-            }
-
             if ($claimed_search !== null) {
                 $dns_state = self::get_cached_bot_dns_state($client_ip, $claimed_search);
-                $has_authoritative_cidrs = in_array($claimed_search, ['googlebot', 'bingbot', 'applebot', 'duckduckbot'], true);
-                if ($dns_state === 'conflicting' || ($dns_state === 'unknown' && !$is_metadata_crawl_path && $has_authoritative_cidrs)) {
+                if ($dns_state === 'conflicting') {
                     return [
                         'id'          => 'BOT-FAKE-CRAWLER-SPOOF',
                         'name'        => 'Fake Search Engine Crawler Spoofing Detected (' . ucfirst($claimed_search) . ')',
@@ -457,6 +450,31 @@ class BotReconDefense {
         return false;
     }
 
+    private const OPTION_DNS_QUEUE_LOCK = 'webcareproscan_bot_dns_queue_lock';
+
+    /**
+     * Acquire an atomic mutex lock for DNS queue mutations using add_option() with stale-lock recovery.
+     */
+    private static function acquire_dns_queue_lock(int $ttl = 15): bool {
+        $now = time();
+        if (add_option(self::OPTION_DNS_QUEUE_LOCK, $now, '', 'no')) {
+            return true;
+        }
+        $existing = (int) get_option(self::OPTION_DNS_QUEUE_LOCK, 0);
+        if ($existing > 0 && ($now - $existing) > $ttl) {
+            delete_option(self::OPTION_DNS_QUEUE_LOCK);
+            return add_option(self::OPTION_DNS_QUEUE_LOCK, $now, '', 'no');
+        }
+        return false;
+    }
+
+    /**
+     * Release the DNS queue mutex lock.
+     */
+    private static function release_dns_queue_lock(): void {
+        delete_option(self::OPTION_DNS_QUEUE_LOCK);
+    }
+
     /**
      * Resolve cached tri-state crawler verification status without executing synchronous DNS on the request path.
      *
@@ -492,55 +510,81 @@ class BotReconDefense {
             return $cached;
         }
 
-        // 3. Cache 'unknown' for 5 minutes and enqueue bounded background WP-Cron resolution
-        set_transient($transient_key, 'unknown', 300);
-        self::enqueue_background_dns_lookup($ip, $bot_key);
+        // 3. Enqueue bounded background WP-Cron resolution; only cache 'unknown' for 5m if enqueue persisted
+        if (self::enqueue_background_dns_lookup($ip, $bot_key)) {
+            set_transient($transient_key, 'unknown', 300);
+        }
 
         return 'unknown';
     }
 
     /**
-     * Enqueue an IP/bot pair for asynchronous background FCrDNS verification (strictly bounded queue).
+     * Enqueue an IP/bot pair for asynchronous background FCrDNS verification under an atomic mutex lock.
+     *
+     * @return bool True if entry is persisted in the background queue, false if lock/cap/write failed.
      */
-    private static function enqueue_background_dns_lookup(string $ip, string $bot_key): void {
-        $queue = get_option(self::OPTION_DNS_QUEUE, []);
-        if (!is_array($queue)) {
-            $queue = [];
+    private static function enqueue_background_dns_lookup(string $ip, string $bot_key): bool {
+        if (!self::acquire_dns_queue_lock()) {
+            return false;
         }
 
-        $entry_key = md5($ip . '_' . $bot_key);
-        if (isset($queue[$entry_key]) || count($queue) >= self::MAX_DNS_QUEUE_SIZE) {
-            return;
+        $enqueued = false;
+        try {
+            $queue = get_option(self::OPTION_DNS_QUEUE, []);
+            if (!is_array($queue)) {
+                $queue = [];
+            }
+
+            $entry_key = md5($ip . '_' . $bot_key);
+            if (isset($queue[$entry_key])) {
+                $enqueued = true;
+            } elseif (count($queue) < self::MAX_DNS_QUEUE_SIZE) {
+                $queue[$entry_key] = [
+                    'ip'      => $ip,
+                    'bot_key' => $bot_key,
+                    'queued'  => time(),
+                ];
+                $enqueued = update_option(self::OPTION_DNS_QUEUE, $queue, false);
+            }
+        } finally {
+            self::release_dns_queue_lock();
         }
 
-        $queue[$entry_key] = [
-            'ip'      => $ip,
-            'bot_key' => $bot_key,
-            'queued'  => time(),
-        ];
-        update_option(self::OPTION_DNS_QUEUE, $queue, false);
-
-        if (function_exists('wp_next_scheduled') && function_exists('wp_schedule_single_event')) {
+        if ($enqueued && function_exists('wp_next_scheduled') && function_exists('wp_schedule_single_event')) {
             if (!wp_next_scheduled(self::CRON_HOOK_DNS_VERIFY)) {
                 wp_schedule_single_event(time() + 10, self::CRON_HOOK_DNS_VERIFY);
             }
         }
+
+        return $enqueued;
     }
 
     /**
-     * Background WP-Cron worker that executes PTR + IPv4/IPv6 forward DNS verification
-     * and stores a bounded tri-state result ('verified', 'conflicting', or 'unknown').
+     * Background WP-Cron worker that atomically claims and drains queued IPs under mutex lock,
+     * then executes PTR + IPv4/IPv6 forward DNS verification outside the lock so concurrent
+     * enqueues arriving during DNS resolution are never lost.
      */
     public static function process_background_dns_queue(): void {
-        $queue = get_option(self::OPTION_DNS_QUEUE, []);
-        if (!is_array($queue) || empty($queue)) {
+        if (!self::acquire_dns_queue_lock()) {
             return;
         }
 
-        // Clear queue atomically before processing to prevent overlapping worker loops
-        update_option(self::OPTION_DNS_QUEUE, [], false);
+        $claimed = [];
+        try {
+            $queue = get_option(self::OPTION_DNS_QUEUE, []);
+            if (is_array($queue) && !empty($queue)) {
+                $claimed = $queue;
+                update_option(self::OPTION_DNS_QUEUE, [], false);
+            }
+        } finally {
+            self::release_dns_queue_lock();
+        }
 
-        foreach ($queue as $item) {
+        if (empty($claimed)) {
+            return;
+        }
+
+        foreach ($claimed as $item) {
             if (!is_array($item) || empty($item['ip']) || empty($item['bot_key'])) {
                 continue;
             }

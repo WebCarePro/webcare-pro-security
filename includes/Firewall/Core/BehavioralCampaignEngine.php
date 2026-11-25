@@ -138,22 +138,42 @@ final class BehavioralCampaignEngine {
         $cf_sync_state   = isset($bucket['cf_sync_state']) ? (string) $bucket['cf_sync_state'] : null;
         $cf_operation_id = isset($bucket['cf_operation_id']) ? (string) $bucket['cf_operation_id'] : null;
 
-        // Idempotent escalation latch: commit once per 60s campaign window, preserving retry if initial CF enqueue failed
-        if ($escalate && (empty($bucket['ban_committed']) || $cf_sync_state === 'enqueue_failed')) {
-            $commit_res = self::commit_campaign_autoban(
-                $ip,
-                sprintf('Automated reconnaissance campaign (%d targets, %d vectors)', $distinct_targets_count, $vectors_count)
-            );
-            if (!empty($commit_res['local_banned'])) {
-                $bucket['ban_committed'] = true;
-            }
-            $cf_sync_state             = $commit_res['cf_sync_state'];
-            $cf_operation_id           = $commit_res['cf_operation_id'];
-            $bucket['cf_sync_state']   = $cf_sync_state;
-            $bucket['cf_operation_id'] = $cf_operation_id;
-        }
-
+        // Persist updated probe counters first
         self::save_bucket($transient_key, $bucket);
+
+        // Transactional per-campaign atomic escalation lock: prevents concurrent double-commit/double-enqueue
+        // while preserving retries if initial Cloudflare enqueue returned 'enqueue_failed'.
+        if ($escalate && (empty($bucket['ban_committed']) || $cf_sync_state === 'enqueue_failed')) {
+            $lock_option = 'wcps_camp_lock_' . substr(hash('xxh128', $ip), 0, 16);
+            if (self::acquire_campaign_lock($lock_option)) {
+                try {
+                    // Double-checked reload inside mutex
+                    $locked_bucket = self::load_bucket($transient_key);
+                    if (!empty($locked_bucket)) {
+                        $bucket = $locked_bucket;
+                    }
+                    $cf_sync_state   = isset($bucket['cf_sync_state']) ? (string) $bucket['cf_sync_state'] : null;
+                    $cf_operation_id = isset($bucket['cf_operation_id']) ? (string) $bucket['cf_operation_id'] : null;
+
+                    if (empty($bucket['ban_committed']) || $cf_sync_state === 'enqueue_failed') {
+                        $commit_res = self::commit_campaign_autoban(
+                            $ip,
+                            sprintf('Automated reconnaissance campaign (%d targets, %d vectors)', $distinct_targets_count, $vectors_count)
+                        );
+                        if (!empty($commit_res['local_banned'])) {
+                            $bucket['ban_committed'] = true;
+                        }
+                        $cf_sync_state             = $commit_res['cf_sync_state'];
+                        $cf_operation_id           = $commit_res['cf_operation_id'];
+                        $bucket['cf_sync_state']   = $cf_sync_state;
+                        $bucket['cf_operation_id'] = $cf_operation_id;
+                        self::save_bucket($transient_key, $bucket);
+                    }
+                } finally {
+                    self::release_campaign_lock($lock_option);
+                }
+            }
+        }
 
         return [
             'escalate_ban'           => $escalate,
@@ -164,6 +184,29 @@ final class BehavioralCampaignEngine {
             'cf_sync_state'          => $cf_sync_state,
             'cf_operation_id'        => $cf_operation_id,
         ];
+    }
+
+    /**
+     * Acquire an atomic per-campaign mutex lock using add_option() with 15s stale-lock recovery.
+     */
+    private static function acquire_campaign_lock(string $lock_option, int $ttl = 15): bool {
+        $now = time();
+        if (add_option($lock_option, $now, '', 'no')) {
+            return true;
+        }
+        $existing = (int) get_option($lock_option, 0);
+        if ($existing > 0 && ($now - $existing) > $ttl) {
+            delete_option($lock_option);
+            return add_option($lock_option, $now, '', 'no');
+        }
+        return false;
+    }
+
+    /**
+     * Release the per-campaign mutex lock.
+     */
+    private static function release_campaign_lock(string $lock_option): void {
+        delete_option($lock_option);
     }
 
     /**
