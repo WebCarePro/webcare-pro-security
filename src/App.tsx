@@ -7921,7 +7921,7 @@ Source Code,${escapeCsv(code)}
                     <div className={`webcare-code-viewer-container ${fileViewer.wordWrap ? 'webcare-wrap-lines' : ''}`}>
                       {fileViewer.data.content.split('\n').map((line, idx) => {
                         const lineNum = idx + 1;
-                        const isThreatLine = fileViewer.issue?.line_number === lineNum;
+                        const isThreatLine = Number(fileViewer.issue?.line_number) === lineNum;
                         const isSearchMatch = fileViewer.searchQuery && line.toLowerCase().includes(fileViewer.searchQuery.toLowerCase());
 
                         return (
