@@ -89,6 +89,7 @@ final class BehavioralCampaignEngine {
         $overflow_count         = 0;
         $escalate               = false;
         $should_commit          = false;
+        $reservation_id         = null;
         $cf_sync_state          = null;
         $cf_operation_id        = null;
 
@@ -111,14 +112,16 @@ final class BehavioralCampaignEngine {
             $now    = time();
             if (empty($bucket['created_at']) || ($now - (int) $bucket['created_at']) > self::CAMPAIGN_WINDOW_SECONDS) {
                 $bucket = [
-                    'created_at'            => $now,
-                    'targets'               => [],
-                    'vectors'               => [],
-                    'total_probes'          => 0,
-                    'bucket_overflow_count' => 0,
-                    'ban_committed'         => false,
-                    'cf_sync_state'         => null,
-                    'cf_operation_id'       => null,
+                    'created_at'             => $now,
+                    'targets'                => [],
+                    'vectors'                => [],
+                    'total_probes'           => 0,
+                    'bucket_overflow_count'  => 0,
+                    'ban_committed'          => false,
+                    'pending_reservation_id' => null,
+                    'pending_reservation_at' => 0,
+                    'cf_sync_state'          => null,
+                    'cf_operation_id'        => null,
                 ];
             }
 
@@ -155,10 +158,16 @@ final class BehavioralCampaignEngine {
             $cf_sync_state   = isset($bucket['cf_sync_state']) ? (string) $bucket['cf_sync_state'] : null;
             $cf_operation_id = isset($bucket['cf_operation_id']) ? (string) $bucket['cf_operation_id'] : null;
 
-            if ($escalate && (empty($bucket['ban_committed']) || $cf_sync_state === 'enqueue_failed')) {
-                // Atomically reserve escalation slot inside mutex before releasing lock for external CF queue write
-                $bucket['ban_committed'] = true;
-                $should_commit           = true;
+            // A pending reservation expires automatically after 15s so an interrupted finalization can never deadlock retries
+            $has_active_reservation = !empty($bucket['pending_reservation_id'])
+                && ($now - (int) ($bucket['pending_reservation_at'] ?? 0)) < 15;
+
+            if ($escalate && !$has_active_reservation && (empty($bucket['ban_committed']) || $cf_sync_state === 'enqueue_failed')) {
+                // Record a uniquely identifiable bounded pending reservation; ban_committed stays false until verified
+                $reservation_id                   = bin2hex(random_bytes(8));
+                $bucket['pending_reservation_id'] = $reservation_id;
+                $bucket['pending_reservation_at'] = $now;
+                $should_commit                    = true;
             }
 
             self::save_bucket($transient_key, $bucket);
@@ -167,7 +176,7 @@ final class BehavioralCampaignEngine {
         }
 
         // Execute local ban + Cloudflare queue enqueue outside the DB critical section
-        if ($should_commit) {
+        if ($should_commit && $reservation_id !== null) {
             $commit_res = self::commit_campaign_autoban(
                 $ip,
                 sprintf('Automated reconnaissance campaign (%d targets, %d vectors)', $distinct_targets_count, $vectors_count)
@@ -175,15 +184,25 @@ final class BehavioralCampaignEngine {
             $cf_sync_state   = $commit_res['cf_sync_state'];
             $cf_operation_id = $commit_res['cf_operation_id'];
 
-            // Persist final commit status under lock (release reservation if local ban was rejected)
-            $post_lock = self::acquire_campaign_lock($lock_option);
+            // Bounded retry to finalize reservation under owner-fenced lock (if contention persists, 15s TTL auto-recovers)
+            $post_lock = null;
+            for ($attempt = 0; $attempt < 3; $attempt++) {
+                $post_lock = self::acquire_campaign_lock($lock_option);
+                if ($post_lock !== null) {
+                    break;
+                }
+                usleep(10000); // 10ms backoff
+            }
+
             if ($post_lock !== null) {
                 try {
                     $latest = self::load_bucket($transient_key);
-                    if (!empty($latest)) {
-                        $latest['ban_committed']   = !empty($commit_res['local_banned']);
-                        $latest['cf_sync_state']   = $cf_sync_state;
-                        $latest['cf_operation_id'] = $cf_operation_id;
+                    if (!empty($latest) && ($latest['pending_reservation_id'] ?? null) === $reservation_id) {
+                        $latest['ban_committed']          = !empty($commit_res['local_banned']);
+                        $latest['pending_reservation_id'] = null;
+                        $latest['pending_reservation_at'] = 0;
+                        $latest['cf_sync_state']          = $cf_sync_state;
+                        $latest['cf_operation_id']        = $cf_operation_id;
                         self::save_bucket($transient_key, $latest);
                     }
                 } finally {

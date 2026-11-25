@@ -624,8 +624,10 @@ class BotReconDefense {
         try {
             $queue = get_option(self::OPTION_DNS_QUEUE, []);
             if (is_array($queue) && !empty($queue)) {
-                $claimed = $queue;
-                update_option(self::OPTION_DNS_QUEUE, [], false);
+                // Only treat drain as a successful claim if clearing the persisted queue succeeds
+                if (update_option(self::OPTION_DNS_QUEUE, [], false)) {
+                    $claimed = $queue;
+                }
             }
         } finally {
             self::release_dns_queue_lock($lock_token);
