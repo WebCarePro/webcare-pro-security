@@ -202,9 +202,13 @@ class CloudflareIpListSynchronizer {
      * @param string $ip Client IPv4 or IPv6
      * @param string $reason Reason description
      * @param int $ttl Time to live in seconds (default 86400)
+     * @param string      $ip
+     * @param string      $reason
+     * @param int         $ttl
+     * @param string|null $idempotency_key Optional stable caller operation ID for queue-level deduplication.
      * @return array{cf_sync_state: string, operation_id: ?string}
      */
-    public static function queue_ip_ban(string $ip, string $reason = 'WebCare WAF Threat', int $ttl = 86400): array {
+    public static function queue_ip_ban(string $ip, string $reason = 'WebCare WAF Threat', int $ttl = 86400, ?string $idempotency_key = null): array {
         $ip = trim($ip);
         if (!filter_var($ip, FILTER_VALIDATE_IP)) {
             return ['cf_sync_state' => 'disabled', 'operation_id' => null];
@@ -222,9 +226,19 @@ class CloudflareIpListSynchronizer {
 
         $operation_id = 'cfop_' . bin2hex(random_bytes(8));
         $assigned_generation = null;
+        $deduplicated_op_id  = null;
 
         // Perform generation advancement AND queue insertion inside ONE shared mutex transaction with verified persistence & compensation
-        $success = self::mutate_ban_queue(static function (array $queue) use ($ip, $reason, $ttl, $operation_id, &$assigned_generation): ?array {
+        $success = self::mutate_ban_queue(static function (array $queue) use ($ip, $reason, $ttl, $operation_id, $idempotency_key, &$assigned_generation, &$deduplicated_op_id): ?array {
+            // Idempotency deduplication inside queue mutex: never advance generation or mint duplicate cfop_ for the same idempotency_key
+            if ($idempotency_key !== null && $idempotency_key !== '' && isset($queue[$ip]) && is_array($queue[$ip])) {
+                if (($queue[$ip]['idempotency_key'] ?? null) === $idempotency_key && !empty($queue[$ip]['operation_id'])) {
+                    $deduplicated_op_id  = (string) $queue[$ip]['operation_id'];
+                    $assigned_generation = (int) ($queue[$ip]['generation'] ?? 0);
+                    return $queue;
+                }
+            }
+
             $prev_generations = get_option(self::OPTION_IP_GENERATIONS, []);
             $prev_generations = is_array($prev_generations) ? $prev_generations : [];
 
@@ -241,21 +255,26 @@ class CloudflareIpListSynchronizer {
             }
 
             $queue[$ip] = [
-                'ip'           => $ip,
-                'reason'       => substr(sanitize_text_field($reason), 0, 240),
-                'banned_at'    => time(),
-                'expires_at'   => $ttl > 0 ? (time() + $ttl) : 0,
-                'status'       => 'pending',
-                'attempts'     => 0,
-                'next_retry'   => 0,
-                'last_error'   => '',
-                'operation_id' => $operation_id,
-                'generation'   => $next_gen,
+                'ip'              => $ip,
+                'reason'          => substr(sanitize_text_field($reason), 0, 240),
+                'banned_at'       => time(),
+                'expires_at'      => $ttl > 0 ? (time() + $ttl) : 0,
+                'status'          => 'pending',
+                'attempts'        => 0,
+                'next_retry'      => 0,
+                'last_error'      => '',
+                'operation_id'    => $operation_id,
+                'idempotency_key' => $idempotency_key,
+                'generation'      => $next_gen,
             ];
 
             $assigned_generation = $next_gen;
             return $queue;
         });
+
+        if ($deduplicated_op_id !== null) {
+            return ['cf_sync_state' => 'queued', 'operation_id' => $deduplicated_op_id];
+        }
 
         if (!$success || $assigned_generation === null) {
             return ['cf_sync_state' => 'enqueue_failed', 'operation_id' => null];

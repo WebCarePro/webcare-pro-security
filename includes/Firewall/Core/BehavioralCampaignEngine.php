@@ -300,7 +300,96 @@ final class BehavioralCampaignEngine {
     }
 
     /**
+     * Atomically claim a durable per-campaign operation state ('pending' | 'completed' | 'retryable').
+     *
+     * @return array{status: string, owner?: string, result?: array{local_banned: bool, cf_sync_state: string, cf_operation_id: ?string}}
+     */
+    private static function claim_campaign_operation(string $op_option): array {
+        global $wpdb;
+
+        $now   = time();
+        $owner = bin2hex(random_bytes(16));
+        $claim = wp_json_encode([
+            'state'      => 'pending',
+            'owner'      => $owner,
+            'expires_at' => $now + self::CAMPAIGN_WINDOW_SECONDS,
+        ]);
+
+        if (is_string($claim) && add_option($op_option, $claim, '', 'no')) {
+            return ['status' => 'claimed', 'owner' => $owner];
+        }
+
+        $raw = (string) get_option($op_option, '');
+        $decoded = $raw !== '' ? json_decode($raw, true) : null;
+        if (!is_array($decoded)) {
+            return ['status' => 'busy'];
+        }
+
+        $state = (string) ($decoded['state'] ?? '');
+        if ($state === 'completed') {
+            return [
+                'status' => 'completed',
+                'result' => [
+                    'local_banned'    => !empty($decoded['local_banned']),
+                    'cf_sync_state'   => (string) ($decoded['cf_sync_state'] ?? 'disabled'),
+                    'cf_operation_id' => !empty($decoded['cf_operation_id']) ? (string) $decoded['cf_operation_id'] : null,
+                ],
+            ];
+        }
+
+        $is_retryable      = ($state === 'retryable');
+        $is_expired_pending = ($state === 'pending' && $now > (int) ($decoded['expires_at'] ?? 0));
+        if (!$is_retryable && !$is_expired_pending) {
+            return ['status' => 'busy'];
+        }
+
+        // Atomic CAS takeover of retryable or expired pending state
+        if (is_string($claim) && isset($wpdb) && is_object($wpdb) && !empty($wpdb->options) && method_exists($wpdb, 'prepare') && method_exists($wpdb, 'query')) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Atomic CAS campaign operation claim
+            $updated = $wpdb->query(
+                $wpdb->prepare(
+                    "UPDATE {$wpdb->options} SET option_value = %s WHERE option_name = %s AND option_value = %s",
+                    $claim,
+                    $op_option,
+                    $raw
+                )
+            );
+            if ($updated === 1) {
+                wp_cache_delete($op_option, 'options');
+                return ['status' => 'claimed', 'owner' => $owner];
+            }
+        }
+
+        return ['status' => 'busy'];
+    }
+
+    /**
+     * Durably finalize a claimed campaign operation state ('completed' or 'retryable') fenced by owner token.
+     */
+    private static function finalize_campaign_operation(string $op_option, string $owner, string $final_state, array $result): void {
+        $raw     = (string) get_option($op_option, '');
+        $decoded = $raw !== '' ? json_decode($raw, true) : null;
+        if (is_array($decoded) && ($decoded['owner'] ?? null) !== $owner) {
+            return;
+        }
+
+        $payload = wp_json_encode([
+            'state'           => $final_state,
+            'owner'           => $owner,
+            'expires_at'      => time() + self::CAMPAIGN_WINDOW_SECONDS,
+            'local_banned'    => !empty($result['local_banned']),
+            'cf_sync_state'   => (string) ($result['cf_sync_state'] ?? 'disabled'),
+            'cf_operation_id' => !empty($result['cf_operation_id']) ? (string) $result['cf_operation_id'] : null,
+        ]);
+        if (is_string($payload)) {
+            update_option($op_option, $payload, false);
+        }
+    }
+
+    /**
      * Commit a 24-hour local ban and queue Cloudflare sync idempotently per campaign_op_id.
+     * Uses an atomic durable per-operation state ('pending' -> 'completed' | 'retryable')
+     * and passes campaign_op_id to CloudflareIpListSynchronizer::queue_ip_ban() for queue-level deduplication.
      *
      * Invariant: Never ban authenticated admins, whitelisted IPs, or active shoppers.
      *
@@ -310,48 +399,64 @@ final class BehavioralCampaignEngine {
      * @return array{local_banned: bool, cf_sync_state: string, cf_operation_id: ?string}
      */
     public static function commit_campaign_autoban(string $ip, string $reason, ?string $campaign_op_id = null): array {
-        // Idempotency guard: if this exact campaign operation already succeeded, return its recorded result without duplicating side effects
-        $idempotency_key = $campaign_op_id !== null ? ('wcps_camp_done_' . $campaign_op_id) : null;
-        if ($idempotency_key !== null) {
-            $prior = get_transient($idempotency_key);
-            if (is_array($prior) && !empty($prior['local_banned']) && ($prior['cf_sync_state'] ?? '') !== 'enqueue_failed') {
-                return [
-                    'local_banned'    => true,
-                    'cf_sync_state'   => (string) ($prior['cf_sync_state'] ?? 'disabled'),
-                    'cf_operation_id' => !empty($prior['cf_operation_id']) ? (string) $prior['cf_operation_id'] : null,
-                ];
+        $op_option = $campaign_op_id !== null ? ('wcps_camp_op_' . $campaign_op_id) : null;
+        $op_owner  = null;
+
+        if ($op_option !== null) {
+            $claim = self::claim_campaign_operation($op_option);
+            if ($claim['status'] === 'completed' && isset($claim['result'])) {
+                return $claim['result'];
             }
+            if ($claim['status'] !== 'claimed' || empty($claim['owner'])) {
+                return ['local_banned' => false, 'cf_sync_state' => 'not_queued', 'cf_operation_id' => null];
+            }
+            $op_owner = $claim['owner'];
         }
 
         // Exemption checks: Admins, Whitelisted IPs, and Active Shoppers
         if (class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine') && \WebCareProScanner\Firewall\FirewallEngine::is_authenticated_administrator()) {
-            return ['local_banned' => false, 'cf_sync_state' => 'not_queued', 'cf_operation_id' => null];
+            $res = ['local_banned' => false, 'cf_sync_state' => 'not_queued', 'cf_operation_id' => null];
+            if ($op_option !== null && $op_owner !== null) {
+                self::finalize_campaign_operation($op_option, $op_owner, 'retryable', $res);
+            }
+            return $res;
         }
 
         if (class_exists('\\WebCareProScanner\\Firewall\\Core\\AllowlistManager')) {
             $settings = \WebCareProScanner\System\SettingsManager::get_settings();
             if (\WebCareProScanner\Firewall\Core\AllowlistManager::is_ip_whitelisted($ip, (string) ($settings['waf_whitelisted_ips'] ?? ''))) {
-                return ['local_banned' => false, 'cf_sync_state' => 'not_queued', 'cf_operation_id' => null];
+                $res = ['local_banned' => false, 'cf_sync_state' => 'not_queued', 'cf_operation_id' => null];
+                if ($op_option !== null && $op_owner !== null) {
+                    self::finalize_campaign_operation($op_option, $op_owner, 'retryable', $res);
+                }
+                return $res;
             }
         }
 
         if (class_exists('\\WebCareProScanner\\Firewall\\Core\\CommerceSessionGuard')) {
             if (\WebCareProScanner\Firewall\Core\CommerceSessionGuard::has_active_shopper_session() || \WebCareProScanner\Firewall\Core\CommerceSessionGuard::is_exempt_from_operational_ban($ip)) {
-                return ['local_banned' => false, 'cf_sync_state' => 'not_queued', 'cf_operation_id' => null];
+                $res = ['local_banned' => false, 'cf_sync_state' => 'not_queued', 'cf_operation_id' => null];
+                if ($op_option !== null && $op_owner !== null) {
+                    self::finalize_campaign_operation($op_option, $op_owner, 'retryable', $res);
+                }
+                return $res;
             }
         }
 
         // Commit the local ban first without duplicate auto-queueing (sync_cloudflare: false)
         $local_banned = BlocklistRepository::block_ip($ip, $reason, 86400, false);
         if (!$local_banned) {
-            // Local safety guards (admin, allowlist, shopper, Cloudflare edge) rejected the ban; do not queue CF ban
-            return ['local_banned' => false, 'cf_sync_state' => 'not_queued', 'cf_operation_id' => null];
+            $res = ['local_banned' => false, 'cf_sync_state' => 'not_queued', 'cf_operation_id' => null];
+            if ($op_option !== null && $op_owner !== null) {
+                self::finalize_campaign_operation($op_option, $op_owner, 'retryable', $res);
+            }
+            return $res;
         }
 
-        // Local ban succeeded: queue generation-fenced Cloudflare ban once and preserve operation result
+        // Local ban succeeded: queue generation-fenced Cloudflare ban with stable idempotency_key deduplication
         $cf_res = ['cf_sync_state' => 'disabled', 'operation_id' => null];
         if (class_exists(CloudflareIpListSynchronizer::class)) {
-            $cf_res = CloudflareIpListSynchronizer::queue_ip_ban($ip, $reason, 86400);
+            $cf_res = CloudflareIpListSynchronizer::queue_ip_ban($ip, $reason, 86400, $campaign_op_id);
         }
 
         $result = [
@@ -360,9 +465,9 @@ final class BehavioralCampaignEngine {
             'cf_operation_id' => !empty($cf_res['operation_id']) ? (string) $cf_res['operation_id'] : null,
         ];
 
-        // Persist idempotency ledger when commit + enqueue succeeded (do not cache enqueue_failed so retries remain active)
-        if ($idempotency_key !== null && $result['cf_sync_state'] !== 'enqueue_failed') {
-            set_transient($idempotency_key, $result, self::CAMPAIGN_WINDOW_SECONDS);
+        if ($op_option !== null && $op_owner !== null) {
+            $final_state = ($result['cf_sync_state'] === 'enqueue_failed') ? 'retryable' : 'completed';
+            self::finalize_campaign_operation($op_option, $op_owner, $final_state, $result);
         }
 
         return $result;
