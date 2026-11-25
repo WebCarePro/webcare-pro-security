@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-25T21:16:21.140Z",
+  "generated_at": "2026-11-25T21:49:08.628Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -840,12 +840,12 @@
       "size": 11247
     },
     "includes/Malware/DeobfuscationEngine.php": {
-      "sha256": "18a1309490fb7d24ccc44d378deaebcc6c56c4d0abfda81390039b7acfddad82",
-      "size": 16209
+      "sha256": "437313bc54ba843453377bfdfd7124cfc883e2536524418d421adc6f2060979e",
+      "size": 16218
     },
     "includes/Malware/HeuristicEngine.php": {
-      "sha256": "a8b4c892c35f5c25a12723f9b76ce99dd2a569290fc31aa3cf4d7b317871597b",
-      "size": 7548
+      "sha256": "f3f33d347a9770c52764c29e0a8abcce982b2a5ac6d18ef49d44f498262650d0",
+      "size": 7582
     },
     "includes/Malware/JavaScriptSecurityScanner.php": {
       "sha256": "cc4f23f597d5651de878aa184114a8db430fd03ef501faf255287a023fa08af4",
@@ -868,8 +868,8 @@
       "size": 8620
     },
     "includes/Malware/TaintAnalysisEngine.php": {
-      "sha256": "3786fa6e86fee7c905c9b1f506d3c319035bbaf3ebb9f56cda544bd66200db9a",
-      "size": 65365
+      "sha256": "009e37fdc6ae49e3a4631c3b0c063d7526c2db048c194c68ca8f5f0f3ae364a3",
+      "size": 65374
     },
     "includes/Malware/WebshellDetector.php": {
       "sha256": "74d2c0baf8580d70d0dcc52b070bd11f550ca4855654682c255f9f7d3219e03a",
