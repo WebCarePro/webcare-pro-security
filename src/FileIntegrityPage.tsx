@@ -673,7 +673,7 @@ export default function FileIntegrityPage({ apiRequest, initialFilePath, initial
   const filteredChanges = changes.filter((item) => {
     // Integrity status filter
     if (integrityFilter === 'high_risk') {
-      if (item.risk !== 'high' && item.risk !== 'critical') {
+      if (item.severity !== 'high' && item.severity !== 'critical') {
         return false;
       }
     } else if (integrityFilter === 'altered') {
