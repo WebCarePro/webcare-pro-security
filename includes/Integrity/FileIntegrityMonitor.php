@@ -195,9 +195,15 @@ class FileIntegrityMonitor {
             }
         }
 
-        // Sort by newest modified first
-        usort($changes, function ($a, $b) {
-            return $b['mtime'] - $a['mtime'];
+        // Prioritize critical & high-risk alterations first so array_slice($limit) never drops high-risk files
+        $severity_rank = ['critical' => 0, 'high' => 1, 'info' => 2, 'clean' => 3];
+        usort($changes, static function (array $a, array $b) use ($severity_rank): int {
+            $ra = $severity_rank[$a['severity'] ?? 'info'] ?? 2;
+            $rb = $severity_rank[$b['severity'] ?? 'info'] ?? 2;
+            if ($ra !== $rb) {
+                return $ra <=> $rb;
+            }
+            return ($b['mtime'] ?? 0) <=> ($a['mtime'] ?? 0);
         });
 
         // Limit results
