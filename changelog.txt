@@ -1,4 +1,6 @@
 ﻿v:0.0.1 - 2026-11-25
+- File Integrity Monitor (FIM) High-Risk Quick Filter:
+  * Made the `High-Risk Alterations` KPI card in `FileIntegrityPage.tsx` clickable (with keyboard accessibility and smooth scroll to the table) and added a `High-Risk Only` pill to the Integrity State filter bar.
 - WAF False-Positive Elimination & Autonomous Recon Hardening:
   * `FormSpamProtectionEngine`: Switched public form `webcare_time_gate` tokens to domain-separated HMAC-SHA256 (`wctg1.<b64url>.<sig>`) without embedding `SecretVault` ciphertext prefixes or visitor IP addresses in inline HTML, eliminating `WEBCARE_VAULT_CIPHER` false-positive redactions in `ResponseDlpSentinel` while maintaining backward compatibility for cached pages.
   * `RuntimeSqlRaspEngine`: Skipped `wp-content/db.php` and `wp-content/object-cache.php` drop-in frames during RASP caller provenance resolution, permitted single-table `INFORMATION_SCHEMA.TABLES` existence lookups (`TABLE_NAME = '...'` without `UNION`/subqueries), and allowed bounded non-credential profile/status `UPDATE`s (`user_status`, `display_name`, `user_nicename`, `user_url`) by registration/LMS plugins on freshly registered (`<= 120s`) non-privileged users.

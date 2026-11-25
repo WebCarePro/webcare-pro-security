@@ -182,7 +182,7 @@ export default function FileIntegrityPage({ apiRequest, initialFilePath, initial
   const [loading, setLoading] = useState<boolean>(true);
   const [timeframe, setTimeframe] = useState<number>(48);
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
-  const [integrityFilter, setIntegrityFilter] = useState<'all' | 'altered' | 'pristine' | 'unverified'>('all');
+  const [integrityFilter, setIntegrityFilter] = useState<'all' | 'high_risk' | 'altered' | 'pristine' | 'unverified'>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   const getStartingTab = (): 'fim' | 'permissions' => {
@@ -672,7 +672,11 @@ export default function FileIntegrityPage({ apiRequest, initialFilePath, initial
 
   const filteredChanges = changes.filter((item) => {
     // Integrity status filter
-    if (integrityFilter === 'altered') {
+    if (integrityFilter === 'high_risk') {
+      if (item.risk !== 'high' && item.risk !== 'critical') {
+        return false;
+      }
+    } else if (integrityFilter === 'altered') {
       if (item.integrity_status !== 'modified' && item.integrity_status !== 'rogue_file' && item.integrity_status !== 'suspicious_executable' && !item.is_suspicious) {
         return false;
       }
@@ -1208,8 +1212,33 @@ export default function FileIntegrityPage({ apiRequest, initialFilePath, initial
           </div>
         </div>
 
-        {/* Metric 3 */}
-        <div className="webcare-stat-box webcare-fim-metric-card">
+        {/* Metric 3 — Clickable High-Risk Alterations KPI */}
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => {
+            setCategoryFilter('all');
+            setIntegrityFilter('high_risk');
+            setCurrentPage(1);
+            tableRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              setCategoryFilter('all');
+              setIntegrityFilter('high_risk');
+              setCurrentPage(1);
+              tableRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+          }}
+          className="webcare-stat-box webcare-fim-metric-card"
+          title="Click to filter table to High-Risk Alterations only"
+          style={{
+            cursor: 'pointer',
+            outline: integrityFilter === 'high_risk' ? '2px solid #e11d48' : undefined,
+            outlineOffset: integrityFilter === 'high_risk' ? '-2px' : undefined,
+          }}
+        >
           <div className={`webcare-fim-metric-icon ${stats && stats.high_risk_count > 0 ? 'webcare-fim-icon-rose' : 'webcare-fim-icon-green'}`}>
             <AlertTriangle size={22} />
           </div>
@@ -1217,11 +1246,18 @@ export default function FileIntegrityPage({ apiRequest, initialFilePath, initial
             <div className="webcare-fim-metric-label">
               High-Risk Alterations
             </div>
-            <div
-              className="webcare-fim-metric-value"
-              style={{ color: stats && stats.high_risk_count > 0 ? 'var(--webcare-status-high, #e11d48)' : undefined }}
-            >
-              {stats ? stats.high_risk_count : '...'}
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+              <div
+                className="webcare-fim-metric-value"
+                style={{ color: stats && stats.high_risk_count > 0 ? 'var(--webcare-status-high, #e11d48)' : undefined }}
+              >
+                {stats ? stats.high_risk_count : '...'}
+              </div>
+              {stats && stats.high_risk_count > 0 && (
+                <span style={{ fontSize: '11px', fontWeight: 600, color: '#e11d48' }}>
+                  View →
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -1494,6 +1530,7 @@ export default function FileIntegrityPage({ apiRequest, initialFilePath, initial
           <span style={{ fontSize: '12px', color: 'var(--webcare-text-muted, #64748b)', fontWeight: 600 }}>Integrity State:</span>
           {[
             { id: 'all', label: 'All Files' },
+            { id: 'high_risk', label: `High-Risk Only (${stats ? stats.high_risk_count : 0})`, color: '#e11d48' },
             { id: 'altered', label: 'Altered / Tampered Only', color: '#ef4444' },
             { id: 'pristine', label: 'Official Matches (Pristine)', color: '#10b981' },
             { id: 'unverified', label: 'Custom / Unverified', color: '#8b5cf6' },
