@@ -24,6 +24,15 @@ import {
   FolderSearch,
   Image,
   FileCode2,
+  KeyRound,
+  FileCheck2,
+  PackageCheck,
+  Cloud,
+  Stethoscope,
+  Cpu,
+  Bot,
+  Sparkles,
+  Radar,
 } from 'lucide-react';
 import { apiRequest } from '../utils/api';
 import { buildAdminUrl } from '../utils/routeRegistry';
@@ -484,11 +493,26 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   const urlSchedules = buildAdminUrl('webcare-pro-settings', 'schedules');
   const urlAlerts = buildAdminUrl('webcare-pro-settings', 'alerts');
   const urlDoctor = buildAdminUrl('webcare-pro-settings', 'doctor');
+  const urlCafStackGuard = buildAdminUrl('webcare-pro-modular-waf', 'rules');
+  const urlAiDefense = buildAdminUrl('webcare-pro-modular-waf', 'nextgen');
+  const urlAiIntelligence = buildAdminUrl('webcare-pro-settings', 'ai');
+  const urlThreatFeeds = buildAdminUrl('webcare-pro-firewall', 'threat-intel');
+
+  const cafActive = firewallStatus?.caf_enabled !== false && firewallStatus?.is_enabled !== false;
+  const aiDefenseActive = firewallStatus?.ai_defense_enabled !== false && firewallStatus?.is_enabled !== false;
+  const aiIntelConfigured = Boolean(
+    firewallStatus?.ai_provider_configured ||
+    serverInfo?.ai_provider_configured ||
+    (window as any).webcareScannerSettings?.ai_provider_configured
+  );
+  const threatFeedsActive = firewallStatus?.threat_intel_enabled !== false && firewallStatus?.is_enabled !== false;
 
   const careLayers = [
     {
       key: 'firewall',
       name: 'Perimeter Firewall',
+      icon: Shield,
+      iconColor: '#4f46e5',
       badge: firewallStatus?.is_enabled === false ? 'Paused' : 'Active',
       tone: firewallStatus?.is_enabled === false ? 'warning' : 'active',
       desc: 'Filters harmful bots and exploit payloads before WordPress even loads, keeping pages fast.',
@@ -498,6 +522,8 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     {
       key: 'login',
       name: 'Friendly Login & 2FA',
+      icon: KeyRound,
+      iconColor: '#059669',
       badge: 'Active',
       tone: 'active',
       desc: 'Supports WebAuthn passkeys and 2FA while slowing down password guessers automatically.',
@@ -507,6 +533,8 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     {
       key: 'integrity',
       name: 'Core File Integrity',
+      icon: FileCheck2,
+      iconColor: '#0284c7',
       badge: reviewItemsCount > 0 ? `${reviewItemsCount} Notice` : 'Clean',
       tone: reviewItemsCount > 0 ? 'warning' : 'active',
       desc: 'Compares WordPress core files against official releases to confirm nothing unexpected changed.',
@@ -516,6 +544,8 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     {
       key: 'risks',
       name: 'Plugin & Theme Risks',
+      icon: PackageCheck,
+      iconColor: '#d97706',
       badge: vulnTotal > 0 ? `${vulnTotal} to Review` : '0 Risks',
       tone: vulnTotal > 0 ? 'warning' : 'active',
       desc: 'Monitors active plugins and themes for known vulnerabilities and guides safe updates.',
@@ -525,6 +555,8 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     {
       key: 'cloudflare',
       name: 'Cloudflare Edge Sync',
+      icon: Cloud,
+      iconColor: '#f97316',
       badge: !cfStatus.loaded ? 'Checking' : cfStatus.configured ? 'Synced' : 'Optional',
       tone: cfStatus.configured ? 'active' : 'neutral',
       desc: 'Aligns real visitor IP detection and optional edge firewall filtering cleanly with your origin.',
@@ -534,11 +566,57 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     {
       key: 'doctor',
       name: 'Site Health Doctor',
+      icon: Stethoscope,
+      iconColor: '#0d9488',
       badge: 'Ready',
       tone: 'active',
       desc: 'Monitors PHP, InnoDB settings locks, cron health, and safe server configuration automatically.',
       href: urlDoctor,
       linkText: 'Open Site Doctor',
+    },
+    {
+      key: 'caf_stackguard',
+      name: '(CAF) & StackGuard Engine',
+      icon: Cpu,
+      iconColor: '#7c3aed',
+      badge: cafActive ? 'Active' : 'Paused',
+      tone: cafActive ? 'active' : 'warning',
+      desc: 'Automatically profiles your active WordPress stack and compiles tailored, zero-bloat firewall rules.',
+      href: urlCafStackGuard,
+      linkText: 'Open CAF & StackGuard',
+    },
+    {
+      key: 'ai_defense',
+      name: 'AI Defense',
+      icon: Bot,
+      iconColor: '#6366f1',
+      badge: aiDefenseActive ? 'Guarded' : 'Paused',
+      tone: aiDefenseActive ? 'active' : 'warning',
+      desc: 'Protects forms, comments, and MCP endpoints against 2026–2027 prompt injection and AI scraping bots.',
+      href: urlAiDefense,
+      linkText: 'AI Defense Rules',
+    },
+    {
+      key: 'ai_cyber_intel',
+      name: 'AI Cybersecurity Intelligence Engine',
+      icon: Sparkles,
+      iconColor: '#8b5cf6',
+      badge: aiIntelConfigured ? 'Connected' : 'Ready',
+      tone: aiIntelConfigured ? 'active' : 'neutral',
+      desc: 'Optional on-demand AI forensic assistant that explains suspicious code in plain English when you ask.',
+      href: urlAiIntelligence,
+      linkText: 'AI Engine Settings',
+    },
+    {
+      key: 'threat_feeds',
+      name: 'Public Threat Intelligence Feeds',
+      icon: Radar,
+      iconColor: '#0891b2',
+      badge: threatFeedsActive ? 'Active' : 'Off',
+      tone: threatFeedsActive ? 'active' : 'neutral',
+      desc: 'Blocks known botnet IPs and abusive scanner networks locally on your server with zero telemetry.',
+      href: urlThreatFeeds,
+      linkText: 'Threat Feeds',
     },
   ];
 
@@ -1057,6 +1135,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
           <div className="wcp-dash-layers-grid">
             {careLayers.map((layer) => {
               const isOpen = expandedLayerKey === layer.key;
+              const LayerIcon = layer.icon;
               return (
                 <div key={layer.key} className="wcp-dash-layer-tile">
                   <button
@@ -1065,7 +1144,8 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                     aria-expanded={isOpen ? 'true' : 'false'}
                     onClick={() => setExpandedLayerKey(isOpen ? null : layer.key)}
                   >
-                    <div className="wcp-dash-layer-left">
+                    <div className="wcp-dash-layer-left" style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                      <LayerIcon size={15} style={{ color: layer.iconColor, flexShrink: 0 }} />
                       <span className="wcp-dash-layer-name">{layer.name}</span>
                     </div>
                     <span className={`wcp-dash-layer-badge is-${layer.tone}`}>

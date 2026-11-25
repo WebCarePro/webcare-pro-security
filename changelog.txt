@@ -1,4 +1,7 @@
 ﻿v:0.0.1 - 2026-11-25
+- Dashboard Always-On Site Care Enhancements:
+  * Added crisp color-coded icons next to every guard in `DashboardOverview.tsx` (Perimeter Firewall, Friendly Login & 2FA, Core File Integrity, Plugin & Theme Risks, Cloudflare Edge Sync, Site Health Doctor) for quick visual scanning.
+  * Added 4 new expandable live-status guards: `(CAF) & StackGuard Engine`, `AI Defense`, `AI Cybersecurity Intelligence Engine`, and `Public Threat Intelligence Feeds`.
 - Plugin Compatibility & Conflict Checker (Settings Page):
   * Added read-only `PluginConflictChecker` (`includes/System/PluginConflictChecker.php`) and `POST /system/conflict-check` REST endpoint (`SystemController::run_conflict_check()`) to detect overlapping security/2FA/login/cache plugins and `auto_prepend_file` collisions without modifying third-party settings.
   * Added `PluginConflictCheckerCard` (`src/components/PluginConflictCheckerCard.tsx`) to Settings -> Doctor & Rescue Center with calm, plain-English explanations and direct settings links.
