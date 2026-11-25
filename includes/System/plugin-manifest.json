@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-25T12:19:19.188Z",
+  "generated_at": "2026-11-25T12:20:59.938Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -92,7 +92,7 @@
       "size": 26394
     },
     "build/index.asset.php": {
-      "sha256": "d430007de4db2704401776418a41e28073ed9764ba5891464658b26611da4d87",
+      "sha256": "67f597e149de16ee68be020b61b6c317a2f16765d8c3728a3aceb97c9722049e",
       "size": 174
     },
     "build/index.css": {
@@ -100,8 +100,8 @@
       "size": 26389
     },
     "build/index.js": {
-      "sha256": "082e875b198e247575b6293fecb2851cb0e8ec64ab9eb6749ac31f154ae05cdf",
-      "size": 3021623
+      "sha256": "849d59491a5c8ade37640483a742cc44556c128d193e2ee5240bd76097b62cdc",
+      "size": 3021593
     },
     "build/modular-waf.asset.php": {
       "sha256": "de4d960ba35c0ce5c104ef0572a1d37a6f201993cd61c4e2d3ba5826e1d0287e",
@@ -124,7 +124,7 @@
       "size": 26394
     },
     "build/scan.asset.php": {
-      "sha256": "ede6bf3cdf484ba3f20efcfac58bd812c62e4910c796413ffde16e874d7cddaf",
+      "sha256": "bc4fe8b0aa46c64a57cec0df242b3857eac6489e24b67f6300981b0e4a041e30",
       "size": 174
     },
     "build/scan.css": {
@@ -132,8 +132,8 @@
       "size": 26389
     },
     "build/scan.js": {
-      "sha256": "4b3bb689b906cd85a220a0d82c225feb1934d9330272235ae28ed9f6fb565a81",
-      "size": 3013350
+      "sha256": "e57c91b883640ebf85e3c0ac970cc85370c0ddd6ca5aea07a4d1e5b04a066b77",
+      "size": 3013320
     },
     "build/settings.asset.php": {
       "sha256": "093759ca28491ccb426e5cdb6ba27769c6bb7b0f62f347b77569476a56c84aeb",

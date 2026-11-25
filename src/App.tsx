@@ -7021,7 +7021,6 @@ Source Code,${escapeCsv(code)}
               const sp = new URLSearchParams(window.location.search);
               return (sp.get('tab') === 'permissions' || sp.get('section') === 'permissions' || sp.get('subtab') === 'permissions') ? 'permissions' : 'fim';
             })()}
-            onSubTabChange={(sub) => handleNavTabChange('fim', sub)}
             onNavigateToDashboard={() => handleNavTabChange('dashboard')}
           />
         </SafeErrorBoundary>
