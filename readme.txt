@@ -15,10 +15,10 @@ Enterprise-grade WordPress security, malware detection, web application firewall
 WebCare Pro Security & Firewall gives you enterprise-grade malware detection, core integrity auditing, web application firewalling (WAF), session sentinel, rogue admin detection, and threat forensics inside an intuitive, modern React 18 single-page dashboard. Engineered by Mir Alamin (WebCare Pro) for high-performance WordPress sites, it provides deep visibility across your file system, WordPress core files, plugins, themes, database tables, cron jobs, active sessions, runtime hooks, and server configurations—without the performance bloat of traditional security tools.
 
 Key highlights:
-* **Deep Malware & Heuristic Scanner**: Scans PHP files, uploads, and database for webshells, backdoors, obfuscated injections, and rogue admin accounts.
+* **Deep Malware & Heuristic Scanner**: AST taint-flow analysis and heuristic scanning across PHP files, uploads, and database with nested-install awareness and low false positives.
 * **WordPress Core & Plugin Integrity**: Cryptographic validation against official WordPress.org checksums with 1-click Auto-Cure.
-* **Proactive Web Application Firewall (WAF)**: Zero-overhead request filtering, virtual patching, 404 rate-limiting, and Cloudflare Edge synchronization.
-* **Zero Bloat & Memory-Safe Architecture**: Hierarchical cursors and adaptive resource governor preserve visitor headroom.
+* **Proactive Web Application Firewall (WAF)**: Zero-overhead request filtering, virtual patching, 404 rate-limiting, and instant Cloudflare Edge ban offloading (`CF Ban`).
+* **Shared-Hosting & cPanel Optimized**: Filesystem-first (`/webcare-waf/`) logging, deduplication, and lockout indexing minimize MySQL load and preserve memory headroom (`< 70%`).
 * **Pure AES-256-GCM Cryptographic Vault**: Encrypts sensitive secrets and TOTP 2FA keys at rest.
 * **100% On-Premise & Privacy First**: Zero third-party telemetry, zero external tracking, and zero data collection.
 

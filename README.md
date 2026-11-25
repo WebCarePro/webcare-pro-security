@@ -30,8 +30,8 @@
 **WebCare Pro Security & Firewall** is a modern, high-performance WordPress security, malware detection, and forensic auditing plugin engineered by **[Mir Alamin](https://www.upwork.com/freelancers/~0162afa9a578170c67)** ([WebCare Pro](https://webcarepro.dev)). 
 
 > [!NOTE]
-> **Active Engineering & Senior Architecture (v2.17.0)**  
-> WebCare Pro Security & Firewall is actively developed and battle-tested by solo engineer **Mir Alamin**. Rapid architectural upgrades, engine hardening, and new security primitives are released continuously.
+> **Active Engineering & Senior Architecture (`v0.0.1` — WordPress 7.0+ & PHP 8.3+)**  
+> WebCare Pro Security & Firewall is actively developed and battle-tested by solo engineer **Mir Alamin**. Designed for shared cPanel hosting and high-traffic sites alike, it uses filesystem-first zero-SQL logging (`/webcare-waf/`), instant Cloudflare Edge ban offloading (`CF Ban`), and memory-safe streaming engines.
 
 Unlike heavy, bloated security plugins that degrade server performance with background overhead, WebCare Pro Security & Firewall combines **memory-safe PHP batch auditing engines** with a responsive **React 18 single-page administrative dashboard**. It provides deep insight into your file system, WordPress core integrity, plugin and theme source code, database tables, cron jobs, active administrative sessions, runtime memory hooks, and server configurations—giving developers, sysadmins, and site owners complete visibility and control over their WordPress security posture.
 

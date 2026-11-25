@@ -93,6 +93,8 @@ Built with a high-performance **React 18 + TypeScript** administrative single-pa
 83. [Context-Adaptive Firewall (CAF 2.0) & Dynamic Ecosystem Gating](#83-context-adaptive-firewall-caf-20--dynamic-ecosystem-gating)
 84. [ThreatScore First-Hit Critical Exploit Hard Banning & Instant Zero-Latency Cloudflare Edge Offload](#84-threatscore-first-hit-critical-exploit-hard-banning--instant-zero-latency-cloudflare-edge-offload)
 85. [Egress & SSRF Firewall Legitimate Webhook Whitelisting & Caller Attribution](#85-egress--ssrf-firewall-legitimate-webhook-whitelisting--caller-attribution)
+86. [Shared-Hosting Filesystem-First Zero-SQL Architecture & Cloudflare `CF Ban` Telemetry](#86-shared-hosting-filesystem-first-zero-sql-architecture--cloudflare-cf-ban-telemetry)
+87. [Plugin Compatibility & Conflict Checker + Dedicated Threat Intel Tab](#87-plugin-compatibility--conflict-checker--dedicated-threat-intel-tab)
 86. [Zero-Day Redirect Hack Defense & .htaccess Vault Armor](#86-zero-day-redirect-hack-defense--htaccess-vault-armor)
 87. [Next-Gen Cryptographic Self-Defense & In-Memory Integrity Verification](#87-next-gen-cryptographic-self-defense--in-memory-integrity-verification)
 88. [Cloudflare Edge WAF "4 + 1" Smart Consolidation & Autonomous Auto-Sync System](#88-cloudflare-edge-waf-4--1-smart-consolidation--autonomous-auto-sync-system)
