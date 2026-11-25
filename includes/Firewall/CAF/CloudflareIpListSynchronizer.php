@@ -236,8 +236,11 @@ class CloudflareIpListSynchronizer {
         $ledger_full         = false;
         $now                 = time();
 
-        // Perform generation advancement, idempotency check, and queue insertion inside ONE shared mutex transaction
+        // Perform generation advancement, verified idempotency ledger write, AND queue insertion inside ONE shared mutex transaction
         $success = self::mutate_ban_queue(static function (array $queue) use ($ip, $reason, $ttl, $operation_id, $idempotency_key, $now, &$assigned_generation, &$deduplicated_op_id, &$ledger_full): ?array {
+            $ledger = get_option(self::OPTION_IDEMPOTENCY_LEDGER, []);
+            $ledger = is_array($ledger) ? $ledger : [];
+
             // 1. Check active queue entry AND durable idempotency ledger (survives queue consumption/removal)
             if ($idempotency_key !== null && $idempotency_key !== '') {
                 if (isset($queue[$ip]) && is_array($queue[$ip]) && ($queue[$ip]['idempotency_key'] ?? null) === $idempotency_key && !empty($queue[$ip]['operation_id'])) {
@@ -246,28 +249,24 @@ class CloudflareIpListSynchronizer {
                     return $queue;
                 }
 
-                $ledger = get_option(self::OPTION_IDEMPOTENCY_LEDGER, []);
-                if (is_array($ledger)) {
-                    if (isset($ledger[$idempotency_key]) && is_array($ledger[$idempotency_key])) {
-                        $entry = $ledger[$idempotency_key];
-                        if (!empty($entry['operation_id']) && (int) ($entry['expires_at'] ?? 0) > $now) {
-                            $deduplicated_op_id  = (string) $entry['operation_id'];
-                            $assigned_generation = (int) ($entry['generation'] ?? 0);
-                            return $queue;
-                        }
+                if (isset($ledger[$idempotency_key]) && is_array($ledger[$idempotency_key])) {
+                    $entry = $ledger[$idempotency_key];
+                    if (!empty($entry['operation_id']) && (int) ($entry['expires_at'] ?? 0) > $now) {
+                        $deduplicated_op_id  = (string) $entry['operation_id'];
+                        $assigned_generation = (int) ($entry['generation'] ?? 0);
+                        return $queue;
                     }
+                }
 
-                    // Capacity check: count unexpired entries; never silently evict a still-valid 24h key
-                    $unexpired_count = 0;
-                    foreach ($ledger as $v) {
-                        if (is_array($v) && (int) ($v['expires_at'] ?? 0) > $now) {
-                            $unexpired_count++;
-                        }
+                // Prune expired ledger entries and enforce strict 500-entry non-evicting capacity
+                foreach ($ledger as $k => $v) {
+                    if (!is_array($v) || (int) ($v['expires_at'] ?? 0) <= $now) {
+                        unset($ledger[$k]);
                     }
-                    if ($unexpired_count >= 500) {
-                        $ledger_full = true;
-                        return null;
-                    }
+                }
+                if (count($ledger) >= 500) {
+                    $ledger_full = true;
+                    return null;
                 }
             }
 
@@ -284,6 +283,21 @@ class CloudflareIpListSynchronizer {
 
             if (!self::save_verified_option(self::OPTION_IP_GENERATIONS, $generations)) {
                 return null;
+            }
+
+            if ($idempotency_key !== null && $idempotency_key !== '') {
+                $ledger[$idempotency_key] = [
+                    'operation_id' => $operation_id,
+                    'generation'   => $next_gen,
+                    'expires_at'   => $now + DAY_IN_SECONDS,
+                ];
+                if (!self::save_verified_option(self::OPTION_IDEMPOTENCY_LEDGER, $ledger)) {
+                    // Compensate generation increment before aborting queue write
+                    if (!self::save_verified_option(self::OPTION_IP_GENERATIONS, $prev_generations)) {
+                        self::save_verified_option(self::OPTION_RECONCILIATION_FLAG, time());
+                    }
+                    return null;
+                }
             }
 
             $queue[$ip] = [
@@ -310,45 +324,6 @@ class CloudflareIpListSynchronizer {
 
         if (!$success || $assigned_generation === null || $ledger_full) {
             return ['cf_sync_state' => 'enqueue_failed', 'operation_id' => null];
-        }
-
-        // 2. Queue persistence verified: now record in durable idempotency ledger with verified persistence & compensation
-        if ($idempotency_key !== null && $idempotency_key !== '') {
-            $ledger_saved = false;
-            self::mutate_ban_queue(static function (array $queue) use ($ip, $idempotency_key, $operation_id, $assigned_generation, $now, &$ledger_saved): ?array {
-                $ledger = get_option(self::OPTION_IDEMPOTENCY_LEDGER, []);
-                $ledger = is_array($ledger) ? $ledger : [];
-                foreach ($ledger as $k => $v) {
-                    if (!is_array($v) || (int) ($v['expires_at'] ?? 0) <= $now) {
-                        unset($ledger[$k]);
-                    }
-                }
-                if (count($ledger) >= 500 && !isset($ledger[$idempotency_key])) {
-                    // Compensate: remove the just-inserted queue entry if still matching our operation_id
-                    if (isset($queue[$ip]) && is_array($queue[$ip]) && ($queue[$ip]['operation_id'] ?? null) === $operation_id) {
-                        unset($queue[$ip]);
-                    }
-                    return $queue;
-                }
-                $ledger[$idempotency_key] = [
-                    'operation_id' => $operation_id,
-                    'generation'   => $assigned_generation,
-                    'expires_at'   => $now + DAY_IN_SECONDS,
-                ];
-                if (self::save_verified_option(self::OPTION_IDEMPOTENCY_LEDGER, $ledger)) {
-                    $ledger_saved = true;
-                    return $queue;
-                }
-                // Compensation on ledger persistence failure: roll back our queue entry so retry stays consistent
-                if (isset($queue[$ip]) && is_array($queue[$ip]) && ($queue[$ip]['operation_id'] ?? null) === $operation_id) {
-                    unset($queue[$ip]);
-                }
-                return $queue;
-            });
-
-            if (!$ledger_saved) {
-                return ['cf_sync_state' => 'enqueue_failed', 'operation_id' => null];
-            }
         }
 
         self::log_sync_event([
@@ -687,6 +662,7 @@ class CloudflareIpListSynchronizer {
             $queue = is_array($queue) ? $queue : [];
 
             $prev_generations = get_option(self::OPTION_IP_GENERATIONS, []);
+            $prev_ledger      = get_option(self::OPTION_IDEMPOTENCY_LEDGER, []);
             $prev_queue = $queue;
 
             $queue = $callback($queue);
@@ -705,16 +681,19 @@ class CloudflareIpListSynchronizer {
             }
 
             if (!$persisted) {
-                // Compensate/Rollback OPTION_IP_GENERATIONS to previous state if queue persistence failed
-                $rolled_back = self::save_verified_option(self::OPTION_IP_GENERATIONS, $prev_generations);
-                if (!$rolled_back) {
+                // Compensate/Rollback BOTH OPTION_IP_GENERATIONS and OPTION_IDEMPOTENCY_LEDGER inside the same held mutex
+                $rolled_back_gen    = self::save_verified_option(self::OPTION_IP_GENERATIONS, $prev_generations);
+                $rolled_back_ledger = self::save_verified_option(self::OPTION_IDEMPOTENCY_LEDGER, $prev_ledger);
+                if (!$rolled_back_gen || !$rolled_back_ledger) {
                     // Set and verify a durable persistent reconciliation-needed marker in database
                     $marker_persisted = self::save_verified_option(self::OPTION_RECONCILIATION_FLAG, time());
                     if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
                         \WebCareProScanner\System\AuditLogger::log_operational('cf_queue_compensation_failed', [
-                            'error'            => 'Failed to reconcile OPTION_IP_GENERATIONS after queue persistence failure',
-                            'marker_persisted' => $marker_persisted,
-                            'timestamp'        => time(),
+                            'error'              => 'Failed to reconcile generations or idempotency ledger after queue persistence failure',
+                            'rolled_back_gen'    => $rolled_back_gen,
+                            'rolled_back_ledger' => $rolled_back_ledger,
+                            'marker_persisted'   => $marker_persisted,
+                            'timestamp'          => time(),
                         ]);
                         if (!$marker_persisted) {
                             \WebCareProScanner\System\AuditLogger::log_operational('cf_reconciliation_marker_write_failed', [

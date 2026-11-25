@@ -419,9 +419,9 @@ final class BehavioralCampaignEngine {
     }
 
     /**
-     * Cursor-advancing bounded cleanup of expired completed/retryable campaign operation records in wp_options.
-     * Advances through option_id in ascending order (wrapping at end) so expired records can never starve behind
-     * unexpired or pending entries, and never deletes active 'pending' claims or unexpired 24h 'completed' records.
+     * Concurrency-fenced, cursor-advancing bounded cleanup of expired completed/retryable campaign operation records.
+     * Serialized under an owner-fenced mutex ('wcps_camp_prune_lock') with verified CAS cursor persistence so
+     * overlapping workers can never regress a newer cursor or starve expired records.
      */
     private static function prune_expired_campaign_operations(int $now): void {
         global $wpdb;
@@ -430,55 +430,86 @@ final class BehavioralCampaignEngine {
             return;
         }
 
-        $cursor_option = 'wcps_camp_prune_cursor';
-        $last_id       = (int) get_option($cursor_option, 0);
-
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Cursor-ordered bounded scan of campaign op records
-        $rows = $wpdb->get_results(
-            $wpdb->prepare(
-                "SELECT option_id, option_name, option_value FROM {$wpdb->options} WHERE option_name LIKE %s AND option_id > %d ORDER BY option_id ASC LIMIT 25",
-                'wcps_camp_op_%',
-                $last_id
-            ),
-            ARRAY_A
-        );
-
-        if (!is_array($rows) || empty($rows)) {
-            if ($last_id > 0) {
-                update_option($cursor_option, 0, false);
-            }
+        $prune_lock_option = 'wcps_camp_prune_lock';
+        $prune_lock_token  = self::acquire_campaign_lock($prune_lock_option, 15);
+        if ($prune_lock_token === null) {
             return;
         }
 
-        $max_seen_id = $last_id;
-        foreach ($rows as $row) {
-            $oid = (int) ($row['option_id'] ?? 0);
-            if ($oid > $max_seen_id) {
-                $max_seen_id = $oid;
+        try {
+            $cursor_option = 'wcps_camp_prune_cursor';
+            wp_cache_delete($cursor_option, 'options');
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Read current prune cursor inside mutex
+            $raw_cursor = $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT option_value FROM {$wpdb->options} WHERE option_name = %s",
+                    $cursor_option
+                )
+            );
+            $has_cursor = ($raw_cursor !== null);
+            $last_id    = $has_cursor && ctype_digit((string) $raw_cursor) ? (int) $raw_cursor : 0;
+
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Cursor-ordered bounded scan of campaign op records
+            $rows = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT option_id, option_name, option_value FROM {$wpdb->options} WHERE option_name LIKE %s AND option_id > %d ORDER BY option_id ASC LIMIT 25",
+                    'wcps_camp_op_%',
+                    $last_id
+                ),
+                ARRAY_A
+            );
+
+            $next_cursor = 0;
+            if (is_array($rows) && !empty($rows)) {
+                $max_seen_id = $last_id;
+                foreach ($rows as $row) {
+                    $oid = (int) ($row['option_id'] ?? 0);
+                    if ($oid > $max_seen_id) {
+                        $max_seen_id = $oid;
+                    }
+                    $name = (string) ($row['option_name'] ?? '');
+                    $val  = (string) ($row['option_value'] ?? '');
+                    $dec  = $val !== '' ? json_decode($val, true) : null;
+                    if (!is_array($dec)) {
+                        continue;
+                    }
+                    $st  = (string) ($dec['state'] ?? '');
+                    $exp = (int) ($dec['expires_at'] ?? 0);
+                    if ($st !== 'pending' && $exp > 0 && $now > $exp) {
+                        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Value-fenced delete of expired record
+                        $wpdb->query(
+                            $wpdb->prepare(
+                                "DELETE FROM {$wpdb->options} WHERE option_name = %s AND option_value = %s",
+                                $name,
+                                $val
+                            )
+                        );
+                        wp_cache_delete($name, 'options');
+                    }
+                }
+                $next_cursor = (count($rows) < 25) ? 0 : $max_seen_id;
             }
-            $name = (string) ($row['option_name'] ?? '');
-            $val  = (string) ($row['option_value'] ?? '');
-            $dec  = $val !== '' ? json_decode($val, true) : null;
-            if (!is_array($dec)) {
-                continue;
-            }
-            $st  = (string) ($dec['state'] ?? '');
-            $exp = (int) ($dec['expires_at'] ?? 0);
-            if ($st !== 'pending' && $exp > 0 && $now > $exp) {
-                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Value-fenced delete of expired record
-                $wpdb->query(
+
+            $next_str = (string) $next_cursor;
+            if (!$has_cursor) {
+                add_option($cursor_option, $next_str, '', 'no');
+            } elseif ((string) $raw_cursor !== $next_str) {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Atomic CAS cursor update inside owner-fenced prune mutex
+                $updated = $wpdb->query(
                     $wpdb->prepare(
-                        "DELETE FROM {$wpdb->options} WHERE option_name = %s AND option_value = %s",
-                        $name,
-                        $val
+                        "UPDATE {$wpdb->options} SET option_value = %s WHERE option_name = %s AND option_value = %s",
+                        $next_str,
+                        $cursor_option,
+                        (string) $raw_cursor
                     )
                 );
-                wp_cache_delete($name, 'options');
+                if ($updated === 1) {
+                    wp_cache_delete($cursor_option, 'options');
+                }
             }
+        } finally {
+            self::release_campaign_lock($prune_lock_option, $prune_lock_token);
         }
-
-        $next_cursor = (count($rows) < 25) ? 0 : $max_seen_id;
-        update_option($cursor_option, $next_cursor, false);
     }
 
     /**
