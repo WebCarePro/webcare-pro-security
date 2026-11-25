@@ -419,8 +419,9 @@ final class BehavioralCampaignEngine {
     }
 
     /**
-     * Bounded cleanup of expired completed/retryable campaign operation records in wp_options.
-     * Never removes active 'pending' claims or unexpired 24h 'completed' records.
+     * Cursor-advancing bounded cleanup of expired completed/retryable campaign operation records in wp_options.
+     * Advances through option_id in ascending order (wrapping at end) so expired records can never starve behind
+     * unexpired or pending entries, and never deletes active 'pending' claims or unexpired 24h 'completed' records.
      */
     private static function prune_expired_campaign_operations(int $now): void {
         global $wpdb;
@@ -429,20 +430,32 @@ final class BehavioralCampaignEngine {
             return;
         }
 
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Bounded maintenance pruning of expired campaign op records
+        $cursor_option = 'wcps_camp_prune_cursor';
+        $last_id       = (int) get_option($cursor_option, 0);
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Cursor-ordered bounded scan of campaign op records
         $rows = $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT option_name, option_value FROM {$wpdb->options} WHERE option_name LIKE %s LIMIT 25",
-                'wcps_camp_op_%'
+                "SELECT option_id, option_name, option_value FROM {$wpdb->options} WHERE option_name LIKE %s AND option_id > %d ORDER BY option_id ASC LIMIT 25",
+                'wcps_camp_op_%',
+                $last_id
             ),
             ARRAY_A
         );
 
         if (!is_array($rows) || empty($rows)) {
+            if ($last_id > 0) {
+                update_option($cursor_option, 0, false);
+            }
             return;
         }
 
+        $max_seen_id = $last_id;
         foreach ($rows as $row) {
+            $oid = (int) ($row['option_id'] ?? 0);
+            if ($oid > $max_seen_id) {
+                $max_seen_id = $oid;
+            }
             $name = (string) ($row['option_name'] ?? '');
             $val  = (string) ($row['option_value'] ?? '');
             $dec  = $val !== '' ? json_decode($val, true) : null;
@@ -452,7 +465,7 @@ final class BehavioralCampaignEngine {
             $st  = (string) ($dec['state'] ?? '');
             $exp = (int) ($dec['expires_at'] ?? 0);
             if ($st !== 'pending' && $exp > 0 && $now > $exp) {
-                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Owner/value-fenced delete of expired record
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Value-fenced delete of expired record
                 $wpdb->query(
                     $wpdb->prepare(
                         "DELETE FROM {$wpdb->options} WHERE option_name = %s AND option_value = %s",
@@ -463,6 +476,9 @@ final class BehavioralCampaignEngine {
                 wp_cache_delete($name, 'options');
             }
         }
+
+        $next_cursor = (count($rows) < 25) ? 0 : $max_seen_id;
+        update_option($cursor_option, $next_cursor, false);
     }
 
     /**
