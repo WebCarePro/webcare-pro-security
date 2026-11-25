@@ -7017,7 +7017,10 @@ Source Code,${escapeCsv(code)}
           <FileIntegrityPage
             apiRequest={apiRequest}
             initialFilePath={initialFimFile}
-            initialSubTab={((new URLSearchParams(window.location.search).get('tab') as any) === 'permissions' ? 'permissions' : 'fim')}
+            initialSubTab={(() => {
+              const sp = new URLSearchParams(window.location.search);
+              return (sp.get('tab') === 'permissions' || sp.get('section') === 'permissions' || sp.get('subtab') === 'permissions') ? 'permissions' : 'fim';
+            })()}
             onSubTabChange={(sub) => handleNavTabChange('fim', sub)}
             onNavigateToDashboard={() => handleNavTabChange('dashboard')}
           />

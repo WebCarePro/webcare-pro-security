@@ -232,10 +232,11 @@ export default function FileIntegrityPage({ apiRequest, initialFilePath, initial
     const handlePopState = () => {
       try {
         const urlParams = new URLSearchParams(window.location.search);
+        const section = urlParams.get('section') || urlParams.get('subtab');
         const tab = urlParams.get('tab');
-        if (tab === 'fim' || tab === 'permissions') {
-          setActiveTab(tab);
-        } else if (!tab) {
+        if (section === 'permissions' || tab === 'permissions') {
+          setActiveTab('permissions');
+        } else {
           setActiveTab('fim');
         }
       } catch (e) {}
