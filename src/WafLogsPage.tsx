@@ -2874,8 +2874,8 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
                                 </button>
                               </div>
 
-                              {/* Active Enforcement / Cloudflare Ban Indicator */}
-                              {log.is_banned && (
+                              {/* Active Enforcement / Cloudflare Ban Indicator (Last Hit Only) */}
+                              {log.is_last_hit_for_ip && log.is_banned && (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
                                   {(log.ban_scope === 'edge_synced' || log.cf_synced) ? (
                                     <span
@@ -2888,7 +2888,7 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
                                         alignItems: 'center',
                                         gap: '3px'
                                       }}
-                                      title="IP ban is synchronized and actively enforced at Cloudflare Anycast Edge & Local Origin WAF"
+                                      title="Terminal recorded hit: IP ban is synchronized and actively enforced at Cloudflare Anycast Edge & Local Origin WAF"
                                     >
                                       <Cloud size={9} /> CF BAN
                                     </span>
@@ -2903,11 +2903,11 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
                                         alignItems: 'center',
                                         gap: '3px'
                                       }}
-                                      title="IP is banned locally and queued for immediate Cloudflare Edge synchronization"
+                                      title="Terminal recorded hit: IP is banned locally and queued for immediate Cloudflare Edge synchronization"
                                     >
                                       <Cloud size={9} /> BANNED • CF SYNCING
                                     </span>
-                                  ) : log.is_last_hit_for_ip ? (
+                                  ) : (
                                     <span
                                       className="webcare-badge-pill webcare-badge-danger"
                                       style={{
@@ -2918,11 +2918,11 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
                                         alignItems: 'center',
                                         gap: '3px'
                                       }}
-                                      title="IP is actively banned locally on Origin Server WAF"
+                                      title="Terminal recorded hit: IP is actively banned locally on Origin Server WAF"
                                     >
                                       <ShieldAlert size={9} /> BANNED
                                     </span>
-                                  ) : null}
+                                  )}
                                 </div>
                               )}
                             </div>
@@ -3134,7 +3134,7 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
                                   </>
                                 )}
                               </span>
-                            ) : log.action_taken === 'blocked' && log.is_banned && (log.cf_synced || log.ban_scope === 'edge_synced') ? (
+                            ) : log.is_last_hit_for_ip && log.action_taken === 'blocked' && log.is_banned && (log.cf_synced || log.ban_scope === 'edge_synced') ? (
                               <span
                                 className="webcare-badge-pill webcare-badge-danger"
                                 style={{
@@ -3147,12 +3147,12 @@ export const WafLogsPage: React.FC<WafLogsPageProps> = ({
                                   fontWeight: 800,
                                   textTransform: 'uppercase'
                                 }}
-                                title="Blocked & synchronized to Cloudflare Edge. Subsequent requests from this IP are dropped at Cloudflare Anycast Edge before reaching the origin server."
+                                title="Terminal recorded hit from this IP. Active IP ban is synchronized to Cloudflare Edge."
                               >
                                 <Cloud size={12} />
                                 <span>CF Ban</span>
                               </span>
-                            ) : log.action_taken === 'blocked' && log.is_last_hit_for_ip && log.is_banned && (log.cf_queued || log.ban_scope === 'edge_queued') ? (
+                            ) : log.is_last_hit_for_ip && log.action_taken === 'blocked' && log.is_banned && (log.cf_queued || log.ban_scope === 'edge_queued') ? (
                               <span
                                 className="webcare-badge-pill webcare-badge-danger"
                                 style={{
