@@ -4703,7 +4703,7 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
               </div>
             </div>
             <a
-              href="admin.php?page=webcare-pro-firewall&tab=threat-intel"
+              href="admin.php?page=webcare-pro-firewall&tab=intel"
               className="button button-primary"
               style={{ background: '#4f46e5', borderColor: '#4338ca', fontWeight: 600, textDecoration: 'none' }}
             >

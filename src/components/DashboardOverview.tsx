@@ -496,7 +496,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   const urlCafStackGuard = buildAdminUrl('webcare-pro-modular-waf', 'rules');
   const urlAiDefense = buildAdminUrl('webcare-pro-modular-waf', 'nextgen');
   const urlAiIntelligence = buildAdminUrl('webcare-pro-settings', 'ai');
-  const urlThreatFeeds = buildAdminUrl('webcare-pro-firewall', 'threat-intel');
+  const urlThreatFeeds = buildAdminUrl('webcare-pro-firewall', 'intel');
 
   const cafActive = firewallStatus?.caf_enabled !== false && firewallStatus?.is_enabled !== false;
   const aiDefenseActive = firewallStatus?.ai_defense_enabled !== false && firewallStatus?.is_enabled !== false;
@@ -505,7 +505,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     serverInfo?.ai_provider_configured ||
     (window as any).webcareScannerSettings?.ai_provider_configured
   );
-  const threatFeedsActive = firewallStatus?.threat_intel_enabled !== false && firewallStatus?.is_enabled !== false;
+  const threatFeedsActive = Boolean(firewallStatus?.threat_intel_enabled);
 
   const careLayers = [
     {
@@ -612,7 +612,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
       name: 'Public Threat Intelligence Feeds',
       icon: Radar,
       iconColor: '#0891b2',
-      badge: threatFeedsActive ? 'Active' : 'Off',
+      badge: threatFeedsActive ? 'Active' : 'Inactive',
       tone: threatFeedsActive ? 'active' : 'neutral',
       desc: 'Blocks known botnet IPs and abusive scanner networks locally on your server with zero telemetry.',
       href: urlThreatFeeds,
