@@ -161,6 +161,16 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     aiAgentName: '',
   });
 
+  const [fimStatus, setFimStatus] = useState<{
+    loaded: boolean;
+    highRiskCount: number;
+    coreModified: number;
+  }>({
+    loaded: false,
+    highRiskCount: 0,
+    coreModified: 0,
+  });
+
   useEffect(() => {
     setInternalPaused(isRescuePaused);
   }, [isRescuePaused]);
@@ -304,6 +314,22 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
       .catch(() => {
         if (active) {
           setScheduleInfo((prev) => ({ ...prev, loaded: true }));
+        }
+      });
+
+    apiRequest({ path: '/webcare-pro-security/v1/fim/changes?hours=48&limit=200', method: 'GET' })
+      .then((res: any) => {
+        if (!active) return;
+        const st = res?.stats || {};
+        setFimStatus({
+          loaded: true,
+          highRiskCount: Number(st.high_risk_count || 0),
+          coreModified: Number(st.core_modified || 0),
+        });
+      })
+      .catch(() => {
+        if (active) {
+          setFimStatus((prev) => ({ ...prev, loaded: true }));
         }
       });
 
@@ -558,9 +584,13 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
       name: 'Core File Integrity',
       icon: FileCheck2,
       iconColor: '#0284c7',
-      badge: reviewItemsCount > 0 ? `${reviewItemsCount} Notice` : 'Clean',
-      tone: reviewItemsCount > 0 ? 'warning' : 'active',
-      desc: 'Compares WordPress core files against official releases to confirm nothing unexpected changed.',
+      badge: !fimStatus.loaded
+        ? 'Checking'
+        : fimStatus.highRiskCount > 0
+          ? `${fimStatus.highRiskCount} Notice`
+          : 'Clean',
+      tone: fimStatus.loaded && fimStatus.highRiskCount > 0 ? 'warning' : 'active',
+      desc: 'Compares WordPress core and plugin files against official releases to confirm nothing unexpected changed.',
       href: urlScannerFiles,
       linkText: 'File Verification',
     },
