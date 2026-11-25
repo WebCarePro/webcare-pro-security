@@ -347,6 +347,17 @@ class CloudflareIpListSynchronizer {
             'status'       => 'queued',
         ]);
 
+        // Schedule immediate WP-Cron execution + non-blocking loopback flush so Cloudflare Edge drops the IP within seconds
+        if (function_exists('wp_next_scheduled') && function_exists('wp_schedule_single_event')) {
+            $next_scheduled = wp_next_scheduled(self::CRON_HOOK);
+            if (!$next_scheduled || ($next_scheduled - $now) > 10) {
+                wp_schedule_single_event($now, self::CRON_HOOK);
+            }
+        }
+        if (php_sapi_name() !== 'cli' && (!defined('WEBCAREPROSCAN_TESTING') || !WEBCAREPROSCAN_TESTING) && CloudflareService::$mock_request_handler === null) {
+            self::trigger_background_queue_flush();
+        }
+
         return ['cf_sync_state' => 'queued', 'operation_id' => $operation_id];
     }
 
@@ -426,15 +437,29 @@ class CloudflareIpListSynchronizer {
 
     /**
      * Trigger immediate non-blocking loopback request to flush bans without waiting for cron visitor.
+     * Uses a 5-second filesystem stamp inside /webcare-waf/ to avoid wp_options transient writes on shared hosting.
      */
     public static function trigger_background_queue_flush(): void {
-        $last_spawn = (int) get_transient('webcare_cf_queue_spawn_debounce');
-        if (time() - $last_spawn < 60) {
-            return; // Debounce to at most once per 60 seconds
-        }
-        set_transient('webcare_cf_queue_spawn_debounce', time(), 60);
-
         $now = time();
+        if (class_exists('\\WebCareProScanner\\Firewall\\WafFileLogger')) {
+            $dir = \WebCareProScanner\Firewall\WafFileLogger::get_storage_dir();
+            if (!is_dir($dir)) {
+                \WebCareProScanner\Firewall\WafFileLogger::ensure_directory_secured();
+            }
+            if (is_dir($dir) && is_writable($dir)) {
+                $stamp_file = $dir . '/cf-flush-debounce.stamp';
+                if (is_file($stamp_file)) {
+                    // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
+                    $last_spawn = (int) trim((string) @file_get_contents($stamp_file));
+                    if (($now - $last_spawn) < 5) {
+                        return; // Debounce to at most once per 5 seconds (zero SQL)
+                    }
+                }
+                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+                @file_put_contents($stamp_file, (string) $now, LOCK_EX);
+            }
+        }
+
         $random_nonce = function_exists('wp_generate_password') ? wp_generate_password(16, false) : bin2hex(random_bytes(8));
         $salt = class_exists(\WebCareProScanner\Security\SecretVault::class)
             ? \WebCareProScanner\Security\SecretVault::get_key()
@@ -446,7 +471,7 @@ class CloudflareIpListSynchronizer {
         $token = "{$now}:{$random_nonce}:{$signature}";
 
         $ajax_url = admin_url('admin-ajax.php');
-        wp_remote_post($ajax_url, [
+        $post_args = [
             'timeout'   => 0.01,
             'blocking'  => false,
             // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- Standard WordPress core filter for local loopback requests
@@ -455,7 +480,12 @@ class CloudflareIpListSynchronizer {
                 'action' => 'webcare_flush_cf_ban_queue',
                 'token'  => $token,
             ],
-        ]);
+        ];
+        if (str_starts_with(strtolower($ajax_url), 'https://') && function_exists('wp_safe_remote_post')) {
+            wp_safe_remote_post($ajax_url, $post_args);
+        } else {
+            wp_remote_post($ajax_url, $post_args);
+        }
     }
 
     /**
@@ -917,7 +947,30 @@ class CloudflareIpListSynchronizer {
                 return 0;
             }
 
-            $sync_result = ($scope === 'account')
+            // Guarantee Edge Enforcement: An Account Custom IP List ($webcare_threat_blocklist) only blocks traffic
+            // when a WebCare Zone Custom WAF Rule referencing it is deployed on the Zone. If no managed Zone WAF rules
+            // exist yet, auto-deploy Rule 1 once; if still unreferenced (e.g., all 5 Free-plan slots full), enforce via
+            // Zone IP Access Rules so banned IPs are ALWAYS actively dropped at Cloudflare Edge immediately.
+            $use_account_list = ($scope === 'account');
+            if ($use_account_list && class_exists(CloudflareSlotOptimizer::class)) {
+                $managed_rule_ids = get_option(CloudflareSlotOptimizer::OPTION_MANAGED_RULE_IDS, []);
+                if (empty($managed_rule_ids) || !is_array($managed_rule_ids)) {
+                    $settings_cf = SettingsManager::get_settings();
+                    $zone_id_cf  = (string) ($settings_cf['cloudflare_zone_id'] ?? '');
+                    if ($zone_id_cf !== '' && CloudflareService::$mock_request_handler === null) {
+                        $optimizer = new CloudflareSlotOptimizer();
+                        $deploy_res = $optimizer->deploy_to_cloudflare($zone_id_cf);
+                        if (!empty($deploy_res['success'])) {
+                            $managed_rule_ids = get_option(CloudflareSlotOptimizer::OPTION_MANAGED_RULE_IDS, []);
+                        }
+                    }
+                    if ((empty($managed_rule_ids) || !is_array($managed_rule_ids)) && CloudflareService::$mock_request_handler === null) {
+                        $use_account_list = false;
+                    }
+                }
+            }
+
+            $sync_result = $use_account_list
                 ? $this->sync_via_account_list($aggregated_targets, $eligible_entries)
                 : $this->sync_via_zone_access_rules($aggregated_targets, $eligible_entries);
 

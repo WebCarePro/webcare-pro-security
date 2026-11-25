@@ -177,7 +177,8 @@ final class ViolationResponder {
             : (!empty(FirewallEngine::$last_ref_code) ? FirewallEngine::$last_ref_code : self::generate_ref_code());
         FirewallEngine::$last_ref_code = null;
 
-        // Fast transient lookup for non-technical site owners to unblock paying customers in 1 click
+        // Fast filesystem-backed lookup in /webcare-waf/logs/ (zero wp_options SQL writes on shared hosting!)
+        // Allows non-technical site owners to unblock paying customers in 1 click via Support Reference Code or IP.
         $transient_data = [
             'ref_code'      => $ref_code,
             'incident_id'   => $incident_id,
@@ -190,12 +191,24 @@ final class ViolationResponder {
             'timestamp'     => time(),
             'formatted_time'=> gmdate('Y-m-d H:i:s \U\T\C'),
         ];
-        set_transient('webcareproscan_lockout_' . $ref_code, $transient_data, 2 * DAY_IN_SECONDS);
-        if (!empty($incident_id) && $incident_id !== $ref_code) {
-            set_transient('webcareproscan_lockout_' . $incident_id, $transient_data, 2 * DAY_IN_SECONDS);
+        if (($rule['id'] ?? '') !== 'USER-CUSTOM-IP-BLOCK' && class_exists(WafFileLogger::class)) {
+            WafFileLogger::record_lockout_index($ref_code, (string) $incident_id, $client_ip, $transient_data);
         }
-        // Also index by md5(IP) for instant customer unblocking via IP search
-        set_transient('webcareproscan_lockout_ip_' . md5($client_ip), $transient_data, 2 * DAY_IN_SECONDS);
+
+        // Fast-exit ultra-lightweight 403 for already-banned scripted bots (USER-CUSTOM-IP-BLOCK)
+        // to save CPU/RAM on shared hosting while Cloudflare Edge propagates the ban.
+        $raw_ua_fast = isset($_SERVER['HTTP_USER_AGENT']) ? trim((string) wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';
+        if (
+            ($rule['id'] ?? '') === 'USER-CUSTOM-IP-BLOCK'
+            && (!defined('WEBCAREPROSCAN_TESTING') || !WEBCAREPROSCAN_TESTING)
+            && ($raw_ua_fast === '' || preg_match('/^(?:Go-http-client|python-requests|python-urllib|python-httpx|curl|libwww-perl|Wget|aiohttp|httpx|Java\/|okhttp|fasthttp|zgrab|Nuclei)(?:\/|\s|$)/i', $raw_ua_fast))
+        ) {
+            status_header(403);
+            header('Content-Type: text/plain; charset=utf-8');
+            header('Cache-Control: no-store');
+            echo '403 Forbidden - Access Denied by WebCare Pro Security (Ref: ' . esc_html($ref_code) . ')';
+            exit;
+        }
 
         $raw_uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '/';
 
@@ -1014,9 +1027,10 @@ final class ViolationResponder {
         }
 
         // Surge detection: Check if blocked count in the last 60 seconds exceeds surge threshold (e.g. 15 blocks/min)
-        $surge_key = 'webcareproscan_waf_block_surge_window';
-        $blocks = (int) get_transient($surge_key) + 1;
-        set_transient($surge_key, $blocks, 60);
+        // Tracked via APCu / vault filesystem instead of wp_options transients to keep MySQL load at zero during floods.
+        $blocks = class_exists(WafFileLogger::class)
+            ? WafFileLogger::increment_surge_counter(60)
+            : 1;
 
         if ($blocks === 15 || ($blocks > 15 && $blocks % 25 === 0)) {
             $surge_alert_sent = get_transient('webcareproscan_waf_block_surge_alerted');

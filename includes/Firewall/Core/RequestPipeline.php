@@ -167,17 +167,24 @@ final class RequestPipeline {
                         ], 'detected');
                     } else {
                         // Terminal or challenging action triggered
-                        $rule = [
+                        $meta = is_array($verdict->context) ? $verdict->context : [];
+                        $nested_rule = is_array($meta['rule'] ?? null) ? $meta['rule'] : [];
+                        $rule = array_merge($nested_rule, [
                             'id'              => $verdict->ruleId,
-                            'name'            => $verdict->category,
+                            'name'            => $nested_rule['name'] ?? $verdict->category,
                             'category'        => $verdict->category,
                             'description'     => $verdict->reason,
-                            'match_type'      => $action_val,
-                            'match_value'     => $verdict->ruleId,
-                            'payload'         => "Client IP: {$ctx->ip} URI: {$ctx->uri}",
+                            'match_type'      => $nested_rule['match_type'] ?? $action_val,
+                            'match_value'     => $nested_rule['match_value'] ?? $verdict->ruleId,
+                            'payload'         => $nested_rule['payload'] ?? "Client IP: {$ctx->ip} URI: {$ctx->uri}",
                             'sync_cloudflare' => $verdict->syncCloudflare,
                             'ban_ttl'         => $action_val === 'block_and_ban' ? max(60, $verdict->banTtl) : $verdict->banTtl,
-                        ];
+                        ]);
+                        foreach (['is_hard_block', 'cf_sync_state', 'cf_operation_id', 'ban_reason', 'ban_source', 'matching_entry'] as $m_key) {
+                            if (array_key_exists($m_key, $meta) && $meta[$m_key] !== null) {
+                                $rule[$m_key] = $meta[$m_key];
+                            }
+                        }
 
                         if ($action_val === 'challenge_pow' && class_exists('\\WebCareProScanner\\Firewall\\BotReconDefense')) {
                             if (!\WebCareProScanner\Firewall\BotReconDefense::has_valid_clearance_cookie($ctx->ip, $ctx->userAgent)) {

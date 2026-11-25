@@ -3351,6 +3351,13 @@ class FirewallEngine {
             return $access;
         }
 
+        if ($client_ip !== '' && class_exists('\\WebCareProScanner\\Firewall\\Core\\BehavioralCampaignEngine')) {
+            $camp_res = \WebCareProScanner\Firewall\Core\BehavioralCampaignEngine::record_probe($client_ip, 'user_enum_probe', $request_uri);
+            if (!empty($camp_res['escalate_ban'])) {
+                $rule_triggered['cf_sync_state']   = $camp_res['cf_sync_state'] ?? null;
+                $rule_triggered['cf_operation_id'] = $camp_res['cf_operation_id'] ?? null;
+            }
+        }
         self::log_incident($rule_triggered, 'blocked');
 
         return new \WP_Error(
@@ -3434,6 +3441,14 @@ class FirewallEngine {
             return;
         }
 
+        $author_probe_uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash((string) $_SERVER['REQUEST_URI'])) : '/?author=1';
+        if ($client_ip !== '' && class_exists('\\WebCareProScanner\\Firewall\\Core\\BehavioralCampaignEngine')) {
+            $camp_res = \WebCareProScanner\Firewall\Core\BehavioralCampaignEngine::record_probe($client_ip, 'user_enum_probe', $author_probe_uri);
+            if (!empty($camp_res['escalate_ban'])) {
+                $rule_triggered['cf_sync_state']   = $camp_res['cf_sync_state'] ?? null;
+                $rule_triggered['cf_operation_id'] = $camp_res['cf_operation_id'] ?? null;
+            }
+        }
         self::log_incident($rule_triggered, 'blocked');
 
         // Clean suppression: 301 Permanent Redirect to homepage, preventing username enumeration leaks
@@ -4079,6 +4094,13 @@ class FirewallEngine {
                     'payload'     => "Method: {$method} Route: {$route} IP: {$client_ip}",
                 ];
                 if ($policy === 'block') {
+                    if ($client_ip !== '' && class_exists('\\WebCareProScanner\\Firewall\\Core\\BehavioralCampaignEngine')) {
+                        $camp_res = \WebCareProScanner\Firewall\Core\BehavioralCampaignEngine::record_probe($client_ip, 'webshell_probe', $route . '#empty_batch');
+                        if (!empty($camp_res['escalate_ban'])) {
+                            $rule_triggered['cf_sync_state']   = $camp_res['cf_sync_state'] ?? null;
+                            $rule_triggered['cf_operation_id'] = $camp_res['cf_operation_id'] ?? null;
+                        }
+                    }
                     self::log_incident($rule_triggered, 'blocked');
                     return new \WP_Error('webcare_waf_rest_batch_blocked', __('Unauthorized guest REST batch mutation blocked by WebCare Firewall.', 'webcare-pro-security'), ['status' => 403]);
                 }
@@ -4152,6 +4174,13 @@ class FirewallEngine {
                         'payload'     => "Method: {$sub_method} SubRoute: {$sub_path} IP: {$client_ip}",
                     ];
                     if ($policy === 'block') {
+                        if ($client_ip !== '' && class_exists('\\WebCareProScanner\\Firewall\\Core\\BehavioralCampaignEngine')) {
+                            $camp_res = \WebCareProScanner\Firewall\Core\BehavioralCampaignEngine::record_probe($client_ip, 'user_enum_probe', $sub_path);
+                            if (!empty($camp_res['escalate_ban'])) {
+                                $rule_triggered['cf_sync_state']   = $camp_res['cf_sync_state'] ?? null;
+                                $rule_triggered['cf_operation_id'] = $camp_res['cf_operation_id'] ?? null;
+                            }
+                        }
                         self::log_incident($rule_triggered, 'blocked');
                         return new \WP_Error('webcare_waf_rest_batch_users_blocked', __('Unauthenticated REST API user enumeration via batch is disabled by WebCare Firewall.', 'webcare-pro-security'), ['status' => 403]);
                     }
@@ -4173,6 +4202,13 @@ class FirewallEngine {
                             'payload'     => "Method: {$sub_method} SubRoute: {$sub_path} IP: {$client_ip}",
                         ];
                         if ($policy === 'block') {
+                            if ($client_ip !== '' && class_exists('\\WebCareProScanner\\Firewall\\Core\\BehavioralCampaignEngine')) {
+                                $camp_res = \WebCareProScanner\Firewall\Core\BehavioralCampaignEngine::record_probe($client_ip, 'webshell_probe', $sub_path);
+                                if (!empty($camp_res['escalate_ban'])) {
+                                    $rule_triggered['cf_sync_state']   = $camp_res['cf_sync_state'] ?? null;
+                                    $rule_triggered['cf_operation_id'] = $camp_res['cf_operation_id'] ?? null;
+                                }
+                            }
                             self::log_incident($rule_triggered, 'blocked');
                             return new \WP_Error('webcare_waf_rest_batch_blocked', __('Unauthorized guest REST batch mutation blocked by WebCare Firewall.', 'webcare-pro-security'), ['status' => 403]);
                         }
@@ -4202,6 +4238,13 @@ class FirewallEngine {
         ];
 
         if ($policy === 'block') {
+            if ($client_ip !== '' && class_exists('\\WebCareProScanner\\Firewall\\Core\\BehavioralCampaignEngine')) {
+                $camp_res = \WebCareProScanner\Firewall\Core\BehavioralCampaignEngine::record_probe($client_ip, 'rest_mutation_probe', $route);
+                if (!empty($camp_res['escalate_ban'])) {
+                    $rule_triggered['cf_sync_state']   = $camp_res['cf_sync_state'] ?? null;
+                    $rule_triggered['cf_operation_id'] = $camp_res['cf_operation_id'] ?? null;
+                }
+            }
             self::log_incident($rule_triggered, 'blocked');
             return new \WP_Error(
                 'webcare_waf_rest_blocked',

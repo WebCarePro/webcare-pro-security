@@ -46,6 +46,9 @@ final class BehavioralCampaignEngine {
         'xmlrpc_probe',
         'canary_trap',
         'auth_honeypot',
+        'user_enum_probe',
+        'auth_bruteforce_throttle',
+        'rest_mutation_probe',
     ];
 
     /**
@@ -152,6 +155,9 @@ final class BehavioralCampaignEngine {
             $total_probes           = (int) $bucket['total_probes'];
 
             if ($distinct_targets_count >= 5) {
+                $escalate = true;
+            } elseif ($distinct_targets_count >= 2 && in_array('webshell_probe', $bucket['vectors'], true)) {
+                // Deterministic scripted/blank-UA PHP & webshell reconnaissance hitting >= 2 distinct targets: ban rapidly
                 $escalate = true;
             } elseif ($vectors_count >= 2 && ($total_probes >= 3 || in_array('auth_honeypot', $bucket['vectors'], true))) {
                 $escalate = true;

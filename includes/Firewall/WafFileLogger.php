@@ -225,26 +225,30 @@ class WafFileLogger {
         $category = sanitize_key($rule['category'] ?? 'general_defense');
         $raw_uri_dedup = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '/';
 
-        // Zero-SQL Deduplication Cache:
-        // Suppress rapid identical automated probes within 3 seconds while preserving distinct blocked Incident IDs / Ref Codes.
-        if (strpos($category, 'auth') !== false) {
+        // True Zero-SQL Deduplication Cache (APCu + /webcare-waf/ filesystem ring — zero wp_options SQL writes!):
+        // Suppress rapid identical automated probes within short windows AND throttle repeat USER-CUSTOM-IP-BLOCK
+        // log floods (1 entry per 60s per banned IP) while Cloudflare Edge propagates the ban.
+        $rule_id_raw = (string) ($rule['id'] ?? ($rule['rule_id'] ?? ''));
+        if ($rule_id_raw === 'USER-CUSTOM-IP-BLOCK') {
+            $cache_key = 'webcare_dedup_ban_' . md5($ip);
+            $dedup_ttl = 60;
+        } elseif (strpos($category, 'auth') !== false) {
             // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Inspection of incoming authentication attempt parameter for deduplication keying
             $raw_log = isset($_POST['log']) ? sanitize_user(wp_unslash($_POST['log'])) : '';
             $dedup_username = !empty($rule['username']) ? sanitize_user($rule['username']) : $raw_log;
-            $cache_key = 'webcare_dedup_' . md5($ip . '_' . $category . '_' . $dedup_username . '_' . ($rule['id'] ?? ''));
+            $cache_key = 'webcare_dedup_' . md5($ip . '_' . $category . '_' . $dedup_username . '_' . $rule_id_raw);
             $dedup_ttl = 3;
         } elseif ($action === 'blocked') {
-            $cache_key = 'webcare_dedup_' . md5($ip . '_' . $category . '_' . ($rule['id'] ?? '') . '_' . $raw_uri_dedup);
+            $cache_key = 'webcare_dedup_' . md5($ip . '_' . $category . '_' . $rule_id_raw . '_' . $raw_uri_dedup);
             $dedup_ttl = 2;
         } else {
-            $cache_key = 'webcare_dedup_' . md5($ip . '_' . $category . '_' . ($rule['id'] ?? ''));
+            $cache_key = 'webcare_dedup_' . md5($ip . '_' . $category . '_' . $rule_id_raw);
             $dedup_ttl = 30;
         }
 
-        if (get_transient($cache_key)) {
+        if (self::check_and_mark_dedup_cache($cache_key, $dedup_ttl)) {
             return $incident_id;
         }
-        set_transient($cache_key, 1, $dedup_ttl);
 
         if (empty($incident_id)) {
             $incident_id = 'WEBCARE-' . strtoupper(substr(md5($ip . microtime(true) . wp_rand()), 0, 8));
@@ -475,8 +479,11 @@ class WafFileLogger {
             if ($clean_search !== '' && !str_starts_with($clean_search, 'WEBCARE-') && (preg_match('/^[A-Z0-9]{4}$/', $clean_search) || preg_match('/^[A-F0-9]{8}$/', $clean_search))) {
                 $clean_search = 'WEBCARE-' . $clean_search;
             }
-            if (str_starts_with($clean_search, 'WEBCARE-') && function_exists('get_transient')) {
-                $t_data = get_transient('webcareproscan_lockout_' . $clean_search);
+            if (str_starts_with($clean_search, 'WEBCARE-')) {
+                $t_data = self::lookup_lockout_index($clean_search);
+                if (!is_array($t_data) && function_exists('get_transient')) {
+                    $t_data = get_transient('webcareproscan_lockout_' . $clean_search);
+                }
                 if (is_array($t_data) && !empty($t_data['client_ip'])) {
                     $lockout_transient = $t_data;
                     $aliases = [];
@@ -716,27 +723,44 @@ class WafFileLogger {
         $total_pages = max(1, (int) ceil($total / $limit));
         $page        = (int) floor($offset / $limit) + 1;
 
-        // Correlate active blocklist and Cloudflare Edge sync state
+        // Correlate active blocklist and Cloudflare Edge sync state using canonical option keys
         $all_block_meta  = class_exists(FirewallEngine::class) ? FirewallEngine::get_all_block_meta() : [];
-        $waf_settings    = get_option('webcareproscan_waf_settings', []);
-        $raw_blocked_ips = is_array($waf_settings) ? (string) ($waf_settings['waf_blocked_ips'] ?? '') : '';
-        $blocked_ip_set  = array_flip(array_filter(array_map('trim', explode("\n", $raw_blocked_ips))));
+        $cf_settings     = class_exists('\WebCareProScanner\System\SettingsManager')
+            ? \WebCareProScanner\System\SettingsManager::get_settings()
+            : [];
+        $raw_blocked_ips = is_array($cf_settings) ? (string) ($cf_settings['waf_blocked_ips'] ?? '') : '';
+        $blocked_ip_set  = [];
+        foreach (array_filter(array_map('trim', explode("\n", str_replace("\r", '', $raw_blocked_ips)))) as $b_line) {
+            $b_ip = trim((string) (preg_split('/[\s#]+/', $b_line)[0] ?? ''));
+            if ($b_ip !== '') {
+                $blocked_ip_set[$b_ip] = true;
+            }
+        }
 
-        $active_edge_bans = get_option('webcareproscan_cf_active_edge_bans', []);
+        $edge_option_key  = class_exists('\WebCareProScanner\Firewall\CAF\CloudflareIpListSynchronizer')
+            ? \WebCareProScanner\Firewall\CAF\CloudflareIpListSynchronizer::OPTION_ACTIVE_EDGE_BANS
+            : 'webcare_cf_active_edge_bans';
+        $queue_option_key = class_exists('\WebCareProScanner\Firewall\CAF\CloudflareIpListSynchronizer')
+            ? \WebCareProScanner\Firewall\CAF\CloudflareIpListSynchronizer::OPTION_BAN_QUEUE
+            : 'webcare_cf_pending_ban_queue';
+
+        $active_edge_bans = get_option($edge_option_key, []);
         if (!is_array($active_edge_bans)) {
             $active_edge_bans = [];
         }
+        $pending_cf_queue = get_option($queue_option_key, []);
+        if (!is_array($pending_cf_queue)) {
+            $pending_cf_queue = [];
+        }
 
-        $cf_settings = class_exists('\WebCareProScanner\System\SettingsManager')
-            ? \WebCareProScanner\System\SettingsManager::get_settings()
-            : [];
         $cf_auto_sync_enabled = !empty($cf_settings['cloudflare_enabled']) && !empty($cf_settings['cloudflare_auto_sync_bans']);
-        $cf_connected         = !empty($cf_settings['cloudflare_enabled']) && !empty($cf_settings['has_cloudflare_key']);
+        $cf_connected         = !empty($cf_settings['cloudflare_enabled']) && (!empty($cf_settings['has_cloudflare_key']) || !empty($cf_settings['cloudflare_api_token']));
 
         foreach ($sliced_logs as &$log) {
             $ip        = (string) ($log['ip_address'] ?? '');
             $is_banned = false;
             $cf_synced = false;
+            $cf_queued = false;
             $ban_scope = 'none';
             $ban_meta  = null;
 
@@ -746,13 +770,41 @@ class WafFileLogger {
                     $ban_meta  = $all_block_meta[$ip] ?? null;
                 }
                 if (isset($active_edge_bans[$ip])) {
-                    $cf_synced = true;
+                    $edge_state = (string) ($active_edge_bans[$ip]['state'] ?? 'active');
+                    if ($edge_state === 'pending_create') {
+                        $cf_queued = true;
+                    } else {
+                        $cf_synced = true;
+                    }
+                } else {
+                    if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+                        $octets = explode('.', $ip);
+                        if (count($octets) === 4) {
+                            $cidr24 = "{$octets[0]}.{$octets[1]}.{$octets[2]}.0/24";
+                            if (isset($active_edge_bans[$cidr24]) && (($active_edge_bans[$cidr24]['state'] ?? 'active') !== 'pending_create')) {
+                                $cf_synced = true;
+                            }
+                        }
+                    } elseif (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+                        $packed = @inet_pton($ip);
+                        if ($packed !== false) {
+                            $cidr64 = implode(':', str_split(bin2hex(substr($packed, 0, 8)), 4)) . '::/64';
+                            if (isset($active_edge_bans[$cidr64]) && (($active_edge_bans[$cidr64]['state'] ?? 'active') !== 'pending_create')) {
+                                $cf_synced = true;
+                            }
+                        }
+                    }
                 }
-                if ($is_banned && $cf_synced) {
-                    $ban_scope = 'edge_synced';
-                } elseif ($cf_synced) {
+
+                if (!$cf_synced && (isset($pending_cf_queue[$ip]) || (($log['cf_sync_state'] ?? '') === 'queued'))) {
+                    $cf_queued = true;
+                }
+
+                if ($cf_synced) {
                     $is_banned = true;
                     $ban_scope = 'edge_synced';
+                } elseif ($is_banned && $cf_queued) {
+                    $ban_scope = 'edge_queued';
                 } elseif ($is_banned) {
                     $ban_scope = 'local';
                 }
@@ -760,6 +812,7 @@ class WafFileLogger {
 
             $log['is_banned']       = $is_banned;
             $log['cf_synced']       = $cf_synced;
+            $log['cf_queued']       = $cf_queued;
             $log['ban_scope']       = $ban_scope;
             $log['cf_sync_enabled'] = $cf_auto_sync_enabled;
             $log['cf_connected']    = $cf_connected;
@@ -1450,5 +1503,204 @@ class WafFileLogger {
         }
 
         return $campaigns;
+    }
+
+    /**
+     * Zero-SQL deduplication cache backed by APCu or /webcare-waf/ filesystem ring file.
+     * Eliminates wp_options transient INSERT/UPDATE floods during high-velocity botnet attacks on shared hosting.
+     */
+    public static function check_and_mark_dedup_cache(string $cache_key, int $ttl): bool {
+        if ($ttl <= 0 || $cache_key === '') {
+            return false;
+        }
+
+        // Unit-test isolation compatibility when mock transient store is active
+        if (isset($GLOBALS['wp_mock_transients']) && is_array($GLOBALS['wp_mock_transients'])) {
+            if (!empty($GLOBALS['wp_mock_transients'][$cache_key])) {
+                return true;
+            }
+            $GLOBALS['wp_mock_transients'][$cache_key] = 1;
+            return false;
+        }
+
+        $now = time();
+        if (function_exists('apcu_fetch') && function_exists('apcu_store') && filter_var(ini_get('apc.enabled'), FILTER_VALIDATE_BOOL)) {
+            $ok = false;
+            $exp = apcu_fetch($cache_key, $ok);
+            if ($ok && is_int($exp) && $exp > $now) {
+                return true;
+            }
+            apcu_store($cache_key, $now + $ttl, $ttl + 2);
+            return false;
+        }
+
+        $dir = self::get_storage_dir();
+        if (!is_dir($dir) && !self::ensure_directory_secured()) {
+            return false;
+        }
+        $file = $dir . '/dedup-cache.json';
+        $map  = [];
+        if (is_file($file) && is_readable($file)) {
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
+            $raw = @file_get_contents($file);
+            if (is_string($raw) && $raw !== '' && json_validate($raw)) {
+                $decoded = json_decode($raw, true);
+                if (is_array($decoded)) {
+                    $map = $decoded;
+                }
+            }
+        }
+
+        if (isset($map[$cache_key]) && (int) $map[$cache_key] > $now) {
+            return true;
+        }
+
+        foreach ($map as $k => $exp_ts) {
+            if ((int) $exp_ts <= $now) {
+                unset($map[$k]);
+            }
+        }
+        $map[$cache_key] = $now + $ttl;
+        if (count($map) > 500) {
+            $map = array_slice($map, -350, null, true);
+        }
+
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+        @file_put_contents($file, wp_json_encode($map), LOCK_EX);
+        return false;
+    }
+
+    /**
+     * Persist lockout support-code & IP lookup metadata in bounded /webcare-waf/ JSON file (zero MySQL writes).
+     *
+     * @param string               $ref_code
+     * @param string               $incident_id
+     * @param string               $client_ip
+     * @param array<string, mixed> $data
+     */
+    public static function record_lockout_index(string $ref_code, string $incident_id, string $client_ip, array $data): void {
+        $dir = self::get_storage_dir();
+        if (!is_dir($dir) && !self::ensure_directory_secured()) {
+            return;
+        }
+
+        $file = $dir . '/lockout-index.json';
+        $now  = time();
+        $ttl  = 2 * DAY_IN_SECONDS;
+        $map  = [];
+
+        if (is_file($file) && is_readable($file)) {
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
+            $raw = @file_get_contents($file);
+            if (is_string($raw) && $raw !== '' && json_validate($raw)) {
+                $decoded = json_decode($raw, true);
+                if (is_array($decoded)) {
+                    $map = $decoded;
+                }
+            }
+        }
+
+        foreach ($map as $k => $entry) {
+            if (!is_array($entry) || ($now - (int) ($entry['timestamp'] ?? 0)) > $ttl) {
+                unset($map[$k]);
+            }
+        }
+
+        $ref_upper = strtoupper(trim($ref_code));
+        if ($ref_upper !== '') {
+            $map[$ref_upper] = $data;
+        }
+        $inc_upper = strtoupper(trim($incident_id));
+        if ($inc_upper !== '' && $inc_upper !== $ref_upper) {
+            $map[$inc_upper] = $data;
+        }
+        if ($client_ip !== '') {
+            $map['IP_' . md5($client_ip)] = $data;
+        }
+
+        if (count($map) > 300) {
+            $map = array_slice($map, -220, null, true);
+        }
+
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+        @file_put_contents($file, wp_json_encode($map), LOCK_EX);
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod
+        @chmod($file, 0600);
+    }
+
+    /**
+     * Look up lockout metadata from the /webcare-waf/ filesystem index by Support Reference Code, Incident ID, or IP.
+     *
+     * @param string $key_or_ip
+     * @return array<string, mixed>|null
+     */
+    public static function lookup_lockout_index(string $key_or_ip): ?array {
+        $dir  = self::get_storage_dir();
+        $file = $dir . '/lockout-index.json';
+        if (!is_file($file) || !is_readable($file)) {
+            return null;
+        }
+
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
+        $raw = @file_get_contents($file);
+        if (!is_string($raw) || $raw === '' || !json_validate($raw)) {
+            return null;
+        }
+        $map = json_decode($raw, true);
+        if (!is_array($map)) {
+            return null;
+        }
+
+        $lookup = strtoupper(trim($key_or_ip));
+        if (isset($map[$lookup]) && is_array($map[$lookup])) {
+            return $map[$lookup];
+        }
+        $ip_hash = 'IP_' . md5(trim($key_or_ip));
+        if (isset($map[$ip_hash]) && is_array($map[$ip_hash])) {
+            return $map[$ip_hash];
+        }
+
+        return null;
+    }
+
+    /**
+     * Increment rolling surge counter in APCu / vault filesystem (zero MySQL queries).
+     */
+    public static function increment_surge_counter(int $window_seconds = 60): int {
+        $now = time();
+        $key = 'wcp_waf_surge_60s';
+
+        if (function_exists('apcu_fetch') && function_exists('apcu_store') && filter_var(ini_get('apc.enabled'), FILTER_VALIDATE_BOOL)) {
+            $ok   = false;
+            $data = apcu_fetch($key, $ok);
+            if (!$ok || !is_array($data) || ($now - (int) ($data['start'] ?? 0)) >= $window_seconds) {
+                $data = ['start' => $now, 'count' => 1];
+            } else {
+                $data['count'] = ((int) ($data['count'] ?? 0)) + 1;
+            }
+            apcu_store($key, $data, $window_seconds + 5);
+            return (int) $data['count'];
+        }
+
+        $dir = self::get_storage_dir();
+        if (!is_dir($dir) && !self::ensure_directory_secured()) {
+            return 1;
+        }
+        $file  = $dir . '/surge-window.json';
+        $state = ['start' => $now, 'count' => 0];
+        if (is_file($file) && is_readable($file)) {
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
+            $raw = @file_get_contents($file);
+            if (is_string($raw) && $raw !== '' && json_validate($raw)) {
+                $decoded = json_decode($raw, true);
+                if (is_array($decoded) && ($now - (int) ($decoded['start'] ?? 0)) < $window_seconds) {
+                    $state = $decoded;
+                }
+            }
+        }
+        $state['count'] = ((int) ($state['count'] ?? 0)) + 1;
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+        @file_put_contents($file, wp_json_encode($state), LOCK_EX);
+        return (int) $state['count'];
     }
 }

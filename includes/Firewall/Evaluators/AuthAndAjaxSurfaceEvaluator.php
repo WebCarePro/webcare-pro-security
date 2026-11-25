@@ -277,7 +277,14 @@ final readonly class AuthAndAjaxSurfaceEvaluator implements WafEvaluatorInterfac
                 );
             }
 
-            FirewallEngine::log_incident($rule, 'monitored');
+            // Suppress isolated single-hit mobile tab resume / browser beacon noise in monitor mode;
+            // only log monitored incidents when the client is a raw scripted bot or repeats >= 3 hits in 60s.
+            $ua_str = trim($ctx->userAgent);
+            $is_scripted_ua = ($ua_str === '')
+                || (bool) preg_match('/^(?:Go-http-client|python-requests|python-urllib|python-httpx|curl|libwww-perl|Wget|aiohttp|httpx|Java\/|okhttp|fasthttp|zgrab|Nuclei)(?:\/|\s|$)/i', $ua_str);
+            if ($is_scripted_ua || self::should_log_repeated_empty_ajax_probe($client_ip)) {
+                FirewallEngine::log_incident($rule, 'monitored');
+            }
             return null;
         }
 
@@ -286,6 +293,7 @@ final readonly class AuthAndAjaxSurfaceEvaluator implements WafEvaluatorInterfac
         if ($tier1_actions === null) {
             $tier1_actions = array_fill_keys([
                 'heartbeat',
+                'webcare_flush_cf_ban_queue',
                 'woocommerce_get_refreshed_fragments',
                 'woocommerce_add_to_cart',
                 'woocommerce_apply_coupon',
@@ -639,5 +647,65 @@ final readonly class AuthAndAjaxSurfaceEvaluator implements WafEvaluatorInterfac
         }
 
         return null;
+    }
+
+    /**
+     * Track missing-action admin-ajax/admin-post hits per IP in APCu / vault filesystem (zero SQL)
+     * so single-hit mobile tab-resume glitches do not clutter WAF logs in monitor mode.
+     */
+    private static function should_log_repeated_empty_ajax_probe(string $ip): bool {
+        if ($ip === '') {
+            return false;
+        }
+        $now = time();
+        $key = 'wcp_empty_ajax_' . md5($ip);
+
+        if (function_exists('apcu_fetch') && function_exists('apcu_store') && filter_var(ini_get('apc.enabled'), FILTER_VALIDATE_BOOL)) {
+            $ok   = false;
+            $data = apcu_fetch($key, $ok);
+            if (!$ok || !is_array($data) || ($now - (int) ($data['start'] ?? 0)) > 60) {
+                $data = ['start' => $now, 'count' => 1];
+            } else {
+                $data['count'] = ((int) ($data['count'] ?? 0)) + 1;
+            }
+            apcu_store($key, $data, 65);
+            return $data['count'] >= 3;
+        }
+
+        if (!class_exists('\\WebCareProScanner\\Firewall\\WafFileLogger')) {
+            return false;
+        }
+        $dir = \WebCareProScanner\Firewall\WafFileLogger::get_storage_dir();
+        if (!is_dir($dir)) {
+            \WebCareProScanner\Firewall\WafFileLogger::ensure_directory_secured();
+        }
+        $file = $dir . '/empty-ajax-window.json';
+        $map  = [];
+        if (is_file($file) && is_readable($file)) {
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
+            $raw = @file_get_contents($file);
+            if (is_string($raw) && $raw !== '' && json_validate($raw)) {
+                $decoded = json_decode($raw, true);
+                if (is_array($decoded)) {
+                    $map = $decoded;
+                }
+            }
+        }
+        foreach ($map as $k => $entry) {
+            if (!is_array($entry) || ($now - (int) ($entry['start'] ?? 0)) > 60) {
+                unset($map[$k]);
+            }
+        }
+        if (!isset($map[$key])) {
+            $map[$key] = ['start' => $now, 'count' => 1];
+        } else {
+            $map[$key]['count'] = ((int) ($map[$key]['count'] ?? 0)) + 1;
+        }
+        if (count($map) > 200) {
+            $map = array_slice($map, -150, null, true);
+        }
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+        @file_put_contents($file, wp_json_encode($map), LOCK_EX);
+        return ((int) $map[$key]['count']) >= 3;
     }
 }

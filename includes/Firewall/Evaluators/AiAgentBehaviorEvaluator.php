@@ -248,19 +248,25 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
                     && !is_file(rtrim(ABSPATH, '/\\') . '/' . ltrim($req_path, '/'));
 
                 if ($is_protected_wp_php || $is_missing_webshell_probe) {
+                    $camp_meta = [];
                     if (class_exists('\\WebCareProScanner\\Firewall\\Core\\BehavioralCampaignEngine')) {
-                        \WebCareProScanner\Firewall\Core\BehavioralCampaignEngine::record_probe($ctx->ip, 'webshell_probe', $req_path);
+                        $camp_res = \WebCareProScanner\Firewall\Core\BehavioralCampaignEngine::record_probe($ctx->ip, 'webshell_probe', $req_path);
+                        if (!empty($camp_res['escalate_ban'])) {
+                            $camp_meta['cf_sync_state']   = $camp_res['cf_sync_state'] ?? null;
+                            $camp_meta['cf_operation_id'] = $camp_res['cf_operation_id'] ?? null;
+                        }
                     }
                     return new WafVerdict(
                         'block',
                         'WAF-RAW-CLIENT-PHP-PROBE',
                         'Direct scripted HTTP client reconnaissance against PHP subsystem forbidden.',
-                        [
-                            'category'    => 'Exploit Reconnaissance',
-                            'status_code' => 403,
-                            'user_agent'  => $ua,
-                            'path'        => $req_path,
-                        ]
+                        array_merge([
+                            'category'      => 'Exploit Reconnaissance',
+                            'status_code'   => 403,
+                            'user_agent'    => $ua,
+                            'path'          => $req_path,
+                            'is_hard_block' => true,
+                        ], $camp_meta)
                     );
                 }
             }

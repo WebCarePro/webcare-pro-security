@@ -253,16 +253,34 @@ final readonly class ProtocolAndBotEvaluator implements WafEvaluatorInterface {
                     }
                 }
                 if (empty($rate_result['allowed'])) {
+                    $throttle_meta = [];
+                    if (
+                        $bucket === AdaptiveRateLimiter::BUCKET_AUTH
+                        && $client_ip !== ''
+                        && !CommerceSessionGuard::has_active_customer_session()
+                        && class_exists('\\WebCareProScanner\\Firewall\\Core\\BehavioralCampaignEngine')
+                    ) {
+                        // Escalate persistent login/XML-RPC brute-force floods (>= 5 throttled bursts) to 24h local + CF Edge ban
+                        $camp_res = \WebCareProScanner\Firewall\Core\BehavioralCampaignEngine::record_probe(
+                            $client_ip,
+                            'auth_bruteforce_throttle',
+                            rtrim($decoded_uri, '/') . '/burst-' . (int) (microtime(true) * 1000) . '-' . wp_rand(100, 999)
+                        );
+                        if (!empty($camp_res['escalate_ban'])) {
+                            $throttle_meta['cf_sync_state']   = $camp_res['cf_sync_state'] ?? null;
+                            $throttle_meta['cf_operation_id'] = $camp_res['cf_operation_id'] ?? null;
+                        }
+                    }
                     return WafVerdict::rate_limit(
                         'WAF-RATE-LIMIT-THROTTLED',
                         self::translatable_string(sprintf('Too many %s requests. Velocity threshold reached.', esc_html($bucket))),
-                        [
+                        array_merge([
                             'category'    => 'Velocity Defense',
                             'status_code' => 429,
                             'bucket'      => $bucket,
                             'retry_after' => $rate_result['retry_after'] ?? 30,
                             'limit'       => $limit,
-                        ]
+                        ], $throttle_meta)
                     );
                 }
             }
@@ -449,17 +467,23 @@ final readonly class ProtocolAndBotEvaluator implements WafEvaluatorInterface {
                             || (str_ends_with($empty_ua_path, '.php') && !in_array($empty_ua_path, ['/index.php', '/wp-login.php'], true));
 
                         if ($is_sensitive_empty_ua_probe) {
+                            $camp_meta = [];
                             if (class_exists('\\WebCareProScanner\\Firewall\\Core\\BehavioralCampaignEngine')) {
-                                \WebCareProScanner\Firewall\Core\BehavioralCampaignEngine::record_probe($client_ip, 'webshell_probe', $empty_ua_path);
+                                $camp_res = \WebCareProScanner\Firewall\Core\BehavioralCampaignEngine::record_probe($client_ip, 'webshell_probe', $empty_ua_path);
+                                if (!empty($camp_res['escalate_ban'])) {
+                                    $camp_meta['cf_sync_state']   = $camp_res['cf_sync_state'] ?? null;
+                                    $camp_meta['cf_operation_id'] = $camp_res['cf_operation_id'] ?? null;
+                                }
                             }
                             return new WafVerdict(
                                 'block',
                                 'WAF-EMPTY-USER-AGENT',
                                 self::translatable_string('Automated blank User-Agent reconnaissance against restricted WordPress subsystem blocked.'),
-                                [
-                                    'category'    => 'Bot Defense',
-                                    'status_code' => 403,
-                                ]
+                                array_merge([
+                                    'category'      => 'Bot Defense',
+                                    'status_code'   => 403,
+                                    'is_hard_block' => true,
+                                ], $camp_meta)
                             );
                         }
 
