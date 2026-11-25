@@ -110,6 +110,16 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
             return null;
         }
 
+        // 1c. Exemption: Standard read-only public crawl metadata files (/robots.txt, /.well-known/security.txt)
+        $req_path_early = strtolower((string) (wp_parse_url($ctx->uri, PHP_URL_PATH) ?: $ctx->uri));
+        if (
+            in_array($ctx->method, ['GET', 'HEAD'], true)
+            && empty($ctx->queryParams)
+            && in_array($req_path_early, ['/robots.txt', '/.well-known/security.txt'], true)
+        ) {
+            return null;
+        }
+
         // 2. Exemption: Already solved WebCrypto PoW in current session
         $ua = $ctx->userAgent;
         if (class_exists(BotReconDefense::class)) {
@@ -175,15 +185,16 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
             || isset($ctx->server['HTTP_SEC_FETCH_SITE']) || isset($ctx->server['HTTP_SEC_FETCH_MODE']) || isset($ctx->server['HTTP_SEC_FETCH_DEST']);
         if ($is_https && !$has_sec_fetch && $ua !== '') {
             // Modern desktop & mobile browsers (Chrome, Edge, Safari, Firefox) support Fetch Metadata.
-            // Exclude common iOS & Android in-app WebViews (Instagram, Facebook, TikTok, Line, LinkedIn, Snapchat, etc.) which often omit Sec-Fetch-*
+            // Exclude common iOS & Android in-app WebViews and declared non-JS crawlers (governed by BotReconDefense / SubnetSwarmGuard).
             $is_inapp_webview = preg_match('/\b(?:FBAN|FBAV|Instagram|BytedanceWebview|TikTok|Line\/|Snapchat|LinkedInApp|MicroMessenger|Pinterest)\b/i', $ua) === 1;
+            $is_declared_crawler = preg_match('/\b(?:PetalBot|Bytespider|Sogou|YandexBot|Baiduspider|SemrushBot|AhrefsBot|DotBot|MJ12bot|BLEXBot|AdsBot-Google|Mediapartners-Google|Google-InspectionTool|GoogleOther|Applebot|BingPreview|facebookexternalhit|meta-externalagent|Twitterbot|LinkedInBot|Slackbot|WhatsApp)\b/i', $ua) === 1;
 
             $is_desktop_or_mobile_ua = (
                 str_contains($ua, 'Mozilla/') &&
                 (str_contains($ua, 'Chrome/') || str_contains($ua, 'Safari/') || str_contains($ua, 'Firefox/'))
             );
 
-            if ($is_desktop_or_mobile_ua && !$is_inapp_webview) {
+            if ($is_desktop_or_mobile_ua && !$is_inapp_webview && !$is_declared_crawler) {
                 $risk_score += 35;
                 $signals[] = 'missing_sec_fetch_on_https';
             }
@@ -209,33 +220,49 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
         }
 
         // Heuristic 2b: Impossible Future Browser Major Version (Signal +45 risk ONLY — never independent ban trigger)
-        // Deterministic ceiling: Chrome versions > 150 (e.g. Chrome/155.0.0.0) indicate synthetic adversary simulation
+        // Calendar-aware ceiling: accounts for ~15 Chromium milestones/year + Canary margin so current browsers never false-positive
+        $max_plausible_chrome = 145 + max(0, ((int) gmdate('Y') - 2025) * 15) + 15;
         if ($ua !== '' && preg_match('/Chrome\/(\d+)\./i', $ua, $chrome_matches)) {
             $major_ver = (int) ($chrome_matches[1] ?? 0);
-            if ($major_ver >= 150) {
+            if ($major_ver >= $max_plausible_chrome) {
                 $risk_score += 45;
                 $signals[] = 'impossible_browser_version_future';
             }
         }
 
-        // Heuristic 2c: Hard-block raw HTTP clients probing non-existent .php files under /wp-content/ or /wp-admin/
-        if ($ua !== '' && preg_match('/^(?:Go-http-client|python-requests|curl|libwww-perl|Wget|aiohttp|httpx)(?:\/|\s|$)/i', $ua)) {
+        // Heuristic 2c: Hard-block raw HTTP clients probing PHP subsystems or non-existent webshell scripts
+        if ($ua !== '' && preg_match('/^(?:Go-http-client|python-requests|python-urllib|python-httpx|curl|libwww-perl|Wget|aiohttp|httpx|Java\/|okhttp|fasthttp|zgrab|Nuclei)(?:\/|\s|$)/i', $ua)) {
             $req_path = strtolower((string) (wp_parse_url($ctx->uri, PHP_URL_PATH) ?: $ctx->uri));
-            if (str_ends_with($req_path, '.php') && (str_starts_with($req_path, '/wp-content/') || str_starts_with($req_path, '/wp-admin/maint/'))) {
-                if (class_exists('\\WebCareProScanner\\Firewall\\Core\\BehavioralCampaignEngine')) {
-                    \WebCareProScanner\Firewall\Core\BehavioralCampaignEngine::record_probe($ctx->ip, 'webshell_probe', $req_path);
+            if (str_ends_with($req_path, '.php')) {
+                $is_protected_wp_php = str_starts_with($req_path, '/wp-content/')
+                    || str_starts_with($req_path, '/wp-includes/')
+                    || (
+                        str_starts_with($req_path, '/wp-admin/')
+                        && !in_array($req_path, ['/wp-admin/admin-ajax.php', '/wp-admin/admin-post.php'], true)
+                    );
+
+                $is_missing_webshell_probe = !$is_protected_wp_php
+                    && !in_array($req_path, ['/index.php', '/wp-login.php', '/wp-cron.php', '/xmlrpc.php'], true)
+                    && !str_contains($req_path, '..')
+                    && defined('ABSPATH')
+                    && !is_file(rtrim(ABSPATH, '/\\') . '/' . ltrim($req_path, '/'));
+
+                if ($is_protected_wp_php || $is_missing_webshell_probe) {
+                    if (class_exists('\\WebCareProScanner\\Firewall\\Core\\BehavioralCampaignEngine')) {
+                        \WebCareProScanner\Firewall\Core\BehavioralCampaignEngine::record_probe($ctx->ip, 'webshell_probe', $req_path);
+                    }
+                    return new WafVerdict(
+                        'block',
+                        'WAF-RAW-CLIENT-PHP-PROBE',
+                        'Direct scripted HTTP client reconnaissance against PHP subsystem forbidden.',
+                        [
+                            'category'    => 'Exploit Reconnaissance',
+                            'status_code' => 403,
+                            'user_agent'  => $ua,
+                            'path'        => $req_path,
+                        ]
+                    );
                 }
-                return new WafVerdict(
-                    'block',
-                    'WAF-RAW-CLIENT-PHP-PROBE',
-                    'Direct scripted HTTP client reconnaissance against PHP subsystem forbidden.',
-                    [
-                        'category'    => 'Exploit Reconnaissance',
-                        'status_code' => 403,
-                        'user_agent'  => $ua,
-                        'path'        => $req_path,
-                    ]
-                );
             }
         }
 
@@ -279,19 +306,21 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
                 ? __('Browser integrity validation required (signals: %s).', 'webcare-pro-security')
                 : 'Browser integrity validation required (signals: %s).';
 
-            // Check if this is an API / REST / AJAX call
+            // Check if this is an API / REST / AJAX call or a declared non-JS crawler (which cannot solve WebCrypto PoW)
             $is_api_or_rest = str_contains($ctx->uri, '/wp-json/') || str_contains($ctx->uri, 'rest_route=') || (function_exists('wp_doing_ajax') && wp_doing_ajax());
-            if ($is_api_or_rest) {
-                // Return API-native 429 rate limit verdict instead of rendering HTML PoW challenge
+            $is_non_js_crawler = $ua !== '' && preg_match('/\b(?:PetalBot|Bytespider|Sogou|YandexBot|Baiduspider|SemrushBot|AhrefsBot|DotBot|MJ12bot|BLEXBot)\b/i', $ua) === 1;
+            if ($is_api_or_rest || $is_non_js_crawler) {
+                // Return lightweight 429 rate limit verdict instead of rendering HTML PoW challenge
                 return new WafVerdict(
                     'rate_limit',
-                    'WAF-AI-AGENT-API-RATELIMIT',
-                    'Automated high-velocity API access pattern restricted.',
+                    $is_non_js_crawler ? 'WAF-CRAWLER-VELOCITY-THROTTLE' : 'WAF-AI-AGENT-API-RATELIMIT',
+                    $is_non_js_crawler ? 'Automated crawler velocity throttled.' : 'Automated high-velocity API access pattern restricted.',
                     [
                         'category'    => 'AI Threat Defense',
                         'risk_score'  => $risk_score,
                         'signals'     => $signals,
                         'status_code' => 429,
+                        'retry_after' => 120,
                     ]
                 );
             }

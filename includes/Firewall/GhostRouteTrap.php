@@ -205,16 +205,19 @@ class GhostRouteTrap {
 
         \WebCareProScanner\Firewall\Core\WafVaultManager::record_ghost_catch($event);
 
-        // 2. Forensic Incident Logging
+        // 2. Forensic Incident Logging (GhostRouteTrap always terminates with HTTP 403 Forbidden below)
         if (class_exists('\\WebCareProScanner\\Firewall\\WafFileLogger')) {
             WafFileLogger::log_incident([
-                'id'          => 'WAF-GHOST-CANARY-TRAP',
-                'rule_id'     => 'WAF-GHOST-CANARY-TRAP',
-                'name'        => 'Ghost Route Canary Honeypot Trap',
-                'category'    => 'AI Defense & Canary Traps',
-                'description' => sprintf('Autonomous reconnaissance or AI scraper probed canary honeypot: %s (%s)', $trigger_type, $target_surface),
-                'payload'     => $target_surface,
-            ], !empty($settings['block_client_ip']) ? 'blocked' : 'detected');
+                'id'                  => 'WAF-GHOST-CANARY-TRAP',
+                'rule_id'             => 'WAF-GHOST-CANARY-TRAP',
+                'name'                => 'Ghost Route Canary Honeypot Trap',
+                'category'            => 'AI Defense & Canary Traps',
+                'description'         => sprintf('Autonomous reconnaissance or AI scraper probed canary honeypot: %s (%s)', $trigger_type, $target_surface),
+                'payload'             => $target_surface,
+                'status_code'         => 403,
+                'decision'            => 'block',
+                'enforcement_outcome' => 'completed',
+            ], 'blocked');
         }
 
         // Record canary probe in BehavioralCampaignEngine (Single canary increases risk; no 24h ban from 1 hit alone)

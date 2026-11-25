@@ -561,7 +561,7 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
 
         // 2. INFORMATION_SCHEMA metadata probing or time/file SQLi primitives in unquoted SQL skeleton
         if (preg_match('/\bINFORMATION_SCHEMA\.(?:TABLES|COLUMNS|SCHEMATA|USER_PRIVILEGES)\b/i', $skeleton)) {
-            if (self::is_legitimate_security_or_core_caller()) {
+            if (self::is_legitimate_security_or_core_caller() || self::is_safe_single_table_existence_check($skeleton)) {
                 return null;
             }
             return 'INFORMATION_SCHEMA_PROBE';
@@ -618,29 +618,67 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
     }
 
     /**
+     * Check whether a backtrace file belongs to internal RASP/WAF, $wpdb, or a WordPress DB/cache drop-in wrapper.
+     */
+    private static function is_internal_db_wrapper_frame(string $file): bool {
+        return str_contains($file, '/includes/Firewall/')
+            || str_contains($file, '/wp-includes/class-wpdb.php')
+            || str_contains($file, '/wp-includes/wp-db.php')
+            || str_contains($file, '/wp-includes/class-wp-hook.php')
+            || str_contains($file, '/wp-includes/plugin.php')
+            || str_contains($file, '/wp-includes/option.php')
+            || str_ends_with($file, '/wp-content/db.php')
+            || str_ends_with($file, '/wp-content/object-cache.php');
+    }
+
+    /**
+     * Allow benign standalone single-table existence/engine checks against INFORMATION_SCHEMA.TABLES
+     * (e.g. `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = '...'`),
+     * while blocking any UNION, subquery injection, wildcard schema enumeration, or column/privilege probing.
+     */
+    private static function is_safe_single_table_existence_check(string $skeleton): bool {
+        // Must strictly target INFORMATION_SCHEMA.TABLES (never COLUMNS, SCHEMATA, or USER_PRIVILEGES)
+        if (preg_match('/\bINFORMATION_SCHEMA\.(?:COLUMNS|SCHEMATA|USER_PRIVILEGES|SCHEMA_PRIVILEGES|TABLE_PRIVILEGES)\b/i', $skeleton)) {
+            return false;
+        }
+
+        // Reject UNION, stacked statements, subqueries, JOINs, string-aggregation, or timing/error primitives
+        if (preg_match('/\b(?:UNION|JOIN|GROUP_CONCAT|CONCAT|CONCAT_WS|CHAR|HEX|UNHEX|SLEEP|BENCHMARK|EXTRACTVALUE|UPDATEXML|LOAD_FILE|INTO)\b|;/i', $skeleton)) {
+            return false;
+        }
+
+        // Reject subqueries (any secondary SELECT keyword)
+        if (preg_match_all('/\bSELECT\b/i', $skeleton) !== 1) {
+            return false;
+        }
+
+        // Primary FROM source must be INFORMATION_SCHEMA.TABLES and must bind an exact literal TABLE_NAME = ''
+        if (!preg_match('/^\s*SELECT\s+[a-zA-Z0-9_.*(),\s`]+\s+FROM\s+`?INFORMATION_SCHEMA`?\s*\.\s*`?TABLES`?\s+WHERE\b/i', $skeleton)) {
+            return false;
+        }
+
+        // Require exact literal equality on TABLE_NAME (masked to '' by normalize_sql_skeleton) without OR/LIKE wildcards
+        if (preg_match('/\b(?:OR|LIKE|REGEXP|RLIKE)\b|!=|<>/i', $skeleton)) {
+            return false;
+        }
+
+        return preg_match('/\b`?TABLE_NAME`?\s*=\s*\'\'/i', $skeleton) === 1;
+    }
+
+    /**
      * Check if current SQL query originates from a verified security scanner (Wordfence, Solid Security, Sucuri, etc.) or Core schema maintenance.
      *
      * @return bool
      */
     public static function is_legitimate_security_or_core_caller(): bool {
         // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_debug_backtrace -- Provenance validation for RASP
-        $frames = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 15);
+        $frames = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 25);
         $origin_frame = null;
 
-        // Skip internal RASP, WAF, and $wpdb database frames to locate the true direct SQL originator
+        // Skip internal RASP, WAF, $wpdb, and DB drop-in wrapper frames to locate the true direct SQL originator
         foreach ($frames as $frame) {
             $file = isset($frame['file']) ? wp_normalize_path((string) $frame['file']) : '';
-            if ($file === '') {
-                continue;
-            }
-            if (
-                strpos($file, '/includes/Firewall/') !== false
-                || strpos($file, '/wp-includes/class-wpdb.php') !== false
-                || strpos($file, '/wp-includes/wp-db.php') !== false
-                || strpos($file, '/wp-includes/class-wp-hook.php') !== false
-                || strpos($file, '/wp-includes/plugin.php') !== false
-                || strpos($file, '/wp-includes/option.php') !== false
-            ) {
+            if ($file === '' || self::is_internal_db_wrapper_frame($file)) {
                 continue;
             }
             $origin_frame = $frame;
@@ -699,25 +737,15 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
      * @return bool
      */
     public static function is_legitimate_users_table_mutation(string $sql): bool {
-        // 1. Verify caller provenance: immediate caller invoking $wpdb must be Core or WooCommerce user engine
+        // 1. Verify caller provenance: immediate caller invoking $wpdb must be Core, WooCommerce, or a bounded registration plugin UPDATE
         // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_debug_backtrace -- Provenance validation for RASP
-        $frames = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 20);
+        $frames = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 25);
         $origin_frame = null;
 
-        // Skip internal RASP, WAF, and $wpdb database frames to locate the true SQL originator
+        // Skip internal RASP, WAF, $wpdb, and DB drop-in wrapper frames to locate the true SQL originator
         foreach ($frames as $frame) {
             $file = isset($frame['file']) ? wp_normalize_path((string) $frame['file']) : '';
-            if ($file === '') {
-                continue;
-            }
-            if (
-                strpos($file, '/includes/Firewall/') !== false
-                || strpos($file, '/wp-includes/class-wpdb.php') !== false
-                || strpos($file, '/wp-includes/wp-db.php') !== false
-                || strpos($file, '/wp-includes/class-wp-hook.php') !== false
-                || strpos($file, '/wp-includes/plugin.php') !== false
-                || strpos($file, '/wp-includes/option.php') !== false
-            ) {
+            if ($file === '' || self::is_internal_db_wrapper_frame($file)) {
                 continue;
             }
             $origin_frame = $frame;
@@ -730,21 +758,26 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
 
         $origin_file = wp_normalize_path((string) $origin_frame['file']);
 
-        // The query MUST be directly executed by WordPress Core user functions or WooCommerce user data stores
         $is_core_origin = (
-            strpos($origin_file, '/wp-includes/user.php') !== false
-            || strpos($origin_file, '/wp-includes/pluggable.php') !== false
+            str_contains($origin_file, '/wp-includes/user.php')
+            || str_contains($origin_file, '/wp-includes/pluggable.php')
         );
 
         $is_wc_origin = (
-            strpos($origin_file, '/plugins/woocommerce/includes/wc-user-functions.php') !== false
-            || strpos($origin_file, '/plugins/woocommerce/includes/data-stores/class-wc-customer-data-store') !== false
-            || strpos($origin_file, '/plugins/woocommerce/packages/') !== false
-            || strpos($origin_file, '/plugins/woocommerce/src/StoreApi/') !== false
+            str_contains($origin_file, '/plugins/woocommerce/includes/wc-user-functions.php')
+            || str_contains($origin_file, '/plugins/woocommerce/includes/data-stores/class-wc-customer-data-store')
+            || str_contains($origin_file, '/plugins/woocommerce/packages/')
+            || str_contains($origin_file, '/plugins/woocommerce/src/StoreApi/')
         );
 
-        if (!$is_core_origin && !$is_wc_origin) {
-            // Origin was a third-party plugin callback or non-core file
+        $plugin_dir = defined('WP_PLUGIN_DIR') ? wp_normalize_path(WP_PLUGIN_DIR) . '/' : '/wp-content/plugins/';
+        $is_registered_plugin_origin = !$is_core_origin
+            && !$is_wc_origin
+            && str_starts_with($origin_file, $plugin_dir)
+            && !str_ends_with($origin_file, '/admin-ajax.php')
+            && !str_ends_with($origin_file, '/admin-post.php');
+
+        if (!$is_core_origin && !$is_wc_origin && !$is_registered_plugin_origin) {
             return false;
         }
 
@@ -769,7 +802,11 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
         }
 
         // 3. Inspect columns, enforce single-row tuple, and verify role/registration policy in INSERT query
+        // Direct INSERT INTO $wpdb->users is strictly reserved for WordPress Core and WooCommerce user stores
         if (preg_match('/^\s*INSERT\s+INTO\s+`?[a-zA-Z0-9_]+`?\s*\(([^)]+)\)\s*VALUES\s*(.+)$/is', $sql, $insert_matches)) {
+            if (!$is_core_origin && !$is_wc_origin) {
+                return false;
+            }
             $cols = array_map(function ($c) {
                 return strtolower(trim(str_replace('`', '', $c)));
             }, explode(',', $insert_matches[1]));
@@ -898,6 +935,33 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                     $mutated_cols[] = $col_clean;
                 }
                 $mutated_cols = array_values(array_unique($mutated_cols));
+
+                // Third-party registration/LMS plugins (e.g. Gravity Forms User Registration, LearnDash, MemberPress)
+                // may ONLY update non-credential profile/status columns on a single positive integer ID of a freshly registered non-privileged user.
+                if ($is_registered_plugin_origin) {
+                    if ($pred_col !== 'id') {
+                        return false;
+                    }
+                    $safe_plugin_registration_cols = ['user_status', 'display_name', 'user_nicename', 'user_url'];
+                    foreach ($mutated_cols as $m_col) {
+                        if (!in_array($m_col, $safe_plugin_registration_cols, true)) {
+                            return false;
+                        }
+                    }
+                    $target_user = function_exists('get_userdata') ? get_userdata((int) $pred_val) : null;
+                    if (!($target_user instanceof \WP_User)) {
+                        return false;
+                    }
+                    if (
+                        (class_exists(FirewallEngine::class) && FirewallEngine::is_user_privileged($target_user))
+                        || $target_user->has_cap('manage_options')
+                        || $target_user->has_cap('administrator')
+                        || $target_user->has_cap('edit_users')
+                    ) {
+                        return false;
+                    }
+                    return self::is_within_registration_window($target_user, 120);
+                }
 
                 // 5. Target User Boundary & Cryptographic Auth Lifecycle Verification (during unauthenticated guest sessions)
                 if (!function_exists('is_user_logged_in') || !is_user_logged_in()) {
@@ -1259,21 +1323,34 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
     }
 
     /**
-     * Resolve first plugin/theme frame from debug_backtrace for attribution.
+     * Resolve first plugin/theme/mu-plugin frame from debug_backtrace for attribution.
      */
     private static function resolve_culprit_caller(): string {
         // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_debug_backtrace -- Security forensics attribution to pinpoint vulnerable plugin file on blocked SQLi query
-        $frames = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 15);
+        $frames = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 25);
+        $fallback_frame = null;
         foreach ($frames as $frame) {
             $file = isset($frame['file']) ? wp_normalize_path((string) $frame['file']) : '';
-            if ($file === '' || strpos($file, 'webcare-pro-security') !== false) {
+            if ($file === '' || str_contains($file, 'webcare-pro-security')) {
                 continue;
             }
-            if (strpos($file, '/wp-content/plugins/') !== false || strpos($file, '/wp-content/themes/') !== false) {
+            if (
+                str_contains($file, '/wp-content/plugins/')
+                || str_contains($file, '/wp-content/themes/')
+                || str_contains($file, '/wp-content/mu-plugins/')
+            ) {
                 $rel  = preg_replace('#^.*/wp-content/#', 'wp-content/', $file);
                 $line = intval($frame['line'] ?? 0);
                 return $rel . ':' . $line;
             }
+            if ($fallback_frame === null && !self::is_internal_db_wrapper_frame($file)) {
+                $fallback_frame = $frame;
+            }
+        }
+        if ($fallback_frame !== null && !empty($fallback_frame['file'])) {
+            $norm = wp_normalize_path((string) $fallback_frame['file']);
+            $rel  = defined('ABSPATH') ? ltrim(str_replace(wp_normalize_path(ABSPATH), '', $norm), '/') : basename($norm);
+            return $rel . ':' . intval($fallback_frame['line'] ?? 0);
         }
         return 'wp-content/unknown';
     }

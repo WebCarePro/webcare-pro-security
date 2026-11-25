@@ -151,19 +151,35 @@ final readonly class PluginConflictChecker {
             ];
         }
 
+        // 6. Check Cloudflare Proxy Real Visitor IP Restoration when Cloudflare is active
+        $cf_headers_seen = !empty($_SERVER['HTTP_CF_CONNECTING_IP']) || !empty($_SERVER['HTTP_CF_RAY']);
+        $cf_connected    = !empty($settings['cloudflare_enabled']);
+        $cf_trust_mode   = (string) ($settings['waf_cloudflare_proxy_trust_mode'] ?? 'disabled');
+        if (($cf_headers_seen || $cf_connected) && $cf_trust_mode === 'disabled') {
+            $conflicts[] = [
+                'id'                 => 'env_cloudflare_proxy_trust_disabled',
+                'severity'           => 'attention',
+                'plugin_name'        => 'Cloudflare Proxy',
+                'plugin_file'        => 'cloudflare-edge',
+                'category'           => __('Cloudflare Real Visitor IP', 'webcare-pro-security'),
+                'plain_title'        => __('Cloudflare is active, but real visitor IP restoration is turned off', 'webcare-pro-security'),
+                'extended_details'   => __('When Cloudflare proxies your traffic while proxy IP restoration is disabled, your server sees shared Cloudflare edge IP addresses instead of each visitor\'s real IP address in firewall logs and rate limits.', 'webcare-pro-security'),
+                'recommended_action' => __('Open Firewall -> Settings and switch Cloudflare Proxy Trust Mode to "Enabled (Verified Cloudflare IPs)" so WebCare Pro logs accurate visitor IPs.', 'webcare-pro-security'),
+                'target_page'        => 'webcare-pro-firewall',
+                'target_tab'         => 'settings',
+            ];
+        }
+
         $attention_count = count(array_filter($conflicts, static fn (array $c): bool => ($c['severity'] ?? '') === 'attention'));
         $status          = $attention_count > 0 ? 'attention' : 'clean';
         $headline        = $attention_count > 0
-            ? sprintf(
-                /* translators: %d: number of items needing attention */
-                _n(
-                    'Found %d compatibility item worth a quick look',
-                    'Found %d compatibility items worth a quick look',
-                    $attention_count,
-                    'webcare-pro-security'
-                ),
-                $attention_count
-            )
+            ? ($attention_count === 1
+                ? __('Found 1 compatibility item worth a quick look', 'webcare-pro-security')
+                : sprintf(
+                    /* translators: %d: number of items needing attention */
+                    __('Found %d compatibility items worth a quick look', 'webcare-pro-security'),
+                    $attention_count
+                ))
             : __('Everything looks harmonious — no conflicts detected', 'webcare-pro-security');
 
         $summary = $attention_count > 0

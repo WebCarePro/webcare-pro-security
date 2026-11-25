@@ -107,6 +107,11 @@ final class BlocklistRepository {
             return false;
         }
 
+        // Safety Guard 1b: Never ban an official Cloudflare Anycast Edge IP locally (prevents proxy self-DoS when real visitor IP trust is unconfigured)
+        if (!str_contains($ip, '/') && class_exists(ClientIpResolver::class) && ClientIpResolver::is_cloudflare_ip($ip)) {
+            return false;
+        }
+
         // Safety Guard 2: Refuse to add current administrator's active IP or whitelisted IP to custom blocklist
         $current_client_ip = FirewallEngine::get_client_ip();
         if ($ip === $current_client_ip && (FirewallEngine::is_authenticated_administrator() || FirewallEngine::is_authenticated_editor_or_builder())) {

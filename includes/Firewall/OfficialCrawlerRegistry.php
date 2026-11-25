@@ -52,6 +52,12 @@ final class OfficialCrawlerRegistry {
             'json_path'  => 'prefixes',
             'format'     => 'google',
         ],
+        'google-special' => [
+            'url'        => 'https://developers.google.com/search/apis/ipranges/special-crawlers.json',
+            'allowed_host' => 'developers.google.com',
+            'json_path'  => 'prefixes',
+            'format'     => 'google',
+        ],
         'bingbot' => [
             'url'        => 'https://www.bing.com/msnbot.json',
             'allowed_host' => 'www.bing.com',
@@ -91,6 +97,21 @@ final class OfficialCrawlerRegistry {
             '2404:6800::/32',
             '2a00:1450::/32',
             '2c0f:fb50::/32',
+        ],
+        'google-special' => [
+            '66.249.64.0/19',
+            '64.233.160.0/19',
+            '72.14.192.0/18',
+            '209.85.128.0/17',
+            '108.177.8.0/21',
+            '216.58.192.0/19',
+            '192.178.4.0/22',
+            '2001:4860::/32',
+            '2404:6800::/32',
+            '2a00:1450::/32',
+        ],
+        'dotbot' => [
+            '216.244.64.0/19',
         ],
         'bingbot' => [
             '157.55.39.0/24',
@@ -201,19 +222,27 @@ final class OfficialCrawlerRegistry {
         $ua_lower = strtolower($user_agent);
 
         $bot_checks = [
-            'googlebot'        => 'googlebot',
-            'bingbot'          => 'bingbot',
-            'applebot'         => 'applebot',
-            'duckduckbot'      => 'duckduckbot',
-            'oai-searchbot'    => 'oai-searchbot',
-            'gptbot'           => 'oai-gptbot',
-            'claude-searchbot' => 'claude-searchbot',
-            'claudebot'        => 'claudebot',
+            'googlebot'             => 'googlebot',
+            'adsbot-google'         => 'google-special',
+            'mediapartners-google'  => 'google-special',
+            'apis-google'           => 'google-special',
+            'google-inspectiontool' => 'googlebot',
+            'googleother'           => 'googlebot',
+            'storebot-google'       => 'googlebot',
+            'bingbot'               => 'bingbot',
+            'adidxbot'              => 'bingbot',
+            'applebot'              => 'applebot',
+            'duckduckbot'           => 'duckduckbot',
+            'dotbot'                => 'dotbot',
+            'oai-searchbot'         => 'oai-searchbot',
+            'gptbot'                => 'oai-gptbot',
+            'claude-searchbot'      => 'claude-searchbot',
+            'claudebot'             => 'claudebot',
         ];
 
         foreach ($bot_checks as $token => $bot_key) {
             if (str_contains($ua_lower, $token)) {
-                if (self::is_ip_in_crawler_cidrs($ip, $bot_key)) {
+                if (self::is_ip_in_crawler_cidrs($ip, $bot_key) || ($bot_key === 'google-special' && self::is_ip_in_crawler_cidrs($ip, 'googlebot'))) {
                     return $bot_key;
                 }
             }

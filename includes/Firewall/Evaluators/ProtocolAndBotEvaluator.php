@@ -427,13 +427,42 @@ final readonly class ProtocolAndBotEvaluator implements WafEvaluatorInterface {
                 // Never break CORS preflight OPTIONS requests
                 if (!$is_options && !$is_webhook_exempt) {
                     $is_loopback = in_array($client_ip, ['127.0.0.1', '::1'], true)
-                        || ($client_ip === ($ctx->server['SERVER_ADDR'] ?? ''));
-                    $is_cli_or_cron = (php_sapi_name() === 'cli' || (defined('DOING_CRON') && DOING_CRON) || isset($ctx->queryParams['doing_wp_cron']));
+                        || ($client_ip === ($ctx->server['SERVER_ADDR'] ?? ''))
+                        || FirewallEngine::is_server_origin_or_loopback($client_ip);
+                    $is_cli_or_cron = ((php_sapi_name() === 'cli' && !\WebCareProScanner\Firewall\DeclarativePatchVerifier::is_test_context())
+                        || (defined('DOING_CRON') && DOING_CRON && $is_loopback));
                     $is_wc_api = isset($ctx->queryParams['wc-api']);
                     $is_commerce_safe = !empty($settings['waf_ecommerce_safe_mode']) && CommerceSessionGuard::is_commerce_or_membership_request($request_uri);
                     $is_form_safe = !empty($settings['waf_forms_safe_mode']) && CommerceSessionGuard::is_form_submission_request($request_uri);
 
-                    if (!$is_loopback && !$is_cli_or_cron && !$is_wc_api && !$is_commerce_safe && !$is_form_safe) {
+                    $empty_ua_path = strtolower((string) (wp_parse_url($request_uri, PHP_URL_PATH) ?: $request_uri));
+                    $is_robots_txt = in_array($method, ['GET', 'HEAD'], true)
+                        && empty($ctx->queryParams)
+                        && in_array($empty_ua_path, ['/robots.txt', '/.well-known/security.txt'], true);
+
+                    if (!$is_loopback && !$is_cli_or_cron && !$is_wc_api && !$is_commerce_safe && !$is_form_safe && !$is_robots_txt) {
+                        $is_sensitive_empty_ua_probe = str_starts_with($empty_ua_path, '/wp-admin/')
+                            || $empty_ua_path === '/wp-admin'
+                            || str_starts_with($empty_ua_path, '/wp-includes/')
+                            || str_starts_with($empty_ua_path, '/wp-content/mu-plugins')
+                            || str_contains($empty_ua_path, '/alfa_data')
+                            || (str_ends_with($empty_ua_path, '.php') && !in_array($empty_ua_path, ['/index.php', '/wp-login.php'], true));
+
+                        if ($is_sensitive_empty_ua_probe) {
+                            if (class_exists('\\WebCareProScanner\\Firewall\\Core\\BehavioralCampaignEngine')) {
+                                \WebCareProScanner\Firewall\Core\BehavioralCampaignEngine::record_probe($client_ip, 'webshell_probe', $empty_ua_path);
+                            }
+                            return new WafVerdict(
+                                'block',
+                                'WAF-EMPTY-USER-AGENT',
+                                self::translatable_string('Automated blank User-Agent reconnaissance against restricted WordPress subsystem blocked.'),
+                                [
+                                    'category'    => 'Bot Defense',
+                                    'status_code' => 403,
+                                ]
+                            );
+                        }
+
                         $has_pow_submission = isset($ctx->formParams['webcare_pow_challenge'], $ctx->formParams['webcare_pow_nonce']);
                         $has_clearance = class_exists(BotReconDefense::class)
                             && (BotReconDefense::has_valid_clearance_cookie($client_ip, '') || BotReconDefense::verify_and_clear_pow_header($client_ip, ''));
@@ -504,14 +533,27 @@ final readonly class ProtocolAndBotEvaluator implements WafEvaluatorInterface {
                 $bot_rule = BotReconDefense::inspect_bot($client_ip, $ua, $settings);
                 if ($bot_rule !== null && is_array($bot_rule)) {
                     $rule_id = (string) ($bot_rule['id'] ?? 'WAF-BOT-DEFENSE');
-                    $rule_desc = (string) ($bot_rule['description'] ?? 'Malicious scraper or unverified bot rejected.');
+                    $rule_desc = (string) ($bot_rule['description'] ?? $bot_rule['name'] ?? 'Malicious scraper or unverified bot rejected.');
+                    $status_code = (int) ($bot_rule['status_code'] ?? 403);
+                    if ($status_code === 429) {
+                        return WafVerdict::rate_limit(
+                            $rule_id,
+                            $rule_desc,
+                            [
+                                'category'    => $bot_rule['category'] ?? 'Bot Defense',
+                                'status_code' => 429,
+                                'retry_after' => (int) ($bot_rule['retry_after'] ?? 120),
+                                'bot_rule'    => $bot_rule,
+                            ]
+                        );
+                    }
                     return new WafVerdict(
                         'block',
                         $rule_id,
                         $rule_desc,
                         [
                             'category'    => $bot_rule['category'] ?? 'Bot Defense',
-                            'status_code' => 403,
+                            'status_code' => $status_code,
                             'bot_rule'    => $bot_rule,
                         ]
                     );

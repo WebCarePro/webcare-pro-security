@@ -29,16 +29,23 @@ class BotReconDefense {
      * Map of supported search engine bots and their authorized host suffixes.
      */
     private const SEARCH_BOTS = [
-        'googlebot'   => ['googlebot.com', 'google.com'],
-        'bingbot'     => ['search.msn.com', 'bing.com'],
-        'applebot'    => ['applebot.apple.com', 'apple.com'],
-        'slurp'       => ['crawl.yahoo.net', 'yahoo.com'],
-        'duckduckbot' => ['duckduckgo.com'],
-        'yandex'      => ['yandex.ru', 'yandex.net', 'yandex.com'],
-        'baiduspider' => ['baidu.com', 'baidu.jp'],
-        'oai-searchbot'  => ['openai.com'],
-        'perplexitybot' => ['perplexity.ai'],
-        'claude-searchbot' => ['anthropic.com'],
+        'googlebot'             => ['googlebot.com', 'google.com'],
+        'adsbot-google'         => ['googlebot.com', 'google.com'],
+        'mediapartners-google'  => ['googlebot.com', 'google.com'],
+        'apis-google'           => ['googlebot.com', 'google.com'],
+        'google-inspectiontool' => ['googlebot.com', 'google.com'],
+        'googleother'           => ['googlebot.com', 'google.com'],
+        'storebot-google'       => ['googlebot.com', 'google.com'],
+        'bingbot'               => ['search.msn.com', 'bing.com'],
+        'adidxbot'              => ['search.msn.com', 'bing.com'],
+        'applebot'              => ['applebot.apple.com', 'apple.com'],
+        'slurp'                 => ['crawl.yahoo.net', 'yahoo.com'],
+        'duckduckbot'           => ['duckduckgo.com'],
+        'yandex'                => ['yandex.ru', 'yandex.net', 'yandex.com'],
+        'baiduspider'           => ['baidu.com', 'baidu.jp'],
+        'oai-searchbot'         => ['openai.com'],
+        'perplexitybot'         => ['perplexity.ai'],
+        'claude-searchbot'      => ['anthropic.com'],
     ];
 
     /**
@@ -108,6 +115,10 @@ class BotReconDefense {
         'claude-searchbot' => [
             // Anthropic Claude search citation IP ranges
             '160.79.104.0/23',
+        ],
+        'dotbot' => [
+            // Official Moz DotBot crawler subnet
+            '216.244.64.0/19',
         ],
     ];
 
@@ -281,10 +292,13 @@ class BotReconDefense {
                     $hostname = @gethostbyaddr($client_ip);
                     $has_conflicting_ptr = (!empty($hostname) && $hostname !== $client_ip);
 
-                    if (!$is_metadata_crawl_path || $has_conflicting_ptr) {
+                    // Distributed/cloud SEO crawlers (e.g. MJ12bot) may lack reverse PTR records or experience transient DNS timeouts.
+                    // Flag SEO crawler spoofing only when reverse DNS explicitly resolves to a conflicting non-vendor hostname.
+                    if ($has_conflicting_ptr && (!$is_metadata_crawl_path || $has_conflicting_ptr)) {
                         return [
                             'id'          => 'BOT-FAKE-CRAWLER-SPOOF',
                             'name'        => 'Fake SEO Crawler Spoofing Detected (' . ucfirst($claimed_seo) . ')',
+                            'description' => 'Fake SEO Crawler Spoofing Detected (' . ucfirst($claimed_seo) . ')',
                             'category'    => 'Bot Recon Defense',
                             'match_type'  => 'Reverse DNS Verification Failure',
                             'match_value' => 'IP: ' . $client_ip . ' claiming UA: ' . substr($user_agent, 0, 100),
@@ -418,9 +432,43 @@ class BotReconDefense {
     }
 
     /**
-     * Validate genuine search crawler via Reverse DNS (PTR) + Forward DNS (A)
+     * Confirm forward DNS resolution (IPv4 A and IPv6 AAAA) matches the connecting IP.
+     */
+    private static function forward_dns_matches_ip(string $hostname, string $ip): bool {
+        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+            $single = @gethostbyname($hostname);
+            if ($single === $ip) {
+                return true;
+            }
+            $all_v4 = @gethostbynamel($hostname);
+            return is_array($all_v4) && in_array($ip, $all_v4, true);
+        }
+
+        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) && function_exists('dns_get_record')) {
+            $target_bin = @inet_pton($ip);
+            if ($target_bin === false) {
+                return false;
+            }
+            $records = @dns_get_record($hostname, DNS_AAAA);
+            if (is_array($records)) {
+                foreach ($records as $rec) {
+                    if (!empty($rec['ipv6']) && is_string($rec['ipv6'])) {
+                        $cand_bin = @inet_pton($rec['ipv6']);
+                        if ($cand_bin !== false && hash_equals($target_bin, $cand_bin)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Validate genuine search crawler via Reverse DNS (PTR) + Forward DNS (A/AAAA)
      * with high-speed authoritative CIDR fallback for containerized/NAT environments.
-     * Caches verification status for 24 hours (86400s) to keep latency minimal.
+     * Caches verified/conflicting verdicts for 24h and transient empty PTR timeouts for 5m.
      */
     public static function verify_search_bot_reverse_dns(string $ip, string $bot_key): bool {
         // Skip private or local IPs
@@ -440,19 +488,19 @@ class BotReconDefense {
         }
 
         $is_genuine = false;
+        $cache_ttl  = DAY_IN_SECONDS;
 
         // 1. Authoritative Vendor CIDR check first (zero DNS latency & zero timeout risk)
         if (self::is_search_bot_in_official_cidrs($ip, $bot_key)) {
             $is_genuine = true;
         }
 
-        // 2. Secondary Check: Forward-Confirmed Reverse DNS (FCrDNS) if not in published CIDR ranges
+        // 2. Secondary Check: Forward-Confirmed Reverse DNS (FCrDNS) for IPv4 & IPv6 if not in static CIDRs
         if (!$is_genuine) {
             $hostname = @gethostbyaddr($ip);
             if (!empty($hostname) && $hostname !== $ip) {
-                $hostname_lower = strtolower($hostname);
+                $hostname_lower = strtolower(rtrim($hostname, '.'));
 
-                // Check if hostname ends with authorized domain suffix
                 $domain_matches = false;
                 foreach ($allowed_domains as $domain) {
                     if ($hostname_lower === $domain || str_ends_with($hostname_lower, '.' . $domain)) {
@@ -461,18 +509,16 @@ class BotReconDefense {
                     }
                 }
 
-                if ($domain_matches) {
-                    // Forward DNS Lookup confirmation
-                    $resolved_ip = @gethostbyname($hostname);
-                    if ($resolved_ip === $ip) {
-                        $is_genuine = true;
-                    }
+                if ($domain_matches && self::forward_dns_matches_ip($hostname, $ip)) {
+                    $is_genuine = true;
                 }
+            } else {
+                // Transient DNS timeout or missing PTR: use short 5-minute negative cache instead of 24h lockout
+                $cache_ttl = 300;
             }
         }
 
-        // Cache verdict for 24 hours
-        set_transient($transient_key, $is_genuine ? 'genuine' : 'fake', DAY_IN_SECONDS);
+        set_transient($transient_key, $is_genuine ? 'genuine' : 'fake', $cache_ttl);
 
         return $is_genuine;
     }
@@ -481,13 +527,19 @@ class BotReconDefense {
      * Check if client IP belongs to official verified search crawler CIDR ranges.
      */
     public static function is_search_bot_in_official_cidrs(string $ip, string $bot_key): bool {
+        $normalized_key = match ($bot_key) {
+            'adsbot-google', 'mediapartners-google', 'apis-google', 'google-inspectiontool', 'googleother', 'storebot-google' => 'googlebot',
+            'adidxbot' => 'bingbot',
+            default    => $bot_key,
+        };
+
         if (class_exists('\\WebCareProScanner\\Firewall\\OfficialCrawlerRegistry')) {
-            if (OfficialCrawlerRegistry::is_ip_in_crawler_cidrs($ip, $bot_key)) {
+            if (OfficialCrawlerRegistry::is_ip_in_crawler_cidrs($ip, $bot_key) || OfficialCrawlerRegistry::is_ip_in_crawler_cidrs($ip, $normalized_key)) {
                 return true;
             }
         }
 
-        $cidrs = self::CRAWLER_CIDR_RANGES[$bot_key] ?? [];
+        $cidrs = self::CRAWLER_CIDR_RANGES[$bot_key] ?? self::CRAWLER_CIDR_RANGES[$normalized_key] ?? [];
         if (empty($cidrs)) {
             return false;
         }

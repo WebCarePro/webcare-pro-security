@@ -530,6 +530,9 @@ final class AlwaysOnCoreGuard implements WafEvaluatorInterface {
         if (!empty($settings['waf_block_sensitive_file_probes'])) {
             $sensitive_violation = ExploitSignatureEngine::check_sensitive_file_probe($request_uri, $settings, $skip_operational_heuristics);
             if ($sensitive_violation !== null) {
+                if (class_exists(BehavioralCampaignEngine::class) && $client_ip !== '') {
+                    BehavioralCampaignEngine::record_probe($client_ip, 'sensitive_file', $request_uri);
+                }
                 return new WafVerdict(
                     'block',
                     (string) ($sensitive_violation['id'] ?? 'WAF-SENSITIVE-FILE-PROBE'),
@@ -539,6 +542,29 @@ final class AlwaysOnCoreGuard implements WafEvaluatorInterface {
                         'status_code' => 403,
                     ]
                 );
+            }
+        }
+
+        // Rule: Early Perimeter XML-RPC Disabled Guard & Subdirectory XML-RPC Recon Escalation
+        if (!empty($settings['waf_disable_xmlrpc']) && !$skip_operational_heuristics) {
+            $clean_xmlrpc_path = strtolower((string) (wp_parse_url($request_uri, PHP_URL_PATH) ?: $request_uri));
+            if (preg_match('#(?:^|/)xmlrpc\.php(?:/|$)#i', $clean_xmlrpc_path) === 1) {
+                $is_jetpack_exempt = (class_exists('Jetpack') || defined('JETPACK__VERSION'))
+                    && FirewallEngine::is_verified_jetpack_ip($client_ip);
+                if (!$is_jetpack_exempt) {
+                    if (class_exists(BehavioralCampaignEngine::class) && $client_ip !== '') {
+                        BehavioralCampaignEngine::record_probe($client_ip, 'xmlrpc_probe', $clean_xmlrpc_path);
+                    }
+                    return new WafVerdict(
+                        'block',
+                        'WAF-XMLRPC-DISABLED',
+                        'XML-RPC services are disabled on this WordPress installation by WebCare Pro Security.',
+                        [
+                            'category'    => 'XML-RPC Disabled',
+                            'status_code' => 403,
+                        ]
+                    );
+                }
             }
         }
 

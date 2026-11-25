@@ -1,4 +1,6 @@
 <?php
+declare(strict_types=1);
+
 namespace WebCareProScanner\Firewall;
 
 use WebCareProScanner\Security\SecretVault;
@@ -125,16 +127,72 @@ class FormSpamProtectionEngine {
     }
 
     /**
-     * Generate an encrypted cryptographic time-gate token.
+     * Derive a domain-separated HMAC-SHA256 signing key for public form time-gate tokens.
+     * Never exposes raw SecretVault ciphertext prefixes in public HTML responses.
+     */
+    private static function get_time_gate_hmac_key(): string {
+        $master = '';
+        if (class_exists(SecretVault::class)) {
+            $master = SecretVault::get_key();
+        }
+        if ($master === '' && function_exists('wp_salt')) {
+            $master = (string) wp_salt('nonce');
+        }
+        if ($master === '' && defined('AUTH_KEY')) {
+            $master = (string) AUTH_KEY;
+        }
+        return hash_hmac('sha256', 'webcare_form_time_gate_v1', $master !== '' ? $master : 'webcare_form_gate_key');
+    }
+
+    /**
+     * Generate an authenticated, cache-safe cryptographic time-gate token.
+     * Uses domain-separated HMAC-SHA256 (`wctg1.<b64url>.<sig>`) without embedding
+     * visitor IP addresses or Vault ciphertext prefixes into public HTML pages.
      *
      * @return string
      */
     public static function generate_time_gate_token(): string {
-        $data = time() . '|' . self::get_client_ip();
-        if (class_exists('\\WebCareProScanner\\Security\\SecretVault')) {
-            return SecretVault::encrypt($data);
+        $payload = time() . '|' . bin2hex(random_bytes(8));
+        $b64     = rtrim(strtr(base64_encode($payload), '+/', '-_'), '=');
+        $sig     = hash_hmac('sha256', $payload, self::get_time_gate_hmac_key());
+        return 'wctg1.' . $b64 . '.' . $sig;
+    }
+
+    /**
+     * Verify a cryptographic time-gate token and return its decoded `timestamp|nonce` payload.
+     * Supports both `wctg1.` HMAC tokens and legacy `SecretVault` encrypted tokens on cached pages.
+     *
+     * @param string $raw_token
+     * @return string|false
+     */
+    public static function verify_time_gate_token(string $raw_token): string|false {
+        if (str_starts_with($raw_token, 'wctg1.')) {
+            $parts = explode('.', $raw_token, 3);
+            if (count($parts) !== 3 || $parts[1] === '' || !preg_match('/^[a-f0-9]{64}$/', $parts[2])) {
+                return false;
+            }
+            $padded  = strtr($parts[1], '-_', '+/');
+            $rem     = strlen($padded) % 4;
+            if ($rem > 0) {
+                $padded .= str_repeat('=', 4 - $rem);
+            }
+            $decoded = base64_decode($padded, true);
+            if (!is_string($decoded) || !str_contains($decoded, '|')) {
+                return false;
+            }
+            $expected_sig = hash_hmac('sha256', $decoded, self::get_time_gate_hmac_key());
+            if (!hash_equals($expected_sig, $parts[2])) {
+                return false;
+            }
+            return $decoded;
         }
-        return base64_encode($data);
+
+        if (class_exists(SecretVault::class) && SecretVault::is_encrypted($raw_token)) {
+            $decrypted = SecretVault::decrypt($raw_token);
+            return (is_string($decrypted) && str_contains($decrypted, '|')) ? $decrypted : false;
+        }
+
+        return false;
     }
 
     /**
@@ -356,17 +414,14 @@ class FormSpamProtectionEngine {
                 }
             } else {
                 $raw_token = sanitize_text_field(wp_unslash($request_data['webcare_time_gate']));
-                $decrypted = false;
+                $decrypted = self::verify_time_gate_token($raw_token);
 
-                if (class_exists('\\WebCareProScanner\\Security\\SecretVault') && SecretVault::is_encrypted($raw_token)) {
-                    $decrypted = SecretVault::decrypt($raw_token);
-                }
-                if (!$decrypted || strpos((string) $decrypted, '|') === false) {
+                if ($decrypted === false || !str_contains($decrypted, '|')) {
                     self::record_spam_drop('invalid_time_gate', $form_source, $client_ip);
                     return new \WP_Error('webcare_spam_invalid_gate', __('Security token validation failed. Please refresh the page and try again.', 'webcare-pro-security'));
                 }
 
-                if ($decrypted && strpos($decrypted, '|') !== false) {
+                if (str_contains($decrypted, '|')) {
                     list($timestamp_str, $token_ip) = explode('|', $decrypted, 2);
                     $rendered_at = (int) $timestamp_str;
                     $elapsed = time() - $rendered_at;
