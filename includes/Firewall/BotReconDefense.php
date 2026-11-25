@@ -453,26 +453,75 @@ class BotReconDefense {
     private const OPTION_DNS_QUEUE_LOCK = 'webcareproscan_bot_dns_queue_lock';
 
     /**
-     * Acquire an atomic mutex lock for DNS queue mutations using add_option() with stale-lock recovery.
+     * Acquire an ownership-fenced atomic mutex lock for DNS queue mutations.
+     * Uses add_option() for initial acquisition and an atomic SQL compare-and-swap (CAS)
+     * on expired locks so concurrent stale-lock recovery can never delete another worker's lock.
+     *
+     * @return string|null Lock value ("<expires>:<token>") on success, or null if locked.
      */
-    private static function acquire_dns_queue_lock(int $ttl = 15): bool {
-        $now = time();
-        if (add_option(self::OPTION_DNS_QUEUE_LOCK, $now, '', 'no')) {
-            return true;
+    private static function acquire_dns_queue_lock(int $ttl = 15): ?string {
+        global $wpdb;
+
+        $now        = time();
+        $lock_value = ($now + $ttl) . ':' . bin2hex(random_bytes(16));
+
+        if (add_option(self::OPTION_DNS_QUEUE_LOCK, $lock_value, '', 'no')) {
+            return $lock_value;
         }
-        $existing = (int) get_option(self::OPTION_DNS_QUEUE_LOCK, 0);
-        if ($existing > 0 && ($now - $existing) > $ttl) {
-            delete_option(self::OPTION_DNS_QUEUE_LOCK);
-            return add_option(self::OPTION_DNS_QUEUE_LOCK, $now, '', 'no');
+
+        $existing = (string) get_option(self::OPTION_DNS_QUEUE_LOCK, '');
+        if ($existing === '' || !str_contains($existing, ':')) {
+            return null;
         }
-        return false;
+
+        [$exp_str] = explode(':', $existing, 2);
+        if (!ctype_digit($exp_str) || $now <= (int) $exp_str) {
+            return null;
+        }
+
+        // Atomic CAS stale-lock takeover: succeeds ONLY if option_value still matches the exact stale token
+        if (isset($wpdb) && is_object($wpdb) && !empty($wpdb->options) && method_exists($wpdb, 'prepare') && method_exists($wpdb, 'query')) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Atomic CAS stale-lock takeover
+            $updated = $wpdb->query(
+                $wpdb->prepare(
+                    "UPDATE {$wpdb->options} SET option_value = %s WHERE option_name = %s AND option_value = %s",
+                    $lock_value,
+                    self::OPTION_DNS_QUEUE_LOCK,
+                    $existing
+                )
+            );
+            if ($updated === 1) {
+                wp_cache_delete(self::OPTION_DNS_QUEUE_LOCK, 'options');
+                return $lock_value;
+            }
+            return null;
+        }
+
+        return null;
     }
 
     /**
-     * Release the DNS queue mutex lock.
+     * Release the DNS queue mutex lock strictly if the caller still owns the exact lock token.
      */
-    private static function release_dns_queue_lock(): void {
-        delete_option(self::OPTION_DNS_QUEUE_LOCK);
+    private static function release_dns_queue_lock(string $lock_value): void {
+        global $wpdb;
+
+        if (isset($wpdb) && is_object($wpdb) && !empty($wpdb->options) && method_exists($wpdb, 'prepare') && method_exists($wpdb, 'query')) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Atomic owner-fenced lock release
+            $wpdb->query(
+                $wpdb->prepare(
+                    "DELETE FROM {$wpdb->options} WHERE option_name = %s AND option_value = %s",
+                    self::OPTION_DNS_QUEUE_LOCK,
+                    $lock_value
+                )
+            );
+            wp_cache_delete(self::OPTION_DNS_QUEUE_LOCK, 'options');
+            return;
+        }
+
+        if ((string) get_option(self::OPTION_DNS_QUEUE_LOCK, '') === $lock_value) {
+            delete_option(self::OPTION_DNS_QUEUE_LOCK);
+        }
     }
 
     /**
@@ -524,7 +573,8 @@ class BotReconDefense {
      * @return bool True if entry is persisted in the background queue, false if lock/cap/write failed.
      */
     private static function enqueue_background_dns_lookup(string $ip, string $bot_key): bool {
-        if (!self::acquire_dns_queue_lock()) {
+        $lock_token = self::acquire_dns_queue_lock();
+        if ($lock_token === null) {
             return false;
         }
 
@@ -547,7 +597,7 @@ class BotReconDefense {
                 $enqueued = update_option(self::OPTION_DNS_QUEUE, $queue, false);
             }
         } finally {
-            self::release_dns_queue_lock();
+            self::release_dns_queue_lock($lock_token);
         }
 
         if ($enqueued && function_exists('wp_next_scheduled') && function_exists('wp_schedule_single_event')) {
@@ -565,7 +615,8 @@ class BotReconDefense {
      * enqueues arriving during DNS resolution are never lost.
      */
     public static function process_background_dns_queue(): void {
-        if (!self::acquire_dns_queue_lock()) {
+        $lock_token = self::acquire_dns_queue_lock();
+        if ($lock_token === null) {
             return;
         }
 
@@ -577,7 +628,7 @@ class BotReconDefense {
                 update_option(self::OPTION_DNS_QUEUE, [], false);
             }
         } finally {
-            self::release_dns_queue_lock();
+            self::release_dns_queue_lock($lock_token);
         }
 
         if (empty($claimed)) {

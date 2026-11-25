@@ -80,97 +80,114 @@ final class BehavioralCampaignEngine {
         $normalized_target = CanonicalRouteParser::normalize_path($target);
         $target_hash = hash('xxh128', $normalized_target);
 
-        $transient_key = 'wcps_camp_' . substr(hash('xxh128', $ip), 0, 16);
-        $bucket = self::load_bucket($transient_key);
+        $ip_hash       = substr(hash('xxh128', $ip), 0, 16);
+        $transient_key = 'wcps_camp_' . $ip_hash;
+        $lock_option   = 'wcps_camp_lock_' . $ip_hash;
 
-        $now = time();
-        if (empty($bucket['created_at']) || ($now - (int) $bucket['created_at']) > self::CAMPAIGN_WINDOW_SECONDS) {
-            // Initialize fresh 60s campaign window
-            $bucket = [
-                'created_at'            => $now,
-                'targets'               => [],
-                'vectors'               => [],
-                'total_probes'          => 0,
-                'bucket_overflow_count' => 0,
-                'ban_committed'         => false,
-                'cf_sync_state'         => null,
-                'cf_operation_id'       => null,
+        $distinct_targets_count = 0;
+        $vectors_count          = 0;
+        $overflow_count         = 0;
+        $escalate               = false;
+        $should_commit          = false;
+        $cf_sync_state          = null;
+        $cf_operation_id        = null;
+
+        // Serialize the complete bucket read-modify-write and escalation reservation under the owner-fenced per-IP lock
+        $lock_token = self::acquire_campaign_lock($lock_option);
+        if ($lock_token === null) {
+            return [
+                'escalate_ban'           => false,
+                'distinct_targets_count' => 0,
+                'vectors_count'          => 0,
+                'overflow_count'         => 0,
+                'rule_id'                => null,
+                'cf_sync_state'          => null,
+                'cf_operation_id'        => null,
             ];
         }
 
-        $bucket['total_probes'] = ((int) ($bucket['total_probes'] ?? 0)) + 1;
-
-        // Record vector
-        if (!in_array($detector, $bucket['vectors'], true)) {
-            $bucket['vectors'][] = $detector;
-        }
-
-        // Record target with strict 20-target bucket cap
-        if (!in_array($target_hash, $bucket['targets'], true)) {
-            if (count($bucket['targets']) < self::MAX_BUCKET_TARGETS) {
-                $bucket['targets'][] = $target_hash;
-            } else {
-                // Saturated: freeze insertions, do NOT evict, increment overflow
-                $bucket['bucket_overflow_count'] = ((int) ($bucket['bucket_overflow_count'] ?? 0)) + 1;
+        try {
+            $bucket = self::load_bucket($transient_key);
+            $now    = time();
+            if (empty($bucket['created_at']) || ($now - (int) $bucket['created_at']) > self::CAMPAIGN_WINDOW_SECONDS) {
+                $bucket = [
+                    'created_at'            => $now,
+                    'targets'               => [],
+                    'vectors'               => [],
+                    'total_probes'          => 0,
+                    'bucket_overflow_count' => 0,
+                    'ban_committed'         => false,
+                    'cf_sync_state'         => null,
+                    'cf_operation_id'       => null,
+                ];
             }
+
+            $bucket['total_probes'] = ((int) ($bucket['total_probes'] ?? 0)) + 1;
+
+            if (!in_array($detector, $bucket['vectors'], true)) {
+                $bucket['vectors'][] = $detector;
+            }
+
+            if (!in_array($target_hash, $bucket['targets'], true)) {
+                if (count($bucket['targets']) < self::MAX_BUCKET_TARGETS) {
+                    $bucket['targets'][] = $target_hash;
+                } else {
+                    $bucket['bucket_overflow_count'] = ((int) ($bucket['bucket_overflow_count'] ?? 0)) + 1;
+                }
+            }
+
+            $distinct_targets_count = count($bucket['targets']) + (int) ($bucket['bucket_overflow_count'] ?? 0);
+            $vectors_count          = count($bucket['vectors']);
+            $overflow_count         = (int) ($bucket['bucket_overflow_count'] ?? 0);
+            $total_probes           = (int) $bucket['total_probes'];
+
+            if ($distinct_targets_count >= 5) {
+                $escalate = true;
+            } elseif ($vectors_count >= 2 && ($total_probes >= 3 || in_array('auth_honeypot', $bucket['vectors'], true))) {
+                $escalate = true;
+            }
+
+            // Invariant: Single canary hit (GhostRouteTrap) alone does NOT trigger auto-ban
+            if ($distinct_targets_count === 1 && $vectors_count === 1 && $bucket['vectors'][0] === 'canary_trap') {
+                $escalate = false;
+            }
+
+            $cf_sync_state   = isset($bucket['cf_sync_state']) ? (string) $bucket['cf_sync_state'] : null;
+            $cf_operation_id = isset($bucket['cf_operation_id']) ? (string) $bucket['cf_operation_id'] : null;
+
+            if ($escalate && (empty($bucket['ban_committed']) || $cf_sync_state === 'enqueue_failed')) {
+                // Atomically reserve escalation slot inside mutex before releasing lock for external CF queue write
+                $bucket['ban_committed'] = true;
+                $should_commit           = true;
+            }
+
+            self::save_bucket($transient_key, $bucket);
+        } finally {
+            self::release_campaign_lock($lock_option, $lock_token);
         }
 
-        $distinct_targets_count = count($bucket['targets']) + (int) ($bucket['bucket_overflow_count'] ?? 0);
-        $vectors_count          = count($bucket['vectors']);
-        $overflow_count         = (int) ($bucket['bucket_overflow_count'] ?? 0);
-        $total_probes           = (int) $bucket['total_probes'];
+        // Execute local ban + Cloudflare queue enqueue outside the DB critical section
+        if ($should_commit) {
+            $commit_res = self::commit_campaign_autoban(
+                $ip,
+                sprintf('Automated reconnaissance campaign (%d targets, %d vectors)', $distinct_targets_count, $vectors_count)
+            );
+            $cf_sync_state   = $commit_res['cf_sync_state'];
+            $cf_operation_id = $commit_res['cf_operation_id'];
 
-        // Escalation Policy:
-        // Policy A: >= 5 distinct targets within 60s -> 24h local ban + CF queue
-        // Policy B: >= 2 independent vectors AND (total probes >= 3 OR honeypot present) -> 24h local ban + CF queue
-        $escalate = false;
-        if ($distinct_targets_count >= 5) {
-            $escalate = true;
-        } elseif ($vectors_count >= 2 && ($total_probes >= 3 || in_array('auth_honeypot', $bucket['vectors'], true))) {
-            $escalate = true;
-        }
-
-        // Invariant: Single canary hit (GhostRouteTrap) alone does NOT trigger auto-ban
-        if ($distinct_targets_count === 1 && $vectors_count === 1 && $bucket['vectors'][0] === 'canary_trap') {
-            $escalate = false;
-        }
-
-        $cf_sync_state   = isset($bucket['cf_sync_state']) ? (string) $bucket['cf_sync_state'] : null;
-        $cf_operation_id = isset($bucket['cf_operation_id']) ? (string) $bucket['cf_operation_id'] : null;
-
-        // Persist updated probe counters first
-        self::save_bucket($transient_key, $bucket);
-
-        // Transactional per-campaign atomic escalation lock: prevents concurrent double-commit/double-enqueue
-        // while preserving retries if initial Cloudflare enqueue returned 'enqueue_failed'.
-        if ($escalate && (empty($bucket['ban_committed']) || $cf_sync_state === 'enqueue_failed')) {
-            $lock_option = 'wcps_camp_lock_' . substr(hash('xxh128', $ip), 0, 16);
-            if (self::acquire_campaign_lock($lock_option)) {
+            // Persist final commit status under lock (release reservation if local ban was rejected)
+            $post_lock = self::acquire_campaign_lock($lock_option);
+            if ($post_lock !== null) {
                 try {
-                    // Double-checked reload inside mutex
-                    $locked_bucket = self::load_bucket($transient_key);
-                    if (!empty($locked_bucket)) {
-                        $bucket = $locked_bucket;
-                    }
-                    $cf_sync_state   = isset($bucket['cf_sync_state']) ? (string) $bucket['cf_sync_state'] : null;
-                    $cf_operation_id = isset($bucket['cf_operation_id']) ? (string) $bucket['cf_operation_id'] : null;
-
-                    if (empty($bucket['ban_committed']) || $cf_sync_state === 'enqueue_failed') {
-                        $commit_res = self::commit_campaign_autoban(
-                            $ip,
-                            sprintf('Automated reconnaissance campaign (%d targets, %d vectors)', $distinct_targets_count, $vectors_count)
-                        );
-                        if (!empty($commit_res['local_banned'])) {
-                            $bucket['ban_committed'] = true;
-                        }
-                        $cf_sync_state             = $commit_res['cf_sync_state'];
-                        $cf_operation_id           = $commit_res['cf_operation_id'];
-                        $bucket['cf_sync_state']   = $cf_sync_state;
-                        $bucket['cf_operation_id'] = $cf_operation_id;
-                        self::save_bucket($transient_key, $bucket);
+                    $latest = self::load_bucket($transient_key);
+                    if (!empty($latest)) {
+                        $latest['ban_committed']   = !empty($commit_res['local_banned']);
+                        $latest['cf_sync_state']   = $cf_sync_state;
+                        $latest['cf_operation_id'] = $cf_operation_id;
+                        self::save_bucket($transient_key, $latest);
                     }
                 } finally {
-                    self::release_campaign_lock($lock_option);
+                    self::release_campaign_lock($lock_option, $post_lock);
                 }
             }
         }
@@ -187,26 +204,72 @@ final class BehavioralCampaignEngine {
     }
 
     /**
-     * Acquire an atomic per-campaign mutex lock using add_option() with 15s stale-lock recovery.
+     * Acquire an ownership-fenced atomic per-campaign mutex lock with CAS stale-lock recovery.
+     *
+     * @return string|null Lock value ("<expires>:<token>") on success, or null if locked.
      */
-    private static function acquire_campaign_lock(string $lock_option, int $ttl = 15): bool {
-        $now = time();
-        if (add_option($lock_option, $now, '', 'no')) {
-            return true;
+    private static function acquire_campaign_lock(string $lock_option, int $ttl = 15): ?string {
+        global $wpdb;
+
+        $now        = time();
+        $lock_value = ($now + $ttl) . ':' . bin2hex(random_bytes(16));
+
+        if (add_option($lock_option, $lock_value, '', 'no')) {
+            return $lock_value;
         }
-        $existing = (int) get_option($lock_option, 0);
-        if ($existing > 0 && ($now - $existing) > $ttl) {
-            delete_option($lock_option);
-            return add_option($lock_option, $now, '', 'no');
+
+        $existing = (string) get_option($lock_option, '');
+        if ($existing === '' || !str_contains($existing, ':')) {
+            return null;
         }
-        return false;
+
+        [$exp_str] = explode(':', $existing, 2);
+        if (!ctype_digit($exp_str) || $now <= (int) $exp_str) {
+            return null;
+        }
+
+        if (isset($wpdb) && is_object($wpdb) && !empty($wpdb->options) && method_exists($wpdb, 'prepare') && method_exists($wpdb, 'query')) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Atomic CAS stale-lock takeover
+            $updated = $wpdb->query(
+                $wpdb->prepare(
+                    "UPDATE {$wpdb->options} SET option_value = %s WHERE option_name = %s AND option_value = %s",
+                    $lock_value,
+                    $lock_option,
+                    $existing
+                )
+            );
+            if ($updated === 1) {
+                wp_cache_delete($lock_option, 'options');
+                return $lock_value;
+            }
+            return null;
+        }
+
+        return null;
     }
 
     /**
-     * Release the per-campaign mutex lock.
+     * Release the per-campaign mutex lock strictly if the caller still owns the exact lock token.
      */
-    private static function release_campaign_lock(string $lock_option): void {
-        delete_option($lock_option);
+    private static function release_campaign_lock(string $lock_option, string $lock_value): void {
+        global $wpdb;
+
+        if (isset($wpdb) && is_object($wpdb) && !empty($wpdb->options) && method_exists($wpdb, 'prepare') && method_exists($wpdb, 'query')) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Atomic owner-fenced lock release
+            $wpdb->query(
+                $wpdb->prepare(
+                    "DELETE FROM {$wpdb->options} WHERE option_name = %s AND option_value = %s",
+                    $lock_option,
+                    $lock_value
+                )
+            );
+            wp_cache_delete($lock_option, 'options');
+            return;
+        }
+
+        if ((string) get_option($lock_option, '') === $lock_value) {
+            delete_option($lock_option);
+        }
     }
 
     /**
