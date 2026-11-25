@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-25T20:30:58.316Z",
+  "generated_at": "2026-11-25T20:33:16.646Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -868,8 +868,8 @@
       "size": 6101
     },
     "includes/Malware/TaintAnalysisEngine.php": {
-      "sha256": "f8a3d0762104d04bcd979ababbecf6333bfc054326c14e48e08e01b1a8225824",
-      "size": 61146
+      "sha256": "20bc215348627b3e9826891a5ef95e483b43f459d15a1b45ce39a4f2ad989c87",
+      "size": 61909
     },
     "includes/Malware/WebshellDetector.php": {
       "sha256": "af57253570d13aa055ff95f14a77f5f9eb855b44a03ce609c43c39fe1294ccf1",
