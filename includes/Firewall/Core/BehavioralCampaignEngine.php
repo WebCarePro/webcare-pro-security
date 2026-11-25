@@ -90,6 +90,7 @@ final class BehavioralCampaignEngine {
         $escalate               = false;
         $should_commit          = false;
         $reservation_id         = null;
+        $campaign_op_id         = null;
         $cf_sync_state          = null;
         $cf_operation_id        = null;
 
@@ -113,6 +114,7 @@ final class BehavioralCampaignEngine {
             if (empty($bucket['created_at']) || ($now - (int) $bucket['created_at']) > self::CAMPAIGN_WINDOW_SECONDS) {
                 $bucket = [
                     'created_at'             => $now,
+                    'campaign_op_id'         => 'camp_' . substr(hash('xxh128', $ip . '|' . $now), 0, 16),
                     'targets'                => [],
                     'vectors'                => [],
                     'total_probes'           => 0,
@@ -124,6 +126,11 @@ final class BehavioralCampaignEngine {
                     'cf_operation_id'        => null,
                 ];
             }
+
+            if (empty($bucket['campaign_op_id'])) {
+                $bucket['campaign_op_id'] = 'camp_' . substr(hash('xxh128', $ip . '|' . (int) $bucket['created_at']), 0, 16);
+            }
+            $campaign_op_id = (string) $bucket['campaign_op_id'];
 
             $bucket['total_probes'] = ((int) ($bucket['total_probes'] ?? 0)) + 1;
 
@@ -158,12 +165,12 @@ final class BehavioralCampaignEngine {
             $cf_sync_state   = isset($bucket['cf_sync_state']) ? (string) $bucket['cf_sync_state'] : null;
             $cf_operation_id = isset($bucket['cf_operation_id']) ? (string) $bucket['cf_operation_id'] : null;
 
-            // A pending reservation expires automatically after 15s so an interrupted finalization can never deadlock retries
+            // Lease spans the full campaign window (60s) so an active commit is never preempted mid-flight;
+            // idempotent campaign_op_id deduplication in commit_campaign_autoban() further prevents duplicate side effects.
             $has_active_reservation = !empty($bucket['pending_reservation_id'])
-                && ($now - (int) ($bucket['pending_reservation_at'] ?? 0)) < 15;
+                && ($now - (int) ($bucket['pending_reservation_at'] ?? 0)) < self::CAMPAIGN_WINDOW_SECONDS;
 
             if ($escalate && !$has_active_reservation && (empty($bucket['ban_committed']) || $cf_sync_state === 'enqueue_failed')) {
-                // Record a uniquely identifiable bounded pending reservation; ban_committed stays false until verified
                 $reservation_id                   = bin2hex(random_bytes(8));
                 $bucket['pending_reservation_id'] = $reservation_id;
                 $bucket['pending_reservation_at'] = $now;
@@ -175,11 +182,12 @@ final class BehavioralCampaignEngine {
             self::release_campaign_lock($lock_option, $lock_token);
         }
 
-        // Execute local ban + Cloudflare queue enqueue outside the DB critical section
+        // Execute idempotent local ban + Cloudflare queue enqueue outside the DB critical section
         if ($should_commit && $reservation_id !== null) {
             $commit_res = self::commit_campaign_autoban(
                 $ip,
-                sprintf('Automated reconnaissance campaign (%d targets, %d vectors)', $distinct_targets_count, $vectors_count)
+                sprintf('Automated reconnaissance campaign (%d targets, %d vectors)', $distinct_targets_count, $vectors_count),
+                $campaign_op_id
             );
             $cf_sync_state   = $commit_res['cf_sync_state'];
             $cf_operation_id = $commit_res['cf_operation_id'];
@@ -292,15 +300,29 @@ final class BehavioralCampaignEngine {
     }
 
     /**
-     * Commit a 24-hour local ban and queue Cloudflare sync.
+     * Commit a 24-hour local ban and queue Cloudflare sync idempotently per campaign_op_id.
      *
      * Invariant: Never ban authenticated admins, whitelisted IPs, or active shoppers.
      *
-     * @param string $ip
-     * @param string $reason
+     * @param string      $ip
+     * @param string      $reason
+     * @param string|null $campaign_op_id Stable per-window campaign operation identifier for idempotency.
      * @return array{local_banned: bool, cf_sync_state: string, cf_operation_id: ?string}
      */
-    public static function commit_campaign_autoban(string $ip, string $reason): array {
+    public static function commit_campaign_autoban(string $ip, string $reason, ?string $campaign_op_id = null): array {
+        // Idempotency guard: if this exact campaign operation already succeeded, return its recorded result without duplicating side effects
+        $idempotency_key = $campaign_op_id !== null ? ('wcps_camp_done_' . $campaign_op_id) : null;
+        if ($idempotency_key !== null) {
+            $prior = get_transient($idempotency_key);
+            if (is_array($prior) && !empty($prior['local_banned']) && ($prior['cf_sync_state'] ?? '') !== 'enqueue_failed') {
+                return [
+                    'local_banned'    => true,
+                    'cf_sync_state'   => (string) ($prior['cf_sync_state'] ?? 'disabled'),
+                    'cf_operation_id' => !empty($prior['cf_operation_id']) ? (string) $prior['cf_operation_id'] : null,
+                ];
+            }
+        }
+
         // Exemption checks: Admins, Whitelisted IPs, and Active Shoppers
         if (class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine') && \WebCareProScanner\Firewall\FirewallEngine::is_authenticated_administrator()) {
             return ['local_banned' => false, 'cf_sync_state' => 'not_queued', 'cf_operation_id' => null];
@@ -332,11 +354,18 @@ final class BehavioralCampaignEngine {
             $cf_res = CloudflareIpListSynchronizer::queue_ip_ban($ip, $reason, 86400);
         }
 
-        return [
+        $result = [
             'local_banned'    => true,
             'cf_sync_state'   => (string) ($cf_res['cf_sync_state'] ?? 'disabled'),
             'cf_operation_id' => !empty($cf_res['operation_id']) ? (string) $cf_res['operation_id'] : null,
         ];
+
+        // Persist idempotency ledger when commit + enqueue succeeded (do not cache enqueue_failed so retries remain active)
+        if ($idempotency_key !== null && $result['cf_sync_state'] !== 'enqueue_failed') {
+            set_transient($idempotency_key, $result, self::CAMPAIGN_WINDOW_SECONDS);
+        }
+
+        return $result;
     }
 
     /**

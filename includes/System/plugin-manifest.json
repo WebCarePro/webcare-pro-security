@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-25T12:15:12.948Z",
+  "generated_at": "2026-11-25T12:17:06.712Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -568,8 +568,8 @@
       "size": 39610
     },
     "includes/Firewall/Core/BehavioralCampaignEngine.php": {
-      "sha256": "c13e58908b0968a7331e39c3ab49abb8574155e66c3a30d9f8c69c0aba2258a7",
-      "size": 16849
+      "sha256": "16598ee1c72214a274f4981a2157aebd50197819cc0b91160c2f7eada262f4dc",
+      "size": 18623
     },
     "includes/Firewall/Core/BlocklistRepository.php": {
       "sha256": "e6529ff8474e1d4426b3953c1693a18548a1b43cc2aa4e93912448215478ae2d",
