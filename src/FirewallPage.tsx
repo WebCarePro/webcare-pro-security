@@ -62,6 +62,7 @@ import {
 import { VirtualPatchCard } from './components/VirtualPatchCard';
 import { CustomerLockoutCard } from './components/CustomerLockoutCard';
 import { ThreatIntelCockpitCard } from './components/ThreatIntelCockpitCard';
+import { PublicThreatIntelSettingsCard } from './components/PublicThreatIntelSettingsCard';
 import { ServerSecurityTab } from './components/ServerSecurityTab';
 import { AttackSimulationCard } from './components/AttackSimulationCard';
 import { SbomSupplyChainCard } from './components/SbomSupplyChainCard';
@@ -318,6 +319,8 @@ export const FirewallPage = ({
       server: 'server_sec',
       server_sec: 'server_sec',
       intel: 'intel',
+      'threat-intel': 'intel',
+      threat_intel: 'intel',
     };
     return tabMap[tab] || null;
   };
@@ -8556,10 +8559,13 @@ export const FirewallPage = ({
 
       {/* TAB 3: Cloud Threat Intelligence & Botnet Feeds */}
       {activeTab === 'intel' && (
-        <ThreatIntelCockpitCard
-          apiRequest={apiRequest}
-          clientIp={status?.client_ip}
-        />
+        <>
+          <PublicThreatIntelSettingsCard apiRequest={apiRequest} />
+          <ThreatIntelCockpitCard
+            apiRequest={apiRequest}
+            clientIp={status?.client_ip}
+          />
+        </>
       )}
 
       {/* TAB 4: Cloudflare Edge Defense */}

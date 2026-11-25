@@ -1,4 +1,7 @@
 ﻿v:0.0.1 - 2026-11-25
+- Dedicated Public Threat Intelligence Feeds Tab on Firewall Page:
+  * Added `PublicThreatIntelSettingsCard` (`src/components/PublicThreatIntelSettingsCard.tsx`) to `FirewallPage.tsx` under the dedicated Threat Intel tab (`page=webcare-pro-firewall&tab=threat-intel` / `&tab=intel`) with live load/save controls for Master Sync, CISA KEV, NVD CVE 2.0, and Public Botnet CIDRs.
+  * Replaced the old inline Threat Intel block in `SettingsPage.tsx` (`tab=headers`) with a clean redirect card linking directly to `page=webcare-pro-firewall&tab=threat-intel`.
 - Dashboard Always-On Site Care Enhancements:
   * Added crisp color-coded icons next to every guard in `DashboardOverview.tsx` (Perimeter Firewall, Friendly Login & 2FA, Core File Integrity, Plugin & Theme Risks, Cloudflare Edge Sync, Site Health Doctor) for quick visual scanning.
   * Added 4 new expandable live-status guards: `(CAF) & StackGuard Engine`, `AI Defense`, `AI Cybersecurity Intelligence Engine`, and `Public Threat Intelligence Feeds`.
