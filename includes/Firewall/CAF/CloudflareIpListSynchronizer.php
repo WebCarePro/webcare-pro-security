@@ -202,6 +202,12 @@ class CloudflareIpListSynchronizer {
      * @param string $ip Client IPv4 or IPv6
      * @param string $reason Reason description
      * @param int $ttl Time to live in seconds (default 86400)
+    /**
+     * Durable bounded idempotency ledger surviving queue removal (max 500 entries, 24h retention).
+     */
+    public const OPTION_IDEMPOTENCY_LEDGER = 'webcareproscan_cf_idempotency_ledger';
+
+    /**
      * @param string      $ip
      * @param string      $reason
      * @param int         $ttl
@@ -228,14 +234,26 @@ class CloudflareIpListSynchronizer {
         $assigned_generation = null;
         $deduplicated_op_id  = null;
 
-        // Perform generation advancement AND queue insertion inside ONE shared mutex transaction with verified persistence & compensation
+        // Perform generation advancement, idempotency ledger check, AND queue insertion inside ONE shared mutex transaction
         $success = self::mutate_ban_queue(static function (array $queue) use ($ip, $reason, $ttl, $operation_id, $idempotency_key, &$assigned_generation, &$deduplicated_op_id): ?array {
-            // Idempotency deduplication inside queue mutex: never advance generation or mint duplicate cfop_ for the same idempotency_key
-            if ($idempotency_key !== null && $idempotency_key !== '' && isset($queue[$ip]) && is_array($queue[$ip])) {
-                if (($queue[$ip]['idempotency_key'] ?? null) === $idempotency_key && !empty($queue[$ip]['operation_id'])) {
+            $now = time();
+
+            // 1. Check active queue entry AND durable idempotency ledger (survives queue consumption/removal)
+            if ($idempotency_key !== null && $idempotency_key !== '') {
+                if (isset($queue[$ip]) && is_array($queue[$ip]) && ($queue[$ip]['idempotency_key'] ?? null) === $idempotency_key && !empty($queue[$ip]['operation_id'])) {
                     $deduplicated_op_id  = (string) $queue[$ip]['operation_id'];
                     $assigned_generation = (int) ($queue[$ip]['generation'] ?? 0);
                     return $queue;
+                }
+
+                $ledger = get_option(self::OPTION_IDEMPOTENCY_LEDGER, []);
+                if (is_array($ledger) && isset($ledger[$idempotency_key]) && is_array($ledger[$idempotency_key])) {
+                    $entry = $ledger[$idempotency_key];
+                    if (!empty($entry['operation_id']) && (int) ($entry['expires_at'] ?? 0) > $now) {
+                        $deduplicated_op_id  = (string) $entry['operation_id'];
+                        $assigned_generation = (int) ($entry['generation'] ?? 0);
+                        return $queue;
+                    }
                 }
             }
 
@@ -257,8 +275,8 @@ class CloudflareIpListSynchronizer {
             $queue[$ip] = [
                 'ip'              => $ip,
                 'reason'          => substr(sanitize_text_field($reason), 0, 240),
-                'banned_at'       => time(),
-                'expires_at'      => $ttl > 0 ? (time() + $ttl) : 0,
+                'banned_at'       => $now,
+                'expires_at'      => $ttl > 0 ? ($now + $ttl) : 0,
                 'status'          => 'pending',
                 'attempts'        => 0,
                 'next_retry'      => 0,
@@ -267,6 +285,26 @@ class CloudflareIpListSynchronizer {
                 'idempotency_key' => $idempotency_key,
                 'generation'      => $next_gen,
             ];
+
+            // Record in bounded durable idempotency ledger (24h retention, max 500 entries)
+            if ($idempotency_key !== null && $idempotency_key !== '') {
+                $ledger = get_option(self::OPTION_IDEMPOTENCY_LEDGER, []);
+                $ledger = is_array($ledger) ? $ledger : [];
+                foreach ($ledger as $k => $v) {
+                    if (!is_array($v) || (int) ($v['expires_at'] ?? 0) <= $now) {
+                        unset($ledger[$k]);
+                    }
+                }
+                $ledger[$idempotency_key] = [
+                    'operation_id' => $operation_id,
+                    'generation'   => $next_gen,
+                    'expires_at'   => $now + DAY_IN_SECONDS,
+                ];
+                if (count($ledger) > 500) {
+                    $ledger = array_slice($ledger, -500, null, true);
+                }
+                update_option(self::OPTION_IDEMPOTENCY_LEDGER, $ledger, false);
+            }
 
             $assigned_generation = $next_gen;
             return $queue;

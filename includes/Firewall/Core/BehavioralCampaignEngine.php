@@ -302,7 +302,7 @@ final class BehavioralCampaignEngine {
     /**
      * Atomically claim a durable per-campaign operation state ('pending' | 'completed' | 'retryable').
      *
-     * @return array{status: string, owner?: string, result?: array{local_banned: bool, cf_sync_state: string, cf_operation_id: ?string}}
+     * @return array{status: string, owner?: string, claim_raw?: string, result?: array{local_banned: bool, cf_sync_state: string, cf_operation_id: ?string}}
      */
     private static function claim_campaign_operation(string $op_option): array {
         global $wpdb;
@@ -316,7 +316,7 @@ final class BehavioralCampaignEngine {
         ]);
 
         if (is_string($claim) && add_option($op_option, $claim, '', 'no')) {
-            return ['status' => 'claimed', 'owner' => $owner];
+            return ['status' => 'claimed', 'owner' => $owner, 'claim_raw' => $claim];
         }
 
         $raw = (string) get_option($op_option, '');
@@ -325,8 +325,10 @@ final class BehavioralCampaignEngine {
             return ['status' => 'busy'];
         }
 
-        $state = (string) ($decoded['state'] ?? '');
-        if ($state === 'completed') {
+        $state      = (string) ($decoded['state'] ?? '');
+        $expires_at = (int) ($decoded['expires_at'] ?? 0);
+
+        if ($state === 'completed' && ($expires_at === 0 || $now <= $expires_at)) {
             return [
                 'status' => 'completed',
                 'result' => [
@@ -337,13 +339,14 @@ final class BehavioralCampaignEngine {
             ];
         }
 
-        $is_retryable      = ($state === 'retryable');
-        $is_expired_pending = ($state === 'pending' && $now > (int) ($decoded['expires_at'] ?? 0));
-        if (!$is_retryable && !$is_expired_pending) {
+        $is_retryable       = ($state === 'retryable');
+        $is_expired_pending = ($state === 'pending' && $now > $expires_at);
+        $is_expired_done    = ($state === 'completed' && $expires_at > 0 && $now > $expires_at);
+        if (!$is_retryable && !$is_expired_pending && !$is_expired_done) {
             return ['status' => 'busy'];
         }
 
-        // Atomic CAS takeover of retryable or expired pending state
+        // Atomic CAS takeover of retryable or expired state
         if (is_string($claim) && isset($wpdb) && is_object($wpdb) && !empty($wpdb->options) && method_exists($wpdb, 'prepare') && method_exists($wpdb, 'query')) {
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Atomic CAS campaign operation claim
             $updated = $wpdb->query(
@@ -356,7 +359,7 @@ final class BehavioralCampaignEngine {
             );
             if ($updated === 1) {
                 wp_cache_delete($op_option, 'options');
-                return ['status' => 'claimed', 'owner' => $owner];
+                return ['status' => 'claimed', 'owner' => $owner, 'claim_raw' => $claim];
             }
         }
 
@@ -364,25 +367,101 @@ final class BehavioralCampaignEngine {
     }
 
     /**
-     * Durably finalize a claimed campaign operation state ('completed' or 'retryable') fenced by owner token.
+     * Atomically finalize a claimed campaign operation state ('completed' or 'retryable') using
+     * a single SQL conditional UPDATE matching the exact claimed option_value (owner-fenced CAS).
+     * Also performs bounded retention pruning of expired non-pending operation records.
      */
-    private static function finalize_campaign_operation(string $op_option, string $owner, string $final_state, array $result): void {
-        $raw     = (string) get_option($op_option, '');
-        $decoded = $raw !== '' ? json_decode($raw, true) : null;
-        if (is_array($decoded) && ($decoded['owner'] ?? null) !== $owner) {
-            return;
-        }
+    private static function finalize_campaign_operation(string $op_option, string $expected_claim_raw, string $owner, string $final_state, array $result): bool {
+        global $wpdb;
 
-        $payload = wp_json_encode([
+        $now        = time();
+        $retention  = ($final_state === 'completed') ? DAY_IN_SECONDS : self::CAMPAIGN_WINDOW_SECONDS;
+        $payload    = wp_json_encode([
             'state'           => $final_state,
             'owner'           => $owner,
-            'expires_at'      => time() + self::CAMPAIGN_WINDOW_SECONDS,
+            'expires_at'      => $now + $retention,
             'local_banned'    => !empty($result['local_banned']),
             'cf_sync_state'   => (string) ($result['cf_sync_state'] ?? 'disabled'),
             'cf_operation_id' => !empty($result['cf_operation_id']) ? (string) $result['cf_operation_id'] : null,
         ]);
-        if (is_string($payload)) {
-            update_option($op_option, $payload, false);
+
+        if (!is_string($payload)) {
+            return false;
+        }
+
+        $finalized = false;
+        if (isset($wpdb) && is_object($wpdb) && !empty($wpdb->options) && method_exists($wpdb, 'prepare') && method_exists($wpdb, 'query')) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Atomic owner-fenced conditional UPDATE
+            $updated = $wpdb->query(
+                $wpdb->prepare(
+                    "UPDATE {$wpdb->options} SET option_value = %s WHERE option_name = %s AND option_value = %s",
+                    $payload,
+                    $op_option,
+                    $expected_claim_raw
+                )
+            );
+            if ($updated === 1) {
+                wp_cache_delete($op_option, 'options');
+                $finalized = true;
+            }
+            self::prune_expired_campaign_operations($now);
+            return $finalized;
+        }
+
+        // Minimal non-DB fallback: strictly require decodable matching owner token
+        $raw     = (string) get_option($op_option, '');
+        $decoded = $raw !== '' ? json_decode($raw, true) : null;
+        if (!is_array($decoded) || ($decoded['owner'] ?? null) !== $owner || $raw !== $expected_claim_raw) {
+            return false;
+        }
+
+        return update_option($op_option, $payload, false);
+    }
+
+    /**
+     * Bounded cleanup of expired completed/retryable campaign operation records in wp_options.
+     * Never removes active 'pending' claims or unexpired 24h 'completed' records.
+     */
+    private static function prune_expired_campaign_operations(int $now): void {
+        global $wpdb;
+
+        if (!isset($wpdb) || !is_object($wpdb) || empty($wpdb->options) || !method_exists($wpdb, 'get_results') || !method_exists($wpdb, 'prepare')) {
+            return;
+        }
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Bounded maintenance pruning of expired campaign op records
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT option_name, option_value FROM {$wpdb->options} WHERE option_name LIKE %s LIMIT 25",
+                'wcps_camp_op_%'
+            ),
+            ARRAY_A
+        );
+
+        if (!is_array($rows) || empty($rows)) {
+            return;
+        }
+
+        foreach ($rows as $row) {
+            $name = (string) ($row['option_name'] ?? '');
+            $val  = (string) ($row['option_value'] ?? '');
+            $dec  = $val !== '' ? json_decode($val, true) : null;
+            if (!is_array($dec)) {
+                continue;
+            }
+            $st  = (string) ($dec['state'] ?? '');
+            $exp = (int) ($dec['expires_at'] ?? 0);
+            if ($st !== 'pending' && $exp > 0 && $now > $exp) {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Owner/value-fenced delete of expired record
+                $wpdb->query(
+                    $wpdb->prepare(
+                        "DELETE FROM {$wpdb->options} WHERE option_name = %s AND option_value = %s",
+                        $name,
+                        $val
+                    )
+                );
+                wp_cache_delete($name, 'options');
+            }
         }
     }
 
@@ -399,25 +478,27 @@ final class BehavioralCampaignEngine {
      * @return array{local_banned: bool, cf_sync_state: string, cf_operation_id: ?string}
      */
     public static function commit_campaign_autoban(string $ip, string $reason, ?string $campaign_op_id = null): array {
-        $op_option = $campaign_op_id !== null ? ('wcps_camp_op_' . $campaign_op_id) : null;
-        $op_owner  = null;
+        $op_option    = $campaign_op_id !== null ? ('wcps_camp_op_' . $campaign_op_id) : null;
+        $op_owner     = null;
+        $op_claim_raw = null;
 
         if ($op_option !== null) {
             $claim = self::claim_campaign_operation($op_option);
             if ($claim['status'] === 'completed' && isset($claim['result'])) {
                 return $claim['result'];
             }
-            if ($claim['status'] !== 'claimed' || empty($claim['owner'])) {
+            if ($claim['status'] !== 'claimed' || empty($claim['owner']) || empty($claim['claim_raw'])) {
                 return ['local_banned' => false, 'cf_sync_state' => 'not_queued', 'cf_operation_id' => null];
             }
-            $op_owner = $claim['owner'];
+            $op_owner     = $claim['owner'];
+            $op_claim_raw = $claim['claim_raw'];
         }
 
         // Exemption checks: Admins, Whitelisted IPs, and Active Shoppers
         if (class_exists('\\WebCareProScanner\\Firewall\\FirewallEngine') && \WebCareProScanner\Firewall\FirewallEngine::is_authenticated_administrator()) {
             $res = ['local_banned' => false, 'cf_sync_state' => 'not_queued', 'cf_operation_id' => null];
-            if ($op_option !== null && $op_owner !== null) {
-                self::finalize_campaign_operation($op_option, $op_owner, 'retryable', $res);
+            if ($op_option !== null && $op_owner !== null && $op_claim_raw !== null) {
+                self::finalize_campaign_operation($op_option, $op_claim_raw, $op_owner, 'retryable', $res);
             }
             return $res;
         }
@@ -426,8 +507,8 @@ final class BehavioralCampaignEngine {
             $settings = \WebCareProScanner\System\SettingsManager::get_settings();
             if (\WebCareProScanner\Firewall\Core\AllowlistManager::is_ip_whitelisted($ip, (string) ($settings['waf_whitelisted_ips'] ?? ''))) {
                 $res = ['local_banned' => false, 'cf_sync_state' => 'not_queued', 'cf_operation_id' => null];
-                if ($op_option !== null && $op_owner !== null) {
-                    self::finalize_campaign_operation($op_option, $op_owner, 'retryable', $res);
+                if ($op_option !== null && $op_owner !== null && $op_claim_raw !== null) {
+                    self::finalize_campaign_operation($op_option, $op_claim_raw, $op_owner, 'retryable', $res);
                 }
                 return $res;
             }
@@ -436,8 +517,8 @@ final class BehavioralCampaignEngine {
         if (class_exists('\\WebCareProScanner\\Firewall\\Core\\CommerceSessionGuard')) {
             if (\WebCareProScanner\Firewall\Core\CommerceSessionGuard::has_active_shopper_session() || \WebCareProScanner\Firewall\Core\CommerceSessionGuard::is_exempt_from_operational_ban($ip)) {
                 $res = ['local_banned' => false, 'cf_sync_state' => 'not_queued', 'cf_operation_id' => null];
-                if ($op_option !== null && $op_owner !== null) {
-                    self::finalize_campaign_operation($op_option, $op_owner, 'retryable', $res);
+                if ($op_option !== null && $op_owner !== null && $op_claim_raw !== null) {
+                    self::finalize_campaign_operation($op_option, $op_claim_raw, $op_owner, 'retryable', $res);
                 }
                 return $res;
             }
@@ -447,13 +528,13 @@ final class BehavioralCampaignEngine {
         $local_banned = BlocklistRepository::block_ip($ip, $reason, 86400, false);
         if (!$local_banned) {
             $res = ['local_banned' => false, 'cf_sync_state' => 'not_queued', 'cf_operation_id' => null];
-            if ($op_option !== null && $op_owner !== null) {
-                self::finalize_campaign_operation($op_option, $op_owner, 'retryable', $res);
+            if ($op_option !== null && $op_owner !== null && $op_claim_raw !== null) {
+                self::finalize_campaign_operation($op_option, $op_claim_raw, $op_owner, 'retryable', $res);
             }
             return $res;
         }
 
-        // Local ban succeeded: queue generation-fenced Cloudflare ban with stable idempotency_key deduplication
+        // Local ban succeeded: queue generation-fenced Cloudflare ban with durable idempotency_key deduplication
         $cf_res = ['cf_sync_state' => 'disabled', 'operation_id' => null];
         if (class_exists(CloudflareIpListSynchronizer::class)) {
             $cf_res = CloudflareIpListSynchronizer::queue_ip_ban($ip, $reason, 86400, $campaign_op_id);
@@ -465,9 +546,9 @@ final class BehavioralCampaignEngine {
             'cf_operation_id' => !empty($cf_res['operation_id']) ? (string) $cf_res['operation_id'] : null,
         ];
 
-        if ($op_option !== null && $op_owner !== null) {
+        if ($op_option !== null && $op_owner !== null && $op_claim_raw !== null) {
             $final_state = ($result['cf_sync_state'] === 'enqueue_failed') ? 'retryable' : 'completed';
-            self::finalize_campaign_operation($op_option, $op_owner, $final_state, $result);
+            self::finalize_campaign_operation($op_option, $op_claim_raw, $op_owner, $final_state, $result);
         }
 
         return $result;
