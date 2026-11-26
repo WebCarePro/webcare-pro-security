@@ -305,7 +305,8 @@ class LoginHistoryManager {
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
         $existing_id = $wpdb->get_var(
             $wpdb->prepare(
-                "SELECT id FROM {$table} WHERE user_id = %d AND session_token = %s LIMIT 1",
+                'SELECT id FROM %i WHERE user_id = %d AND session_token = %s LIMIT 1',
+                $table,
                 $user_id,
                 $token_hash
             )
