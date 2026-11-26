@@ -808,12 +808,33 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
                             <button
                               type="button"
                               className="webcare-btn-micro"
-                              disabled={fetchingNistSlug === (item.slug || item.name)}
-                              onClick={() => handleFetchNistComponent(item)}
+                              disabled={busyActionKey === `nist-${item.slug || item.name}`}
+                              onClick={async () => {
+                                const key = `nist-${item.slug || item.name}`;
+                                setBusyActionKey(key);
+                                try {
+                                  const res = await apiRequest({
+                                    path: '/webcare-pro-security/v1/cve/nist-fetch-component',
+                                    method: 'POST',
+                                    data: {
+                                      slug: item.slug,
+                                      name: item.name,
+                                      version: item.installed_version || '0.0.0',
+                                    },
+                                  });
+                                  if (res && res.success) {
+                                    await loadInventory(true);
+                                  }
+                                } catch {
+                                  // Ignore transient network errors
+                                } finally {
+                                  setBusyActionKey(null);
+                                }
+                              }}
                               title="Live-query NIST NVD for this component"
                             >
-                              <RefreshCw size={11} className={fetchingNistSlug === (item.slug || item.name) ? 'webcare-spin' : ''} />
-                              {fetchingNistSlug === (item.slug || item.name) ? 'Fetching…' : 'Fetch NIST'}
+                              <RefreshCw size={11} className={busyActionKey === `nist-${item.slug || item.name}` ? 'webcare-spin' : ''} />
+                              {busyActionKey === `nist-${item.slug || item.name}` ? 'Fetching…' : 'Fetch NIST'}
                             </button>
                             {(item.is_outdated || item.has_cve) && (() => {
                               const compSlug = item.slug || item.name;
