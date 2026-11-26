@@ -378,6 +378,13 @@ const SETTINGS_CATEGORIES: SettingsCategoryGroup[] = [
           const activeCount = [s?.slack_enabled, s?.discord_enabled, s?.clickup_enabled, s?.asana_enabled, s?.generic_webhook_enabled].filter(Boolean).length;
           return activeCount > 0 ? { text: `${activeCount} Webhook(s)`, bg: '#dcfce7', color: '#15803d' } : { text: 'Slack/Discord', bg: '#f1f5f9', color: '#64748b' };
         }
+      },
+      {
+        id: 'threat_intel',
+        label: 'Threat Intel & NIST Sync',
+        shortDesc: 'Public feeds & NIST NVD API key',
+        icon: Shield,
+        getBadge: () => ({ text: 'NIST / Feeds', bg: '#e0f2fe', color: '#0284c7' })
       }
     ]
   },
@@ -4688,7 +4695,11 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
               </div>
             </div>
           </div>
+        </div>
+      )}
 
+      {activeSubTab === 'threat_intel' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           {/* Public Threat Intelligence Feeds Moved Banner */}
           <div className="webcare-firewall-section-group" style={{ borderRadius: '12px', border: '1px solid var(--webcare-border, #e2e8f0)', padding: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
