@@ -379,6 +379,13 @@
           "description": "Slack, Discord, Telegram, and generic HTTPS egress webhook integrations."
         },
         {
+          "id": "threat_intel",
+          "label": "Threat Intel & NIST Sync",
+          "mode": "developer",
+          "group": "Alerts & Automation",
+          "description": "Public Threat Intelligence Feeds and NIST NVD background CVE sync & API key."
+        },
+        {
           "id": "cron",
           "label": "Scheduled Tasks (Cron)",
           "mode": "developer",
