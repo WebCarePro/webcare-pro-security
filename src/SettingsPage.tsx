@@ -6249,3 +6249,111 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
 
 export default SettingsPage;
 
+
+function NistCveSyncSettingsCard({ apiRequest }: { apiRequest: (opts: any) => Promise<any> }) {
+  const [status, setStatus] = useState<{
+    is_running: boolean;
+    total_components: number;
+    checked_count: number;
+    last_fetch_human: string;
+    has_api_key: boolean;
+  } | null>(null);
+  const [apiKeyInput, setApiKeyInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const loadStatus = async () => {
+    try {
+      const res = await apiRequest({ path: '/webcare-pro-security/v1/cve/nist-status', method: 'GET' });
+      if (res?.success && res.status) {
+        setStatus(res.status);
+      }
+    } catch (e) {}
+  };
+
+  useEffect(() => {
+    loadStatus();
+  }, []);
+
+  return (
+    <div className="webcare-firewall-section-group" style={{ borderRadius: '12px', border: '1px solid var(--webcare-border, #e2e8f0)', padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+        <div>
+          <h3 style={{ margin: 0, fontSize: '15.5px', color: 'var(--webcare-text-primary, #0f172a)' }}>
+            NIST NVD Background CVE Sync &amp; API Key
+          </h3>
+          <p style={{ margin: '2px 0 0', fontSize: '13px', color: 'var(--webcare-text-secondary, #475569)' }}>
+            Checked <strong>{status ? `${status.checked_count} / ${status.total_components}` : '0 / 0'}</strong> plugins &amp; themes &bull; Last Fetch: <strong>{status?.last_fetch_human || 'Never'}</strong> &bull; {status?.has_api_key ? 'NIST API Connected (25 req / 35s)' : 'Free NIST Fetch (5 req / 35s)'}
+          </p>
+        </div>
+
+        <button
+          type="button"
+          className="button button-primary"
+          disabled={busy || status?.is_running}
+          style={{ background: '#4f46e5', borderColor: '#4338ca', fontWeight: 600 }}
+          onClick={async () => {
+            setBusy(true);
+            setNotice(null);
+            try {
+              const res = await apiRequest({ path: '/webcare-pro-security/v1/cve/nist-sync-start', method: 'POST' });
+              if (res?.success) {
+                setStatus(res.status);
+                setNotice({ type: 'success', text: res.message || 'Background NIST NVD CVE sync started.' });
+              }
+            } catch (e: any) {
+              setNotice({ type: 'error', text: e?.message || 'Failed to start NIST background sync.' });
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          {status?.is_running ? `Syncing (${status.checked_count}/${status.total_components})…` : 'Start Background NIST Sync'}
+        </button>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+        <input
+          type="password"
+          className="webcare-input"
+          value={apiKeyInput}
+          onChange={(e) => setApiKeyInput(e.target.value)}
+          placeholder={status?.has_api_key ? 'NIST API Key saved in Vault (paste to replace)' : 'Optional NIST NVD API Key'}
+          style={{ width: '280px' }}
+        />
+        <button
+          type="button"
+          className="button"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            setNotice(null);
+            try {
+              const res = await apiRequest({
+                path: '/webcare-pro-security/v1/cve/nist-api-key',
+                method: 'POST',
+                data: { api_key: apiKeyInput },
+              });
+              if (res?.success) {
+                setStatus(res.status);
+                setApiKeyInput('');
+                setNotice({ type: 'success', text: 'NIST NVD API Key encrypted & saved in Vault.' });
+              }
+            } catch (e: any) {
+              setNotice({ type: 'error', text: e?.message || 'Failed to save NIST API Key.' });
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          Save Key
+        </button>
+        {notice && (
+          <span style={{ fontSize: '12px', fontWeight: 600, color: notice.type === 'success' ? '#059669' : '#dc2626' }}>
+            {notice.text}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
