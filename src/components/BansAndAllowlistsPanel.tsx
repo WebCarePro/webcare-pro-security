@@ -1011,10 +1011,17 @@ export const BansAndAllowlistsPanel: React.FC<BansAndAllowlistsPanelProps> = ({
                           className="webcare-btn-micro"
                           onClick={() => handleUnblockIp(item.ip)}
                           disabled={unblockingIp === item.ip}
-                          style={{ color: '#0284c7' }}
-                          title="Unban IP immediately"
+                          style={{ color: item.is_expired ? '#dc2626' : '#0284c7' }}
+                          title={item.is_expired ? 'Remove expired ban record' : 'Unban IP immediately'}
                         >
-                          {unblockingIp === item.ip ? <Loader2 size={11} className="webcare-spin" /> : <Unlock size={11} />} Unblock
+                          {unblockingIp === item.ip ? (
+                            <Loader2 size={11} className="webcare-spin" />
+                          ) : item.is_expired ? (
+                            <Trash2 size={11} />
+                          ) : (
+                            <Unlock size={11} />
+                          )}{' '}
+                          {item.is_expired ? 'Remove' : 'Unblock'}
                         </button>
                       </div>
                     </td>
