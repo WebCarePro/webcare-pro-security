@@ -703,6 +703,8 @@ class UpdateScanner {
             }
         }
 
+        self::merge_threat_intel_cves($cves, (string) $slug, (string) $version);
+
         set_transient($cache_key, $cves, self::CACHE_TTL);
         return $cves;
     }
@@ -741,8 +743,72 @@ class UpdateScanner {
             }
         }
 
+        self::merge_threat_intel_cves($cves, (string) $slug, (string) $version);
+
         set_transient($cache_key, $cves, self::CACHE_TTL);
         return $cves;
+    }
+
+    /**
+     * Merge matching advisories from the synced NVD CVE 2.0 / CISA KEV ThreatIntelService catalog.
+     *
+     * @param array  $cves
+     * @param string $slug
+     * @param string $version
+     */
+    private static function merge_threat_intel_cves(array &$cves, string $slug, string $version): void {
+        if ($slug === '' || $version === '' || !class_exists('\\WebCareProScanner\\Firewall\\ThreatIntelService')) {
+            return;
+        }
+
+        $catalog = get_option(\WebCareProScanner\Firewall\ThreatIntelService::OPTION_CVES, []);
+        if (empty($catalog) || !is_array($catalog)) {
+            $catalog = \WebCareProScanner\Firewall\ThreatIntelService::get_seed_cves();
+        }
+        if (empty($catalog) || !is_array($catalog)) {
+            return;
+        }
+
+        $seen = [];
+        foreach ($cves as $existing) {
+            if (!empty($existing['cve_id'])) {
+                $seen[strtoupper((string) $existing['cve_id'])] = true;
+            }
+        }
+
+        $norm_slug = strtolower($slug);
+        if (class_exists('\\WebCareProScanner\\Firewall\\CVEIntelligenceService')) {
+            $norm_slug = strtolower(\WebCareProScanner\Firewall\CVEIntelligenceService::resolve_canonical_slug($norm_slug));
+        }
+
+        foreach ($catalog as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            $cve_id = strtoupper(trim((string) ($entry['cve_id'] ?? ($entry['id'] ?? ''))));
+            $target = strtolower(trim((string) ($entry['target'] ?? '')));
+            if ($cve_id === '' || $target === '' || isset($seen[$cve_id])) {
+                continue;
+            }
+
+            if ($target !== $norm_slug && $target !== strtolower($slug)) {
+                continue;
+            }
+
+            $fixed_in = trim((string) ($entry['fixed_in'] ?? ''));
+            if ($fixed_in !== '' && $fixed_in !== '0.0.0' && version_compare($version, $fixed_in, '<')) {
+                $seen[$cve_id] = true;
+                $cves[] = [
+                    'cve_id'      => $cve_id,
+                    'title'       => (string) ($entry['title'] ?? $cve_id),
+                    'severity'    => strtolower((string) ($entry['severity'] ?? 'high')),
+                    'cvss'        => (float) ($entry['cvss'] ?? 7.5),
+                    'fixed_in'    => $fixed_in,
+                    'reference'   => "https://nvd.nist.gov/vuln/detail/{$cve_id}",
+                    'cve_details' => (string) ($entry['description'] ?? ''),
+                ];
+            }
+        }
     }
 
     /**
