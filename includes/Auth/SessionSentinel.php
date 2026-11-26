@@ -1161,19 +1161,48 @@ class SessionSentinel {
                 return true;
             }
 
-            // Otherwise, terminate other sessions across all administrators
-            $admins = get_users(['role' => 'administrator', 'number' => 100]);
-            foreach ($admins as $admin) {
-                if ($admin->ID === $current_user_id) {
-                    self::terminate_user_other_sessions($admin->ID, $current_token, $current_verifier);
+            // Otherwise, terminate all active sessions across EVERY user on the site except the current user's active device,
+            // while strictly preserving all login history and device records for every user.
+            global $wpdb;
+            $user_ids = [];
+            if (isset($wpdb) && is_object($wpdb) && !empty($wpdb->usermeta)) {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Targeted lookup of users holding active WordPress session_tokens for global logout.
+                $found_ids = $wpdb->get_col(
+                    $wpdb->prepare(
+                        "SELECT DISTINCT user_id FROM {$wpdb->usermeta} WHERE meta_key = %s AND meta_value != '' AND meta_value != %s",
+                        'session_tokens',
+                        'a:0:{}'
+                    )
+                );
+                if (is_array($found_ids)) {
+                    $user_ids = array_map('intval', $found_ids);
+                }
+            }
+
+            // Always include the current user and all administrators as a fallback (e.g. object-cached session backends)
+            $admin_ids = get_users(['role' => 'administrator', 'fields' => 'ID']);
+            if (is_array($admin_ids)) {
+                foreach ($admin_ids as $aid) {
+                    $user_ids[] = (int) $aid;
+                }
+            }
+            if ($current_user_id > 0) {
+                $user_ids[] = $current_user_id;
+            }
+            $user_ids = array_values(array_unique(array_filter($user_ids)));
+
+            foreach ($user_ids as $uid) {
+                if ($uid === $current_user_id) {
+                    self::terminate_user_other_sessions($uid, $current_token, $current_verifier);
                 } else {
                     try {
-                        $manager = \WP_Session_Tokens::get_instance($admin->ID);
+                        $manager = \WP_Session_Tokens::get_instance($uid);
                         $manager->destroy_all();
                     } catch (\Throwable $e) {}
-                    delete_user_meta($admin->ID, 'session_tokens');
+                    delete_user_meta($uid, 'session_tokens');
 
-                    $sessions_meta = self::get_stored_session_meta($admin->ID);
+                    // Strictly preserve all device records and login history — only mark active records as logged_out.
+                    $sessions_meta = self::get_stored_session_meta($uid);
                     if (is_array($sessions_meta) && !empty($sessions_meta)) {
                         $now = time();
                         foreach ($sessions_meta as $key => &$entry) {
@@ -1185,9 +1214,9 @@ class SessionSentinel {
                             }
                         }
                         unset($entry);
-                        self::save_stored_session_meta($admin->ID, $sessions_meta);
+                        self::save_stored_session_meta($uid, $sessions_meta);
                     }
-                    wp_cache_delete($admin->ID, 'user_meta');
+                    wp_cache_delete($uid, 'user_meta');
                 }
             }
 

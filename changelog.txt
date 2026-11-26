@@ -1,4 +1,6 @@
 ﻿v:0.0.1 - 2026-11-26
+- Session Sentinel Global "Revoke All Other Sessions" Behavior:
+  * `AuthSecurityPage.tsx`, `AuthController.php` & `SessionSentinel.php`: Updated the global `Revoke All Other Sessions` action to log out every active user session across the site (all roles) except the current administrator's active browser session, while strictly preserving all login history and device records for every user.
 - Next-Gen 2026–2027 Malware, Polyglot & Stealth Backdoor Detection Upgrades:
   * `KnownMalwareManifest`: Added memory-safe 64 KB dual streaming SHA-256 hashing (`compute_dual_hashes()`) computing both raw SHA-256 and whitespace-normalized structural SHA-256 digests in a single pass to neutralize re-indentation and CRLF/LF hash-evasion mutations.
   * `HeuristicEngine` & `DeobfuscationEngine`: Expanded executable code inspection to cover `.pht`, `.suspected`, `.shtml`, and disguised multi-extension PHP filenames (`*.php.jpg`), enforced a scoped `pcre.backtrack_limit` ReDoS guard during static inspection, and added static unpacking for `gzdecode(base64_decode(...))`, `hex2bin(...)`, `pack('H*', ...)`, and dense `%XX` URL-encoded payloads.

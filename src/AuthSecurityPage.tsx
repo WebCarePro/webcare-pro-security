@@ -921,8 +921,8 @@ export const AuthSecurityPage = ({
   const handleRevokeAllOtherSessions = async () => {
     requestAuthConfirm({
       title: 'Log Out All Other Sessions',
-      message: 'Are you sure you want to log out all other active sessions across your administrator account? Other devices will be logged out immediately. Device records will be kept in your history as Logged Out.',
-      confirmLabel: 'Log Out All Others',
+      message: 'Are you sure you want to log out everyone else on the site (and your other devices), keeping only your current browser session active? All login history and device records for every user will be preserved.',
+      confirmLabel: 'Log Out Everyone Else',
       variant: 'warning',
       onConfirm: async () => {
         try {
@@ -931,10 +931,10 @@ export const AuthSecurityPage = ({
           const res = await apiRequest({
             path: '/auth/sessions/revoke',
             method: 'POST',
-            data: { revoke_others: true, user_id: status?.user_id || 0 },
+            data: { revoke_others: true, all_users: true, all_admins: true },
           });
           if (res && res.success) {
-            setSessionActionMsg({ success: true, text: res.message || 'All other sessions have been logged out.' });
+            setSessionActionMsg({ success: true, text: res.message || 'All other sessions have been logged out. All login history has been preserved.' });
             setTimeout(() => setSessionActionMsg(null), 4000);
             loadStatus(true);
           }

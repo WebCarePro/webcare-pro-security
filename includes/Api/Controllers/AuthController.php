@@ -795,11 +795,13 @@ final class AuthController extends AbstractApiController {
 
             if ($revoke_others) {
                 $target_user_id = $user_id ?: 0;
-                $all_admins = !empty($params['all_admins']) || empty($user_id);
-                \WebCareProScanner\Auth\SessionSentinel::terminate_all_other_sessions($target_user_id, $all_admins);
+                $revoke_all_users = !empty($params['all_users']) || !empty($params['all_admins']) || empty($user_id);
+                \WebCareProScanner\Auth\SessionSentinel::terminate_all_other_sessions($target_user_id, $revoke_all_users);
                 return rest_ensure_response([
-                    'success' => true,
-                    'message' => __('All other sessions have been logged out.', 'webcare-pro-security'),
+                    'success'  => true,
+                    'message'  => $revoke_all_users
+                        ? __('All other active sessions across all users have been logged out. Your current session remains active and all login history has been preserved.', 'webcare-pro-security')
+                        : __('All other sessions for this account have been logged out.', 'webcare-pro-security'),
                     'sessions' => \WebCareProScanner\Auth\SessionSentinel::get_active_sessions(),
                 ]);
             }
