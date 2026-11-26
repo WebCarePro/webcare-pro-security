@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-26T11:52:58.219Z",
+  "generated_at": "2026-11-26T11:54:46.171Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -856,8 +856,8 @@
       "size": 3357
     },
     "includes/Malware/KnownMalwareManifest.php": {
-      "sha256": "6309bc6d2099de1bc29f05e746d57e8025e571d60bcb5281e52c867a45a38e8d",
-      "size": 9618
+      "sha256": "342902c7bd72a0ce1787bbcead01f1d78a21b8173da9ed9b37470a8dae6efdc3",
+      "size": 9716
     },
     "includes/Malware/ObfuscationDetector.php": {
       "sha256": "a807116ff3538cd6b3cb9e70703cd45ba6c8584c84f0c1b1ac2ab4b1ccf82987",
