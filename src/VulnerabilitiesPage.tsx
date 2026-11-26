@@ -603,10 +603,37 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
               <span>Last NIST Fetch: {nistStatus?.last_fetch_human || 'Never'}</span>
             </div>
 
-            <div style={{ fontSize: '11px', color: 'var(--webcare-text-muted)' }}>
-              {nistStatus?.is_running
-                ? `Background sync running (${nistStatus.checked_count}/${nistStatus.total_components})…`
-                : 'Configure NIST API Key & background sync in Settings'}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+              <a
+                href="admin.php?page=webcare-pro-settings&tab=threat_intel"
+                style={{ fontSize: '12px', fontWeight: 600, color: '#4f46e5', textDecoration: 'none' }}
+              >
+                Configure Key in Settings &rarr;
+              </a>
+              <button
+                type="button"
+                className="webcare-btn-micro"
+                disabled={Boolean(nistStatus?.is_running)}
+                onClick={async () => {
+                  try {
+                    const res = await wp.apiFetch({ path: '/webcare-pro-security/v1/cve/nist-sync-start', method: 'POST' }) as any;
+                    if (res?.status) setNistStatus(res.status);
+                  } catch {
+                    // ignore
+                  }
+                }}
+                style={{
+                  background: nistStatus?.is_running ? 'var(--webcare-bg-elevated)' : '#4f46e5',
+                  color: nistStatus?.is_running ? 'var(--webcare-text-muted)' : '#ffffff',
+                  borderColor: nistStatus?.is_running ? 'var(--webcare-border-subtle)' : '#4338ca',
+                  fontWeight: 600,
+                }}
+              >
+                <RefreshCw size={12} className={nistStatus?.is_running ? 'webcare-spin' : ''} />
+                {nistStatus?.is_running
+                  ? `Syncing (${nistStatus.checked_count}/${nistStatus.total_components})…`
+                  : 'Sync All with NIST'}
+              </button>
             </div>
           </div>
 
@@ -778,6 +805,16 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
                         {/* Action Buttons */}
                         <td style={{ textAlign: 'right' }}>
                           <div style={{ display: 'inline-flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                            <button
+                              type="button"
+                              className="webcare-btn-micro"
+                              disabled={fetchingNistSlug === (item.slug || item.name)}
+                              onClick={() => handleFetchNistComponent(item)}
+                              title="Live-query NIST NVD for this component"
+                            >
+                              <RefreshCw size={11} className={fetchingNistSlug === (item.slug || item.name) ? 'webcare-spin' : ''} />
+                              {fetchingNistSlug === (item.slug || item.name) ? 'Fetching…' : 'Fetch NIST'}
+                            </button>
                             {(item.is_outdated || item.has_cve) && (() => {
                               const compSlug = item.slug || item.name;
                               const activeShieldId = virtualShields[compSlug];
