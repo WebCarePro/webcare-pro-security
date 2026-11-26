@@ -113,7 +113,7 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
 
   const loadNistStatus = async () => {
     try {
-      const res = await apiRequest({ path: '/cve/nist-status', method: 'GET' });
+      const res = await apiRequest({ path: '/webcare-pro-security/v1/cve/nist-status', method: 'GET' });
       if (res?.success && res.status) {
         setNistStatus(res.status);
       }
@@ -617,7 +617,7 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
                   setNistBusy(true);
                   try {
                     const res = await apiRequest({
-                      path: '/cve/nist-api-key',
+                      path: '/webcare-pro-security/v1/cve/nist-api-key',
                       method: 'POST',
                       data: { api_key: nistApiKeyInput },
                     });
@@ -651,7 +651,7 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
                 onClick={async () => {
                   setNistBusy(true);
                   try {
-                    const res = await apiRequest({ path: '/cve/nist-sync-start', method: 'POST' });
+                    const res = await apiRequest({ path: '/webcare-pro-security/v1/cve/nist-sync-start', method: 'POST' });
                     if (res?.success) {
                       setNistStatus(res.status);
                       setActionFeedback({ type: 'success', text: res.message || 'Background NIST NVD CVE sync started.' });
@@ -904,7 +904,7 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
                                     onClick={async () => {
                                       try {
                                         const res = await apiRequest({
-                                          path: '/cve/nist-fetch-component',
+                                          path: '/webcare-pro-security/v1/cve/nist-fetch-component',
                                           method: 'POST',
                                           data: {
                                             slug: item.slug,
@@ -1098,7 +1098,7 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
                                     onClick={async () => {
                                       try {
                                         const res = await apiRequest({
-                                          path: '/cve/nist-fetch-component',
+                                          path: '/webcare-pro-security/v1/cve/nist-fetch-component',
                                           method: 'POST',
                                           data: {
                                             slug: item.slug,
