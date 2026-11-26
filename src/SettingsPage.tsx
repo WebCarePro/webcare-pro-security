@@ -4710,6 +4710,9 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
               Open Threat Intel Feeds &rarr;
             </a>
           </div>
+
+          {/* NIST NVD Background CVE Sync & Encrypted API Key */}
+          <NistCveSyncSettingsCard apiRequest={apiRequest} />
         </div>
       )}
 

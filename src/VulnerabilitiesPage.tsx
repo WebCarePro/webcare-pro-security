@@ -108,8 +108,6 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
     has_api_key: boolean;
     batch_size: number;
   } | null>(null);
-  const [nistApiKeyInput, setNistApiKeyInput] = useState('');
-  const [nistBusy, setNistBusy] = useState(false);
 
   const loadNistStatus = async () => {
     try {
@@ -580,7 +578,20 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
             }}
           >
             <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px', fontSize: '12px', color: 'var(--webcare-text-secondary)' }}>
-              <strong style={{ color: 'var(--webcare-text-primary)' }}>NIST NVD Background Sync:</strong>
+              <strong style={{ color: 'var(--webcare-text-primary)' }}>NIST NVD Intelligence:</strong>
+              <span
+                style={{
+                  padding: '2px 8px',
+                  borderRadius: '999px',
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  background: nistStatus?.has_api_key ? 'rgba(16, 185, 129, 0.14)' : 'rgba(59, 130, 246, 0.12)',
+                  color: nistStatus?.has_api_key ? '#059669' : '#2563eb',
+                }}
+              >
+                {nistStatus?.has_api_key ? 'NIST API Connected (25 req / 35s)' : 'Free NIST Fetch (5 req / 35s)'}
+              </span>
+              <span>&bull;</span>
               <span>
                 Checked{' '}
                 <strong style={{ color: 'var(--webcare-text-primary)' }}>
@@ -590,94 +601,12 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
               </span>
               <span>&bull;</span>
               <span>Last NIST Fetch: {nistStatus?.last_fetch_human || 'Never'}</span>
-              <span>&bull;</span>
-              <span>Rate: {nistStatus?.has_api_key ? '25 req / 35s (API Key Active)' : '5 req / 35s (Free Tier)'}</span>
             </div>
 
-            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px' }}>
-              <input
-                type="password"
-                value={nistApiKeyInput}
-                onChange={(e) => setNistApiKeyInput(e.target.value)}
-                placeholder={nistStatus?.has_api_key ? 'NIST API Key saved in Vault (paste to replace)' : 'Optional NIST NVD API Key'}
-                style={{
-                  padding: '5px 10px',
-                  borderRadius: '6px',
-                  fontSize: '12px',
-                  width: '230px',
-                  background: 'var(--webcare-bg-surface)',
-                  color: 'var(--webcare-text-primary)',
-                  border: '1px solid var(--webcare-border-strong)',
-                }}
-              />
-              <button
-                type="button"
-                disabled={nistBusy}
-                onClick={async () => {
-                  setNistBusy(true);
-                  try {
-                    const res = await apiRequest({
-                      path: '/webcare-pro-security/v1/cve/nist-api-key',
-                      method: 'POST',
-                      data: { api_key: nistApiKeyInput },
-                    });
-                    if (res?.success) {
-                      setNistStatus(res.status);
-                      setNistApiKeyInput('');
-                      setActionFeedback({ type: 'success', text: 'NIST NVD API Key encrypted & saved in Vault.' });
-                    }
-                  } catch (e: any) {
-                    setActionFeedback({ type: 'error', text: e?.message || 'Failed to save NIST API Key.' });
-                  } finally {
-                    setNistBusy(false);
-                  }
-                }}
-                style={{
-                  padding: '5px 10px',
-                  borderRadius: '6px',
-                  fontSize: '12px',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  background: 'var(--webcare-bg-elevated)',
-                  color: 'var(--webcare-text-primary)',
-                  border: '1px solid var(--webcare-border-strong)',
-                }}
-              >
-                Save Key
-              </button>
-              <button
-                type="button"
-                disabled={nistBusy || nistStatus?.is_running}
-                onClick={async () => {
-                  setNistBusy(true);
-                  try {
-                    const res = await apiRequest({ path: '/webcare-pro-security/v1/cve/nist-sync-start', method: 'POST' });
-                    if (res?.success) {
-                      setNistStatus(res.status);
-                      setActionFeedback({ type: 'success', text: res.message || 'Background NIST NVD CVE sync started.' });
-                      await loadReport();
-                    }
-                  } catch (e: any) {
-                    setActionFeedback({ type: 'error', text: e?.message || 'Failed to start NIST background sync.' });
-                  } finally {
-                    setNistBusy(false);
-                  }
-                }}
-                style={{
-                  padding: '5px 12px',
-                  borderRadius: '6px',
-                  fontSize: '12px',
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                  background: '#4f46e5',
-                  color: '#ffffff',
-                  border: 'none',
-                }}
-              >
-                {nistStatus?.is_running
-                  ? `Syncing (${nistStatus.checked_count}/${nistStatus.total_components})...`
-                  : 'Start Background NIST Sync'}
-              </button>
+            <div style={{ fontSize: '11px', color: 'var(--webcare-text-muted)' }}>
+              {nistStatus?.is_running
+                ? `Background sync running (${nistStatus.checked_count}/${nistStatus.total_components})…`
+                : 'Configure NIST API Key & background sync in Settings'}
             </div>
           </div>
 

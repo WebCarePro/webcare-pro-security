@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-26T21:38:17.165Z",
+  "generated_at": "2026-11-26T21:40:40.619Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -92,7 +92,7 @@
       "size": 26394
     },
     "build/index.asset.php": {
-      "sha256": "cb4d5a87f63104ea7923e05e9f33359e28f020a13bf47602454a6d45a947f916",
+      "sha256": "d283557f787d9caada67bf2f770db57b2492fe3b272efae0ee1c0cf5b8426c6a",
       "size": 174
     },
     "build/index.css": {
@@ -100,8 +100,8 @@
       "size": 26389
     },
     "build/index.js": {
-      "sha256": "031c100f4bd15fc08d6ac0ee54ec1bb301fe1f5a0ca62374f2e56667128f0fa7",
-      "size": 3029671
+      "sha256": "aaed04c33dbf32d3e61177c7b2e7829ab98d3712b14e865191ca3459229419d9",
+      "size": 3028335
     },
     "build/modular-waf.asset.php": {
       "sha256": "08782f1d0f25dccaa2854276f814ba5cdf32858d717b6483f3487531c4e9dfc1",
@@ -124,7 +124,7 @@
       "size": 26394
     },
     "build/scan.asset.php": {
-      "sha256": "3496474e3752017c8d3e7c3be6d8974d0447cb92b64e703aecefd310f20f5de8",
+      "sha256": "d8ac8b964005b1b264d91c02378851ad88de80b95fdd265ebdb7a9dbd0cb6aad",
       "size": 174
     },
     "build/scan.css": {
@@ -132,16 +132,16 @@
       "size": 26389
     },
     "build/scan.js": {
-      "sha256": "1670372994776651c1c0b247129f9525a110c6f9aba91e91fd476781a6e3e53d",
-      "size": 3021398
+      "sha256": "8c3a0bf4f5712c8a1d0131ab295d8bfa2d09c0f6ea0ee564e38b4b291fdbd9e2",
+      "size": 3020062
     },
     "build/settings.asset.php": {
-      "sha256": "10cbc69d6df0cb706a293eaa213dfa2839b0d04764db94f0893d355e8f11a4b5",
+      "sha256": "9c83a66912be76f37895a70a23d013cd53b40e9d0225415d9de0f46b7ab7ef2e",
       "size": 163
     },
     "build/settings.js": {
-      "sha256": "ac1f9ed1e4f9c7c9687e0fc2b1e02bf8250b223d1f3592ff1d5ea55b056f9ed5",
-      "size": 482312
+      "sha256": "a3026f3ffa3a3515a4bee6de75be44643ce0f60a349e7c2b230df93581d1af6d",
+      "size": 482372
     },
     "build/vault.asset.php": {
       "sha256": "793967ca61df28f4c3eaa59af895b3a2fb372451327fac25cccc39ae8a186e43",
