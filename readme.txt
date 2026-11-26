@@ -211,6 +211,14 @@ This plugin can optionally connect to the following external third-party service
 * SURBL Terms: https://www.surbl.org/terms-of-use
 * SpamCop Privacy: https://www.spamcop.net/fom-serve/cache/37.html
 
+18. WPVulnerability API (WordPress CVE Feed)
+* Service: WPVulnerability (https://www.wpvulnerability.net).
+* Purpose: Queries publicly documented CVE advisories and affected version ranges for installed WordPress plugins and themes.
+* Data Sent: Public plugin or theme slug only (e.g. `elementor`). No site URL, user data, or personal information is transmitted.
+* When: Triggered during vulnerability scans or when clicking "Re-Check All" in the Vulnerabilities tab (cached locally for 12 hours).
+* Terms of Service: https://www.wpvulnerability.com/terms/
+* Privacy Policy: https://www.wpvulnerability.com/privacy/
+
 == Source Code & Build ==
 
 This plugin is open-source under GPLv2 or later. Non-minified React and JavaScript source files are included directly in the `src/` directory.
