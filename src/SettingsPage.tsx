@@ -185,6 +185,7 @@ export type SettingsSubTab =
   | 'email'
   | 'alerts'
   | 'webhooks'
+  | 'threat_intel'
   | 'cloudflare'
   | 'headers'
   | 'ai'
@@ -511,6 +512,7 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
       notifications: 'alerts',
       email: 'email',
       webhooks: 'webhooks',
+      threat_intel: 'threat_intel',
       cloudflare: 'cloudflare',
       headers: 'headers',
       ai: 'ai',
@@ -665,6 +667,7 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
     const engineerTabs: SettingsSubTab[] = [
       'containment',
       'webhooks',
+      'threat_intel',
       'headers',
       'ai',
       'mcp',
