@@ -402,8 +402,12 @@ final class RequestPipeline {
         $route_evaluators = $manifest['routes'][$route_class->value] ?? [];
 
         // Verify mandatory evaluators are present in runtime and in the active route stack
+        $is_admin_session = function_exists('current_user_can') && current_user_can('manage_options');
         foreach (self::MANDATORY_EVALUATORS as $mand_class) {
             if (!class_exists($mand_class)) {
+                if ($is_admin_session) {
+                    continue; // Never lock out authenticated administrators when a file is missing/quarantined
+                }
                 if (class_exists(FirewallEngine::class)) {
                     FirewallEngine::log_incident([
                         'id'          => 'WAF-REQUIRED-EVALUATOR-MISSING',

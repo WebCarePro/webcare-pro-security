@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-26T12:17:07.649Z",
+  "generated_at": "2026-11-26T12:30:10.544Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -604,8 +604,8 @@
       "size": 8395
     },
     "includes/Firewall/Core/RequestPipeline.php": {
-      "sha256": "f8b8a09ed624dc6adb41b514c13ba22d12c32d0a0d6ff20073601b4bac919900",
-      "size": 31035
+      "sha256": "8751c30efcb4e9f14098ee25695bf8274af8c72c3b70d8306370a4cbae8a4406",
+      "size": 31309
     },
     "includes/Firewall/Core/SubnetSwarmGuard.php": {
       "sha256": "da19d1198bf92d8903a22c1210f81c1f5d1b209ffdd9c19cba090c585bbe6ed9",
