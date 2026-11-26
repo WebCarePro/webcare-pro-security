@@ -112,6 +112,9 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
   } | null>(null);
   const [showNistLogs, setShowNistLogs] = useState(false);
 
+  const getCompSlug = (it: any): string =>
+    String(it?.slug || (it?.type === 'core' ? 'wordpress' : it?.name || '')).toLowerCase();
+
   const loadNistStatus = async () => {
     try {
       const res = await apiRequest({ path: '/webcare-pro-security/v1/cve/nist-status', method: 'GET' });
@@ -626,7 +629,7 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
                 disabled={Boolean(nistStatus?.is_running)}
                 onClick={async () => {
                   try {
-                    const res = await wp.apiFetch({ path: '/webcare-pro-security/v1/cve/nist-sync-start', method: 'POST' }) as any;
+                    const res = await apiRequest({ path: '/webcare-pro-security/v1/cve/nist-sync-start', method: 'POST' }) as any;
                     if (res?.status) setNistStatus(res.status);
                   } catch {
                     // ignore
@@ -873,16 +876,17 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
                             <button
                               type="button"
                               className="webcare-btn-micro"
-                              disabled={busyActionKey === `nist-${item.slug || item.name}`}
+                              disabled={busyActionKey === `nist-${getCompSlug(item)}`}
                               onClick={async () => {
-                                const key = `nist-${item.slug || item.name}`;
+                                const slug = getCompSlug(item);
+                                const key = `nist-${slug}`;
                                 setBusyActionKey(key);
                                 try {
                                   const res = await apiRequest({
                                     path: '/webcare-pro-security/v1/cve/nist-fetch-component',
                                     method: 'POST',
                                     data: {
-                                      slug: item.slug,
+                                      slug,
                                       name: item.name,
                                       version: item.installed_version || '0.0.0',
                                     },
@@ -899,8 +903,8 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
                               }}
                               title="Live-query NIST NVD for this component"
                             >
-                              <RefreshCw size={11} className={busyActionKey === `nist-${item.slug || item.name}` ? 'webcare-spin' : ''} />
-                              {busyActionKey === `nist-${item.slug || item.name}` ? 'Fetching…' : 'Fetch NIST'}
+                              <RefreshCw size={11} className={busyActionKey === `nist-${getCompSlug(item)}` ? 'webcare-spin' : ''} />
+                              {busyActionKey === `nist-${getCompSlug(item)}` ? 'Fetching…' : 'Fetch NIST'}
                             </button>
                             {(item.is_outdated || item.has_cve) && (() => {
                               const compSlug = item.slug || item.name;
@@ -954,22 +958,28 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
 
                                   <button
                                     type="button"
+                                    disabled={busyActionKey === `nist-${getCompSlug(item)}`}
                                     onClick={async () => {
+                                      const slug = getCompSlug(item);
+                                      setBusyActionKey(`nist-${slug}`);
                                       try {
                                         const res = await apiRequest({
                                           path: '/webcare-pro-security/v1/cve/nist-fetch-component',
                                           method: 'POST',
                                           data: {
-                                            slug: item.slug,
+                                            slug,
                                             name: item.name,
                                             version: item.installed_version || '0.0.0',
                                           },
                                         });
                                         if (res && res.success) {
+                                          if (res.status) setNistStatus(res.status);
                                           await loadInventory(true);
                                         }
                                       } catch (e) {
                                         // Ignore transient network errors
+                                      } finally {
+                                        setBusyActionKey(null);
                                       }
                                     }}
                                     style={{
@@ -1099,7 +1109,7 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
                                   <div className="webcare-vuln-banner-sub">
                                     Installed path: <code>{item.type === 'core' ? 'WordPress Core (ABSPATH)' : item.file || item.slug}</code>
                                     {(() => {
-                                      const nistEntry = nistStatus?.checked_components?.[(item.slug || '').toLowerCase()];
+                                      const nistEntry = nistStatus?.checked_components?.[getCompSlug(item)];
                                       if (!nistEntry) {
                                         return (
                                           <span style={{ display: 'block', marginTop: '4px', fontSize: '11.5px', color: 'var(--webcare-text-muted)' }}>
@@ -1166,22 +1176,28 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
 
                                   <button
                                     type="button"
+                                    disabled={busyActionKey === `nist-${getCompSlug(item)}`}
                                     onClick={async () => {
+                                      const slug = getCompSlug(item);
+                                      setBusyActionKey(`nist-${slug}`);
                                       try {
                                         const res = await apiRequest({
                                           path: '/webcare-pro-security/v1/cve/nist-fetch-component',
                                           method: 'POST',
                                           data: {
-                                            slug: item.slug,
+                                            slug,
                                             name: item.name,
                                             version: item.installed_version || '0.0.0',
                                           },
                                         });
                                         if (res && res.success) {
+                                          if (res.status) setNistStatus(res.status);
                                           await loadInventory(true);
                                         }
                                       } catch (e) {
                                         // Ignore transient network errors
+                                      } finally {
+                                        setBusyActionKey(null);
                                       }
                                     }}
                                     style={{

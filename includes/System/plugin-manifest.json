@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-26T22:35:48.679Z",
+  "generated_at": "2026-11-26T22:39:20.409Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -92,7 +92,7 @@
       "size": 26394
     },
     "build/index.asset.php": {
-      "sha256": "27a2768b6f28a48f1c2787a3e8b69d5eb8c25c5d1c741b68ce53c89fb1a28a5b",
+      "sha256": "1613adfe7ebb16351d7fc87a4571a438e70b95ccbd219532aded916380f656b9",
       "size": 174
     },
     "build/index.css": {
@@ -100,8 +100,8 @@
       "size": 26389
     },
     "build/index.js": {
-      "sha256": "0e72627ab74b17880cc56e27c7ba06673b82c0d69096cf7ab8d7d635a4cc5c5f",
-      "size": 3039995
+      "sha256": "6770f9653ddba94b29d6016d3a58a4742203d61210480dc6cbf4a9c82f03cb14",
+      "size": 3040192
     },
     "build/modular-waf.asset.php": {
       "sha256": "72f086518778ec6308bf613a3739f6f4d5136424a86e97ff0c5190d6fbccd0d8",
@@ -124,7 +124,7 @@
       "size": 26394
     },
     "build/scan.asset.php": {
-      "sha256": "4cff28622be4da3d4b8df356d28028fd6ca25b105567d51b24ace444384ade6e",
+      "sha256": "9b57e0c2c6d07306dba6f28b0538bb538764fb7a08dce92f92ca925203d961bb",
       "size": 174
     },
     "build/scan.css": {
@@ -132,8 +132,8 @@
       "size": 26389
     },
     "build/scan.js": {
-      "sha256": "8c9a7f40202364494cc4bfad7ccbb13ac62387de1b89c3675e6f2d19b8ec7397",
-      "size": 3031722
+      "sha256": "4ec0cdf649018ec48010a30ee74a08cb1308d39040ebc7fd13af0d3993b8e89b",
+      "size": 3031919
     },
     "build/settings.asset.php": {
       "sha256": "3d15cd7bd78ae8480bb6acee96042ef3eee48d6690cb5b905b788340f3fce646",
@@ -732,8 +732,8 @@
       "size": 14036
     },
     "includes/Firewall/NistCveVaultSync.php": {
-      "sha256": "d9179fcd23cd7db0ca90d5cdcc7610cf5e4c43e95d17663a4d752a9dc2109f01",
-      "size": 22604
+      "sha256": "3849fe28398f4a3470f41bf519adb9c0a0317193bcc63359bf398939537b0ea8",
+      "size": 22875
     },
     "includes/Firewall/OfficialCrawlerRegistry.php": {
       "sha256": "b82c0a1da8dc5266a21f298ad8ea580ad626804b45adb291ba8ce31edfea1d9c",

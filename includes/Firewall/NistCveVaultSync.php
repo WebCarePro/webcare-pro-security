@@ -206,7 +206,14 @@ class NistCveVaultSync {
      * @return list<array{slug: string, name: string, version: string, type: string}>
      */
     public static function collect_installed_components(): array {
-        $items = [];
+        $items = [
+            [
+                'slug'    => 'wordpress',
+                'name'    => 'WordPress Core',
+                'version' => function_exists('get_bloginfo') ? (string) get_bloginfo('version') : '0.0.0',
+                'type'    => 'core',
+            ],
+        ];
         if (!function_exists('get_plugins')) {
             require_once ABSPATH . 'wp-admin/includes/plugin.php';
         }
