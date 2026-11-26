@@ -6379,6 +6379,90 @@ function NistCveSyncSettingsCard({ apiRequest }: { apiRequest: (opts: any) => Pr
           </span>
         )}
       </div>
+
+      {/* Checked Components & Sync Logs */}
+      {(Object.keys(status?.checked_components || {}).length > 0 || (status?.logs || []).length > 0) && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '14px', marginTop: '6px' }}>
+          <div className="webcare-firewall-rule-card" style={{ padding: '14px', borderRadius: '10px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+              <strong style={{ fontSize: '13px', color: 'var(--webcare-text-primary, #0f172a)' }}>
+                Checked Plugins &amp; Themes ({Object.keys(status?.checked_components || {}).length})
+              </strong>
+              <button type="button" className="webcare-btn-micro" onClick={loadStatus}>
+                Refresh
+              </button>
+            </div>
+            <div style={{ maxHeight: '220px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {Object.values(status?.checked_components || {}).map((comp: any) => (
+                <div
+                  key={comp.slug}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '6px 10px',
+                    borderRadius: '8px',
+                    background: 'var(--webcare-bg-panel, #f8fafc)',
+                    border: '1px solid var(--webcare-border, #e2e8f0)',
+                    fontSize: '12px',
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 600, color: 'var(--webcare-text-primary, #0f172a)' }}>
+                      {comp.name} <span style={{ color: 'var(--webcare-text-muted, #64748b)', fontWeight: 400 }}>v{comp.version}</span>
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--webcare-text-muted, #64748b)' }}>
+                      {comp.checked_human} &bull; {comp.raw_total} NVD records scanned
+                    </div>
+                  </div>
+                  <span
+                    style={{
+                      padding: '2px 8px',
+                      borderRadius: '999px',
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      background: comp.matched_count > 0 ? 'rgba(239, 68, 68, 0.14)' : 'rgba(16, 185, 129, 0.14)',
+                      color: comp.matched_count > 0 ? '#dc2626' : '#059669',
+                    }}
+                  >
+                    {comp.error ? comp.error : comp.matched_count > 0 ? `${comp.matched_count} CVE(s)` : 'Clean'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="webcare-firewall-rule-card" style={{ padding: '14px', borderRadius: '10px' }}>
+            <strong style={{ display: 'block', marginBottom: '10px', fontSize: '13px', color: 'var(--webcare-text-primary, #0f172a)' }}>
+              Recent NIST Sync Logs ({(status?.logs || []).length})
+            </strong>
+            <div style={{ maxHeight: '220px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {(status?.logs || []).length === 0 ? (
+                <div style={{ fontSize: '12px', color: 'var(--webcare-text-muted, #64748b)' }}>No sync logs recorded yet.</div>
+              ) : (
+                (status?.logs || []).map((log: any, idx: number) => (
+                  <div
+                    key={idx}
+                    style={{
+                      padding: '6px 10px',
+                      borderRadius: '8px',
+                      background: 'var(--webcare-bg-panel, #f8fafc)',
+                      border: '1px solid var(--webcare-border, #e2e8f0)',
+                      fontSize: '11.5px',
+                    }}
+                  >
+                    <div style={{ color: 'var(--webcare-text-primary, #0f172a)', fontWeight: 500 }}>{log.message}</div>
+                    <div style={{ fontSize: '10.5px', color: 'var(--webcare-text-muted, #64748b)', marginTop: '2px' }}>
+                      {log.ts_human} &bull; HTTP {log.http_status || 'ERR'}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

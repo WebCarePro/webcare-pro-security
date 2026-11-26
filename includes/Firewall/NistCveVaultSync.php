@@ -150,16 +150,53 @@ class NistCveVaultSync {
         }
         $catalog = self::read_vault_catalog();
         $last_ts = (int) ($state['last_fetch_at'] ?? 0);
+        $now     = time();
+
+        $checked_components = [];
+        foreach ($catalog as $slug => $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            $checked_ts = (int) ($entry['checked_at'] ?? 0);
+            $cves       = is_array($entry['cves'] ?? null) ? $entry['cves'] : [];
+            $checked_components[$slug] = [
+                'slug'           => (string) ($entry['slug'] ?? $slug),
+                'name'           => (string) ($entry['name'] ?? $slug),
+                'type'           => (string) ($entry['type'] ?? 'plugin'),
+                'version'        => (string) ($entry['version'] ?? '0.0.0'),
+                'checked_at'     => $checked_ts,
+                'checked_human'  => $checked_ts > 0 ? human_time_diff($checked_ts, $now) . ' ago' : 'Never',
+                'query_keyword'  => (string) ($entry['query_keyword'] ?? ''),
+                'http_status'    => (int) ($entry['http_status'] ?? 200),
+                'raw_total'      => (int) ($entry['raw_total'] ?? 0),
+                'matched_count'  => count($cves),
+                'error'          => (string) ($entry['error'] ?? ''),
+                'cves'           => $cves,
+            ];
+        }
+
+        $raw_logs = is_array($state['logs'] ?? null) ? $state['logs'] : [];
+        $logs     = [];
+        foreach ($raw_logs as $log) {
+            if (!is_array($log)) {
+                continue;
+            }
+            $ts = (int) ($log['ts'] ?? 0);
+            $log['ts_human'] = $ts > 0 ? human_time_diff($ts, $now) . ' ago' : '';
+            $logs[] = $log;
+        }
 
         return [
-            'is_running'       => !empty($state['is_running']),
-            'total_components' => (int) ($state['total_components'] ?? count(self::collect_installed_components())),
-            'checked_count'    => (int) ($state['checked_count'] ?? count($catalog)),
-            'last_fetch_at'    => $last_ts,
-            'last_fetch_human' => $last_ts > 0 ? human_time_diff($last_ts, time()) . ' ago' : 'Never',
-            'has_api_key'      => self::get_api_key() !== '',
-            'batch_size'       => self::get_batch_size(),
-            'vault_entries'    => count($catalog),
+            'is_running'         => !empty($state['is_running']),
+            'total_components'   => (int) ($state['total_components'] ?? count(self::collect_installed_components())),
+            'checked_count'      => (int) ($state['checked_count'] ?? count($catalog)),
+            'last_fetch_at'      => $last_ts,
+            'last_fetch_human'   => $last_ts > 0 ? human_time_diff($last_ts, $now) . ' ago' : 'Never',
+            'has_api_key'        => self::get_api_key() !== '',
+            'batch_size'         => self::get_batch_size(),
+            'vault_entries'      => count($catalog),
+            'checked_components' => $checked_components,
+            'logs'               => $logs,
         ];
     }
 
@@ -234,24 +271,50 @@ class NistCveVaultSync {
         $batch = array_splice($state['queue'], 0, $batch_size);
         $catalog = self::read_vault_catalog();
 
+        $logs = is_array($state['logs'] ?? null) ? $state['logs'] : [];
+
         foreach ($batch as $comp) {
-            $slug = (string) ($comp['slug'] ?? '');
+            $slug    = (string) ($comp['slug'] ?? '');
+            $name    = (string) ($comp['name'] ?? $slug);
+            $version = (string) ($comp['version'] ?? '0.0.0');
+            $type    = (string) ($comp['type'] ?? 'plugin');
             if ($slug === '') {
                 continue;
             }
-            $cves = self::query_nist_for_component(
-                $slug,
-                (string) ($comp['name'] ?? $slug),
-                (string) ($comp['version'] ?? '0.0.0')
-            );
+            $result = self::query_nist_for_component($slug, $name, $version);
+            $cves   = $result['cves'];
+            $now    = time();
+
             $catalog[$slug] = [
-                'slug'       => $slug,
-                'version'    => (string) ($comp['version'] ?? '0.0.0'),
-                'checked_at' => time(),
-                'cves'       => $cves,
+                'slug'          => $slug,
+                'name'          => $name,
+                'type'          => $type,
+                'version'       => $version,
+                'checked_at'    => $now,
+                'query_keyword' => $result['query_keyword'],
+                'http_status'   => $result['http_status'],
+                'raw_total'     => $result['raw_total'],
+                'error'         => $result['error'],
+                'cves'          => $cves,
             ];
             $state['checked_count'] = (int) ($state['checked_count'] ?? 0) + 1;
+
+            array_unshift($logs, [
+                'ts'          => $now,
+                'slug'        => $slug,
+                'name'        => $name,
+                'type'        => $type,
+                'version'     => $version,
+                'http_status' => $result['http_status'],
+                'raw_total'   => $result['raw_total'],
+                'matched'     => count($cves),
+                'message'     => $result['error'] !== ''
+                    ? sprintf('%s (v%s): %s', $name, $version, $result['error'])
+                    : sprintf('%s (v%s): Scanned %d NVD records, %d matched CVEs', $name, $version, $result['raw_total'], count($cves)),
+            ]);
         }
+
+        $state['logs'] = array_slice($logs, 0, 50);
 
         self::write_vault_catalog($catalog);
         $state['last_fetch_at'] = time();
@@ -268,14 +331,22 @@ class NistCveVaultSync {
      */
     public static function fetch_single_component(string $slug, string $name, string $version): array {
         $norm_slug = strtolower(trim($slug));
-        $cves = self::query_nist_for_component($norm_slug, $name, $version);
+        $result    = self::query_nist_for_component($norm_slug, $name, $version);
+        $cves      = $result['cves'];
+        $now       = time();
 
         $catalog = self::read_vault_catalog();
         $catalog[$norm_slug] = [
-            'slug'       => $norm_slug,
-            'version'    => $version,
-            'checked_at' => time(),
-            'cves'       => $cves,
+            'slug'          => $norm_slug,
+            'name'          => $name !== '' ? $name : $norm_slug,
+            'type'          => 'component',
+            'version'       => $version,
+            'checked_at'    => $now,
+            'query_keyword' => $result['query_keyword'],
+            'http_status'   => $result['http_status'],
+            'raw_total'     => $result['raw_total'],
+            'error'         => $result['error'],
+            'cves'          => $cves,
         ];
         self::write_vault_catalog($catalog);
 
@@ -283,7 +354,22 @@ class NistCveVaultSync {
         if (!is_array($state)) {
             $state = [];
         }
-        $state['last_fetch_at'] = time();
+        $logs = is_array($state['logs'] ?? null) ? $state['logs'] : [];
+        array_unshift($logs, [
+            'ts'          => $now,
+            'slug'        => $norm_slug,
+            'name'        => $name !== '' ? $name : $norm_slug,
+            'type'        => 'manual',
+            'version'     => $version,
+            'http_status' => $result['http_status'],
+            'raw_total'   => $result['raw_total'],
+            'matched'     => count($cves),
+            'message'     => $result['error'] !== ''
+                ? sprintf('%s (v%s): %s', $name !== '' ? $name : $norm_slug, $version, $result['error'])
+                : sprintf('%s (v%s): Live-fetched %d NVD records, %d matched CVEs', $name !== '' ? $name : $norm_slug, $version, $result['raw_total'], count($cves)),
+        ]);
+        $state['logs']          = array_slice($logs, 0, 50);
+        $state['last_fetch_at'] = $now;
         $state['checked_count'] = count($catalog);
         update_option(self::OPTION_SYNC_STATE, $state, false);
 
@@ -324,15 +410,19 @@ class NistCveVaultSync {
 
     /**
      * Query NIST NVD 2.0 API for a WordPress component by keyword.
+     *
+     * @return array{cves: array, http_status: int, raw_total: int, query_keyword: string, error: string}
      */
     private static function query_nist_for_component(string $slug, string $name, string $version): array {
+        $keyword       = trim($name !== '' ? $name : str_replace(['-', '_'], ' ', $slug));
+        $query_keyword = 'WordPress ' . $keyword;
+
         if ((defined('WEBCAREPROSCAN_TESTING') && WEBCAREPROSCAN_TESTING) || !function_exists('wp_remote_get')) {
-            return [];
+            return ['cves' => [], 'http_status' => 0, 'raw_total' => 0, 'query_keyword' => $query_keyword, 'error' => 'Testing mode'];
         }
 
-        $keyword = trim($name !== '' ? $name : str_replace(['-', '_'], ' ', $slug));
         $url = add_query_arg([
-            'keywordSearch'  => 'WordPress ' . $keyword,
+            'keywordSearch'  => $query_keyword,
             'resultsPerPage' => 10,
         ], 'https://services.nvd.nist.gov/rest/json/cves/2.0');
 
@@ -343,18 +433,23 @@ class NistCveVaultSync {
         }
 
         $res = wp_remote_get($url, [
-            'timeout'    => 8,
+            'timeout'    => 10,
             'headers'    => $headers,
             'user-agent' => 'WEBCARE-NIST-Vault/' . (defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '1.0'),
         ]);
-        if (is_wp_error($res) || wp_remote_retrieve_response_code($res) !== 200) {
-            return [];
+        if (is_wp_error($res)) {
+            return ['cves' => [], 'http_status' => 0, 'raw_total' => 0, 'query_keyword' => $query_keyword, 'error' => $res->get_error_message()];
+        }
+        $code = (int) wp_remote_retrieve_response_code($res);
+        if ($code !== 200) {
+            return ['cves' => [], 'http_status' => $code, 'raw_total' => 0, 'query_keyword' => $query_keyword, 'error' => "NIST HTTP {$code}"];
         }
 
-        $body = json_decode(wp_remote_retrieve_body($res), true);
-        $vulns = $body['vulnerabilities'] ?? [];
+        $body      = json_decode(wp_remote_retrieve_body($res), true);
+        $raw_total = (int) ($body['totalResults'] ?? 0);
+        $vulns     = $body['vulnerabilities'] ?? [];
         if (!is_array($vulns)) {
-            return [];
+            return ['cves' => [], 'http_status' => $code, 'raw_total' => $raw_total, 'query_keyword' => $query_keyword, 'error' => ''];
         }
 
         $results = [];
@@ -371,28 +466,44 @@ class NistCveVaultSync {
                     break;
                 }
             }
-            if ($desc === '' || stripos($desc, $keyword) === false && stripos($desc, $slug) === false) {
+            if ($desc === '' || (stripos($desc, $keyword) === false && stripos($desc, $slug) === false)) {
                 continue;
             }
 
-            $cvss = 7.5;
-            $metrics = $cve['metrics']['cvssMetricV31'][0]['cvssData'] ?? ($cve['metrics']['cvssMetricV30'][0]['cvssData'] ?? null);
+            $cvss        = 7.5;
+            $cvss_vector = '';
+            $metrics     = $cve['metrics']['cvssMetricV31'][0]['cvssData'] ?? ($cve['metrics']['cvssMetricV30'][0]['cvssData'] ?? null);
             if (is_array($metrics) && isset($metrics['baseScore'])) {
-                $cvss = (float) $metrics['baseScore'];
+                $cvss        = (float) $metrics['baseScore'];
+                $cvss_vector = (string) ($metrics['vectorString'] ?? '');
+            }
+            $cwe = '';
+            if (!empty($cve['weaknesses'][0]['description'][0]['value'])) {
+                $cwe = (string) $cve['weaknesses'][0]['description'][0]['value'];
             }
             $severity = $cvss >= 9.0 ? 'critical' : ($cvss >= 7.0 ? 'high' : ($cvss >= 4.0 ? 'medium' : 'low'));
 
             $results[] = [
-                'cve_id'      => $cve_id,
-                'title'       => substr($desc, 0, 120),
-                'severity'    => $severity,
-                'cvss'        => $cvss,
-                'fixed_in'    => 'Latest',
-                'reference'   => "https://nvd.nist.gov/vuln/detail/{$cve_id}",
-                'cve_details' => $desc,
+                'cve_id'        => $cve_id,
+                'title'         => substr($desc, 0, 120),
+                'severity'      => $severity,
+                'cvss'          => $cvss,
+                'cvss_vector'   => $cvss_vector,
+                'cwe'           => $cwe,
+                'published'     => (string) ($cve['published'] ?? ''),
+                'last_modified' => (string) ($cve['lastModified'] ?? ''),
+                'fixed_in'      => 'Latest',
+                'reference'     => "https://nvd.nist.gov/vuln/detail/{$cve_id}",
+                'cve_details'   => $desc,
             ];
         }
 
-        return $results;
+        return [
+            'cves'          => $results,
+            'http_status'   => $code,
+            'raw_total'     => $raw_total,
+            'query_keyword' => $query_keyword,
+            'error'         => '',
+        ];
     }
 }

@@ -107,7 +107,10 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
     last_fetch_human: string;
     has_api_key: boolean;
     batch_size: number;
+    checked_components?: Record<string, any>;
+    logs?: any[];
   } | null>(null);
+  const [showNistLogs, setShowNistLogs] = useState(false);
 
   const loadNistStatus = async () => {
     try {
@@ -604,6 +607,13 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="webcare-btn-micro"
+                onClick={() => setShowNistLogs((prev) => !prev)}
+              >
+                {showNistLogs ? 'Hide Sync Logs' : `Sync Logs & Checked (${Object.keys(nistStatus?.checked_components || {}).length})`}
+              </button>
               <a
                 href="admin.php?page=webcare-pro-settings&tab=threat_intel"
                 style={{ fontSize: '12px', fontWeight: 600, color: '#4f46e5', textDecoration: 'none' }}
@@ -636,6 +646,61 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
               </button>
             </div>
           </div>
+
+          {showNistLogs && (
+            <div
+              style={{
+                margin: '0 20px 14px 20px',
+                padding: '14px 16px',
+                borderRadius: '10px',
+                background: 'var(--webcare-bg-panel)',
+                border: '1px solid var(--webcare-border-subtle)',
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
+                gap: '14px',
+              }}
+            >
+              <div>
+                <strong style={{ display: 'block', marginBottom: '8px', fontSize: '12.5px', color: 'var(--webcare-text-primary)' }}>
+                  Checked Components ({Object.keys(nistStatus?.checked_components || {}).length})
+                </strong>
+                <div style={{ maxHeight: '180px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  {Object.keys(nistStatus?.checked_components || {}).length === 0 ? (
+                    <span style={{ fontSize: '12px', color: 'var(--webcare-text-muted)' }}>No components checked yet. Click "Fetch NIST" or "Sync All with NIST".</span>
+                  ) : (
+                    Object.values(nistStatus?.checked_components || {}).map((comp: any) => (
+                      <div key={comp.slug} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', borderRadius: '8px', background: 'var(--webcare-bg-card)', border: '1px solid var(--webcare-border-subtle)', fontSize: '12px' }}>
+                        <div>
+                          <strong>{comp.name}</strong> <span style={{ color: 'var(--webcare-text-muted)' }}>v{comp.version}</span>
+                          <div style={{ fontSize: '11px', color: 'var(--webcare-text-muted)' }}>{comp.checked_human} &bull; {comp.raw_total} NVD records</div>
+                        </div>
+                        <span style={{ fontWeight: 700, fontSize: '11px', color: comp.matched_count > 0 ? '#dc2626' : '#059669' }}>
+                          {comp.error ? comp.error : comp.matched_count > 0 ? `${comp.matched_count} CVE(s)` : 'Clean'}
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+              <div>
+                <strong style={{ display: 'block', marginBottom: '8px', fontSize: '12.5px', color: 'var(--webcare-text-primary)' }}>
+                  Recent NIST Sync Logs ({(nistStatus?.logs || []).length})
+                </strong>
+                <div style={{ maxHeight: '180px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  {(nistStatus?.logs || []).length === 0 ? (
+                    <span style={{ fontSize: '12px', color: 'var(--webcare-text-muted)' }}>No sync activity logged yet.</span>
+                  ) : (
+                    (nistStatus?.logs || []).map((log: any, idx: number) => (
+                      <div key={idx} style={{ padding: '6px 10px', borderRadius: '8px', background: 'var(--webcare-bg-card)', border: '1px solid var(--webcare-border-subtle)', fontSize: '11.5px' }}>
+                        <div style={{ color: 'var(--webcare-text-primary)' }}>{log.message}</div>
+                        <div style={{ fontSize: '10.5px', color: 'var(--webcare-text-muted)', marginTop: '2px' }}>{log.ts_human} &bull; HTTP {log.http_status || 'ERR'}</div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
           {filteredComponents.length === 0 ? (
             <EmptyStateCard
@@ -823,6 +888,7 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
                                     },
                                   });
                                   if (res && res.success) {
+                                    if (res.status) setNistStatus(res.status);
                                     await loadInventory(true);
                                   }
                                 } catch {
@@ -1032,6 +1098,24 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
                                   </div>
                                   <div className="webcare-vuln-banner-sub">
                                     Installed path: <code>{item.type === 'core' ? 'WordPress Core (ABSPATH)' : item.file || item.slug}</code>
+                                    {(() => {
+                                      const nistEntry = nistStatus?.checked_components?.[(item.slug || '').toLowerCase()];
+                                      if (!nistEntry) {
+                                        return (
+                                          <span style={{ display: 'block', marginTop: '4px', fontSize: '11.5px', color: 'var(--webcare-text-muted)' }}>
+                                            NIST NVD Audit: Not queried yet — click <strong>Fetch NIST</strong> to live-query NIST NVD 2.0.
+                                          </span>
+                                        );
+                                      }
+                                      return (
+                                        <span style={{ display: 'block', marginTop: '4px', fontSize: '11.5px', color: 'var(--webcare-text-secondary)' }}>
+                                          <strong>NIST NVD Audit:</strong> Checked {nistEntry.checked_human} &bull; Query: <code>{nistEntry.query_keyword}</code> &bull; HTTP {nistEntry.http_status} &bull; Scanned {nistEntry.raw_total} NVD records &bull;{' '}
+                                          <strong style={{ color: nistEntry.matched_count > 0 ? '#dc2626' : '#059669' }}>
+                                            {nistEntry.error ? nistEntry.error : nistEntry.matched_count > 0 ? `${nistEntry.matched_count} matched CVE(s)` : '0 matching CVEs (Clean)'}
+                                          </strong>
+                                        </span>
+                                      );
+                                    })()}
                                   </div>
                                 </div>
 
