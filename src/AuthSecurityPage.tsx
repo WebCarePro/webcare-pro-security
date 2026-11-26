@@ -2634,6 +2634,14 @@ export const AuthSecurityPage = ({
                                     <div className="webcare-session-device-name-row">
                                       <strong className={`webcare-session-device-name ${isLoggedOut ? 'is-logged-out-title' : ''}`}>
                                         {sess.browser} on {sess.platform}
+                                        {sess.browser_version ? ` v${sess.browser_version.split('.')[0]}` : ''}
+                                        {' '}
+                                        <span
+                                          style={{ fontWeight: 500, opacity: 0.72, fontSize: '0.88em', fontFamily: 'monospace' }}
+                                          title={`Unique Device ID: ${(sess.device_uuid || sess.session_id || sess.token || '').slice(0, 8).toUpperCase()}`}
+                                        >
+                                          #{(sess.device_uuid || sess.session_id || sess.token || '0000').replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase()}
+                                        </span>
                                       </strong>
 
                                       {/* Current Device Badge */}
