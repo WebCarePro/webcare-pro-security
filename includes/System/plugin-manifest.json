@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-26T22:00:35.548Z",
+  "generated_at": "2026-11-26T22:08:05.595Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -268,8 +268,8 @@
       "size": 11248
     },
     "includes/Api/RestRouter.php": {
-      "sha256": "9f007e23f4624db1162918dac45a4501e1cfee69bb6e4e60009d3472754d2745",
-      "size": 9689
+      "sha256": "97d078bb630d055394099b6e6999a8e01824134e664ccf8c294e7c348eaedfb4",
+      "size": 9764
     },
     "includes/Api/ScannerRoutes.php": {
       "sha256": "54944d07983e6e962770f3f0d5466eccdb571f3c2493a88ad001a2ff39fad246",

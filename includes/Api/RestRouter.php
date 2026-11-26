@@ -50,6 +50,7 @@ final class RestRouter {
         'virtual-patch'        => Controllers\ModularWafController::class,
         'behavioral'           => Controllers\ModularWafController::class,
         'defense'              => Controllers\ModularWafController::class,
+        'cve'                  => Controllers\ModularWafController::class,
 
         // 4. AuthController
         'auth'                 => Controllers\AuthController::class,
