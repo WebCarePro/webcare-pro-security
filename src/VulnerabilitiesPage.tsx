@@ -100,6 +100,29 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
   const [virtualShields, setVirtualShields] = useState<Record<string, string>>({});
   const [safeBackups, setSafeBackups] = useState<Record<string, any>>({});
   const [busyActionKey, setBusyActionKey] = useState<string | null>(null);
+  const [nistStatus, setNistStatus] = useState<{
+    is_running: boolean;
+    total_components: number;
+    checked_count: number;
+    last_fetch_human: string;
+    has_api_key: boolean;
+    batch_size: number;
+  } | null>(null);
+  const [nistApiKeyInput, setNistApiKeyInput] = useState('');
+  const [nistBusy, setNistBusy] = useState(false);
+
+  const loadNistStatus = async () => {
+    try {
+      const res = await apiRequest({ path: '/cve/nist-status', method: 'GET' });
+      if (res?.success && res.status) {
+        setNistStatus(res.status);
+      }
+    } catch (e) {}
+  };
+
+  useEffect(() => {
+    loadNistStatus();
+  }, []);
   const [actionFeedback, setActionFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const loadReport = async () => {
