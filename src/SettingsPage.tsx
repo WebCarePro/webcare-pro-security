@@ -6422,8 +6422,8 @@ function NistCveSyncSettingsCard({ apiRequest }: { apiRequest: (opts: any) => Pr
                       borderRadius: '999px',
                       fontSize: '11px',
                       fontWeight: 700,
-                      background: comp.matched_count > 0 ? 'rgba(239, 68, 68, 0.14)' : 'rgba(16, 185, 129, 0.14)',
-                      color: comp.matched_count > 0 ? '#dc2626' : '#059669',
+                      background: comp.error ? 'rgba(245, 158, 11, 0.16)' : comp.matched_count > 0 ? 'rgba(239, 68, 68, 0.14)' : 'rgba(16, 185, 129, 0.14)',
+                      color: comp.error ? '#b45309' : comp.matched_count > 0 ? '#dc2626' : '#059669',
                     }}
                   >
                     {comp.error ? comp.error : comp.matched_count > 0 ? `${comp.matched_count} CVE(s)` : 'Clean'}

@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-26T22:30:04.192Z",
+  "generated_at": "2026-11-26T22:33:33.944Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -92,7 +92,7 @@
       "size": 26394
     },
     "build/index.asset.php": {
-      "sha256": "342390d0b1edff3eedefe8c3607b45e39e7f1b8811a201749c00a772bd815cd7",
+      "sha256": "88c75254d2aefc561966fcfe33f88de01022bbc12c8028bd6887d12b1d00bf93",
       "size": 174
     },
     "build/index.css": {
@@ -100,8 +100,8 @@
       "size": 26389
     },
     "build/index.js": {
-      "sha256": "10f308f8e146ef67924975d63028fac3d7dff303d6127d5622ffca5926889c9b",
-      "size": 3039743
+      "sha256": "aefd66dd56d692651cb60bc7b2294e111a7e5f08ccfd430beef7457afb39ad91",
+      "size": 3039796
     },
     "build/modular-waf.asset.php": {
       "sha256": "08782f1d0f25dccaa2854276f814ba5cdf32858d717b6483f3487531c4e9dfc1",
@@ -124,7 +124,7 @@
       "size": 26394
     },
     "build/scan.asset.php": {
-      "sha256": "ecd7818b6ac0539a6c5e75d0e64effeaa07baf2f195e4896b21141da8be2eec4",
+      "sha256": "945d4729bb61c7e52d0c4fa704adc2d434bc347100dd17e8e288eb5eefd8f0a5",
       "size": 174
     },
     "build/scan.css": {
@@ -132,16 +132,16 @@
       "size": 26389
     },
     "build/scan.js": {
-      "sha256": "602b3d5e6fe48374618e11cbae0addd0b8c399ae54b74e4ea4c40e66889f2a26",
-      "size": 3031470
+      "sha256": "084423911faa1d8a79394a6eee367cc218701fc915efa9dcf7c183f08f796b02",
+      "size": 3031523
     },
     "build/settings.asset.php": {
-      "sha256": "899048f33fa7c58342ad6e5273da539329959562dc4d73c7fa365f1c287efd3b",
+      "sha256": "3eeaa1e31db442d3a7bf0c8c017e75d19fd4250ca4365b6ea1c9f7e08c59134f",
       "size": 163
     },
     "build/settings.js": {
-      "sha256": "65858be30b5c23ebf02cde78cbadb0fd13f6b5258f901482781d835fe7c9c84a",
-      "size": 488844
+      "sha256": "3f514f496451abc5f9aa23bb92ef1ab6b58b5dc6574b7b2b95d937a4916dc599",
+      "size": 488897
     },
     "build/vault.asset.php": {
       "sha256": "793967ca61df28f4c3eaa59af895b3a2fb372451327fac25cccc39ae8a186e43",
@@ -732,8 +732,8 @@
       "size": 14036
     },
     "includes/Firewall/NistCveVaultSync.php": {
-      "sha256": "b4bd82e1f4384d26e2dd8d36ce31cebd2c82fefb5c4b69fcc8a6543b192c3a75",
-      "size": 20495
+      "sha256": "d9179fcd23cd7db0ca90d5cdcc7610cf5e4c43e95d17663a4d752a9dc2109f01",
+      "size": 22604
     },
     "includes/Firewall/OfficialCrawlerRegistry.php": {
       "sha256": "b82c0a1da8dc5266a21f298ad8ea580ad626804b45adb291ba8ce31edfea1d9c",

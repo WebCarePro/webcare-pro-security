@@ -421,10 +421,10 @@ class NistCveVaultSync {
             return ['cves' => [], 'http_status' => 0, 'raw_total' => 0, 'query_keyword' => $query_keyword, 'error' => 'Testing mode'];
         }
 
-        $url = add_query_arg([
+        $url = 'https://services.nvd.nist.gov/rest/json/cves/2.0?' . http_build_query([
             'keywordSearch'  => $query_keyword,
             'resultsPerPage' => 10,
-        ], 'https://services.nvd.nist.gov/rest/json/cves/2.0');
+        ], '', '&', PHP_QUERY_RFC3986);
 
         $headers = ['Accept' => 'application/json'];
         $api_key = self::get_api_key();
@@ -441,8 +441,22 @@ class NistCveVaultSync {
             return ['cves' => [], 'http_status' => 0, 'raw_total' => 0, 'query_keyword' => $query_keyword, 'error' => $res->get_error_message()];
         }
         $code = (int) wp_remote_retrieve_response_code($res);
+        // If NIST rejects the API key (403/404), retry once without apiKey on Free Tier
+        if (($code === 403 || $code === 404) && $api_key !== '') {
+            unset($headers['apiKey']);
+            $res = wp_remote_get($url, [
+                'timeout'    => 10,
+                'headers'    => $headers,
+                'user-agent' => 'WEBCARE-NIST-Vault/' . (defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '1.0'),
+            ]);
+            if (!is_wp_error($res)) {
+                $code = (int) wp_remote_retrieve_response_code($res);
+            }
+        }
         if ($code !== 200) {
-            return ['cves' => [], 'http_status' => $code, 'raw_total' => 0, 'query_keyword' => $query_keyword, 'error' => "NIST HTTP {$code}"];
+            $nist_msg = (string) wp_remote_retrieve_header($res, 'message');
+            $err      = $nist_msg !== '' ? "NIST HTTP {$code}: {$nist_msg}" : "NIST HTTP {$code}";
+            return ['cves' => [], 'http_status' => $code, 'raw_total' => 0, 'query_keyword' => $query_keyword, 'error' => $err];
         }
 
         $body      = json_decode(wp_remote_retrieve_body($res), true);
@@ -483,6 +497,33 @@ class NistCveVaultSync {
             }
             $severity = $cvss >= 9.0 ? 'critical' : ($cvss >= 7.0 ? 'high' : ($cvss >= 4.0 ? 'medium' : 'low'));
 
+            // Check NVD CPE version ranges to avoid false positives on already-patched versions
+            $fixed_in = 'Latest';
+            $is_version_affected = true;
+            foreach (($cve['configurations'] ?? []) as $cfg) {
+                foreach (($cfg['nodes'] ?? []) as $node) {
+                    foreach (($node['cpeMatch'] ?? []) as $match) {
+                        if (empty($match['vulnerable'])) {
+                            continue;
+                        }
+                        if (!empty($match['versionEndExcluding'])) {
+                            $fixed_in = (string) $match['versionEndExcluding'];
+                            if ($version !== '' && version_compare($version, $fixed_in, '>=')) {
+                                $is_version_affected = false;
+                            }
+                        } elseif (!empty($match['versionEndIncluding'])) {
+                            $end_inc = (string) $match['versionEndIncluding'];
+                            if ($version !== '' && version_compare($version, $end_inc, '>')) {
+                                $is_version_affected = false;
+                            }
+                        }
+                    }
+                }
+            }
+            if (!$is_version_affected) {
+                continue;
+            }
+
             $results[] = [
                 'cve_id'        => $cve_id,
                 'title'         => substr($desc, 0, 120),
@@ -492,7 +533,7 @@ class NistCveVaultSync {
                 'cwe'           => $cwe,
                 'published'     => (string) ($cve['published'] ?? ''),
                 'last_modified' => (string) ($cve['lastModified'] ?? ''),
-                'fixed_in'      => 'Latest',
+                'fixed_in'      => $fixed_in,
                 'reference'     => "https://nvd.nist.gov/vuln/detail/{$cve_id}",
                 'cve_details'   => $desc,
             ];
