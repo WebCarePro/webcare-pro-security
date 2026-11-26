@@ -1533,6 +1533,82 @@ export const CustomRulesStudio: React.FC = () => {
                         Off
                       </button>
 
+                      <button
+                        type="button"
+                        title={rule.sync_cloudflare ? 'Force Unsync from Cloudflare Edge' : 'Force Sync to Cloudflare Edge'}
+                        onClick={async () => {
+                          try {
+                            const nextSync = !rule.sync_cloudflare;
+                            const res = await apiRequest({
+                              path: '/custom-rules/rule/cloudflare-push',
+                              method: 'POST',
+                              data: {
+                                rule_id: rule.id,
+                                action: nextSync ? 'sync' : 'unsync',
+                                name: rule.title,
+                                target_uri: rule.target_uri,
+                                target_param: rule.target_param,
+                                target_value: rule.target_value,
+                                conditions: rule.conditions,
+                                group_logic: rule.group_logic,
+                              },
+                            });
+                            if (res && res.success) {
+                              setRules((prev) => prev.map((r) => (r.id === rule.id ? { ...r, sync_cloudflare: nextSync } : r)));
+                              showNotification(res.message || (nextSync ? 'Rule synced to Cloudflare Edge.' : 'Rule unsynced from Cloudflare Edge.'));
+                            } else {
+                              showNotification(res?.message || 'Cloudflare sync request completed.', 'warning');
+                            }
+                          } catch (err: any) {
+                            showNotification(err?.message || 'Failed to sync rule with Cloudflare Edge.', 'error');
+                          }
+                        }}
+                        style={{
+                          padding: '5px 10px',
+                          borderRadius: '6px',
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          border: 'none',
+                          background: rule.sync_cloudflare ? 'rgba(245, 158, 11, 0.14)' : 'rgba(59, 130, 246, 0.12)',
+                          color: rule.sync_cloudflare ? '#d97706' : '#2563eb',
+                        }}
+                      >
+                        {rule.sync_cloudflare ? 'CF Unsync' : 'CF Sync'}
+                      </button>
+
+                      {!rule.is_custom && (
+                        <button
+                          type="button"
+                          title="Remove this rule / shield"
+                          onClick={async () => {
+                            try {
+                              await apiRequest({
+                                path: '/custom-rules/rule/custom/delete',
+                                method: 'POST',
+                                data: { rule_id: rule.id },
+                              });
+                              setRules((prev) => prev.filter((r) => r.id !== rule.id));
+                              showNotification('Rule removed.');
+                            } catch (err: any) {
+                              showNotification(err?.message || 'Failed to remove rule.', 'error');
+                            }
+                          }}
+                          style={{
+                            padding: '5px 10px',
+                            borderRadius: '6px',
+                            fontSize: '11px',
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                            border: 'none',
+                            background: 'rgba(239, 68, 68, 0.12)',
+                            color: '#dc2626',
+                          }}
+                        >
+                          Remove
+                        </button>
+                      )}
+
                       {rule.is_custom && (
                         <>
                           <button
