@@ -327,7 +327,7 @@
             { "id": "attack-chains", "label": "Attack Chains", "mode": "developer" },
             { "id": "correlation", "label": "Threat Correlation", "mode": "developer" },
             { "id": "allowlist", "label": "Allowlist & Safe Files", "mode": "developer" },
-            { "id": "self-defense", "label": "Plugin Self-Defense", "mode": "developer" }
+            { "id": "self_defense", "label": "Plugin Self-Defense", "mode": "developer" }
           ]
         }
       ]
