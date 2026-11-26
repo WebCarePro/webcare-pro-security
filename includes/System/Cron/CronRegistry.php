@@ -238,7 +238,7 @@ class CronRegistry {
                 'setting_key'         => 'self_defense_watchdog_enabled',
                 'setting_type'        => 'settings_manager',
                 'setting_location'    => did_action('init') ? __('Forensics -> Plugin Self-Defense', 'webcare-pro-security') : 'Forensics -> Plugin Self-Defense',
-                'deep_link'           => 'admin.php?page=webcare-pro-backups&tab=diagnostics&section=self-defense',
+                'deep_link'           => 'admin.php?page=webcare-pro-backups&tab=diagnostics&section=self_defense',
                 'default_delay'       => 300,
             ],
             'webcareproscan_reinfection_hourly_check' => [

@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-26T11:50:11.762Z",
+  "generated_at": "2026-11-26T11:52:58.219Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -972,7 +972,7 @@
       "size": 21160
     },
     "includes/Security/PluginSelfDefense.php": {
-      "sha256": "28b96325132be508eea2903aa09e77c015a5eb1e83946dcc2aed6e5484ccee58",
+      "sha256": "81187fac02424429777eebc33105f5ced14a889978c8dc7e8fddaa33bbc6cd2a",
       "size": 28129
     },
     "includes/Security/PromptInjectionGuard.php": {
@@ -1068,7 +1068,7 @@
       "size": 19572
     },
     "includes/System/Cron/CronRegistry.php": {
-      "sha256": "421cf638604e798bbabed44342a86dd862c123c21225d39972c8126ee2bfb66d",
+      "sha256": "2311b5c40c0b0af0fc70285f5f48e6769b7bdacb74f920eddd78d5998341026d",
       "size": 28176
     },
     "includes/System/PluginConflictChecker.php": {

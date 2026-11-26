@@ -403,7 +403,7 @@ class PluginSelfDefense {
 
         $missing_count  = (int) ($audit['missing_count'] ?? 0);
         $modified_count = (int) ($audit['modified_count'] ?? 0);
-        $audit_url      = admin_url('admin.php?page=webcare-pro-backups&tab=diagnostics&section=self-defense');
+        $audit_url      = admin_url('admin.php?page=webcare-pro-backups&tab=diagnostics&section=self_defense');
 
         echo '<div class="notice notice-error" style="padding: 14px 18px; border-left: 4px solid #ef4444; background: #fff1f2; box-shadow: 0 2px 6px rgba(239, 68, 68, 0.15); margin-top: 15px;">';
         echo '<div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">';
