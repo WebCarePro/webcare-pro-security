@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-26T11:58:32.500Z",
+  "generated_at": "2026-11-26T12:05:35.095Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -972,8 +972,8 @@
       "size": 21160
     },
     "includes/Security/PluginSelfDefense.php": {
-      "sha256": "81187fac02424429777eebc33105f5ced14a889978c8dc7e8fddaa33bbc6cd2a",
-      "size": 28129
+      "sha256": "625afc55a3287d5202396be14c4bd4b60db5e8f63dc692d9b7c3be60082bfd79",
+      "size": 28513
     },
     "includes/Security/PromptInjectionGuard.php": {
       "sha256": "0be9a935c102793fb7f9ce88b6b63a8af65b8eec8e06ffaaa58f12129ee63159",

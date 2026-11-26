@@ -452,22 +452,32 @@ class PluginSelfDefense {
         }
 
         $raw_host = 'raw.' . 'githubusercontent' . '.com';
-        $remote_url = "https://{$raw_host}/WebCarePro/webcare-pro-security/refs/tags/{$version_tag}/includes/System/plugin-manifest.json";
-        $res = wp_remote_get($remote_url, [
-            'timeout'    => 12,
-            'user-agent' => 'WEBCARE-Self-Defense/' . (defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '1.0'),
-            'sslverify'  => true,
-            'headers'    => [
-                'Cache-Control' => 'no-cache, must-revalidate',
-            ],
-        ]);
+        $candidate_urls = [
+            "https://{$raw_host}/WebCarePro/webcare-pro-security/refs/tags/{$version_tag}/includes/System/plugin-manifest.json",
+            "https://{$raw_host}/WebCarePro/webcare-pro-security/main/includes/System/plugin-manifest.json",
+        ];
 
-        if (is_wp_error($res) || wp_remote_retrieve_response_code($res) !== 200) {
-            return null;
+        $decoded = null;
+        foreach ($candidate_urls as $remote_url) {
+            $res = wp_remote_get($remote_url, [
+                'timeout'    => 12,
+                'user-agent' => 'WEBCARE-Self-Defense/' . (defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '1.0'),
+                'sslverify'  => true,
+                'headers'    => [
+                    'Cache-Control' => 'no-cache, must-revalidate',
+                ],
+            ]);
+
+            if (!is_wp_error($res) && wp_remote_retrieve_response_code($res) === 200) {
+                $body_json = json_decode(wp_remote_retrieve_body($res), true);
+                if (is_array($body_json) && !empty($body_json['files'])) {
+                    $decoded = $body_json;
+                    break;
+                }
+            }
         }
 
-        $decoded = json_decode(wp_remote_retrieve_body($res), true);
-        if (!is_array($decoded) || empty($decoded['files'])) {
+        if ($decoded === null) {
             return null;
         }
 
