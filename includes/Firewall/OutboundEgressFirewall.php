@@ -891,7 +891,10 @@ class OutboundEgressFirewall {
         if ($packed !== false) {
             // IPv4 Range Checks
             if (strlen($packed) === 4) {
-                if (\WebCareProScanner\Firewall\Core\ExploitSignatureEngine::is_loopback_or_private_ipv4($clean_host)) {
+                $is_private_or_loopback_v4 = class_exists('\\WebCareProScanner\\Firewall\\Core\\ExploitSignatureEngine')
+                    ? \WebCareProScanner\Firewall\Core\ExploitSignatureEngine::is_loopback_or_private_ipv4($clean_host)
+                    : (filter_var($clean_host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 | FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false);
+                if ($is_private_or_loopback_v4) {
                     $long = unpack('N', $packed)[1];
                     if (($long & 0xFF000000) === 0x7F000000 || ($long & 0xFF000000) === 0x00000000) {
                         return [
