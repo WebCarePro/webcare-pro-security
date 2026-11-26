@@ -3177,6 +3177,51 @@ Source Code,${escapeCsv(code)}
 
       setProgress(100);
       setScanStage('Scan completed successfully!');
+      // Real-time NIST NVD CVE Audit (4 plugins/themes/core per 30s)
+      const shouldRunCveCheck =
+        target === 'full' ||
+        target === 'plugins_themes' ||
+        (target === 'custom' && (!optionsToUse || optionsToUse.scan_cve_vulnerabilities !== false));
+
+      if (shouldRunCveCheck) {
+        try {
+          setScanStage('Checking Themes, Plugins & Core CVEs (NIST NVD 4/30s)...');
+          setCurrentFile('Starting real-time NIST NVD vulnerability audit...');
+          let nistRes: any = await apiRequest({
+            path: '/webcare-pro-security/v1/cve/nist-scan-batch',
+            method: 'POST',
+            data: { start: true },
+          });
+
+          while (nistRes?.success) {
+            const st = nistRes.status || {};
+            const checked = Number(st.checked_count || 0);
+            const totalComps = Math.max(1, Number(st.total_components || 1));
+            const pct = Math.min(99, Math.max(92, 92 + Math.round((checked / totalComps) * 7)));
+            setProgress(pct);
+            setScanStage(`NIST CVE Audit: ${checked} / ${totalComps} themes, plugins & core checked`);
+
+            if (!nistRes.has_more) {
+              break;
+            }
+
+            for (let sec = 30; sec > 0; sec--) {
+              setCurrentFile(`Checked ${checked} / ${totalComps} components. Next batch of 4 in ${sec}s (NIST rate-limit)...`);
+              await new Promise((r) => setTimeout(r, 1000));
+            }
+
+            nistRes = await apiRequest({
+              path: '/webcare-pro-security/v1/cve/nist-scan-batch',
+              method: 'POST',
+              data: { start: false },
+            });
+          }
+          setProgress(100);
+        } catch (nistErr) {
+          console.warn('NIST CVE batch phase skipped due to transient error', nistErr);
+        }
+      }
+
       setCurrentFile('Audit finalized.');
       await loadLatestScan();
     } catch (err: any) {

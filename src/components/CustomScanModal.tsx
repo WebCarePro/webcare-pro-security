@@ -129,6 +129,17 @@ export const CUSTOM_SCAN_OPTIONS_CATALOG: CustomScanOptionDef[] = [
     highlightTerm: 'plugin files',
   },
   {
+    key: 'scan_cve_vulnerabilities',
+    label: 'CVE - Themes/plugins/core vulnerability check',
+    description: 'Audits all installed WordPress core, plugins, and themes in real time against NIST NVD 2.0 CVE advisories (rate-limited at 4 components per 30s) and stores results in the Vault.',
+    category: 'General Options',
+    defaultChecked: true,
+    engineTag: 'NIST NVD CVE',
+    tagClass: 'pill-integrity',
+    highlightTerm: 'vulnerability check',
+    highlightVariant: 'variant-emerald',
+  },
+  {
     key: 'scan_unbundled_files',
     label: 'Scan wp-admin and wp-includes for files not bundled with WordPress',
     description: 'Detects unbundled, foreign, or orphaned PHP files lurking inside wp-admin and wp-includes that do not belong to the official WordPress distribution.',

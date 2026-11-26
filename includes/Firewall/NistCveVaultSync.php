@@ -21,10 +21,36 @@ class NistCveVaultSync {
     public const OPTION_SYNC_STATE  = 'webcareproscan_nist_sync_state';
     public const OPTION_API_KEY_ENC = 'webcareproscan_nist_api_key_enc';
     public const CRON_HOOK          = 'webcareproscan_nist_cve_batch_tick';
+    public const DAILY_CRON_HOOK    = 'webcareproscan_nist_daily_sync';
     public const VAULT_FILE         = 'nist_cve_catalog.vault.json';
+    public const BATCH_SIZE         = 4;
+    public const BATCH_INTERVAL_SEC = 30;
+    public const DAILY_COOLDOWN_SEC = 86400;
 
     public static function init(): void {
         add_action(self::CRON_HOOK, [__CLASS__, 'process_next_batch']);
+        add_action(self::DAILY_CRON_HOOK, [__CLASS__, 'maybe_run_daily_sync']);
+        if (function_exists('wp_next_scheduled') && function_exists('wp_schedule_event') && !wp_next_scheduled(self::DAILY_CRON_HOOK)) {
+            wp_schedule_event(time() + 60, 'daily', self::DAILY_CRON_HOOK);
+        }
+    }
+
+    /**
+     * Daily WP-Cron entrypoint: runs once every 24h to check all installed plugins, themes & core.
+     */
+    public static function maybe_run_daily_sync(): void {
+        $state = get_option(self::OPTION_SYNC_STATE, []);
+        if (!is_array($state)) {
+            $state = [];
+        }
+        if (!empty($state['is_running'])) {
+            return;
+        }
+        $last_completed = (int) ($state['last_completed_at'] ?? 0);
+        if ($last_completed > 0 && (time() - $last_completed) < self::DAILY_COOLDOWN_SEC) {
+            return;
+        }
+        self::start_background_sync();
     }
 
     /**
@@ -60,10 +86,10 @@ class NistCveVaultSync {
     }
 
     /**
-     * Batch size per 30-second window (5 without API key, 25 with API key).
+     * Batch size per 30-second window (strictly 4 components / 30s for safe NIST NVD compliance).
      */
     public static function get_batch_size(): int {
-        return self::get_api_key() !== '' ? 25 : 5;
+        return self::BATCH_SIZE;
     }
 
     private static function get_vault_file_path(): string {
@@ -325,12 +351,115 @@ class NistCveVaultSync {
 
         self::write_vault_catalog($catalog);
         $state['last_fetch_at'] = time();
-        $state['is_running'] = !empty($state['queue']);
+        $has_more               = !empty($state['queue']);
+        $state['is_running']    = $has_more;
+        if (!$has_more) {
+            $state['last_completed_at'] = time();
+            if (function_exists('wp_clear_scheduled_hook')) {
+                wp_clear_scheduled_hook(self::CRON_HOOK);
+            }
+        }
         update_option(self::OPTION_SYNC_STATE, $state, false);
 
-        if (!empty($state['queue']) && !wp_next_scheduled(self::CRON_HOOK)) {
-            wp_schedule_single_event(time() + 35, self::CRON_HOOK);
+        if ($has_more && !wp_next_scheduled(self::CRON_HOOK)) {
+            wp_schedule_single_event(time() + self::BATCH_INTERVAL_SEC, self::CRON_HOOK);
         }
+    }
+
+    /**
+     * Process a single real-time Complete/Custom Scan batch (4 components) without scheduling WP-Cron.
+     */
+    public static function process_scan_batch(bool $start = false): array {
+        if ($start) {
+            $components = self::collect_installed_components();
+            $state      = get_option(self::OPTION_SYNC_STATE, []);
+            if (!is_array($state)) {
+                $state = [];
+            }
+            $state['is_running']       = true;
+            $state['total_components'] = count($components);
+            $state['checked_count']    = 0;
+            $state['last_fetch_at']    = time();
+            $state['queue']            = $components;
+            update_option(self::OPTION_SYNC_STATE, $state, false);
+        }
+
+        $state = get_option(self::OPTION_SYNC_STATE, []);
+        if (!is_array($state) || empty($state['queue']) || !is_array($state['queue'])) {
+            if (is_array($state)) {
+                $state['is_running']        = false;
+                $state['last_completed_at'] = time();
+                update_option(self::OPTION_SYNC_STATE, $state, false);
+            }
+            return [
+                'success'   => true,
+                'has_more'  => false,
+                'remaining' => 0,
+                'status'    => self::get_status(),
+            ];
+        }
+
+        $batch   = array_splice($state['queue'], 0, self::BATCH_SIZE);
+        $catalog = self::read_vault_catalog();
+        $logs    = is_array($state['logs'] ?? null) ? $state['logs'] : [];
+
+        foreach ($batch as $comp) {
+            $slug    = (string) ($comp['slug'] ?? '');
+            $name    = (string) ($comp['name'] ?? $slug);
+            $version = (string) ($comp['version'] ?? '0.0.0');
+            $type    = (string) ($comp['type'] ?? 'plugin');
+            if ($slug === '') {
+                continue;
+            }
+            $result = self::query_nist_for_component($slug, $name, $version);
+            $cves   = $result['cves'];
+            $now    = time();
+
+            $catalog[$slug] = [
+                'slug'          => $slug,
+                'name'          => $name,
+                'type'          => $type,
+                'version'       => $version,
+                'checked_at'    => $now,
+                'query_keyword' => $result['query_keyword'],
+                'http_status'   => $result['http_status'],
+                'raw_total'     => $result['raw_total'],
+                'error'         => $result['error'],
+                'cves'          => $cves,
+            ];
+            $state['checked_count'] = (int) ($state['checked_count'] ?? 0) + 1;
+
+            array_unshift($logs, [
+                'ts'          => $now,
+                'slug'        => $slug,
+                'name'        => $name,
+                'type'        => $type,
+                'version'     => $version,
+                'http_status' => $result['http_status'],
+                'raw_total'   => $result['raw_total'],
+                'matched'     => count($cves),
+                'message'     => $result['error'] !== ''
+                    ? sprintf('%s (v%s): %s', $name, $version, $result['error'])
+                    : sprintf('%s (v%s): Scanned %d NVD records, %d matched CVEs', $name, $version, $result['raw_total'], count($cves)),
+            ]);
+        }
+
+        $state['logs']          = array_slice($logs, 0, 50);
+        self::write_vault_catalog($catalog);
+        $state['last_fetch_at'] = time();
+        $remaining              = count($state['queue']);
+        $state['is_running']    = $remaining > 0;
+        if ($remaining === 0) {
+            $state['last_completed_at'] = time();
+        }
+        update_option(self::OPTION_SYNC_STATE, $state, false);
+
+        return [
+            'success'   => true,
+            'has_more'  => $remaining > 0,
+            'remaining' => $remaining,
+            'status'    => self::get_status(),
+        ];
     }
 
     /**

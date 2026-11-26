@@ -422,6 +422,12 @@ final class ModularWafController extends AbstractApiController {
             'permission_callback' => $permission,
         ]);
 
+        register_rest_route($namespace, '/cve/nist-scan-batch', [
+            'methods'             => 'POST',
+            'callback'            => [self::class, 'run_nist_cve_scan_batch'],
+            'permission_callback' => $permission,
+        ]);
+
     }
 
     /**
@@ -2221,5 +2227,11 @@ final class ModularWafController extends AbstractApiController {
             'success' => $ok,
             'status'  => \WebCareProScanner\Firewall\NistCveVaultSync::get_status(),
         ]);
+    }
+
+    public static function run_nist_cve_scan_batch(\WP_REST_Request $request) {
+        $params = $request->get_json_params() ?: [];
+        $start  = !empty($params['start']);
+        return rest_ensure_response(\WebCareProScanner\Firewall\NistCveVaultSync::process_scan_batch($start));
     }
 }
