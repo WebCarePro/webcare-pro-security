@@ -26,6 +26,24 @@ class SessionSentinel {
     public static array $pending_auth_details = [];
 
     /**
+     * Per-request memoization of reconciled user IDs to avoid redundant vault disk reads.
+     *
+     * @var array<int, true>
+     */
+    private static array $reconciled_users = [];
+
+    /**
+     * Reset per-request reconciliation cache (used after writes or in tests).
+     */
+    public static function reset_reconcile_cache(?int $user_id = null): void {
+        if ($user_id === null) {
+            self::$reconciled_users = [];
+        } else {
+            unset(self::$reconciled_users[$user_id]);
+        }
+    }
+
+    /**
      * Get or create the hardened auth vault directory in uploads.
      */
     public static function get_vault_dir(): string {
@@ -131,14 +149,22 @@ class SessionSentinel {
                     $vault_data[$user_id] = $sessions_meta;
                 }
 
+                if (!class_exists('\\WebCareProScanner\\Security\\SecretVault')) {
+                    return; // Fail closed: never write unencrypted session data to vault
+                }
+
                 $json = (string) wp_json_encode($vault_data);
-                $key = class_exists('\\WebCareProScanner\\Security\\SecretVault') ? \WebCareProScanner\Security\SecretVault::get_key() : 'webcare_fallback_salt';
-                $encrypted = class_exists('\\WebCareProScanner\\Security\\SecretVault') ? \WebCareProScanner\Security\SecretVault::encrypt($json) : base64_encode($json);
+                $key = \WebCareProScanner\Security\SecretVault::get_key();
+                $encrypted = \WebCareProScanner\Security\SecretVault::encrypt($json);
+                if (!is_string($encrypted) || $encrypted === '') {
+                    return; // Fail closed on encryption failure
+                }
                 $hmac = hash_hmac('sha256', $encrypted, $key);
 
                 $container = [
                     'vault_format'      => 'V2_AUTH_SENTINEL_AEAD',
                     'scope'             => 'admin_session_sentinel_audit',
+                    'retention_days'    => 30,
                     'updated_at'        => time(),
                     'updated_at_iso'    => gmdate('Y-m-d\TH:i:s\Z'),
                     'hmac_sha256'       => $hmac,
@@ -147,10 +173,14 @@ class SessionSentinel {
 
                 $encoded_container = (string) wp_json_encode($container, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
 
-                $tmp_file = $vault_file . '.' . uniqid('wcp_vault_', true) . '.tmp';
+                $tmp_file = $vault_file . '.' . bin2hex(random_bytes(6)) . '.tmp';
                 if (@file_put_contents($tmp_file, $encoded_container, LOCK_EX) !== false) {
+                    // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod -- Restrict vault file permissions to owner read/write only.
+                    @chmod($tmp_file, 0600);
                     // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename -- Atomic vault replacement prevents partial file reads.
                     @rename($tmp_file, $vault_file);
+                    // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_chmod
+                    @chmod($vault_file, 0600);
                 }
             } finally {
                 @flock($lock_fp, LOCK_UN);
@@ -163,77 +193,206 @@ class SessionSentinel {
     }
 
     /**
-     * Retrieve decrypted session metadata for a user from database (with vault fallback).
+     * Encrypt and write session metadata to WordPress user_meta (fail-closed, never plaintext).
      */
-    public static function get_stored_session_meta(int $user_id): array {
-        if (!$user_id) {
-            return [];
+    private static function save_to_db_encrypted(int $user_id, array $sessions_meta): bool {
+        if (!$user_id || !class_exists('\\WebCareProScanner\\Security\\SecretVault')) {
+            return false;
         }
+        try {
+            $json = (string) wp_json_encode($sessions_meta);
+            $encrypted = \WebCareProScanner\Security\SecretVault::encrypt($json);
+            if (!is_string($encrypted) || $encrypted === '') {
+                return false;
+            }
+            update_user_meta($user_id, 'webcareproscan_session_meta', $encrypted);
+            wp_cache_delete($user_id, 'user_meta');
+            return true;
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
 
+    /**
+     * Read and decrypt session metadata strictly from WordPress user_meta.
+     */
+    private static function read_from_db_encrypted(int $user_id): array {
         $raw = get_user_meta($user_id, 'webcareproscan_session_meta', true);
-
-        // 1. If stored as an encrypted string (webcare_gcm:...)
-        if (is_string($raw) && !empty($raw) && class_exists('\\WebCareProScanner\\Security\\SecretVault')) {
+        if (is_string($raw) && $raw !== '' && class_exists('\\WebCareProScanner\\Security\\SecretVault')) {
             try {
                 $decrypted = \WebCareProScanner\Security\SecretVault::decrypt($raw);
-                if (is_string($decrypted) && !empty($decrypted)) {
+                if (is_string($decrypted) && $decrypted !== '') {
                     $decoded = json_decode($decrypted, true);
                     if (is_array($decoded)) {
                         return $decoded;
                     }
                 }
             } catch (\Throwable $e) {
-                // Decryption error
+                return [];
             }
         }
-
-        // 2. If stored as legacy/unencrypted array
-        if (is_array($raw) && !empty($raw)) {
-            return $raw;
-        }
-
-        // 3. Fallback: Recover from isolated encrypted JSON vault archive
-        try {
-            $vault_data = self::read_from_auth_vault();
-            if (isset($vault_data[$user_id]) && is_array($vault_data[$user_id])) {
-                // Re-persist recovered data into database in encrypted format
-                self::save_stored_session_meta($user_id, $vault_data[$user_id]);
-                return $vault_data[$user_id];
-            }
-        } catch (\Throwable $e) {
-            // Ignore vault read errors
-        }
-
         return [];
     }
 
     /**
+     * Union-merge session metadata from DB and Vault, preserving all records within the
+     * 30-day retention window and keeping the freshest status/timestamps/IP histories.
+     *
+     * @param array $db_meta
+     * @param array $vault_meta
+     * @return array{merged: array, changed_db: bool, changed_vault: bool}
+     */
+    private static function merge_dual_storage_entries(array $db_meta, array $vault_meta): array {
+        $merged = $db_meta;
+        $changed_db = false;
+        $changed_vault = false;
+
+        foreach ($vault_meta as $key => $v_entry) {
+            if (!is_array($v_entry)) {
+                continue;
+            }
+            if (!isset($merged[$key]) || !is_array($merged[$key])) {
+                $merged[$key] = $v_entry;
+                $changed_db = true;
+                continue;
+            }
+
+            $d_entry = $merged[$key];
+            $d_ts = max((int) ($d_entry['last_seen'] ?? 0), (int) ($d_entry['revoked_at'] ?? 0), (int) ($d_entry['login_time'] ?? 0));
+            $v_ts = max((int) ($v_entry['last_seen'] ?? 0), (int) ($v_entry['revoked_at'] ?? 0), (int) ($v_entry['login_time'] ?? 0));
+
+            if ($v_ts > $d_ts) {
+                $merged[$key] = array_merge($d_entry, $v_entry);
+                $changed_db = true;
+            } elseif ($d_ts > $v_ts) {
+                $changed_vault = true;
+            }
+        }
+
+        foreach ($db_meta as $key => $d_entry) {
+            if (is_array($d_entry) && (!isset($vault_meta[$key]) || !is_array($vault_meta[$key]))) {
+                $changed_vault = true;
+            }
+        }
+
+        return [
+            'merged'        => $merged,
+            'changed_db'    => $changed_db,
+            'changed_vault' => $changed_vault,
+        ];
+    }
+
+    /**
+     * Retrieve decrypted session metadata for a user with bidirectional self-healing
+     * between Database (user_meta) and Encrypted Auth Vault (filesystem).
+     *
+     * - Missing from Vault -> syncs encrypted DB copy back to Vault.
+     * - Missing from DB    -> syncs encrypted Vault copy back to DB.
+     * - Diverged           -> union-merges both and persists encrypted copy to both stores.
+     */
+    public static function get_stored_session_meta(int $user_id): array {
+        if (!$user_id) {
+            return [];
+        }
+
+        $db_meta = self::read_from_db_encrypted($user_id);
+
+        // Fast path: already reconciled for this user in the current PHP request
+        if (isset(self::$reconciled_users[$user_id])) {
+            return $db_meta;
+        }
+
+        $vault_meta = [];
+        try {
+            $vault_data = self::read_from_auth_vault();
+            if (isset($vault_data[$user_id]) && is_array($vault_data[$user_id])) {
+                $vault_meta = $vault_data[$user_id];
+            }
+        } catch (\Throwable $e) {
+            $vault_meta = [];
+        }
+
+        self::$reconciled_users[$user_id] = true;
+
+        // Case 1: Both empty
+        if (empty($db_meta) && empty($vault_meta)) {
+            return [];
+        }
+
+        // Case 2: DB has data, Vault is missing -> heal Vault from DB
+        if (!empty($db_meta) && empty($vault_meta)) {
+            self::sync_to_auth_vault($user_id, $db_meta);
+            if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                \WebCareProScanner\System\AuditLogger::log('session_vault_healed_from_db', sprintf('Rebuilt missing encrypted Session Sentinel vault record for user ID %d from database.', $user_id));
+            }
+            return $db_meta;
+        }
+
+        // Case 3: Vault has data, DB is missing -> heal DB from Vault
+        if (empty($db_meta) && !empty($vault_meta)) {
+            self::save_to_db_encrypted($user_id, $vault_meta);
+            if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                \WebCareProScanner\System\AuditLogger::log('session_db_healed_from_vault', sprintf('Restored missing encrypted Session Sentinel database record for user ID %d from Auth Vault.', $user_id));
+            }
+            return $vault_meta;
+        }
+
+        // Case 4: Both have data -> reconcile any drift via union merge
+        $reconciled = self::merge_dual_storage_entries($db_meta, $vault_meta);
+        if ($reconciled['changed_db']) {
+            self::save_to_db_encrypted($user_id, $reconciled['merged']);
+        }
+        if ($reconciled['changed_vault']) {
+            self::sync_to_auth_vault($user_id, $reconciled['merged']);
+        }
+
+        return $reconciled['merged'];
+    }
+
+    /**
      * Encrypt and store administrator login & session history in BOTH database and JSON vault file.
+     * Strictly fail-closed: never writes plaintext session data to either store.
      */
     public static function save_stored_session_meta(int $user_id, array $sessions_meta): void {
         if (!$user_id) {
             return;
         }
 
-        // 1. Encrypt and store in database
-        try {
-            $json = (string) wp_json_encode($sessions_meta);
-            if (class_exists('\\WebCareProScanner\\Security\\SecretVault')) {
-                $encrypted = \WebCareProScanner\Security\SecretVault::encrypt($json);
-                update_user_meta($user_id, 'webcareproscan_session_meta', $encrypted);
-            } else {
-                update_user_meta($user_id, 'webcareproscan_session_meta', $sessions_meta);
-            }
-        } catch (\Throwable $e) {
-            update_user_meta($user_id, 'webcareproscan_session_meta', $sessions_meta);
-        }
-        wp_cache_delete($user_id, 'user_meta');
+        // 1. Encrypt and store in database (fail-closed)
+        self::save_to_db_encrypted($user_id, $sessions_meta);
 
-        // 2. Synchronize to isolated encrypted JSON vault archive
+        // 2. Synchronize encrypted copy to isolated Auth Vault file
         try {
             self::sync_to_auth_vault($user_id, $sessions_meta);
         } catch (\Throwable $e) {
             // Failsafe
+        }
+
+        self::$reconciled_users[$user_id] = true;
+    }
+
+    /**
+     * Daily WP-Cron sweep to verify and bidirectionally heal DB <-> Auth Vault encryption parity
+     * for all administrators and all users present in the Auth Vault.
+     */
+    public static function run_daily_dual_storage_sync(): void {
+        $user_ids = [];
+        $admin_ids = get_users(['role' => 'administrator', 'fields' => 'ID']);
+        if (is_array($admin_ids)) {
+            foreach ($admin_ids as $aid) {
+                $user_ids[] = (int) $aid;
+            }
+        }
+
+        $vault_data = self::read_from_auth_vault();
+        foreach (array_keys($vault_data) as $vid) {
+            $user_ids[] = (int) $vid;
+        }
+
+        $user_ids = array_values(array_unique(array_filter($user_ids)));
+        foreach ($user_ids as $uid) {
+            self::reset_reconcile_cache($uid);
+            self::get_stored_session_meta($uid);
         }
     }
 
@@ -253,6 +412,12 @@ class SessionSentinel {
 
         // Cleanup on logout
         add_action('wp_logout', [__CLASS__, 'on_user_logout']);
+
+        // Daily bidirectional DB <-> Auth Vault integrity sweep
+        add_action('webcareproscan_daily_session_vault_sync', [__CLASS__, 'run_daily_dual_storage_sync']);
+        if ((is_admin() || wp_doing_cron()) && !wp_next_scheduled('webcareproscan_daily_session_vault_sync')) {
+            wp_schedule_event(time() + HOUR_IN_SECONDS, 'daily', 'webcareproscan_daily_session_vault_sync');
+        }
     }
 
     /**
