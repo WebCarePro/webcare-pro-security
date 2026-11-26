@@ -6275,7 +6275,7 @@ function NistCveSyncSettingsCard({ apiRequest }: { apiRequest: (opts: any) => Pr
 
   const loadStatus = async () => {
     try {
-      const res = await apiRequest({ path: '/webcare-pro-security/v1/cve/nist-status', method: 'GET' });
+      const res = await apiRequest({ path: '/cve/nist-status', method: 'GET' });
       if (res?.success && res.status) {
         setStatus(res.status);
       }
@@ -6307,7 +6307,7 @@ function NistCveSyncSettingsCard({ apiRequest }: { apiRequest: (opts: any) => Pr
             setBusy(true);
             setNotice(null);
             try {
-              const res = await apiRequest({ path: '/webcare-pro-security/v1/cve/nist-sync-start', method: 'POST' });
+              const res = await apiRequest({ path: '/cve/nist-sync-start', method: 'POST' });
               if (res?.success) {
                 setStatus(res.status);
                 setNotice({ type: 'success', text: res.message || 'Background NIST NVD CVE sync started.' });
@@ -6341,7 +6341,7 @@ function NistCveSyncSettingsCard({ apiRequest }: { apiRequest: (opts: any) => Pr
             setNotice(null);
             try {
               const res = await apiRequest({
-                path: '/webcare-pro-security/v1/cve/nist-api-key',
+                path: '/cve/nist-api-key',
                 method: 'POST',
                 data: { api_key: apiKeyInput },
               });
