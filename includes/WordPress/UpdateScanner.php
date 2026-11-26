@@ -704,6 +704,7 @@ class UpdateScanner {
         }
 
         self::merge_threat_intel_cves($cves, (string) $slug, (string) $version);
+        self::merge_wpvulnerability_cves($cves, 'plugin', (string) $slug, (string) $version);
 
         set_transient($cache_key, $cves, self::CACHE_TTL);
         return $cves;
@@ -744,9 +745,107 @@ class UpdateScanner {
         }
 
         self::merge_threat_intel_cves($cves, (string) $slug, (string) $version);
+        self::merge_wpvulnerability_cves($cves, 'plugin', (string) $slug, (string) $version);
 
         set_transient($cache_key, $cves, self::CACHE_TTL);
         return $cves;
+    }
+
+    /**
+     * Query the free WPVulnerability.net API for real-time CVEs affecting an installed plugin/theme,
+     * cached per slug+version so repeated page loads are instant.
+     *
+     * @param array  $cves
+     * @param string $type 'plugin' or 'theme'
+     * @param string $slug
+     * @param string $version
+     */
+    private static function merge_wpvulnerability_cves(array &$cves, string $type, string $slug, string $version): void {
+        if ($slug === '' || $version === '' || (defined('WEBCAREPROSCAN_TESTING') && WEBCAREPROSCAN_TESTING)) {
+            return;
+        }
+        if (!function_exists('wp_remote_get')) {
+            return;
+        }
+
+        $endpoint = sprintf(
+            'https://www.wpvulnerability.net/%s/%s/',
+            $type === 'theme' ? 'theme' : 'plugin',
+            rawurlencode(strtolower($slug))
+        );
+
+        $res = wp_remote_get($endpoint, [
+            'timeout'    => 4,
+            'user-agent' => 'WEBCARE-CVE-Audit/' . (defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '1.0'),
+        ]);
+        if (is_wp_error($res) || wp_remote_retrieve_response_code($res) !== 200) {
+            return;
+        }
+
+        $body = json_decode(wp_remote_retrieve_body($res), true);
+        $vulns = $body['data']['vulnerability'] ?? [];
+        if (!is_array($vulns) || empty($vulns)) {
+            return;
+        }
+
+        $seen = [];
+        foreach ($cves as $existing) {
+            if (!empty($existing['cve_id'])) {
+                $seen[strtoupper((string) $existing['cve_id'])] = true;
+            }
+        }
+
+        foreach ($vulns as $v) {
+            if (!is_array($v)) {
+                continue;
+            }
+            $op = $v['operator'] ?? [];
+            $min_ver = (string) ($op['min_version'] ?? '');
+            $max_ver = (string) ($op['max_version'] ?? '');
+            $min_op  = (string) ($op['min_operator'] ?? 'ge');
+            $max_op  = (string) ($op['max_operator'] ?? 'lt');
+
+            if ($min_ver !== '' && !version_compare($version, $min_ver, $min_op === 'gt' ? '>' : '>=')) {
+                continue;
+            }
+            if ($max_ver !== '' && !version_compare($version, $max_ver, $max_op === 'le' ? '<=' : '<')) {
+                continue;
+            }
+            if ($min_ver === '' && $max_ver === '') {
+                continue;
+            }
+
+            $cve_id = '';
+            $cvss = 7.5;
+            if (!empty($v['source']) && is_array($v['source'])) {
+                foreach ($v['source'] as $src) {
+                    if (!empty($src['id']) && str_starts_with(strtoupper((string) $src['id']), 'CVE-')) {
+                        $cve_id = strtoupper((string) $src['id']);
+                        break;
+                    }
+                }
+            }
+            if ($cve_id === '' || isset($seen[$cve_id])) {
+                continue;
+            }
+            if (!empty($v['impact']['cvss']['score'])) {
+                $cvss = (float) $v['impact']['cvss']['score'];
+            }
+
+            $severity = $cvss >= 9.0 ? 'critical' : ($cvss >= 7.0 ? 'high' : ($cvss >= 4.0 ? 'medium' : 'low'));
+            $fixed_in = $max_ver !== '' ? $max_ver : 'Latest';
+            $seen[$cve_id] = true;
+
+            $cves[] = [
+                'cve_id'      => $cve_id,
+                'title'       => (string) ($v['name'] ?? $cve_id),
+                'severity'    => $severity,
+                'cvss'        => $cvss,
+                'fixed_in'    => $fixed_in,
+                'reference'   => "https://nvd.nist.gov/vuln/detail/{$cve_id}",
+                'cve_details' => (string) ($v['impact']['cwe'][0]['description'] ?? ($v['name'] ?? '')),
+            ];
+        }
     }
 
     /**
