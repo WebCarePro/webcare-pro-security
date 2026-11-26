@@ -759,6 +759,44 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
                                     </button>
                                   )}
 
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      try {
+                                        const res = await apiRequest({
+                                          path: '/cve/nist-fetch-component',
+                                          method: 'POST',
+                                          data: {
+                                            slug: item.slug,
+                                            name: item.name,
+                                            version: item.installed_version || '0.0.0',
+                                          },
+                                        });
+                                        if (res && res.success) {
+                                          await loadInventory(true);
+                                        }
+                                      } catch (e) {
+                                        // Ignore transient network errors
+                                      }
+                                    }}
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '4px',
+                                      padding: '4px 8px',
+                                      borderRadius: '6px',
+                                      fontSize: '11px',
+                                      fontWeight: 600,
+                                      cursor: 'pointer',
+                                      background: 'var(--webcare-bg-panel)',
+                                      color: 'var(--webcare-text-secondary)',
+                                      border: '1px solid var(--webcare-border-subtle)',
+                                    }}
+                                    title="Live-fetch CVE advisories from NIST NVD for this component and store in Vault"
+                                  >
+                                    Fetch NIST
+                                  </button>
+
                                   {item.is_outdated && item.type === 'plugin' && item.file ? (
                                     <button
                                       type="button"
@@ -914,6 +952,44 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
                                       </button>
                                     );
                                   })()}
+
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      try {
+                                        const res = await apiRequest({
+                                          path: '/cve/nist-fetch-component',
+                                          method: 'POST',
+                                          data: {
+                                            slug: item.slug,
+                                            name: item.name,
+                                            version: item.installed_version || '0.0.0',
+                                          },
+                                        });
+                                        if (res && res.success) {
+                                          await loadInventory(true);
+                                        }
+                                      } catch (e) {
+                                        // Ignore transient network errors
+                                      }
+                                    }}
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '4px',
+                                      padding: '4px 8px',
+                                      borderRadius: '6px',
+                                      fontSize: '11px',
+                                      fontWeight: 600,
+                                      cursor: 'pointer',
+                                      background: 'var(--webcare-bg-panel)',
+                                      color: 'var(--webcare-text-secondary)',
+                                      border: '1px solid var(--webcare-border-subtle)',
+                                    }}
+                                    title="Live-fetch CVE advisories from NIST NVD for this component and store in Vault"
+                                  >
+                                    Fetch NIST
+                                  </button>
 
                                   {item.is_outdated && item.type === 'plugin' && item.file ? (
                                     <button

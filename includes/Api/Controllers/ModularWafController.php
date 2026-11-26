@@ -398,6 +398,30 @@ final class ModularWafController extends AbstractApiController {
             'permission_callback' => $permission,
         ]);
 
+        register_rest_route($namespace, '/cve/nist-status', [
+            'methods'             => 'GET',
+            'callback'            => [self::class, 'get_nist_cve_status'],
+            'permission_callback' => $permission,
+        ]);
+
+        register_rest_route($namespace, '/cve/nist-sync-start', [
+            'methods'             => 'POST',
+            'callback'            => [self::class, 'start_nist_cve_sync'],
+            'permission_callback' => $permission,
+        ]);
+
+        register_rest_route($namespace, '/cve/nist-fetch-component', [
+            'methods'             => 'POST',
+            'callback'            => [self::class, 'fetch_nist_cve_component'],
+            'permission_callback' => $permission,
+        ]);
+
+        register_rest_route($namespace, '/cve/nist-api-key', [
+            'methods'             => 'POST',
+            'callback'            => [self::class, 'save_nist_api_key'],
+            'permission_callback' => $permission,
+        ]);
+
     }
 
     /**
@@ -2160,5 +2184,42 @@ final class ModularWafController extends AbstractApiController {
             'preboot_fail2ban_lines'=> $preboot_mod_lines,
             'recent_log_records'    => array_slice($records, 0, 200),
         ];
+    }
+
+    public static function get_nist_cve_status(\WP_REST_Request $request) {
+        return rest_ensure_response([
+            'success' => true,
+            'status'  => \WebCareProScanner\Firewall\NistCveVaultSync::get_status(),
+        ]);
+    }
+
+    public static function start_nist_cve_sync(\WP_REST_Request $request) {
+        $status = \WebCareProScanner\Firewall\NistCveVaultSync::start_background_sync();
+        return rest_ensure_response([
+            'success' => true,
+            'message' => __('Background NIST NVD CVE sync started.', 'webcare-pro-security'),
+            'status'  => $status,
+        ]);
+    }
+
+    public static function fetch_nist_cve_component(\WP_REST_Request $request) {
+        $params  = $request->get_json_params() ?: [];
+        $slug    = sanitize_text_field((string) ($params['slug'] ?? ''));
+        $name    = sanitize_text_field((string) ($params['name'] ?? $slug));
+        $version = sanitize_text_field((string) ($params['version'] ?? '0.0.0'));
+        if ($slug === '') {
+            return new \WP_Error('missing_slug', __('Component slug is required.', 'webcare-pro-security'), ['status' => 400]);
+        }
+        return rest_ensure_response(\WebCareProScanner\Firewall\NistCveVaultSync::fetch_single_component($slug, $name, $version));
+    }
+
+    public static function save_nist_api_key(\WP_REST_Request $request) {
+        $params = $request->get_json_params() ?: [];
+        $key    = (string) ($params['api_key'] ?? '');
+        $ok     = \WebCareProScanner\Firewall\NistCveVaultSync::save_api_key($key);
+        return rest_ensure_response([
+            'success' => $ok,
+            'status'  => \WebCareProScanner\Firewall\NistCveVaultSync::get_status(),
+        ]);
     }
 }

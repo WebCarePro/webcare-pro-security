@@ -704,6 +704,7 @@ class UpdateScanner {
         }
 
         self::merge_threat_intel_cves($cves, (string) $slug, (string) $version);
+        self::merge_nist_vault_cves($cves, (string) $slug, (string) $version);
         self::merge_wpvulnerability_cves($cves, 'plugin', (string) $slug, (string) $version);
 
         set_transient($cache_key, $cves, self::CACHE_TTL);
@@ -745,10 +746,37 @@ class UpdateScanner {
         }
 
         self::merge_threat_intel_cves($cves, (string) $slug, (string) $version);
+        self::merge_nist_vault_cves($cves, (string) $slug, (string) $version);
         self::merge_wpvulnerability_cves($cves, 'plugin', (string) $slug, (string) $version);
 
         set_transient($cache_key, $cves, self::CACHE_TTL);
         return $cves;
+    }
+
+    /**
+     * Merge cached NIST NVD advisories from the encrypted NistCveVaultSync store.
+     */
+    private static function merge_nist_vault_cves(array &$cves, string $slug, string $version): void {
+        if ($slug === '' || $version === '' || !class_exists('\\WebCareProScanner\\Firewall\\NistCveVaultSync')) {
+            return;
+        }
+        $nist_cves = \WebCareProScanner\Firewall\NistCveVaultSync::get_component_cves($slug, $version);
+        if (empty($nist_cves)) {
+            return;
+        }
+        $seen = [];
+        foreach ($cves as $existing) {
+            if (!empty($existing['cve_id'])) {
+                $seen[strtoupper((string) $existing['cve_id'])] = true;
+            }
+        }
+        foreach ($nist_cves as $item) {
+            $id = strtoupper((string) ($item['cve_id'] ?? ''));
+            if ($id !== '' && !isset($seen[$id])) {
+                $seen[$id] = true;
+                $cves[] = $item;
+            }
+        }
     }
 
     /**
