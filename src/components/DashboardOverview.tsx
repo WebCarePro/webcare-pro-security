@@ -417,7 +417,10 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     () => (uniqueIssues || []).filter((i) => i.status === 'open'),
     [uniqueIssues]
   );
-  const reviewItemsCount = openIssues.length;
+  const reviewItemsCount = useMemo(
+    () => openIssues.filter((i) => i.severity === 'critical' || i.severity === 'high').length,
+    [openIssues]
+  );
 
   const { healthScore, protectionStatusLabel, protectionStatusColor } = useMemo(() => {
     let activeRaw = 0;
@@ -769,6 +772,17 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                   <Clock size={12} />
                   Last checked {lastScanText}
                 </span>
+              )}
+
+              {(lastScanText || openIssues.length > 0) && (
+                <a
+                  href="admin.php?page=webcare-pro-scanner"
+                  className="wcp-dash-privacy-pill"
+                  style={{ textDecoration: 'none', fontWeight: 600, color: '#4f46e5' }}
+                >
+                  <span>View Scan Results</span>
+                  <ArrowRight size={12} />
+                </a>
               )}
             </div>
 
