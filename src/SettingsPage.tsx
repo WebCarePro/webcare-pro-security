@@ -6299,6 +6299,17 @@ function NistCveSyncSettingsCard({ apiRequest }: { apiRequest: (opts: any) => Pr
           <p style={{ margin: '2px 0 0', fontSize: '13px', color: 'var(--webcare-text-secondary, #475569)' }}>
             Checked <strong>{status ? `${status.checked_count} / ${status.total_components}` : '0 / 0'}</strong> plugins &amp; themes &bull; Last Fetch: <strong>{status?.last_fetch_human || 'Never'}</strong> &bull; {status?.has_api_key ? 'NIST API Connected (25 req / 35s)' : 'Free NIST Fetch (5 req / 35s)'}
           </p>
+          <p style={{ margin: '6px 0 0', fontSize: '12px', color: 'var(--webcare-text-muted, #64748b)' }}>
+            Syncs CVE advisories for your installed plugins and themes in the background and stores them in your local vault. Without an API key, NIST allows 5 requests per 35 seconds; with a free API key, rate limits increase to 25 requests per 35 seconds.{' '}
+            <a
+              href="https://nvd.nist.gov/developers/request-an-api-key"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: '#4f46e5', fontWeight: 600, textDecoration: 'none' }}
+            >
+              Request a free NIST NVD API Key &rarr;
+            </a>
+          </p>
         </div>
 
         <button
