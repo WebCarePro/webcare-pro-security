@@ -1,5 +1,6 @@
 ﻿v:0.0.1 - 2026-11-26
-- Session Sentinel Global "Revoke All Other Sessions" Behavior:
+- Session Sentinel Pre-Install Login Handling & Global "Revoke All Other Sessions":
+  * `SessionSentinel.php`, `LoginHistoryManager.php` & `AuthSecurityPage.tsx`: Flagged pre-existing WordPress administrator sessions created before plugin installation as `Old Login (Pre-Install)` (with a `Cloudflare Proxy IP` indicator when WordPress recorded a Cloudflare edge IP, preventing false IP-change alerts), and automatically anchored the real client IP plus recorded a deduplicated `Session Resumed (Post-Install)` login history entry on the administrator's first post-install visit or login.
   * `AuthSecurityPage.tsx`, `AuthController.php` & `SessionSentinel.php`: Updated the global `Revoke All Other Sessions` action to log out every active user session across the site (all roles) except the current administrator's active browser session, while strictly preserving all login history and device records for every user.
 - Next-Gen 2026–2027 Malware, Polyglot & Stealth Backdoor Detection Upgrades:
   * `KnownMalwareManifest`: Added memory-safe 64 KB dual streaming SHA-256 hashing (`compute_dual_hashes()`) computing both raw SHA-256 and whitespace-normalized structural SHA-256 digests in a single pass to neutralize re-indentation and CRLF/LF hash-evasion mutations.

@@ -906,12 +906,21 @@ class SessionSentinel {
         }
 
         $now = time();
-        $login_ip = $existing_info['login_ip'] ?? ($existing_decoded['login_ip'] ?? $ip);
+        $raw_existing_login_ip = $existing_info['login_ip'] ?? ($existing_decoded['login_ip'] ?? '');
+        $was_pre_install_or_cf = empty($existing_info) || empty($raw_existing_login_ip) || \WebCareProScanner\Firewall\FirewallEngine::is_cloudflare_ip($raw_existing_login_ip);
+        $login_ip = $was_pre_install_or_cf ? $ip : $raw_existing_login_ip;
 
-        // Preserve and update unlimited IP history
+        // Preserve and update unlimited IP history (stripping any stale Cloudflare proxy IPs when healing)
         $existing_history = isset($existing_info['ip_history']) && is_array($existing_info['ip_history'])
             ? $existing_info['ip_history']
             : (isset($existing_decoded['ip_history']) && is_array($existing_decoded['ip_history']) ? $existing_decoded['ip_history'] : []);
+
+        if ($was_pre_install_or_cf && !empty($existing_history)) {
+            $existing_history = array_values(array_filter(
+                $existing_history,
+                static fn($h_item) => is_array($h_item) && !empty($h_item['ip']) && !\WebCareProScanner\Firewall\FirewallEngine::is_cloudflare_ip((string) $h_item['ip'])
+            ));
+        }
 
         if (empty($existing_history) && !empty($login_ip)) {
             $existing_history[] = [
@@ -974,6 +983,19 @@ class SessionSentinel {
         $sessions_meta[$token]    = $entry;
         $sessions_meta[$verifier] = $entry;
         self::save_stored_session_meta($user_id, $sessions_meta);
+
+        // When a pre-install (or Cloudflare-proxied) session is accessed for the first time after install,
+        // record a deduplicated login history entry with the real client IP.
+        if ($was_pre_install_or_cf && !empty($ip) && !\WebCareProScanner\Firewall\FirewallEngine::is_cloudflare_ip($ip)) {
+            if (class_exists('\\WebCareProScanner\\Auth\\LoginHistoryManager')) {
+                \WebCareProScanner\Auth\LoginHistoryManager::record_resumed_session(
+                    $user_id,
+                    $token,
+                    $ip,
+                    __('Session Resumed (Post-Install)', 'webcare-pro-security')
+                );
+            }
+        }
     }
 
     /**
@@ -1624,6 +1646,7 @@ class SessionSentinel {
 
                 $is_active = !$is_logged_out;
                 $status = $is_active ? 'active' : 'logged_out';
+                $is_pre_install = empty($meta) && !empty($data) && !$is_current;
 
                 $ip = 'Unknown';
                 $ua = 'Unknown';
@@ -1780,7 +1803,8 @@ class SessionSentinel {
                     return ($b['last_seen_raw'] ?? 0) <=> ($a['last_seen_raw'] ?? 0);
                 });
 
-                $has_ip_changed = count($distinct_ips) > 1 || (!empty($session_active_ip) && !empty($ip) && $session_active_ip !== $ip);
+                $is_cloudflare_proxy_ip = \WebCareProScanner\Firewall\FirewallEngine::is_cloudflare_ip($ip);
+                $has_ip_changed = !$is_pre_install && !$is_cloudflare_proxy_ip && (count($distinct_ips) > 1 || (!empty($session_active_ip) && !empty($ip) && $session_active_ip !== $ip));
 
                 if ($has_ip_changed && !in_array($session_active_ip, $distinct_ips, true) && !empty($session_active_ip) && $session_active_ip !== 'Unknown') {
                     $distinct_ips[] = $session_active_ip;
@@ -1926,6 +1950,8 @@ class SessionSentinel {
                     'avatar_url'               => get_avatar_url($admin->ID, ['size' => 48]),
                     'is_current'               => $is_current,
                     'is_active'                => $is_active,
+                    'is_pre_install'           => $is_pre_install,
+                    'is_cloudflare_proxy_ip'   => $is_cloudflare_proxy_ip,
                     'status'                   => $status,
                     'is_revoked'               => $is_logged_out,
                     'revoked_at'               => isset($meta['revoked_at']) ? (int) $meta['revoked_at'] : null,

@@ -275,6 +275,98 @@ class LoginHistoryManager {
     }
 
     /**
+     * Record a deduplicated login history entry when a pre-install session is first
+     * accessed after WebCare Pro Security & Firewall is installed (capturing the real client IP).
+     *
+     * @param int    $user_id
+     * @param string $session_token
+     * @param string $ip
+     * @param string $auth_method
+     * @return bool True if a new record was inserted, false if already recorded or skipped.
+     */
+    public static function record_resumed_session(int $user_id, string $session_token, string $ip, string $auth_method = 'Session Resumed (Post-Install)'): bool {
+        if ($user_id <= 0 || $session_token === '' || $ip === '' || $ip === 'Unknown') {
+            return false;
+        }
+
+        if (FirewallEngine::is_cloudflare_ip($ip)) {
+            return false;
+        }
+
+        global $wpdb;
+        if (!isset($wpdb) || !is_object($wpdb) || empty($wpdb->prefix)) {
+            return false;
+        }
+
+        $table = $wpdb->prefix . self::TABLE_NAME;
+        $token_hash = substr(hash('sha256', $session_token), 0, 64);
+
+        // Deduplicate: never insert more than one login history entry for the same session token
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $existing_id = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT id FROM {$table} WHERE user_id = %d AND session_token = %s LIMIT 1",
+                $user_id,
+                $token_hash
+            )
+        );
+        if (!empty($existing_id)) {
+            return false;
+        }
+
+        $ua = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : 'Unknown';
+        $device_uuid = self::get_or_create_device_uuid();
+        $device_fp   = self::get_device_fingerprint($ua, '', '');
+        $parsed      = self::parse_device_details($ua, '');
+
+        $country_info = class_exists('\\WebCareProScanner\\Auth\\SessionSentinel')
+            ? SessionSentinel::get_cloudflare_country($ip)
+            : ['code' => 'XX', 'name' => 'Unknown', 'cf_header' => false];
+
+        $telemetry = [
+            'ip'                 => $ip,
+            'user_agent'         => $ua,
+            'browser'            => $parsed['browser'],
+            'browser_version'    => $parsed['browser_version'],
+            'platform'           => $parsed['platform'],
+            'device_type'        => $parsed['device_type'],
+            'device_uuid'        => $device_uuid,
+            'device_fingerprint' => $device_fp,
+            'screen_resolution'  => $parsed['screen_resolution'],
+            'viewport'           => $parsed['viewport'],
+            'timezone'           => 'UTC',
+            'country'            => $country_info['country'] ?? ($country_info['name'] ?? 'Unknown'),
+            'country_code'       => $country_info['country_code'] ?? ($country_info['code'] ?? 'XX'),
+            'auth_method'        => $auth_method,
+        ];
+
+        $encrypted_data = SecretVault::encrypt((string) wp_json_encode($telemetry));
+        $now     = current_time('mysql');
+        $now_gmt = gmdate('Y-m-d H:i:s');
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+        $inserted = $wpdb->insert(
+            $table,
+            [
+                'user_id'        => $user_id,
+                'session_token'  => $token_hash,
+                'login_time'     => $now,
+                'login_time_gmt' => $now_gmt,
+                'last_seen'      => $now,
+                'last_seen_gmt'  => $now_gmt,
+                'encrypted_data' => $encrypted_data,
+                'created_at'     => $now,
+                'created_at_gmt' => $now_gmt,
+            ],
+            ['%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s']
+        );
+
+        self::prune_old_logins($user_id);
+
+        return $inserted !== false;
+    }
+
+    /**
      * Update active session heartbeat and telemetry (Screen size, Viewport)
      */
     public static function update_session_telemetry(int $user_id, array $client_telemetry) {

@@ -96,6 +96,8 @@ export interface ActiveSession {
   avatar_url: string;
   is_current: boolean;
   is_active?: boolean;
+  is_pre_install?: boolean;
+  is_cloudflare_proxy_ip?: boolean;
   status?: 'active' | 'logged_out';
   is_revoked?: boolean;
   revoked_at?: number | null;
@@ -2645,6 +2647,26 @@ export const AuthSecurityPage = ({
                                       {isLoggedOut && (
                                         <span className="webcare-badge-device-logged-out" title={sess.revoked_at_human ? `Logged out ${sess.revoked_at_human}` : 'Session logged out'}>
                                           <LogOut size={10} /> Logged Out
+                                        </span>
+                                      )}
+
+                                      {/* Pre-Install Old Login Badge */}
+                                      {sess.is_pre_install && (
+                                        <span
+                                          className="webcare-badge-device-logged-out"
+                                          title="Logged in before WebCare Pro was installed. Real IP and login history will be recorded automatically on next visit or login."
+                                        >
+                                          <Clock size={10} /> Old Login (Pre-Install)
+                                        </span>
+                                      )}
+
+                                      {/* Cloudflare Proxy IP Notice on Pre-Install Sessions */}
+                                      {sess.is_cloudflare_proxy_ip && !sess.is_current && (
+                                        <span
+                                          className="webcare-badge-device-logged-out"
+                                          title="WordPress recorded a Cloudflare proxy IP before WebCare Pro was installed. Real IP will update automatically on next access."
+                                        >
+                                          <Globe size={10} /> Cloudflare Proxy IP
                                         </span>
                                       )}
 
