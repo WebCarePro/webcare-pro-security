@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-27T19:13:26.344Z",
+  "generated_at": "2026-11-27T19:51:27.802Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -336,8 +336,8 @@
       "size": 20365
     },
     "includes/Content/HTMLAnalyzer.php": {
-      "sha256": "248a1b1f29379585d73c9b6679cdfdc24dbda4a50ae34c6cacde6502eb4b9385",
-      "size": 19516
+      "sha256": "6f308e9755e804b71ab545883771c967ee67d74f463529ca2eb7f59d4be4e6e3",
+      "size": 19594
     },
     "includes/Content/ScriptInventoryMonitor.php": {
       "sha256": "22426ce8282a297c01bf4e66857046dfeae32cefdfb1fed137541e284d51eda5",
@@ -444,8 +444,8 @@
       "size": 16755
     },
     "includes/Database/TableScanner.php": {
-      "sha256": "36efefb87289abf72fda8c3b25f76c0fc142f44a5f8d578c2df89254b0922d14",
-      "size": 33185
+      "sha256": "a8d70764f4fe247401a897e1b2a660f2043ac3a6dd8da05e4c5571e93d64cb30",
+      "size": 33291
     },
     "includes/Filesystem/DirectoryWalker.php": {
       "sha256": "caa823d84f9169ca8cb93d81f7595d84667e4248113067ff475f5c4ffb4116e1",

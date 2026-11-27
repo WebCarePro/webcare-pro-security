@@ -161,7 +161,7 @@ class HTMLAnalyzer {
         // 11. WordPress 7.0+ WP_HTML_Tag_Processor Deep Streaming Security Audit (with HTML-aware attribute fallback)
         // Handles quoted, single-quoted, and unquoted attribute values (e.g. <script src=https://evil.example/a.js>).
         $home_host = strtolower((string) (wp_parse_url(home_url(), PHP_URL_HOST) ?: ''));
-        // phpcs:ignore PluginCheck.CodeAnalysis.Offloading.OffloadedContent -- Allowlist of trusted CDN hostnames for malware/injection detection, not offloaded assets.
+        // phpcs:disable PluginCheck.CodeAnalysis.Offloading.OffloadedContent -- Allowlist of trusted CDN hostnames for malware/injection detection, not offloaded assets.
         $trusted_cdn_hosts = [
             'youtube.com', 'vimeo.com', 'cdnjs.cloudflare.com', 'code.jquery.com',
             'platform.twitter.com', 'connect.facebook.net', 'googletagmanager.com',
@@ -170,6 +170,7 @@ class HTMLAnalyzer {
             'trustpilot.com', 'yotpo.com', 'klaviyo.com', 'privy.com',
             'elfsight.com', 'judge.me', 'ahrefs.com',
         ];
+        // phpcs:enable PluginCheck.CodeAnalysis.Offloading.OffloadedContent
 
         $inspect_external_script = static function (string $raw_src, string $snippet) use (&$detections, $home_host, $trusted_cdn_hosts): void {
             $decoded_src = self::decode_html_attribute_value($raw_src);
