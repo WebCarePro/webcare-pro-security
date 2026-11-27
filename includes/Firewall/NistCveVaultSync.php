@@ -549,23 +549,56 @@ class NistCveVaultSync {
     }
 
     /**
+     * Advance a due background sync batch when WP-Cron loopback is delayed or blocked.
+     */
+    public static function maybe_advance_due_sync(): void {
+        $state = get_option(self::OPTION_SYNC_STATE, []);
+        if (!is_array($state) || empty($state['is_running']) || empty($state['queue'])) {
+            return;
+        }
+        $now      = time();
+        $last_ts  = (int) ($state['last_fetch_at'] ?? 0);
+        $sched_ts = function_exists('wp_next_scheduled') ? wp_next_scheduled(self::CRON_HOOK) : false;
+        $is_due   = (is_int($sched_ts) && $sched_ts > 0 && $sched_ts <= $now)
+            || ($last_ts > 0 && ($now - $last_ts) >= self::BATCH_INTERVAL_SEC)
+            || ($sched_ts === false && $last_ts === 0);
+
+        if ($is_due) {
+            self::process_next_batch();
+        }
+    }
+
+    /**
      * Process one rate-limited batch of components/pages from the queue.
      */
     public static function process_next_batch(): void {
-        $state = get_option(self::OPTION_SYNC_STATE, []);
-        if (!is_array($state) || empty($state['queue']) || !is_array($state['queue'])) {
-            if (is_array($state) && !empty($state['is_running'])) {
-                $state['is_running'] = false;
-                update_option(self::OPTION_SYNC_STATE, $state, false);
+        if (function_exists('get_transient') && function_exists('set_transient')) {
+            if (get_transient('webcareproscan_nist_batch_lock')) {
+                return;
             }
-            return;
+            set_transient('webcareproscan_nist_batch_lock', 1, 25);
         }
 
-        self::execute_queue_batch($state, false);
-        update_option(self::OPTION_SYNC_STATE, $state, false);
+        try {
+            $state = get_option(self::OPTION_SYNC_STATE, []);
+            if (!is_array($state) || empty($state['queue']) || !is_array($state['queue'])) {
+                if (is_array($state) && !empty($state['is_running'])) {
+                    $state['is_running'] = false;
+                    update_option(self::OPTION_SYNC_STATE, $state, false);
+                }
+                return;
+            }
 
-        if (!empty($state['is_running']) && !wp_next_scheduled(self::CRON_HOOK)) {
-            wp_schedule_single_event(time() + self::BATCH_INTERVAL_SEC, self::CRON_HOOK);
+            self::execute_queue_batch($state, false);
+            update_option(self::OPTION_SYNC_STATE, $state, false);
+
+            if (!empty($state['is_running']) && !wp_next_scheduled(self::CRON_HOOK)) {
+                wp_schedule_single_event(time() + self::BATCH_INTERVAL_SEC, self::CRON_HOOK);
+            }
+        } finally {
+            if (function_exists('delete_transient')) {
+                delete_transient('webcareproscan_nist_batch_lock');
+            }
         }
     }
 

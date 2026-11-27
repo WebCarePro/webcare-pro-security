@@ -6,6 +6,7 @@
 - NIST NVD Background Sync Stop Action (`NistCveVaultSync.php`, `ModularWafController.php`, `SettingsPage.tsx` & `VulnerabilitiesPage.tsx`):
   * Added `NistCveVaultSync::stop_background_sync()`, `POST /cve/nist-sync-stop`, and a `Stop Sync` button alongside active `Syncing (...)` indicators so administrators can cancel an active background NIST NVD sync and clear pending cron jobs.
   * Exposed `next_fetch_in` in `NistCveVaultSync::get_status()` and added a live 1-second `Next Fetch: in Xs` countdown with automatic status refresh in `SettingsPage.tsx` and `VulnerabilitiesPage.tsx`.
+  * Added `NistCveVaultSync::maybe_advance_due_sync()` with a 25-second batch lock (`webcareproscan_nist_batch_lock`) invoked on `/cve/nist-status` polls so subsequent batches advance reliably even when WP-Cron loopback is delayed or blocked.
 
 v:0.0.1 - 2026-11-27
 - End-to-End 24-Engine Custom Scan Audit & Wiring Hardening:

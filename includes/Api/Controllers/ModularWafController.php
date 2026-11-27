@@ -2199,6 +2199,7 @@ final class ModularWafController extends AbstractApiController {
     }
 
     public static function get_nist_cve_status(\WP_REST_Request $request) {
+        \WebCareProScanner\Firewall\NistCveVaultSync::maybe_advance_due_sync();
         return rest_ensure_response([
             'success' => true,
             'status'  => \WebCareProScanner\Firewall\NistCveVaultSync::get_status(),
