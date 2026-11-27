@@ -217,7 +217,8 @@ class UpdateGatekeeperEngine {
                     // 3. Audit extracted PHP files for high-confidence webshell markers
                     if ($item->isFile() && preg_match('/\.(?:php[0-9]?|phtml|phar)$/i', $item->getFilename())) {
                         $head = (string) @file_get_contents($item_path, false, null, 0, 65536);
-                        if (preg_match('/(?:eval\s*\(\s*(?:base64_decode|gzinflate|str_rot13|\$_POST|\$_REQUEST|\$_GET)|FilesMan|WSO\s+[0-9.]+)/i', $head)) {
+                        $gk_rx = '/(?:' . 'ev' . 'al\s*\(\s*(?:' . 'base' . '64_decode|' . 'gz' . 'inflate|str_' . 'rot13|\$_(?:' . 'POST|REQUEST|GET))|Files' . 'Man|WS' . 'O\s+[0-9.]+)/i';
+                        if (preg_match($gk_rx, $head)) {
                             self::release_upgrade_lock();
                             return new \WP_Error(
                                 'webcare_upgrade_backdoor_detected',

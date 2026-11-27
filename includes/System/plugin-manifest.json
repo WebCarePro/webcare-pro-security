@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-27T11:35:42.633Z",
+  "generated_at": "2026-11-27T11:40:21.687Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -992,8 +992,8 @@
       "size": 37874
     },
     "includes/SupplyChain/InstallRiskAdvisor.php": {
-      "sha256": "efd655f0d6222111f6e9ef7e16f6018f4d198289d78b14680d2d48e38ab64793",
-      "size": 14832
+      "sha256": "26ae138bb7e7e1769c65eb116e149986a725b8d33a7e90a0ea7445eacf2cfb00",
+      "size": 16443
     },
     "includes/SupplyChain/LockfileAuditEngine.php": {
       "sha256": "5d2399a03a1f3fd5eab6682368411b5a8c6451182a46e222a6866e6087553fb9",
@@ -1004,8 +1004,8 @@
       "size": 32723
     },
     "includes/SupplyChain/UpdateGatekeeperEngine.php": {
-      "sha256": "4085d8cb8ebd12f5813a116973676d67d371e9fe0a803a815b5b0d6f3086f807",
-      "size": 29160
+      "sha256": "c6e4c974b0acc76712c08a552f5db27b9ea8ead10f185cf395c62f491aee27a6",
+      "size": 29249
     },
     "includes/System/ActivityLogs/ActivityCanonicalizer.php": {
       "sha256": "a8859132bb05668c6f992d4827323d76144fe7e9fa56a0f41806043566ffb9ee",

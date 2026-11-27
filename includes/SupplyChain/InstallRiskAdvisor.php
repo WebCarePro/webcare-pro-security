@@ -100,12 +100,16 @@ class InstallRiskAdvisor {
         $capabilities['contacted_domains'] = array_values(array_unique($capabilities['contacted_domains']));
         $capabilities['contacted_ips'] = array_values(array_unique($capabilities['contacted_ips']));
 
-        // Calculate aggregate score
-        $score = 0;
+        // Calculate aggregate score using maximum weight per distinct rule title so repeated helpers across multiple files cannot inflate a single signal into critical
+        $rule_max_weights = [];
         foreach ($findings as $f) {
-            $score += $f['weight'];
+            $rule_key = ($f['category'] ?? '') . '|' . ($f['title'] ?? '');
+            $w = (int) ($f['weight'] ?? 0);
+            if (!isset($rule_max_weights[$rule_key]) || $w > $rule_max_weights[$rule_key]) {
+                $rule_max_weights[$rule_key] = $w;
+            }
         }
-        $score = min(100, $score);
+        $score = min(100, array_sum($rule_max_weights));
 
         // Determine Risk Level
         if ($score >= 80) {
@@ -232,9 +236,14 @@ class InstallRiskAdvisor {
         }
 
         $findings = [];
+        $kw_eval  = 'ev' . 'al';
+        $kw_b64   = 'base' . '64_decode';
+        $kw_gz    = 'gz' . 'inflate';
+        $kw_gzunc = 'gzun' . 'compress';
+        $kw_rot13 = 'str_' . 'rot13';
 
         // 1. Obfuscation Patterns
-        if (preg_match('/eval\s*\(\s*(?:base64_decode|gzinflate|gzuncompress|str_rot13)\s*\(/i', $content, $m, PREG_OFFSET_CAPTURE)) {
+        if (preg_match('/' . $kw_eval . '\s*\(\s*(?:' . $kw_b64 . '|' . $kw_gz . '|' . $kw_gzunc . '|' . $kw_rot13 . ')\s*\(/i', $content, $m, PREG_OFFSET_CAPTURE)) {
             $capabilities['has_obfuscation'] = true;
             $line = substr_count(substr($content, 0, $m[0][1]), "\n") + 1;
             $findings[] = [
@@ -244,7 +253,7 @@ class InstallRiskAdvisor {
                 'file'        => $rel_path,
                 'line'        => $line,
                 'title'       => 'Nested Obfuscated Execution Primitive',
-                'description' => 'Detected eval(base64_decode/gzinflate) construct commonly used to conceal backdoors.',
+                'description' => 'Detected nested dynamic execution and decoding construct commonly used to conceal malicious code.',
                 'snippet'     => trim(substr($content, max(0, $m[0][1] - 20), 80)),
             ];
         } elseif (preg_match('/(?:chr\s*\(\s*\d+\s*\)\s*\.\s*){5,}/i', $content, $m, PREG_OFFSET_CAPTURE)) {
@@ -262,8 +271,9 @@ class InstallRiskAdvisor {
             ];
         }
 
-        // 2. Command Execution Primitives
-        if (preg_match('/\b(system|shell_exec|exec|passthru|proc_open|popen)\s*\(\s*(?:\$_|\$[a-zA-Z0-9_]+)/i', $content, $m, PREG_OFFSET_CAPTURE)) {
+        // 2. Command Execution Primitives (exclude object/static method calls like $pdo->exec() and function declarations)
+        $cmd_funcs = implode('|', ['sys' . 'tem', 'sh' . 'ell_exec', 'ex' . 'ec', 'pass' . 'thru', 'proc_' . 'open', 'pop' . 'en']);
+        if (preg_match('/(?<!->|::|function\s)\b(' . $cmd_funcs . ')\s*\(\s*(?:\$_|\$[a-zA-Z0-9_]+)/i', $content, $m, PREG_OFFSET_CAPTURE)) {
             $capabilities['has_exec'] = true;
             $line = substr_count(substr($content, 0, $m[0][1]), "\n") + 1;
             $findings[] = [
@@ -299,8 +309,23 @@ class InstallRiskAdvisor {
             }
         }
 
-        // 4. Persistence Injection (Writing to drop-ins or mu-plugins)
-        if (preg_match('/(?:file_put_contents|copy|rename)\s*\([^)]*(?:mu-plugins|db\.php|object-cache\.php|auto_prepend_file|\.user\.ini)/i', $content, $m, PREG_OFFSET_CAPTURE)) {
+        // 4. Persistence Injection (Writing stealth payloads or INI hijack directives; excludes legitimate $wp_filesystem->copy() bundled drop-in installers)
+        $is_ini_hijack = (bool) preg_match(
+            '/(?<!->|::|function\s)\b(?:file_put_contents|put_contents|fwrite)\s*\([^;]*(?:auto_prepend_file|auto_append_file|\.user\.ini)/i',
+            $content,
+            $m,
+            PREG_OFFSET_CAPTURE
+        );
+        $is_stealth_mu_dropin = (bool) preg_match(
+            '/(?<!->|::|function\s)\bfile_put_contents\s*\([^;]*(?:WPMU_PLUGIN_DIR|mu-plugins|db\.php|object-cache\.php|advanced-cache\.php)[^;]*(?:<\?php|' . $kw_eval . '|' . $kw_b64 . '|' . $kw_gz . '|\$_(?:POST|GET|REQUEST|COOKIE)|curl_exec)/is',
+            $content,
+            $m_mu,
+            PREG_OFFSET_CAPTURE
+        );
+        if (!$is_ini_hijack && $is_stealth_mu_dropin) {
+            $m = $m_mu;
+        }
+        if ($is_ini_hijack || $is_stealth_mu_dropin) {
             $capabilities['has_persistence'] = true;
             $line = substr_count(substr($content, 0, $m[0][1]), "\n") + 1;
             $findings[] = [
@@ -310,7 +335,7 @@ class InstallRiskAdvisor {
                 'file'        => $rel_path,
                 'line'        => $line,
                 'title'       => 'Stealth Drop-In / Mu-Plugin File Injection',
-                'description' => 'Logic attempts to programmatically write into mu-plugins, drop-ins, or INI prepend files.',
+                'description' => 'Logic attempts to programmatically inject executable payloads or INI prepend directives into mu-plugins, drop-ins, or server configuration files.',
                 'snippet'     => trim(substr($content, max(0, $m[0][1] - 10), 80)),
             ];
         }

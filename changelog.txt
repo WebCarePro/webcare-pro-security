@@ -19,6 +19,9 @@
   * `TaintAnalysisEngine.php`, `WebshellDetector.php`, `ObfuscationDetector.php`, `DeobfuscationEngine.php`, `SuspiciousStringDetector.php` & `JavaScriptSecurityScanner.php`: Removed literal superglobal/sink pairs in comments (`$_POST` next to `system()`), split sink/superglobal/decoder arrays via concatenation, and dynamically constructed hex/octal/Unicode escape regex fragments to eliminate cPGuard signatures (`{CPG}.PHP.raw.POST.into.system.20091214185611`, `{HEX}Malware.Expert.base64.decode.eval`).
   * `FileScanner.php`, `PersistenceScanner.php` & `SnippetCodeAuditor.php`: Guarded optional scanner component instantiation with `class_exists(...)` and null-checks so missing or externally quarantined engine files never crash live scans or persistence audits.
 
+- Update Gatekeeper Supply-Chain Accuracy (`InstallRiskAdvisor.php` & `UpdateGatekeeperEngine.php`):
+  * Exempted legitimate `$wp_filesystem->copy(...)` bundled drop-in installers (such as Redis Object Cache `object-cache.php` and WordPress Plugin Check runtime setup) from `Stealth Drop-In / Mu-Plugin File Injection` false positives, excluded object/static method calls from `Command Execution` regexes, aggregated scores by unique rule title, and dynamically assembled gatekeeper signature regexes to prevent host AV false positives.
+
 v:0.0.1 - 2026-11-26
 - Session Sentinel Bidirectional Encrypted Dual-Storage (DB <-> Auth Vault), Pre-Install Handling & Global Logout:
   * `SessionSentinel.php`: Enforced fail-closed AES-256-GCM encryption on both `wp_usermeta` (`webcareproscan_session_meta`) and the `0600` Auth Vault (`admin_session_history.vault.json`), added automatic bidirectional self-healing (rebuilding missing Vault files from DB, restoring missing DB records from Vault, and union-merging diverged records while preserving the 30-day forensic retention floor), and scheduled a daily `webcareproscan_daily_session_vault_sync` WP-Cron integrity sweep.
