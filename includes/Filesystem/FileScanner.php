@@ -18,12 +18,19 @@ class FileScanner {
     private $url_scanner;
 
     public function __construct() {
-        $this->symlink_scanner = new SymlinkScanner();
-        $this->permission_scanner = new PermissionScanner();
-        $this->hasher = new FileHasher();
-        $this->heuristic_engine = new HeuristicEngine();
-        $this->js_scanner = new \WebCareProScanner\Malware\JavaScriptSecurityScanner();
-        $this->url_scanner = new \WebCareProScanner\Content\URLScanner();
+        $this->symlink_scanner    = class_exists(SymlinkScanner::class) ? new SymlinkScanner() : null;
+        $this->permission_scanner = class_exists(PermissionScanner::class) ? new PermissionScanner() : null;
+        $this->hasher             = class_exists(FileHasher::class) ? new FileHasher() : null;
+        $this->heuristic_engine   = class_exists(HeuristicEngine::class) ? new HeuristicEngine() : null;
+        $this->js_scanner         = class_exists(\WebCareProScanner\Malware\JavaScriptSecurityScanner::class) ? new \WebCareProScanner\Malware\JavaScriptSecurityScanner() : null;
+        $this->url_scanner        = class_exists(\WebCareProScanner\Content\URLScanner::class) ? new \WebCareProScanner\Content\URLScanner() : null;
+    }
+
+    /**
+     * Check whether HeuristicEngine was loaded cleanly.
+     */
+    public function is_heuristic_engine_available(): bool {
+        return $this->heuristic_engine !== null;
     }
 
     /**
@@ -76,7 +83,7 @@ class FileScanner {
         }
 
         // 2. Symlink check (runs even on dangling links before metadata stat)
-        if ($do_backdoors || $do_core || $do_plugins || $do_themes || $do_unbundled) {
+        if ($this->symlink_scanner !== null && ($do_backdoors || $do_core || $do_plugins || $do_themes || $do_unbundled)) {
             $symlink_finding = $this->symlink_scanner->scan($file_path, $scan_id);
             if ($symlink_finding) {
                 $findings[] = $symlink_finding;
@@ -90,7 +97,7 @@ class FileScanner {
         $metadata = new FileMetadata($file_path);
 
         // 1. Permission check
-        if ($do_backdoors || $do_core || $do_plugins || $do_themes) {
+        if ($this->permission_scanner !== null && ($do_backdoors || $do_core || $do_plugins || $do_themes)) {
             $perm_finding = $this->permission_scanner->scan($file_path, $metadata, $scan_id);
             if ($perm_finding) {
                 $findings[] = $perm_finding;
@@ -178,7 +185,7 @@ class FileScanner {
         }
 
         // 4. PHP Heuristic Malware Scan
-        if ($do_known_malware || $do_backdoors || $do_urls) {
+        if ($this->heuristic_engine !== null && ($do_known_malware || $do_backdoors || $do_urls)) {
             try {
                 $malware_findings = $this->heuristic_engine->scan_file($file_path, $scan_id, $custom_options);
                 if (!empty($malware_findings)) {
@@ -191,7 +198,7 @@ class FileScanner {
 
         // 5. Client-Side JavaScript & Inline Script Threat Scan (ClickFix, EtherHiding, Magecart, Skimmers)
         if ($do_backdoors || $do_urls) {
-            if (in_array($ext, ['js', 'mjs', 'cjs'], true)) {
+            if ($this->js_scanner !== null && in_array($ext, ['js', 'mjs', 'cjs'], true)) {
                 $js_findings = $this->js_scanner->scan_file($file_path, $scan_id);
                 if (!empty($js_findings)) {
                     $findings = array_merge($findings, $js_findings);
@@ -205,7 +212,7 @@ class FileScanner {
 
                 if (!$is_authentic) {
                     $raw_markup = (string) @file_get_contents($file_path);
-                    if ($raw_markup !== '' && stripos($raw_markup, '<script') !== false) {
+                    if ($this->js_scanner !== null && $raw_markup !== '' && stripos($raw_markup, '<script') !== false) {
                         if (preg_match_all('/<script\b[^>]*>([\s\S]*?)<\/script>/i', $raw_markup, $sm) && !empty($sm[1])) {
                             $combined_js = implode("\n;\n", $sm[1]);
                             if (trim($combined_js) !== '') {
@@ -216,7 +223,7 @@ class FileScanner {
                             }
                         }
                     }
-                    if ($do_urls && $raw_markup !== '') {
+                    if ($do_urls && $this->url_scanner !== null && $raw_markup !== '') {
                         foreach ($this->url_scanner->scan_urls($raw_markup) as $uh) {
                             if (($uh['severity'] ?? 'low') === 'low') {
                                 continue;
@@ -237,7 +244,7 @@ class FileScanner {
         }
 
         // 5b. Dedicated URL Threat Intel on standalone JS files when scan_malicious_urls is active
-        if ($do_urls && in_array($ext, ['js', 'mjs', 'cjs'], true) && is_readable($file_path) && filesize($file_path) <= 4194304) {
+        if ($do_urls && $this->url_scanner !== null && in_array($ext, ['js', 'mjs', 'cjs'], true) && is_readable($file_path) && filesize($file_path) <= 4194304) {
             if (!\WebCareProScanner\Integrity\ChecksumProvider::is_authentic_core_file($file_path)
                 && !\WebCareProScanner\Integrity\ChecksumProvider::is_authentic_plugin_file($file_path)
                 && !\WebCareProScanner\Integrity\ChecksumProvider::is_authentic_theme_file($file_path)

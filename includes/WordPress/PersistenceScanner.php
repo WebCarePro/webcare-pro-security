@@ -42,7 +42,7 @@ class PersistenceScanner {
     ];
 
     public function __construct() {
-        $this->heuristic_engine = new HeuristicEngine();
+        $this->heuristic_engine = class_exists(HeuristicEngine::class) ? new HeuristicEngine() : null;
     }
 
     /**
@@ -536,7 +536,7 @@ class PersistenceScanner {
                 $threat_summary = $ast['reason'];
                 $snippet = $ast['snippet'];
                 $evidence = $ast['evidence'];
-            } else {
+            } elseif ($this->heuristic_engine !== null) {
                 // Run heuristic detector as second pass
                 $heuristics = $this->heuristic_engine->scan_file($file, 'audit_' . time());
                 if (!empty($heuristics)) {
@@ -633,7 +633,7 @@ class PersistenceScanner {
                 $threat_summary = $ast['reason'];
                 $snippet = $ast['snippet'];
                 $evidence = $ast['evidence'];
-            } else {
+            } elseif ($this->heuristic_engine !== null) {
                 // Run full HeuristicEngine on drop-ins (catches backdoored object-cache.php / db.php / advanced-cache.php even when a caching plugin is active!)
                 $drop_heuristics = $this->heuristic_engine->scan_file($file, 'dropin_' . time());
                 if (!empty($drop_heuristics)) {

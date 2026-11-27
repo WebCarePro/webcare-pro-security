@@ -23,8 +23,8 @@ class SnippetCodeAuditor {
     private ?string $last_error = null;
 
     public function __construct() {
-        $this->webshell_detector = new WebshellDetector();
-        $this->js_scanner = new JavaScriptSecurityScanner();
+        $this->webshell_detector = class_exists(WebshellDetector::class) ? new WebshellDetector() : null;
+        $this->js_scanner        = class_exists(JavaScriptSecurityScanner::class) ? new JavaScriptSecurityScanner() : null;
     }
 
     /**
@@ -297,7 +297,7 @@ class SnippetCodeAuditor {
             }
 
             $virtual_file = "/database_snippet/{$context_id}.php";
-            $res = $this->webshell_detector->scan($virtual_file, $php_code, $scan_id);
+            $res = ($this->webshell_detector !== null) ? $this->webshell_detector->scan($virtual_file, $php_code, $scan_id) : null;
             if ($res === null && class_exists('\\WebCareProScanner\\Malware\\DeobfuscationEngine')) {
                 $deobf = new \WebCareProScanner\Malware\DeobfuscationEngine();
                 $res = $deobf->scan($virtual_file, $php_code, $scan_id);
@@ -345,7 +345,7 @@ class SnippetCodeAuditor {
                 $js_to_scan = implode("\n;\n", $matches[1]);
             }
 
-            if (!empty(trim($js_to_scan))) {
+            if ($this->js_scanner !== null && !empty(trim($js_to_scan))) {
                 $virtual_path = "/database_snippet/{$context_id}.js";
                 $js_findings = $this->js_scanner->scan_content($js_to_scan, $virtual_path, $scan_id);
                 foreach ($js_findings as $jf) {
