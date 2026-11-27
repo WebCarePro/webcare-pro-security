@@ -3563,23 +3563,30 @@ class SettingsManager {
             return true;
         }
 
+        // Normalize benign WPForms / plugin directory protection headers reading $_SERVER['SERVER_PROTOCOL'] solely for 403/404 status lines
+        $normalized_content = preg_replace(
+            '/\bheader\s*\(\s*\$_SERVER\s*\[\s*[\'"]SERVER_PROTOCOL[\'"]\s*\]\s*\.\s*[\'"]\s*(?:403\s+Forbidden|404\s+Not\s+Found)[\'"]\s*\)\s*;/i',
+            "header('Status: 404 Not Found');",
+            $content
+        ) ?? $content;
+
         // Must NOT contain any dangerous execution functions, webshell signatures, superglobals, or backdoors
         $dangerous_pattern = '/(eval\s*\(|base64_decode\s*\(|assert\s*\(|system\s*\(|exec\s*\(|shell_exec\s*\(|passthru\s*\(|proc_open\s*\(|popen\s*\(|gzinflate\s*\(|gzuncompress\s*\(|create_function\s*\(|file_put_contents\s*\(|curl_exec\s*\(|include\s*\(|require\s*\(|include_once\s*\(|require_once\s*\(|\$_POST|\$_GET|\$_REQUEST|\$_COOKIE|\$_SERVER|\$GLOBALS)/i';
-        if (preg_match($dangerous_pattern, $content)) {
+        if (preg_match($dangerous_pattern, $normalized_content)) {
             return false;
         }
 
         // Static HTML index files without script tags
         $ext = strtolower(pathinfo($file_path, PATHINFO_EXTENSION));
         if (in_array($ext, ['html', 'htm'], true)) {
-            if (stripos($content, '<?') === false && stripos($content, '<script') === false) {
+            if (stripos($normalized_content, '<?') === false && stripos($normalized_content, '<script') === false) {
                 return true;
             }
             return false;
         }
 
         // Tokenize PHP to inspect actual AST tokens
-        $tokens = @token_get_all($content);
+        $tokens = @token_get_all($normalized_content);
         if (!is_array($tokens)) {
             return false;
         }

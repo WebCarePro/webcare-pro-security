@@ -459,16 +459,24 @@ class TableScanner {
                         if (preg_match($rule['regex'], $str, $matches)) {
                             $snippet = substr($matches[0], 0, 150);
 
-                            // Whitelist check: Legitimate media embeds (YouTube, Vimeo, Google Maps, WordPress.org)
+                            // Whitelist check: Legitimate media embeds (YouTube, Vimeo, Google Maps, WordPress.org), including backslash-escaped JSON/postmeta attributes
                             if ($rule_key === 'iframe_injection') {
-                                $is_trusted_embed = preg_match('/src=["\']https?:\/\/(www\.)?(youtube\.com|youtube-nocookie\.com|vimeo\.com|player\.vimeo\.com|wordpress\.org|maps\.google\.com|google\.com\/maps|spotify\.com|soundcloud\.com)\//i', $matches[0]);
-                                if ($is_trusted_embed && !preg_match('/(display\s*:\s*none|visibility\s*:\s*hidden|width\s*:\s*0|height\s*:\s*0)/i', $matches[0])) {
+                                $normalized_iframe = str_replace(['\\"', "\\'"], ['"', "'"], $matches[0]);
+                                $is_trusted_embed = preg_match('/\bsrc\s*=\s*["\']https?:\/\/(www\.)?(youtube\.com|youtube-nocookie\.com|youtu\.be|vimeo\.com|player\.vimeo\.com|wordpress\.org|maps\.google\.com|google\.com\/maps|spotify\.com|soundcloud\.com)\//i', $normalized_iframe);
+                                if ($is_trusted_embed && !preg_match('/(display\s*:\s*none|visibility\s*:\s*hidden|width\s*:\s*0|height\s*:\s*0)/i', $normalized_iframe)) {
                                     continue;
                                 }
                             }
 
                             if ($rule_key === 'script_tag_injection') {
-                                if (strpos($table, 'post_smtp_logs') !== false || strpos($table, 'actionscheduler_logs') !== false) {
+                                if (
+                                    strpos($table, 'post_smtp_logs') !== false ||
+                                    strpos($table, 'actionscheduler_logs') !== false ||
+                                    strpos($table, 'email_log') !== false ||
+                                    strpos($table, 'wpml_mails') !== false ||
+                                    strpos($table, 'fluentmail_logs') !== false ||
+                                    strpos($table, 'mail_bank') !== false
+                                ) {
                                     continue;
                                 }
 

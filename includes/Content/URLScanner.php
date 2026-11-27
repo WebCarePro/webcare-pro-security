@@ -47,9 +47,9 @@ class URLScanner {
                 continue;
             }
 
-            // 1. Raw IP address in external URL (ignore localhost/loopback dev URLs)
+            // 1. Raw IP address in external URL (ignore loopback, private RFC1918, and link-local metadata ranges such as 169.254.169.254 or doc examples)
             if (preg_match('/^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$/', $host)) {
-                if ($host === '127.0.0.1' || $host === '0.0.0.0') {
+                if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false) {
                     continue;
                 }
                 $url_path = isset($parsed['path']) ? $parsed['path'] : '';

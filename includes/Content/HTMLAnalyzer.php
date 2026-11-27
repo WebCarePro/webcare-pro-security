@@ -241,6 +241,10 @@ class HTMLAnalyzer {
                     $attr_val = $processor->get_attribute($attr);
                     if (is_string($attr_val) && $attr_val !== '') {
                         $norm_attr = strtolower((string) (preg_replace('/[\x00-\x20]+/', '', self::decode_html_attribute_value($attr_val)) ?? ''));
+                        // Ignore benign null-op UI placeholder links (e.g. Elementor/theme nav dropdowns using href="javascript:void(0);" or "javascript:;")
+                        if (preg_match('/^javascript:(?:void\s*\(\s*0?\s*\)|;)*$/i', $norm_attr)) {
+                            continue;
+                        }
                         if (str_starts_with($norm_attr, 'javascript:') || str_starts_with($norm_attr, 'vbscript:') || str_starts_with($norm_attr, 'data:text/html')) {
                             $detections[] = [
                                 'type'       => 'html_processor_javascript_uri',

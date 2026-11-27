@@ -52,17 +52,35 @@ class SerializedDataScanner {
      * @param string $payload Raw database value.
      * @return array<string, mixed>|null Finding array if malicious, null if clean.
      */
-    public function inspect_serialized_string(string $payload): ?array {
-        if (strpos($payload, 'O:') === false && strpos($payload, 'C:') === false) {
+    public function inspect_serialized_string(string $payload, int $depth = 0): ?array {
+        if ($depth > 6 || (strpos($payload, 'O:') === false && strpos($payload, 'C:') === false)) {
             return null;
         }
 
-        if (!preg_match_all('/(?:O|C):[+-]?\d+:"([^"]+)"/i', $payload, $matches)) {
-            return null;
+        $trimmed = trim($payload);
+        $classes = [];
+
+        // Strategy 1: Safe structural unserialization with allowed_classes => false prevents regex false positives inside plain text/HTML strings
+        $unserialized = self::safe_unserialize($trimmed);
+        if ($unserialized !== false || $trimmed === 'b:0;') {
+            $nested_serialized = [];
+            $this->collect_object_classes_recursive($unserialized, $classes, $nested_serialized);
+            foreach ($nested_serialized as $nested_str) {
+                $nested_hit = $this->inspect_serialized_string($nested_str, $depth + 1);
+                if ($nested_hit !== null) {
+                    return $nested_hit;
+                }
+            }
+        } elseif (preg_match_all('/(?:O|C):[+-]?\d+:"([^"]+)"/', $trimmed, $matches)) {
+            // Strategy 2: Fallback regex only for malformed/truncated serialized gadget payloads (strict case-sensitive object tokens)
+            $classes = $matches[1];
         }
 
-        foreach ($matches[1] as $class_name) {
-            $clean_class = ltrim($class_name, '\\');
+        foreach (array_unique($classes) as $class_name) {
+            $clean_class = ltrim((string) $class_name, '\\');
+            if ($clean_class === '') {
+                continue;
+            }
 
             if (preg_match(self::KNOWN_GADGET_PATTERNS, $clean_class)) {
                 return [
@@ -73,7 +91,15 @@ class SerializedDataScanner {
                 ];
             }
 
-            if (!self::is_allowed_commerce_class($clean_class) && !str_starts_with($clean_class, 'Gravity_Forms\\')) {
+            $is_allowed_namespace = (
+                self::is_allowed_commerce_class($clean_class) ||
+                str_starts_with($clean_class, 'Gravity_Forms\\') ||
+                str_starts_with($clean_class, 'WooCommerce\\') ||
+                str_starts_with($clean_class, 'Elementor\\') ||
+                str_starts_with($clean_class, 'WpProQuiz_Model_')
+            );
+
+            if (!$is_allowed_namespace) {
                 return [
                     'type'     => 'serialized_unexpected_object',
                     'severity' => 'high',
@@ -84,6 +110,42 @@ class SerializedDataScanner {
         }
 
         return null;
+    }
+
+    /**
+     * Collect PHP object class names and nested serialized strings from safely unserialized data.
+     *
+     * @param mixed    $node
+     * @param string[] $classes
+     * @param string[] $nested_serialized
+     */
+    private function collect_object_classes_recursive(mixed $node, array &$classes, array &$nested_serialized): void {
+        if (is_object($node)) {
+            $props = (array) $node;
+            if ($node instanceof \__PHP_Incomplete_Class && isset($props['__PHP_Incomplete_Class_Name']) && is_string($props['__PHP_Incomplete_Class_Name'])) {
+                $classes[] = $props['__PHP_Incomplete_Class_Name'];
+            } else {
+                $classes[] = get_class($node);
+            }
+            foreach ($props as $k => $v) {
+                if ($k === '__PHP_Incomplete_Class_Name') {
+                    continue;
+                }
+                $this->collect_object_classes_recursive($v, $classes, $nested_serialized);
+            }
+            return;
+        }
+
+        if (is_array($node)) {
+            foreach ($node as $v) {
+                $this->collect_object_classes_recursive($v, $classes, $nested_serialized);
+            }
+            return;
+        }
+
+        if (is_string($node) && (strpos($node, 'O:') !== false || strpos($node, 'C:') !== false) && self::is_serialized($node)) {
+            $nested_serialized[] = $node;
+        }
     }
 
     /**

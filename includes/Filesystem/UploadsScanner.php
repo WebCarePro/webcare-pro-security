@@ -168,17 +168,27 @@ class UploadsScanner {
                             $findings = array_merge($findings, $js_hits);
                             continue;
                         }
+                        $norm_rel = strtolower(str_replace('\\', '/', $rel_path));
+                        $is_elearning_package = (
+                            str_starts_with($norm_rel, 'uncanny-snc/') || str_contains($norm_rel, '/uncanny-snc/') ||
+                            str_starts_with($norm_rel, 'articulate_uploads/') || str_contains($norm_rel, '/articulate_uploads/') ||
+                            str_starts_with($norm_rel, 'grassblade/') || str_contains($norm_rel, '/grassblade/') ||
+                            str_starts_with($norm_rel, 'h5p/') || str_contains($norm_rel, '/h5p/')
+                        );
                         if (in_array($ext, ['html', 'htm', 'shtml'], true) && $raw_web !== '' && preg_match('/(<script\b|<form\b[^>]*action\s*=|navigator\.clipboard|http-equiv\s*=\s*[\'"]?refresh)/i', $raw_web, $wm)) {
-                            $findings[] = new Finding([
-                                'engine'       => 'uploads-scanner',
-                                'type'         => 'phishing_html_in_uploads',
-                                'severity'     => 'high',
-                                'confidence'   => 92,
-                                'file_path'    => $real_path,
-                                'code_snippet' => $this->extract_context_snippet($raw_web, $wm[0]),
-                                'description'  => "Active HTML page '{$basename}' with embedded script/form/redirect found inside uploads: {$rel_path}",
-                                'evidence'     => "Matched active markup '{$wm[0]}' in uploaded HTML file.",
-                            ]);
+                            $is_benign_elearning = $is_elearning_package && !preg_match('/(<form\b[^>]*action\s*=\s*[\'"]?https?:\/\/|navigator\.clipboard|http-equiv\s*=\s*[\'"]?refresh|(?:Win|Windows)\s*\+\s*R)/i', $raw_web);
+                            if (!$is_benign_elearning) {
+                                $findings[] = new Finding([
+                                    'engine'       => 'uploads-scanner',
+                                    'type'         => 'phishing_html_in_uploads',
+                                    'severity'     => 'high',
+                                    'confidence'   => 92,
+                                    'file_path'    => $real_path,
+                                    'code_snippet' => $this->extract_context_snippet($raw_web, $wm[0]),
+                                    'description'  => "Active HTML page '{$basename}' with embedded script/form/redirect found inside uploads: {$rel_path}",
+                                    'evidence'     => "Matched active markup '{$wm[0]}' in uploaded HTML file.",
+                                ]);
+                            }
                             continue;
                         }
                     }
@@ -186,10 +196,10 @@ class UploadsScanner {
 
                 if ($lower_name === '.htaccess' || $lower_name === 'web.config') {
                     $content = @file_get_contents($real_path, false, null, 0, 2048) ?: '';
-                    // Legitimate security plugins (Forminator, WooCommerce, WPForms) place protective .htaccess files
-                    // to prevent PHP execution (e.g. php_flag engine off, Options -ExecCGI, Deny from all, RemoveHandler).
+                    // Legitimate security plugins (Forminator, WooCommerce, WPForms, File Manager) place protective .htaccess or web.config files
+                    // to prevent PHP/script execution (e.g. php_flag engine off, Options -ExecCGI, Deny from all, <deny users="*" />).
                     // Flag ONLY if it actually overrides/enables PHP execution for media/non-php files or drops backdoors.
-                    $is_malicious_override = (bool) preg_match('/(AddType|AddHandler|SetHandler)\s+application\/x-httpd-php|\b(auto_prepend_file|auto_append_file)\b|php_flag\s+engine\s+(?:on|1)/i', $content);
+                    $is_malicious_override = (bool) preg_match('/(AddType|AddHandler|SetHandler)\s+application\/x-httpd-php|\b(auto_prepend_file|auto_append_file)\b|php_flag\s+engine\s+(?:on|1)|<(?:handlers|httpHandlers|scriptProcessor|rewrite)\b|FastCgiModule|CgiModule|php-cgi\.exe/i', $content);
                     $is_protective = (
                         stripos($content, 'deny from all') !== false ||
                         stripos($content, 'require all denied') !== false ||
@@ -197,7 +207,8 @@ class UploadsScanner {
                         stripos($content, 'Options -ExecCGI') !== false ||
                         stripos($content, 'Options -Indexes') !== false ||
                         stripos($content, 'RemoveHandler') !== false ||
-                        stripos($content, 'SetHandler default-handler') !== false
+                        stripos($content, 'SetHandler default-handler') !== false ||
+                        (bool) preg_match('/<deny\s+users\s*=\s*["\']\*["\']/i', $content)
                     );
 
                     if ($is_malicious_override || !$is_protective) {

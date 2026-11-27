@@ -109,9 +109,14 @@ class UpdateScanner {
             $new_version = $cur_version;
 
             if (!empty($update_plugins->response[$plugin_file])) {
+                $update_entry = $update_plugins->response[$plugin_file];
                 $is_outdated = true;
-                $new_version = $update_plugins->response[$plugin_file]->new_version ?? 'Latest';
-                if (empty($update_plugins->response[$plugin_file]->package)) {
+                $new_version = $update_entry->new_version ?? 'Latest';
+                $is_wp_org_entry = (
+                    str_starts_with((string) ($update_entry->id ?? ''), 'w.org/plugins/') ||
+                    str_contains((string) ($update_entry->url ?? ''), 'wordpress.org/plugins/')
+                );
+                if ($is_wp_org_entry && empty($update_entry->package)) {
                     $is_abandoned = true;
                 }
             }

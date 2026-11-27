@@ -496,8 +496,9 @@ class UserScanner {
                     $poisoned = [];
                     foreach ($forbidden_global_caps as $f_cap) {
                         if (!empty($r_caps[$f_cap])) {
-                            // Yoast SEO intentionally grants upload_files & unfiltered_html to wpseo_editor / wpseo_manager
-                            if (in_array($r_name, ['wpseo_editor', 'wpseo_manager'], true) && in_array($f_cap, ['upload_files', 'unfiltered_html'], true)) {
+                            // Yoast SEO intentionally grants upload_files & unfiltered_html to wpseo_editor / wpseo_manager,
+                            // and LMS platforms (Tutor LMS, LearnPress, LearnDash, LifterLMS) intentionally grant upload_files / unfiltered_html to instructor roles.
+                            if (in_array($r_name, ['wpseo_editor', 'wpseo_manager', 'tutor_instructor', 'lp_teacher', 'group_leader', 'ld_instructor', 'wdm_instructor', 'stm_lms_instructor', 'llms_instructor'], true) && in_array($f_cap, ['upload_files', 'unfiltered_html'], true)) {
                                 continue;
                             }
                             $poisoned[] = $f_cap;

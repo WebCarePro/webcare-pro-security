@@ -2300,6 +2300,7 @@ class NistCveVaultSync {
      * @return list<array<string, mixed>>|null
      */
     public static function get_same_day_vault_cves(string $slug, string $version, string $type = 'plugin'): ?array {
+        $raw_slug       = strtolower(trim($slug));
         $canonical_slug = self::resolve_canonical_slug($slug);
         $norm_ver       = self::normalize_version($version);
         if ($canonical_slug === '' || $norm_ver === '') {
@@ -2310,12 +2311,18 @@ class NistCveVaultSync {
             ? 'core'
             : ($type === 'theme' ? 'theme' : 'plugin');
 
-        $state   = self::get_state();
-        $checked = is_array($state['checked'] ?? null) ? $state['checked'] : [];
-        $key     = $comp_type . ':' . $canonical_slug;
-        $entry   = $checked[$key] ?? null;
-
+        $catalog = self::read_vault_catalog();
+        $entry   = $catalog[$canonical_slug] ?? ($catalog[$raw_slug] ?? null);
         if (!is_array($entry)) {
+            return null;
+        }
+
+        if (!empty($entry['error'])) {
+            return null;
+        }
+
+        $entry_type = (string) ($entry['type'] ?? 'plugin');
+        if ($entry_type !== '' && $entry_type !== 'component' && $entry_type !== $comp_type) {
             return null;
         }
 
@@ -2325,20 +2332,7 @@ class NistCveVaultSync {
             return null;
         }
 
-        $vault   = self::get_vault();
-        $matches = [];
-        foreach ($vault as $record) {
-            if (!is_array($record)) {
-                continue;
-            }
-            $rec_slug = self::resolve_canonical_slug((string) ($record['slug'] ?? ''));
-            $rec_type = (string) ($record['type'] ?? 'plugin');
-            if ($rec_slug === $canonical_slug && $rec_type === $comp_type) {
-                $matches[] = $record;
-            }
-        }
-
-        return $matches;
+        return self::get_component_cves($canonical_slug, $version, $comp_type);
     }
 
     /**
