@@ -652,6 +652,14 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
               </span>
               <span>&bull;</span>
               <span>Last NIST Fetch: {nistStatus?.last_fetch_human || 'Never'}</span>
+              {nistStatus?.is_running && typeof nistStatus?.next_fetch_in === 'number' && (
+                <>
+                  <span>&bull;</span>
+                  <span style={{ color: 'var(--webcare-accent-primary, #4f46e5)', fontWeight: 600 }}>
+                    Next Fetch: {nistStatus.next_fetch_in > 0 ? `in ${nistStatus.next_fetch_in}s` : 'Due now…'}
+                  </span>
+                </>
+              )}
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>

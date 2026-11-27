@@ -6273,12 +6273,14 @@ function NistCveSyncSettingsCard({ apiRequest }: { apiRequest: (opts: any) => Pr
     total_components: number;
     checked_count: number;
     last_fetch_human: string;
+    next_fetch_in?: number | null;
     has_api_key: boolean;
     api_key_masked?: string;
     checked_components?: Record<string, any>;
     logs?: any[];
   } | null>(null);
   const [apiKeyInput, setApiKeyInput] = useState('');
+  const [nextFetchSeconds, setNextFetchSeconds] = useState<number | null>(null);
   const [showKey, setShowKey] = useState(false);
   const [busy, setBusy] = useState(false);
   const [inputError, setInputError] = useState<string | null>(null);
@@ -6302,6 +6304,29 @@ function NistCveSyncSettingsCard({ apiRequest }: { apiRequest: (opts: any) => Pr
   useEffect(() => {
     loadStatus();
   }, []);
+
+  useEffect(() => {
+    if (status?.is_running && typeof status.next_fetch_in === 'number') {
+      setNextFetchSeconds(Math.max(0, status.next_fetch_in));
+    } else {
+      setNextFetchSeconds(null);
+    }
+  }, [status?.is_running, status?.next_fetch_in]);
+
+  useEffect(() => {
+    if (!status?.is_running) return;
+    const timer = setInterval(() => {
+      setNextFetchSeconds((prev) => {
+        if (prev === null) return null;
+        if (prev <= 1) {
+          loadStatus();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [status?.is_running]);
 
   const handleSaveKey = async (e: any) => {
     e.preventDefault();
@@ -6397,6 +6422,14 @@ function NistCveSyncSettingsCard({ apiRequest }: { apiRequest: (opts: any) => Pr
           </div>
           <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--webcare-text-secondary, #475569)' }}>
             Checked <strong>{status ? `${status.checked_count} / ${status.total_components}` : '0 / 0'}</strong> plugins, themes &amp; core &bull; Last Fetch: <strong>{status?.last_fetch_human || 'Never'}</strong>
+            {status?.is_running && nextFetchSeconds !== null && (
+              <>
+                {' '}&bull; Next Fetch:{' '}
+                <strong style={{ color: 'var(--webcare-accent-primary, #4f46e5)' }}>
+                  {nextFetchSeconds > 0 ? `in ${nextFetchSeconds}s` : 'Due now…'}
+                </strong>
+              </>
+            )}
           </p>
           <p style={{ margin: '6px 0 0', fontSize: '12px', color: 'var(--webcare-text-muted, #64748b)' }}>
             Syncs CVE advisories for your installed plugins and themes in the background and stores them in your local vault. Without an API key, NIST allows 5 requests per 35 seconds; with a free API key, rate limits increase to 25 requests per 35 seconds.{' '}

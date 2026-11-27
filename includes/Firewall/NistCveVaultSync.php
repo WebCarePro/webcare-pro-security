@@ -277,12 +277,25 @@ class NistCveVaultSync {
                 : str_repeat('•', strlen($api_key));
         }
 
+        $next_fetch_in = null;
+        if (!empty($state['is_running'])) {
+            $scheduled_ts = function_exists('wp_next_scheduled') ? wp_next_scheduled(self::CRON_HOOK) : false;
+            if (is_int($scheduled_ts) && $scheduled_ts > 0) {
+                $next_fetch_in = max(0, $scheduled_ts - $now);
+            } elseif ($last_ts > 0) {
+                $next_fetch_in = max(0, ($last_ts + self::BATCH_INTERVAL_SEC) - $now);
+            } else {
+                $next_fetch_in = self::BATCH_INTERVAL_SEC;
+            }
+        }
+
         return [
             'is_running'         => !empty($state['is_running']),
             'total_components'   => (int) ($state['total_components'] ?? count(self::collect_installed_components())),
             'checked_count'      => (int) ($state['checked_count'] ?? count($catalog)),
             'last_fetch_at'      => $last_ts,
             'last_fetch_human'   => $last_ts > 0 ? (function_exists('human_time_diff') ? human_time_diff($last_ts, $now) . ' ago' : gmdate('Y-m-d H:i:s', $last_ts)) : 'Never',
+            'next_fetch_in'      => $next_fetch_in,
             'has_api_key'        => $api_key !== '',
             'api_key_masked'     => $masked_key,
             'batch_size'         => self::get_batch_size(),

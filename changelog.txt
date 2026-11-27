@@ -5,6 +5,7 @@
   * Added an optional `WPVulnerability.net API` opt-out checkbox (`threat_intel_wpvulnerability_enabled`, enabled by default) in `PublicThreatIntelSettingsCard.tsx` and `SettingsManager.php`, enforced across `NistCveVaultSync::fetch_wpvulnerability_for_component()` and `UpdateScanner::merge_wpvulnerability_cves()` so users can disable external WPVulnerability.net lookups cleanly.
 - NIST NVD Background Sync Stop Action (`NistCveVaultSync.php`, `ModularWafController.php`, `SettingsPage.tsx` & `VulnerabilitiesPage.tsx`):
   * Added `NistCveVaultSync::stop_background_sync()`, `POST /cve/nist-sync-stop`, and a `Stop Sync` button alongside active `Syncing (...)` indicators so administrators can cancel an active background NIST NVD sync and clear pending cron jobs.
+  * Exposed `next_fetch_in` in `NistCveVaultSync::get_status()` and added a live 1-second `Next Fetch: in Xs` countdown with automatic status refresh in `SettingsPage.tsx` and `VulnerabilitiesPage.tsx`.
 
 v:0.0.1 - 2026-11-27
 - End-to-End 24-Engine Custom Scan Audit & Wiring Hardening:
