@@ -269,13 +269,22 @@ class NistCveVaultSync {
             $logs[] = $log;
         }
 
+        $api_key    = self::get_api_key();
+        $masked_key = '';
+        if ($api_key !== '') {
+            $masked_key = strlen($api_key) >= 12
+                ? substr($api_key, 0, 4) . '••••••••-••••-' . substr($api_key, -4)
+                : str_repeat('•', strlen($api_key));
+        }
+
         return [
             'is_running'         => !empty($state['is_running']),
             'total_components'   => (int) ($state['total_components'] ?? count(self::collect_installed_components())),
             'checked_count'      => (int) ($state['checked_count'] ?? count($catalog)),
             'last_fetch_at'      => $last_ts,
             'last_fetch_human'   => $last_ts > 0 ? (function_exists('human_time_diff') ? human_time_diff($last_ts, $now) . ' ago' : gmdate('Y-m-d H:i:s', $last_ts)) : 'Never',
-            'has_api_key'        => self::get_api_key() !== '',
+            'has_api_key'        => $api_key !== '',
+            'api_key_masked'     => $masked_key,
             'batch_size'         => self::get_batch_size(),
             'vault_entries'      => count($catalog),
             'checked_components' => $checked_components,

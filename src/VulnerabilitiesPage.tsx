@@ -629,17 +629,18 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
           >
             <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px', fontSize: '12px', color: 'var(--webcare-text-secondary)' }}>
               <strong style={{ color: 'var(--webcare-text-primary)' }}>NIST NVD Intelligence:</strong>
-              <span
-                style={{
-                  padding: '2px 8px',
-                  borderRadius: '999px',
-                  fontSize: '11px',
-                  fontWeight: 700,
-                  background: nistStatus?.has_api_key ? 'rgba(16, 185, 129, 0.14)' : 'rgba(59, 130, 246, 0.12)',
-                  color: nistStatus?.has_api_key ? '#059669' : '#2563eb',
-                }}
-              >
-                {nistStatus?.has_api_key ? 'NIST API Connected (25 req / 35s)' : 'Free NIST Fetch (5 req / 35s)'}
+              <span className={`webcare-badge-pill ${nistStatus?.has_api_key ? 'webcare-badge-clean' : 'webcare-badge-info'}`}>
+                {nistStatus?.has_api_key ? (
+                  <>
+                    <CheckCircle2 size={12} aria-hidden="true" />
+                    Connected (25 req / 35s)
+                  </>
+                ) : (
+                  <>
+                    <Shield size={12} aria-hidden="true" />
+                    Free NIST Fetch (4 req / 30s)
+                  </>
+                )}
               </span>
               <span>&bull;</span>
               <span>
@@ -665,7 +666,7 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
                 href="admin.php?page=webcare-pro-settings&tab=threat_intel"
                 style={{ fontSize: '12px', fontWeight: 600, color: '#4f46e5', textDecoration: 'none' }}
               >
-                Configure Key in Settings &rarr;
+                {nistStatus?.has_api_key ? 'Manage Key in Settings →' : 'Configure Key in Settings →'}
               </a>
               <button
                 type="button"

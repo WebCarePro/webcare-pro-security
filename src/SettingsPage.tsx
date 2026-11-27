@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from '@wordpress/element';
+import { useState, useEffect, useMemo, useId, useRef } from '@wordpress/element';
 import { CronManagerPage } from './CronManager/CronManagerPage';
 import { NotificationsPage } from './NotificationsPage';
 import {
@@ -6271,10 +6271,21 @@ function NistCveSyncSettingsCard({ apiRequest }: { apiRequest: (opts: any) => Pr
     checked_count: number;
     last_fetch_human: string;
     has_api_key: boolean;
+    api_key_masked?: string;
+    checked_components?: Record<string, any>;
+    logs?: any[];
   } | null>(null);
   const [apiKeyInput, setApiKeyInput] = useState('');
+  const [showKey, setShowKey] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [inputError, setInputError] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const headingId = useId();
+  const inputId = useId();
+  const helperId = useId();
+  const statusMsgId = useId();
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   const loadStatus = async () => {
     try {
@@ -6289,15 +6300,100 @@ function NistCveSyncSettingsCard({ apiRequest }: { apiRequest: (opts: any) => Pr
     loadStatus();
   }, []);
 
+  const handleSaveKey = async (e: any) => {
+    e.preventDefault();
+    const trimmed = apiKeyInput.trim();
+    if (!trimmed) {
+      const msg = 'Please enter a NIST NVD API Key (36-character UUID) to save.';
+      setInputError(msg);
+      setNotice({ type: 'error', text: msg });
+      inputRef.current?.focus();
+      return;
+    }
+
+    setBusy(true);
+    setInputError(null);
+    setNotice(null);
+    try {
+      const res = await apiRequest({
+        path: '/cve/nist-api-key',
+        method: 'POST',
+        data: { api_key: trimmed },
+      });
+      if (res?.status) {
+        setStatus(res.status);
+      }
+      if (res?.success) {
+        setApiKeyInput('');
+        setShowKey(false);
+        setNotice({ type: 'success', text: res?.message || 'NIST NVD API Key encrypted & saved in Vault.' });
+      } else {
+        const msg = res?.message || 'Invalid NIST NVD API Key format.';
+        setInputError(msg);
+        setNotice({ type: 'error', text: msg });
+        inputRef.current?.focus();
+      }
+    } catch (err: any) {
+      const msg = err?.message || 'Failed to save NIST API Key.';
+      setInputError(msg);
+      setNotice({ type: 'error', text: msg });
+      inputRef.current?.focus();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRemoveKey = async () => {
+    setBusy(true);
+    setInputError(null);
+    setNotice(null);
+    try {
+      const res = await apiRequest({
+        path: '/cve/nist-api-key',
+        method: 'POST',
+        data: { api_key: '' },
+      });
+      if (res?.status) {
+        setStatus(res.status);
+      }
+      if (res?.success) {
+        setApiKeyInput('');
+        setShowKey(false);
+        setNotice({ type: 'success', text: res?.message || 'NIST NVD API Key removed. Using free public rate limit.' });
+      } else {
+        setNotice({ type: 'error', text: res?.message || 'Failed to remove NIST API Key.' });
+      }
+    } catch (err: any) {
+      setNotice({ type: 'error', text: err?.message || 'Failed to remove NIST API Key.' });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="webcare-firewall-section-group" style={{ borderRadius: '12px', border: '1px solid var(--webcare-border, #e2e8f0)', padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
         <div>
-          <h3 style={{ margin: 0, fontSize: '15.5px', color: 'var(--webcare-text-primary, #0f172a)' }}>
-            NIST NVD Background CVE Sync &amp; API Key
-          </h3>
-          <p style={{ margin: '2px 0 0', fontSize: '13px', color: 'var(--webcare-text-secondary, #475569)' }}>
-            Checked <strong>{status ? `${status.checked_count} / ${status.total_components}` : '0 / 0'}</strong> plugins, themes &amp; core &bull; Last Fetch: <strong>{status?.last_fetch_human || 'Never'}</strong> &bull; {status?.has_api_key ? 'NIST API Connected (25 req / 35s)' : 'Free NIST Fetch (4 req / 30s)'}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <h3 id={headingId} style={{ margin: 0, fontSize: '15.5px', color: 'var(--webcare-text-primary, #0f172a)' }}>
+              NIST NVD Background CVE Sync &amp; API Key
+            </h3>
+            <span className={`webcare-badge-pill ${status?.has_api_key ? 'webcare-badge-clean' : 'webcare-badge-info'}`}>
+              {status?.has_api_key ? (
+                <>
+                  <CheckCircle2 size={12} aria-hidden="true" />
+                  Connected (25 req / 35s)
+                </>
+              ) : (
+                <>
+                  <Shield size={12} aria-hidden="true" />
+                  Free NIST Fetch (4 req / 30s)
+                </>
+              )}
+            </span>
+          </div>
+          <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--webcare-text-secondary, #475569)' }}>
+            Checked <strong>{status ? `${status.checked_count} / ${status.total_components}` : '0 / 0'}</strong> plugins, themes &amp; core &bull; Last Fetch: <strong>{status?.last_fetch_human || 'Never'}</strong>
           </p>
           <p style={{ margin: '6px 0 0', fontSize: '12px', color: 'var(--webcare-text-muted, #64748b)' }}>
             Syncs CVE advisories for your installed plugins and themes in the background and stores them in your local vault. Without an API key, NIST allows 5 requests per 35 seconds; with a free API key, rate limits increase to 25 requests per 35 seconds.{' '}
@@ -6337,52 +6433,133 @@ function NistCveSyncSettingsCard({ apiRequest }: { apiRequest: (opts: any) => Pr
         </button>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-        <input
-          type="password"
-          className="webcare-input"
-          value={apiKeyInput}
-          onChange={(e) => setApiKeyInput(e.target.value)}
-          placeholder={status?.has_api_key ? 'NIST API Key saved in Vault (paste to replace)' : 'Optional NIST NVD API Key'}
-          style={{ width: '280px' }}
-        />
-        <button
-          type="button"
-          className="button"
-          disabled={busy}
-          onClick={async () => {
-            setBusy(true);
-            setNotice(null);
-            try {
-              const res = await apiRequest({
-                path: '/cve/nist-api-key',
-                method: 'POST',
-                data: { api_key: apiKeyInput },
-              });
-              if (res?.status) {
-                setStatus(res.status);
-              }
-              if (res?.success) {
-                setApiKeyInput('');
-                setNotice({ type: 'success', text: res?.message || 'NIST NVD API Key encrypted & saved in Vault.' });
-              } else {
-                setNotice({ type: 'error', text: res?.message || 'Invalid NIST NVD API Key format.' });
-              }
-            } catch (e: any) {
-              setNotice({ type: 'error', text: e?.message || 'Failed to save NIST API Key.' });
-            } finally {
-              setBusy(false);
-            }
+      {status?.has_api_key && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '10px',
+            padding: '10px 14px',
+            borderRadius: '10px',
+            background: 'var(--webcare-status-clean-soft, #ecfdf5)',
+            border: '1px solid var(--webcare-status-clean-border, #a7f3d0)',
+            color: 'var(--webcare-status-clean, #059669)',
+            fontSize: '12.5px',
           }}
         >
-          Save Key
-        </button>
-        {notice && (
-          <span style={{ fontSize: '12px', fontWeight: 600, color: notice.type === 'success' ? '#059669' : '#dc2626' }}>
-            {notice.text}
-          </span>
-        )}
-      </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <CheckCircle2 size={16} aria-hidden="true" />
+            <strong>NIST NVD API Connected</strong>
+            {status.api_key_masked && (
+              <code
+                style={{
+                  fontSize: '11.5px',
+                  padding: '2px 7px',
+                  borderRadius: '6px',
+                  background: 'var(--webcare-bg-card, #ffffff)',
+                  color: 'var(--webcare-text-primary, #0f172a)',
+                  border: '1px solid var(--webcare-border, #e2e8f0)',
+                }}
+              >
+                {status.api_key_masked}
+              </code>
+            )}
+            <span style={{ color: 'var(--webcare-text-secondary, #475569)', fontSize: '12px' }}>
+              Encrypted in local Vault (25 req / 35s)
+            </span>
+          </div>
+          <button
+            type="button"
+            className="webcare-btn-danger-outline"
+            disabled={busy}
+            onClick={handleRemoveKey}
+            style={{ minHeight: '34px' }}
+          >
+            <Trash2 size={13} aria-hidden="true" />
+            {busy ? 'Removing…' : 'Remove API'}
+          </button>
+        </div>
+      )}
+
+      <form onSubmit={handleSaveKey} aria-labelledby={headingId} noValidate style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        <label
+          htmlFor={inputId}
+          style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--webcare-text-primary, #0f172a)' }}
+        >
+          {status?.has_api_key ? 'Replace NIST NVD API Key' : 'Optional NIST NVD API Key'}
+        </label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', width: '300px', maxWidth: '100%' }}>
+            <input
+              ref={inputRef}
+              id={inputId}
+              name="nist_api_key"
+              type={showKey ? 'text' : 'password'}
+              className="webcare-form-input"
+              value={apiKeyInput}
+              onChange={(e) => {
+                setApiKeyInput(e.target.value);
+                if (inputError) setInputError(null);
+              }}
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="none"
+              spellCheck={false}
+              enterKeyHint="done"
+              aria-invalid={inputError ? 'true' : undefined}
+              aria-describedby={notice ? `${helperId} ${statusMsgId}` : helperId}
+              placeholder={status?.has_api_key ? 'Paste new UUID key to replace saved key' : 'Enter 36-character UUID key'}
+              style={{ width: '100%', minHeight: '38px', padding: '7px 38px 7px 12px', font: 'inherit', fontSize: '13px', boxSizing: 'border-box' }}
+            />
+            <button
+              type="button"
+              aria-pressed={showKey}
+              aria-label={showKey ? 'Hide NIST NVD API Key' : 'Show NIST NVD API Key'}
+              onClick={() => setShowKey((prev) => !prev)}
+              style={{
+                position: 'absolute',
+                insetInlineEnd: '4px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                minWidth: '30px',
+                minHeight: '30px',
+                padding: 0,
+                background: 'transparent',
+                border: 'none',
+                borderRadius: '6px',
+                color: 'var(--webcare-text-muted, #64748b)',
+                cursor: 'pointer',
+              }}
+            >
+              {showKey ? <EyeOff size={15} aria-hidden="true" /> : <Eye size={15} aria-hidden="true" />}
+            </button>
+          </div>
+          <button
+            type="submit"
+            className="button"
+            disabled={busy}
+            style={{ minHeight: '38px', padding: '0 14px', fontWeight: 600 }}
+          >
+            {busy ? 'Saving…' : status?.has_api_key ? 'Update Key' : 'Save Key'}
+          </button>
+        </div>
+        <span id={helperId} style={{ fontSize: '11.5px', color: 'var(--webcare-text-muted, #64748b)' }}>
+          {status?.has_api_key
+            ? 'Your current key remains active until you replace it or click Remove API.'
+            : 'Expected format: 36-character UUID from nvd.nist.gov (stored AES-256 encrypted in Vault).'}
+        </span>
+        <div
+          id={statusMsgId}
+          role={notice?.type === 'error' ? 'alert' : 'status'}
+          aria-live="polite"
+          style={{ minHeight: notice ? '18px' : '0px', fontSize: '12px', fontWeight: 600, color: notice?.type === 'error' ? 'var(--webcare-status-critical, #dc2626)' : 'var(--webcare-status-clean, #059669)' }}
+        >
+          {notice?.text || ''}
+        </div>
+      </form>
 
       {/* Checked Components & Sync Logs */}
       {(Object.keys(status?.checked_components || {}).length > 0 || (status?.logs || []).length > 0) && (
