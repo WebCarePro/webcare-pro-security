@@ -31,6 +31,26 @@ class NistCveVaultSync {
     public const FREE_TIER_REQUEST_BUDGET  = 4;
     public const API_KEY_REQUEST_BUDGET    = 12;
     public const RATE_WINDOW_TRANSIENT     = 'webcareproscan_nist_rate_window';
+    public const SCHEMA_VERSION            = 2;
+
+    /**
+     * Canonical WordPress.org slug map for single-file or aliased extensions.
+     *
+     * @var array<string, string>
+     */
+    private const SLUG_ALIASES = [
+        'hello'                => 'hello-dolly',
+        'hello_dolly'          => 'hello-dolly',
+        'hello-dolly'          => 'hello-dolly',
+        'woocommerce_payments' => 'woocommerce-payments',
+        'woocommerce-payment'  => 'woocommerce-payments',
+        'cf7'                  => 'contact-form-7',
+        'contact_form_7'       => 'contact-form-7',
+        'givewp'               => 'give',
+        'aioseo'               => 'all-in-one-seo-pack',
+        'yoast-seo'            => 'wordpress-seo',
+        'litespeed_cache'      => 'litespeed-cache',
+    ];
 
     /**
      * Optional test seam for mocking NIST HTTP responses in unit tests.
@@ -38,6 +58,13 @@ class NistCveVaultSync {
      * @var callable|null
      */
     public static $http_get_callback = null;
+
+    /**
+     * Optional test seam for mocking WPVulnerability HTTP responses in unit tests.
+     *
+     * @var callable|null
+     */
+    public static $wpvuln_get_callback = null;
 
     public static function init(): void {
         add_action(self::CRON_HOOK, [__CLASS__, 'process_next_batch']);
@@ -257,53 +284,131 @@ class NistCveVaultSync {
     }
 
     /**
-     * Collect all installed plugins & themes for background NIST sync (with vendor/author hints).
+     * Resolve canonical WordPress.org slug for a component (e.g., hello -> hello-dolly).
+     */
+    public static function resolve_canonical_slug(string $slug): string {
+        $clean = strtolower(trim($slug));
+        if ($clean === '') {
+            return '';
+        }
+        if (isset(self::SLUG_ALIASES[$clean])) {
+            return self::SLUG_ALIASES[$clean];
+        }
+        if (class_exists(CVEIntelligenceService::class)) {
+            $mapped = strtolower(CVEIntelligenceService::resolve_canonical_slug($clean));
+            if ($mapped !== '') {
+                return self::SLUG_ALIASES[$mapped] ?? $mapped;
+            }
+        }
+        return $clean;
+    }
+
+    /**
+     * Normalize an installed or constraint version string cleanly for semver comparison.
+     */
+    public static function normalize_version(string $version): string {
+        $v = trim($version);
+        if ($v === '') {
+            return '';
+        }
+        $v = (string) preg_replace('/^[vV]+/', '', $v);
+        $plus = strpos($v, '+');
+        if ($plus !== false) {
+            $v = substr($v, 0, $plus);
+        }
+        $v = trim($v);
+        if ($v === '' || $v === '0.0.0') {
+            return '';
+        }
+        return $v;
+    }
+
+    /**
+     * Collect all installed plugins & themes for background NIST sync (with canonical slug & vendor/author hints).
      *
-     * @return list<array{slug: string, name: string, version: string, type: string, author?: string, vendor_hints?: list<string>}>
+     * @return list<array{slug: string, raw_slug?: string, name: string, version: string, type: string, author?: string, vendor_hints?: list<string>, is_outdated?: bool, latest_version?: string}>
      */
     public static function collect_installed_components(): array {
         $items = [
             [
-                'slug'         => 'wordpress',
-                'name'         => 'WordPress Core',
-                'version'      => function_exists('get_bloginfo') ? (string) get_bloginfo('version') : '0.0.0',
-                'type'         => 'core',
-                'author'       => 'WordPress',
-                'vendor_hints' => ['wordpress'],
+                'slug'           => 'wordpress',
+                'raw_slug'       => 'wordpress',
+                'name'           => 'WordPress Core',
+                'version'        => function_exists('get_bloginfo') ? (string) get_bloginfo('version') : '0.0.0',
+                'type'           => 'core',
+                'author'         => 'WordPress',
+                'vendor_hints'   => ['wordpress'],
+                'is_outdated'    => false,
+                'latest_version' => '',
             ],
         ];
         if (!function_exists('get_plugins')) {
             require_once ABSPATH . 'wp-admin/includes/plugin.php';
         }
+        $update_plugins = function_exists('get_site_transient') ? get_site_transient('update_plugins') : null;
+        $update_themes  = function_exists('get_site_transient') ? get_site_transient('update_themes') : null;
+
         foreach (get_plugins() as $file => $data) {
-            $slug = dirname($file);
-            if ($slug === '.' || $slug === '') {
-                $slug = pathinfo($file, PATHINFO_FILENAME);
+            $raw_slug = dirname($file);
+            if ($raw_slug === '.' || $raw_slug === '') {
+                $raw_slug = pathinfo($file, PATHINFO_FILENAME);
             }
+            $raw_slug_l = strtolower((string) $raw_slug);
+
+            // Prefer authoritative WordPress.org repository slug when populated in update transient
+            $wporg_slug = '';
+            $is_outdated = false;
+            $latest_ver = (string) ($data['Version'] ?? '0.0.0');
+            if (is_object($update_plugins)) {
+                if (!empty($update_plugins->response[$file]->slug)) {
+                    $wporg_slug = strtolower((string) $update_plugins->response[$file]->slug);
+                } elseif (!empty($update_plugins->no_update[$file]->slug)) {
+                    $wporg_slug = strtolower((string) $update_plugins->no_update[$file]->slug);
+                }
+                if (!empty($update_plugins->response[$file])) {
+                    $is_outdated = true;
+                    $latest_ver  = (string) ($update_plugins->response[$file]->new_version ?? $latest_ver);
+                }
+            }
+            $canonical_slug = $wporg_slug !== '' ? self::resolve_canonical_slug($wporg_slug) : self::resolve_canonical_slug($raw_slug_l);
+
             $author = function_exists('wp_strip_all_tags')
                 ? wp_strip_all_tags((string) ($data['Author'] ?? ($data['AuthorName'] ?? '')))
                 : trim(strip_tags((string) ($data['Author'] ?? ($data['AuthorName'] ?? ''))));
             $items[] = [
-                'slug'         => strtolower($slug),
-                'name'         => (string) ($data['Name'] ?? $slug),
-                'version'      => (string) ($data['Version'] ?? '0.0.0'),
-                'type'         => 'plugin',
-                'author'       => $author,
-                'vendor_hints' => self::extract_vendor_hints($author, (string) ($data['AuthorURI'] ?? ''), (string) ($data['PluginURI'] ?? '')),
+                'slug'           => $canonical_slug,
+                'raw_slug'       => $raw_slug_l,
+                'name'           => (string) ($data['Name'] ?? $canonical_slug),
+                'version'        => (string) ($data['Version'] ?? '0.0.0'),
+                'type'           => 'plugin',
+                'author'         => $author,
+                'vendor_hints'   => self::extract_vendor_hints($author, (string) ($data['AuthorURI'] ?? ''), (string) ($data['PluginURI'] ?? '')),
+                'is_outdated'    => $is_outdated,
+                'latest_version' => $latest_ver,
             ];
         }
         if (function_exists('wp_get_themes')) {
             foreach (wp_get_themes() as $slug => $theme) {
+                $raw_slug_l = strtolower((string) $slug);
+                $is_outdated = false;
+                $latest_ver  = (string) $theme->get('Version');
+                if (is_object($update_themes) && !empty($update_themes->response[$slug])) {
+                    $is_outdated = true;
+                    $latest_ver  = (string) ($update_themes->response[$slug]['new_version'] ?? $latest_ver);
+                }
                 $author = function_exists('wp_strip_all_tags')
                     ? wp_strip_all_tags((string) $theme->get('Author'))
                     : trim(strip_tags((string) $theme->get('Author')));
                 $items[] = [
-                    'slug'         => strtolower((string) $slug),
-                    'name'         => (string) $theme->get('Name'),
-                    'version'      => (string) $theme->get('Version'),
-                    'type'         => 'theme',
-                    'author'       => $author,
-                    'vendor_hints' => self::extract_vendor_hints($author, (string) $theme->get('AuthorURI'), (string) $theme->get('ThemeURI')),
+                    'slug'           => $raw_slug_l,
+                    'raw_slug'       => $raw_slug_l,
+                    'name'           => (string) $theme->get('Name'),
+                    'version'        => (string) $theme->get('Version'),
+                    'type'           => 'theme',
+                    'author'         => $author,
+                    'vendor_hints'   => self::extract_vendor_hints($author, (string) $theme->get('AuthorURI'), (string) $theme->get('ThemeURI')),
+                    'is_outdated'    => $is_outdated,
+                    'latest_version' => $latest_ver,
                 ];
             }
         }
@@ -368,12 +473,14 @@ class NistCveVaultSync {
         if (!empty($extra['author']) || !empty($extra['vendor_hints']) || !empty($extra['vendor'])) {
             return $extra;
         }
-        $norm_slug = strtolower(trim($slug));
+        $norm_slug = self::resolve_canonical_slug($slug);
         if ($norm_slug === 'wordpress' || $type === 'core') {
             return ['author' => 'WordPress', 'vendor_hints' => ['wordpress']];
         }
         foreach (self::collect_installed_components() as $comp) {
-            if (($comp['slug'] ?? '') === $norm_slug && ($type === '' || $type === 'component' || ($comp['type'] ?? '') === $type)) {
+            if ((($comp['slug'] ?? '') === $norm_slug || ($comp['raw_slug'] ?? '') === strtolower(trim($slug)))
+                && ($type === '' || $type === 'component' || ($comp['type'] ?? '') === $type)
+            ) {
                 return [
                     'author'       => (string) ($comp['author'] ?? ''),
                     'vendor_hints' => is_array($comp['vendor_hints'] ?? null) ? $comp['vendor_hints'] : [],
@@ -493,7 +600,7 @@ class NistCveVaultSync {
             if (!is_array($comp)) {
                 continue;
             }
-            $slug            = strtolower(trim((string) ($comp['slug'] ?? '')));
+            $slug            = self::resolve_canonical_slug((string) ($comp['slug'] ?? ''));
             $name            = (string) ($comp['name'] ?? $slug);
             $version         = (string) ($comp['version'] ?? '0.0.0');
             $type            = (string) ($comp['type'] ?? 'plugin');
@@ -507,6 +614,12 @@ class NistCveVaultSync {
             ];
             if ($slug === '') {
                 continue;
+            }
+
+            // Enrich from slug-authoritative WPVulnerability API once when starting this component
+            if ($pages_fetched === 0) {
+                $wpvuln_cves  = self::fetch_wpvulnerability_for_component($slug, $name, $version, $type);
+                $partial_cves = self::merge_unique_cves($partial_cves, $wpvuln_cves);
             }
 
             $final_page = null;
@@ -574,7 +687,9 @@ class NistCveVaultSync {
             $stored_cves = ($final_page['error'] !== '' && !empty($existing_cves)) ? $existing_cves : $partial_cves;
 
             $catalog[$slug] = [
+                'schema_version'  => self::SCHEMA_VERSION,
                 'slug'            => $slug,
+                'canonical_slug'  => $slug,
                 'name'            => $name,
                 'type'            => $type,
                 'version'         => $version,
@@ -605,12 +720,7 @@ class NistCveVaultSync {
                     : sprintf('%s (v%s): Scanned %d of %d NVD records (%d page%s), %d matched CVEs%s', $name, $version, $scanned_records, $final_page['raw_total'], $pages_fetched, $pages_fetched === 1 ? '' : 's', count($stored_cves), $trunc_note),
             ]);
 
-            if ($type === 'core' || $slug === 'wordpress') {
-                delete_transient('webcareproscan_cve_core_' . sanitize_key($version));
-            } else {
-                delete_transient('webcareproscan_cve_plugin_' . sanitize_key($slug . '_' . $version));
-                delete_transient('webcareproscan_cve_theme_' . sanitize_key($slug . '_' . $version));
-            }
+            self::clear_component_transients($slug, $version, $type);
         }
 
         $state['logs']          = array_slice($logs, 0, 50);
@@ -671,7 +781,7 @@ class NistCveVaultSync {
             if ($slug === '') {
                 continue;
             }
-            $cves = self::get_component_cves($slug, $version);
+            $cves = self::get_component_cves($slug, $version, $type);
             if (empty($cves)) {
                 continue;
             }
@@ -770,21 +880,26 @@ class NistCveVaultSync {
     }
 
     /**
-     * Live-fetch NIST NVD CVEs for a single plugin/theme/core component and store in the encrypted Vault.
+     * Live-fetch NIST NVD + WPVulnerability CVEs for a single plugin/theme/core component and store in Vault.
      */
     public static function fetch_single_component(string $slug, string $name, string $version, string $type = ''): array {
-        $norm_slug = strtolower(trim($slug));
-        $comp_type = $type !== '' ? $type : ($norm_slug === 'wordpress' ? 'core' : 'component');
-        $result    = self::query_nist_for_component($norm_slug, $name, $version, $comp_type);
-        $cves      = $result['cves'];
-        $now       = time();
+        $norm_slug   = self::resolve_canonical_slug($slug);
+        $comp_type   = $type !== '' ? $type : ($norm_slug === 'wordpress' ? 'core' : 'component');
+        $wpvuln_cves = self::fetch_wpvulnerability_for_component($norm_slug, $name, $version, $comp_type);
+        $result      = self::query_nist_for_component($norm_slug, $name, $version, $comp_type);
+        $cves        = self::merge_unique_cves($wpvuln_cves, $result['cves']);
+        $now         = time();
 
         $catalog = self::read_vault_catalog();
-        $existing_cves = (isset($catalog[$norm_slug]['cves']) && is_array($catalog[$norm_slug]['cves'])) ? $catalog[$norm_slug]['cves'] : [];
-        $stored_cves = ($result['error'] !== '' && !empty($existing_cves)) ? $existing_cves : $cves;
+        $existing_cves = (isset($catalog[$norm_slug]['cves']) && is_array($catalog[$norm_slug]['cves']) && (int) ($catalog[$norm_slug]['schema_version'] ?? 0) >= self::SCHEMA_VERSION)
+            ? $catalog[$norm_slug]['cves']
+            : [];
+        $stored_cves = ($result['error'] !== '' && empty($wpvuln_cves) && !empty($existing_cves)) ? $existing_cves : $cves;
 
         $catalog[$norm_slug] = [
+            'schema_version'  => self::SCHEMA_VERSION,
             'slug'            => $norm_slug,
+            'canonical_slug'  => $norm_slug,
             'name'            => $name !== '' ? $name : $norm_slug,
             'type'            => $comp_type,
             'version'         => $version,
@@ -817,7 +932,7 @@ class NistCveVaultSync {
             'http_status' => $result['http_status'],
             'raw_total'   => $result['raw_total'],
             'matched'     => count($stored_cves),
-            'message'     => $result['error'] !== ''
+            'message'     => $result['error'] !== '' && empty($wpvuln_cves)
                 ? sprintf('%s (v%s): %s', $name !== '' ? $name : $norm_slug, $version, $result['error'])
                 : sprintf('%s (v%s): Live-fetched %d of %d NVD records (%d page%s), %d matched CVEs%s', $name !== '' ? $name : $norm_slug, $version, $scanned_records, $result['raw_total'], $pages_fetched, $pages_fetched === 1 ? '' : 's', count($stored_cves), $trunc_note),
         ]);
@@ -826,16 +941,10 @@ class NistCveVaultSync {
         $state['checked_count'] = count($catalog);
         update_option(self::OPTION_SYNC_STATE, $state, false);
 
-        // Clear UpdateScanner transient cache for this component so UI refreshes immediately
-        if ($comp_type === 'core' || $norm_slug === 'wordpress') {
-            delete_transient('webcareproscan_cve_core_' . sanitize_key($version));
-        } else {
-            delete_transient('webcareproscan_cve_plugin_' . sanitize_key($norm_slug . '_' . $version));
-            delete_transient('webcareproscan_cve_theme_' . sanitize_key($norm_slug . '_' . $version));
-        }
+        self::clear_component_transients($norm_slug, $version, $comp_type);
 
         return [
-            'success' => $result['error'] === '' || $result['http_status'] === 200,
+            'success' => $result['error'] === '' || $result['http_status'] === 200 || !empty($wpvuln_cves),
             'slug'    => $norm_slug,
             'cves'    => $cves,
             'error'   => $result['error'],
@@ -844,28 +953,93 @@ class NistCveVaultSync {
     }
 
     /**
-     * Retrieve cached NIST CVEs for a component from the encrypted Vault.
+     * Clear UpdateScanner CVE transient caches for both current and legacy cache key prefixes.
      */
-    public static function get_component_cves(string $slug, string $version): array {
-        $catalog = self::read_vault_catalog();
-        $norm_slug = strtolower(trim($slug));
-        if (empty($catalog[$norm_slug]['cves']) || !is_array($catalog[$norm_slug]['cves'])) {
+    private static function clear_component_transients(string $slug, string $version, string $type): void {
+        if (!function_exists('delete_transient')) {
+            return;
+        }
+        $canon = self::resolve_canonical_slug($slug);
+        $slugs = array_unique(array_filter([strtolower(trim($slug)), $canon]));
+        foreach (['webcareproscan_cve_v2_', 'webcareproscan_cve_'] as $prefix) {
+            if ($type === 'core' || $canon === 'wordpress') {
+                delete_transient($prefix . 'core_' . sanitize_key($version));
+            } else {
+                foreach ($slugs as $s) {
+                    delete_transient($prefix . 'plugin_' . sanitize_key($s . '_' . $version));
+                    delete_transient($prefix . 'theme_' . sanitize_key($s . '_' . $version));
+                }
+            }
+        }
+    }
+
+    /**
+     * Retrieve cached CVEs for a component from the encrypted Vault, validating schema, type, and exact version bounds.
+     */
+    public static function get_component_cves(string $slug, string $version, string $type = ''): array {
+        $catalog        = self::read_vault_catalog();
+        $raw_slug       = strtolower(trim($slug));
+        $canonical_slug = self::resolve_canonical_slug($raw_slug);
+        $entry          = $catalog[$canonical_slug] ?? ($catalog[$raw_slug] ?? null);
+        if (!is_array($entry) || empty($entry['cves']) || !is_array($entry['cves'])) {
             return [];
         }
+        // Reject stale pre-hardening Vault entries written before strict ownership/version schema v2
+        if ((int) ($entry['schema_version'] ?? 0) < self::SCHEMA_VERSION) {
+            return [];
+        }
+        if ($type !== '' && $type !== 'component' && !empty($entry['type']) && $entry['type'] !== 'component' && $entry['type'] !== $type) {
+            return [];
+        }
+
+        $norm_ver   = self::normalize_version($version);
+        $stored_ver = self::normalize_version((string) ($entry['version'] ?? ''));
+        if ($norm_ver === '') {
+            return [];
+        }
+
         $cves = [];
-        foreach ($catalog[$norm_slug]['cves'] as $item) {
+        foreach ($entry['cves'] as $item) {
             if (!is_array($item)) {
                 continue;
             }
-            $fixed_in = (string) ($item['fixed_in'] ?? '');
-            if ($fixed_in !== '' && $fixed_in !== 'Latest' && !str_starts_with($fixed_in, '<=')) {
-                if (version_compare($version, $fixed_in, '>=')) {
+            $item_type = (string) ($item['component_type'] ?? '');
+            if ($type !== '' && $type !== 'component' && $item_type !== '' && $item_type !== 'component' && $item_type !== $type) {
+                continue;
+            }
+
+            if (!empty($item['affected_ranges']) && is_array($item['affected_ranges'])) {
+                $re_eval = self::evaluate_range_list($norm_ver, $item['affected_ranges']);
+                if (!$re_eval['matched']) {
                     continue;
                 }
-            } elseif (str_starts_with($fixed_in, '<=')) {
-                $max_inc = trim(substr($fixed_in, 2));
-                if ($max_inc !== '' && version_compare($version, $max_inc, '>')) {
+                // If advisory only carried an open-ended unfixed flag without bounds, expire cleanly on version change
+                $first_r = $item['affected_ranges'][0] ?? [];
+                if (!empty($re_eval['unfixed']) && empty($first_r['start_inc']) && empty($first_r['start_exc']) && $stored_ver !== '' && $norm_ver !== $stored_ver) {
                     continue;
+                }
+            } else {
+                $fixed_in = (string) ($item['fixed_in'] ?? '');
+                if ($fixed_in === '') {
+                    continue;
+                }
+                if ($fixed_in === 'Latest' || str_starts_with($fixed_in, 'Unpatched')) {
+                    if ($stored_ver === '' || version_compare($norm_ver, $stored_ver, '>')) {
+                        continue;
+                    }
+                    if (empty($item['unfixed'])) {
+                        continue;
+                    }
+                } elseif (str_starts_with($fixed_in, '<=')) {
+                    $max_inc = self::normalize_version(trim(substr($fixed_in, 2)));
+                    if ($max_inc === '' || version_compare($norm_ver, $max_inc, '>')) {
+                        continue;
+                    }
+                } else {
+                    $fix_norm = self::normalize_version($fixed_in);
+                    if ($fix_norm === '' || version_compare($norm_ver, $fix_norm, '>=')) {
+                        continue;
+                    }
                 }
             }
             $cves[] = $item;
@@ -874,10 +1048,10 @@ class NistCveVaultSync {
     }
 
     /**
-     * Build a clean, concise NIST NVD keywordSearch string without marketing subtitles or parentheticals.
+     * Build a clean, full-name NIST NVD keywordSearch string without truncating multi-word titles like "Hello Dolly".
      */
     public static function build_nist_query_keyword(string $slug, string $name, string $type = 'plugin'): string {
-        $norm_slug = strtolower(trim($slug));
+        $norm_slug = self::resolve_canonical_slug($slug);
         if ($type === 'core' || $norm_slug === 'wordpress') {
             return 'WordPress';
         }
@@ -892,9 +1066,10 @@ class NistCveVaultSync {
         if ($base === '') {
             $base = str_replace(['-', '_'], ' ', $norm_slug);
         }
-        // If slug is a clean single brand word matching the leading word (e.g. "akismet" -> "Akismet Anti-spam"), prefer the concise brand token
+        // Only shorten to leading brand token when the canonical slug itself is that exact single word
+        // (e.g. "akismet" -> "WordPress Akismet", while "hello" -> canonical "hello-dolly" keeps "WordPress Hello Dolly").
         $words = explode(' ', $base);
-        if (count($words) > 1 && strtolower((string) preg_replace('/[^a-z0-9]/i', '', $words[0])) === (string) preg_replace('/[^a-z0-9]/i', '', $norm_slug)) {
+        if (count($words) > 1 && strtolower((string) preg_replace('/[^a-z0-9]/i', '', $words[0])) === (string) preg_replace('/[^a-z0-9]/', '', $norm_slug)) {
             $base = $words[0];
         }
         if (stripos($base, 'wordpress') !== false) {
@@ -939,9 +1114,15 @@ class NistCveVaultSync {
             return null;
         }
 
-        $norm_slug  = strtolower(trim($slug));
-        $slug_under = str_replace('-', '_', $norm_slug);
-        $is_core    = ($type === 'core' || $norm_slug === 'wordpress');
+        $raw_slug       = strtolower(trim($slug));
+        $canonical_slug = self::resolve_canonical_slug($raw_slug);
+        $norm_slug      = $canonical_slug !== '' ? $canonical_slug : $raw_slug;
+        $slug_under     = str_replace('-', '_', $norm_slug);
+        $is_core        = ($type === 'core' || $norm_slug === 'wordpress');
+        $norm_version   = self::normalize_version($version);
+        if ($norm_version === '') {
+            return null;
+        }
 
         // Clean component title without marketing subtitle
         $clean_name = trim((string) preg_replace('/\s*\([^)]*\)\s*/', ' ', $name));
@@ -949,21 +1130,31 @@ class NistCveVaultSync {
         $short_name = is_array($name_parts) && !empty($name_parts[0]) ? trim($name_parts[0]) : $clean_name;
 
         if (!$is_core) {
-            $matches_text = ($short_name !== '' && stripos($desc, $short_name) !== false)
-                || ($norm_slug !== '' && stripos($desc, $norm_slug) !== false)
-                || ($slug_under !== '' && stripos($desc, $slug_under) !== false);
+            $slug_variants = array_unique(array_filter([$norm_slug, $slug_under, $raw_slug, str_replace('-', '_', $raw_slug)]));
+            $matches_text  = ($short_name !== '' && self::does_text_have_word($desc, $short_name));
+            if (!$matches_text) {
+                foreach ($slug_variants as $sv) {
+                    if ($sv !== '' && self::does_text_have_word($desc, $sv)) {
+                        $matches_text = true;
+                        break;
+                    }
+                }
+            }
             if (!$matches_text) {
                 return null;
             }
         }
 
-        $context = self::resolve_component_context($norm_slug, $type, $context);
-        $cve_signals = self::extract_cve_ecosystem_signals($cve, $desc, $norm_slug);
+        $context          = self::resolve_component_context($norm_slug, $type, $context);
+        $cve_signals      = self::extract_cve_ecosystem_signals($cve, $desc, $norm_slug);
         $expected_vendors = self::build_expected_vendor_set($norm_slug, $short_name, $context);
+        $subject_info     = self::extract_description_subject_info($desc);
 
         $has_any_cpe         = false;
         $fixed_in            = 'Latest';
         $is_version_affected = false;
+        $affected_ranges     = [];
+        $is_unfixed          = false;
 
         $configurations = is_array($cve['configurations'] ?? null) ? $cve['configurations'] : [];
         if (!empty($configurations)) {
@@ -971,7 +1162,7 @@ class NistCveVaultSync {
                 $configurations,
                 $norm_slug,
                 $short_name,
-                $version,
+                $norm_version,
                 $is_core,
                 $context,
                 $expected_vendors,
@@ -983,6 +1174,10 @@ class NistCveVaultSync {
                 if ($eval['fixed_in'] !== '') {
                     $fixed_in = $eval['fixed_in'];
                 }
+                if (!empty($eval['ranges']) && is_array($eval['ranges'])) {
+                    $affected_ranges = $eval['ranges'];
+                }
+                $is_unfixed = !empty($eval['unfixed']);
             }
         }
 
@@ -991,23 +1186,39 @@ class NistCveVaultSync {
                 return null;
             }
         } else {
-            // No CPEs yet ("Awaiting Analysis") — never guess on Core; for plugins/themes require explicit CNA version range in description
-            if ($is_core || str_contains($desc, '** DISPUTED **') || $version === '' || $version === '0.0.0') {
+            // No CPEs yet ("Awaiting Analysis") — never guess on Core; for plugins/themes require authoritative
+            // component subject ownership (exact WP.org slug ref or anchored opening subject + matching plugin/theme type)
+            // AND explicit version bounds extracted from the description.
+            if ($is_core || str_contains($desc, '** DISPUTED **')) {
                 return null;
             }
-            if (preg_match('/\b(?:versions?\s+)?(?:up\s+to,?\s+and\s+including,?|through|<=)\s*v?(\d+\.\d+(?:\.\d+)*)/i', $desc, $m)) {
-                $max_inc = $m[1];
-                if (version_compare($version, $max_inc, '<=')) {
-                    $is_version_affected = true;
-                    $fixed_in            = '<= ' . $max_inc;
-                }
-            } elseif (preg_match('/\b(?:versions?\s+)?(?:before|prior\s+to|<)\s*v?(\d+\.\d+(?:\.\d+)*)/i', $desc, $m)) {
-                $end_exc = $m[1];
-                if (version_compare($version, $end_exc, '<')) {
-                    $is_version_affected = true;
-                    $fixed_in            = $end_exc;
-                }
+            if ($subject_info['type'] !== '' && ($type === 'plugin' || $type === 'theme') && $subject_info['type'] !== $type) {
+                return null;
             }
+
+            $owns_subject = self::does_description_subject_match($subject_info, $norm_slug, $short_name, $type);
+            if (!$owns_subject && !empty($cve_signals['has_slug_wp_ref']) && $subject_info['subject'] === '') {
+                $owns_subject = true;
+            } elseif (!$owns_subject && !empty($cve_signals['has_slug_wp_ref']) && $subject_info['subject'] !== '') {
+                // If opening clause explicitly names a DIFFERENT plugin/theme, only allow exact slug ref when type agrees
+                $owns_subject = self::does_description_subject_match($subject_info, $norm_slug, $short_name, $type);
+            }
+            if (!$owns_subject) {
+                return null;
+            }
+
+            $desc_bounds = self::extract_description_version_bounds($desc);
+            if (empty($desc_bounds)) {
+                return null;
+            }
+            $range_eval = self::evaluate_range_list($norm_version, $desc_bounds);
+            if (!$range_eval['matched']) {
+                return null;
+            }
+            $is_version_affected = true;
+            $fixed_in            = $range_eval['fixed_in'];
+            $affected_ranges     = $desc_bounds;
+            $is_unfixed          = !empty($range_eval['unfixed']);
         }
 
         if (!$is_version_affected) {
@@ -1028,18 +1239,200 @@ class NistCveVaultSync {
         $severity = $cvss >= 9.0 ? 'critical' : ($cvss >= 7.0 ? 'high' : ($cvss >= 4.0 ? 'medium' : 'low'));
 
         return [
-            'cve_id'        => $cve_id,
-            'title'         => substr($desc, 0, 120),
-            'severity'      => $severity,
-            'cvss'          => $cvss,
-            'cvss_vector'   => $cvss_vector,
-            'cwe'           => $cwe,
-            'published'     => (string) ($cve['published'] ?? ''),
-            'last_modified' => (string) ($cve['lastModified'] ?? ''),
-            'fixed_in'      => $fixed_in,
-            'reference'     => "https://nvd.nist.gov/vuln/detail/{$cve_id}",
-            'cve_details'   => $desc,
+            'cve_id'          => $cve_id,
+            'title'           => substr($desc, 0, 120),
+            'severity'        => $severity,
+            'cvss'            => $cvss,
+            'cvss_vector'     => $cvss_vector,
+            'cwe'             => $cwe,
+            'published'       => (string) ($cve['published'] ?? ''),
+            'last_modified'   => (string) ($cve['lastModified'] ?? ''),
+            'fixed_in'        => $fixed_in,
+            'unfixed'         => $is_unfixed,
+            'affected_ranges' => $affected_ranges,
+            'source'          => $has_any_cpe ? 'nvd_cpe' : 'nvd_cna',
+            'canonical_slug'  => $norm_slug,
+            'component_type'  => $type,
+            'reference'       => "https://nvd.nist.gov/vuln/detail/{$cve_id}",
+            'cve_details'     => $desc,
         ];
+    }
+
+    /**
+     * Check whether needle appears in haystack on alphanumeric/slug boundaries (preventing "hello" from matching "Helloprint").
+     */
+    private static function does_text_have_word(string $haystack, string $needle): bool {
+        $needle = trim($needle);
+        if ($needle === '') {
+            return false;
+        }
+        return preg_match('/(?<![a-z0-9_-])' . preg_quote($needle, '/') . '(?![a-z0-9_-])/i', $haystack) === 1;
+    }
+
+    /**
+     * Extract the opening vulnerable component name and WordPress component type from CNA/NVD descriptions.
+     *
+     * @return array{subject: string, type: ''|'plugin'|'theme'}
+     */
+    private static function extract_description_subject_info(string $desc): array {
+        $head = substr($desc, 0, 320);
+        if (preg_match('/^\s*(?:The\s+)?(.{2,140}?)\s+(plugin|theme)\s+for\s+WordPress\b(?:\s*\([^)]{0,80}\))?\s+(?:is\s+vulnerable|allows|has\b|contains|before\b|in\s+(?:all\s+)?versions?\b|versions?\b|<=?)/i', $head, $m)) {
+            return [
+                'subject' => trim((string) $m[1]),
+                'type'    => strtolower((string) $m[2]) === 'theme' ? 'theme' : 'plugin',
+            ];
+        }
+        return ['subject' => '', 'type' => ''];
+    }
+
+    /**
+     * Verify whether an extracted opening CVE subject cleanly identifies the target component & type.
+     *
+     * @param array{subject: string, type: string} $subject_info
+     */
+    private static function does_description_subject_match(array $subject_info, string $norm_slug, string $short_name, string $expected_type): bool {
+        $subj_raw  = trim((string) ($subject_info['subject'] ?? ''));
+        $subj_type = (string) ($subject_info['type'] ?? '');
+        if ($subj_raw === '') {
+            return false;
+        }
+        if ($subj_type !== '' && ($expected_type === 'plugin' || $expected_type === 'theme') && $subj_type !== $expected_type) {
+            return false;
+        }
+
+        // Strip trailing descriptive filler words ("Plugin" / "Theme") and optional subtitle after "-", ":", "|"
+        $subj_clean = trim((string) preg_replace('/\s+(?:WordPress\s+)?(?:plugin|theme)$/i', '', $subj_raw));
+        $subj_parts = preg_split('/\s*(?::|\s[-–—|]\s)\s*/u', $subj_clean);
+        $subj_head  = is_array($subj_parts) && !empty($subj_parts[0]) ? trim($subj_parts[0]) : $subj_clean;
+
+        $subj_norm      = strtolower((string) preg_replace('/[^a-z0-9]+/', '', $subj_clean));
+        $subj_head_norm = strtolower((string) preg_replace('/[^a-z0-9]+/', '', $subj_head));
+        $name_norm      = strtolower((string) preg_replace('/[^a-z0-9]+/', '', $short_name));
+        $slug_norm      = strtolower((string) preg_replace('/[^a-z0-9]+/', '', $norm_slug));
+
+        if ($name_norm !== '' && strlen($name_norm) >= 4 && ($subj_norm === $name_norm || $subj_head_norm === $name_norm)) {
+            return true;
+        }
+        if ($slug_norm !== '' && strlen($slug_norm) >= 4 && ($subj_norm === $slug_norm || $subj_head_norm === $slug_norm)) {
+            return true;
+        }
+        if ($short_name !== '' && (self::does_text_have_word($subj_head, $short_name) || self::does_text_have_word($subj_clean, $short_name))) {
+            $subj_words = preg_split('/\s+/', trim($subj_head)) ?: [];
+            $name_words = preg_split('/\s+/', trim($short_name)) ?: [];
+            if (count($name_words) >= 2 || count($subj_words) <= 3) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Extract explicit structured version bounds from CNA/NVD vulnerability descriptions.
+     *
+     * @return list<array{start_inc: string, start_exc: string, end_inc: string, end_exc: string, exact: string, unfixed: bool}>
+     */
+    private static function extract_description_version_bounds(string $desc): array {
+        $bounds = [];
+        if (preg_match('/\bfrom\s+v?(\d+\.\d+(?:\.\d+)*)\s+(?:up\s+to,?\s+and\s+including,?|through|to)\s+v?(\d+\.\d+(?:\.\d+)*)/i', $desc, $m)) {
+            $bounds[] = [
+                'start_inc' => self::normalize_version($m[1]),
+                'start_exc' => '',
+                'end_inc'   => self::normalize_version($m[2]),
+                'end_exc'   => '',
+                'exact'     => '',
+                'unfixed'   => false,
+            ];
+            return $bounds;
+        }
+        if (preg_match('/\b(?:versions?\s+)?(?:up\s+to,?\s+and\s+including,?|through|<=)\s*v?(\d+\.\d+(?:\.\d+)*)/i', $desc, $m)) {
+            $bounds[] = [
+                'start_inc' => '',
+                'start_exc' => '',
+                'end_inc'   => self::normalize_version($m[1]),
+                'end_exc'   => '',
+                'exact'     => '',
+                'unfixed'   => false,
+            ];
+            return $bounds;
+        }
+        if (preg_match('/\b(?:versions?\s+)?(?:before|prior\s+to|<)\s*v?(\d+\.\d+(?:\.\d+)*)/i', $desc, $m)) {
+            $bounds[] = [
+                'start_inc' => '',
+                'start_exc' => '',
+                'end_inc'   => '',
+                'end_exc'   => self::normalize_version($m[1]),
+                'exact'     => '',
+                'unfixed'   => false,
+            ];
+            return $bounds;
+        }
+        if (preg_match('/\bin\s+(?:the\s+)?version\s+v?(\d+\.\d+(?:\.\d+)*)\b/i', $desc, $m)) {
+            $bounds[] = [
+                'start_inc' => '',
+                'start_exc' => '',
+                'end_inc'   => '',
+                'end_exc'   => '',
+                'exact'     => self::normalize_version($m[1]),
+                'unfixed'   => false,
+            ];
+        }
+        return $bounds;
+    }
+
+    /**
+     * Evaluate a list of structured version range objects against an installed normalized version.
+     *
+     * @param list<array<string, mixed>> $ranges
+     * @return array{matched: bool, fixed_in: string, unfixed: bool}
+     */
+    public static function evaluate_range_list(string $version, array $ranges): array {
+        $norm_ver = self::normalize_version($version);
+        if ($norm_ver === '' || empty($ranges)) {
+            return ['matched' => false, 'fixed_in' => '', 'unfixed' => false];
+        }
+        foreach ($ranges as $r) {
+            if (!is_array($r)) {
+                continue;
+            }
+            $start_inc = self::normalize_version((string) ($r['start_inc'] ?? ''));
+            $start_exc = self::normalize_version((string) ($r['start_exc'] ?? ''));
+            $end_inc   = self::normalize_version((string) ($r['end_inc'] ?? ''));
+            $end_exc   = self::normalize_version((string) ($r['end_exc'] ?? ''));
+            $exact     = self::normalize_version((string) ($r['exact'] ?? ''));
+            $unfixed   = !empty($r['unfixed']);
+
+            if ($exact !== '' && $start_inc === '' && $start_exc === '' && $end_inc === '' && $end_exc === '') {
+                if (version_compare($norm_ver, $exact, '==')) {
+                    return ['matched' => true, 'fixed_in' => '<= ' . $exact, 'unfixed' => $unfixed];
+                }
+                continue;
+            }
+            if ($start_inc === '' && $start_exc === '' && $end_inc === '' && $end_exc === '' && !$unfixed) {
+                continue;
+            }
+            if ($start_inc !== '' && version_compare($norm_ver, $start_inc, '<')) {
+                continue;
+            }
+            if ($start_exc !== '' && version_compare($norm_ver, $start_exc, '<=')) {
+                continue;
+            }
+            if ($end_exc !== '') {
+                if (version_compare($norm_ver, $end_exc, '<')) {
+                    return ['matched' => true, 'fixed_in' => $end_exc, 'unfixed' => false];
+                }
+                continue;
+            }
+            if ($end_inc !== '') {
+                if (version_compare($norm_ver, $end_inc, '<=')) {
+                    return ['matched' => true, 'fixed_in' => '<= ' . $end_inc, 'unfixed' => false];
+                }
+                continue;
+            }
+            if ($start_inc !== '' || $start_exc !== '' || $unfixed) {
+                return ['matched' => true, 'fixed_in' => 'Latest', 'unfixed' => true];
+            }
+        }
+        return ['matched' => false, 'fixed_in' => '', 'unfixed' => false];
     }
 
     /**
@@ -1064,7 +1457,7 @@ class NistCveVaultSync {
             ) {
                 $mentions_wp = true;
             }
-            if ($norm_slug !== '' && preg_match('#(?:wordpress\.org/(?:plugins|themes)|(?:plugins|themes)\.trac\.wordpress\.org/(?:browser|changeset|log))/' . preg_quote($norm_slug, '#') . '(?:[/?#]|$)#i', $url)) {
+            if ($norm_slug !== '' && preg_match('~(?:wordpress\.org/(?:plugins|themes)|(?:plugins|themes)\.trac\.wordpress\.org/(?:browser|changeset|log))/' . preg_quote($norm_slug, '~') . '(?:[/?#]|$)~i', $url)) {
                 $has_slug_wp_ref = true;
             }
         }
@@ -1179,13 +1572,15 @@ class NistCveVaultSync {
         return [
             'state'    => $saw_not_matched ? 'not_matched' : 'neutral',
             'fixed_in' => $best_fixed_in,
+            'ranges'   => [],
+            'unfixed'  => false,
         ];
     }
 
     /**
      * Recursively evaluate a single NVD configuration node (supporting nested nodes/children, AND/OR, negate).
      *
-     * @return array{state: 'matched'|'not_matched'|'neutral', fixed_in: string}
+     * @return array{state: 'matched'|'not_matched'|'neutral', fixed_in: string, ranges: list<array<string, mixed>>, unfixed: bool}
      */
     private static function evaluate_cpe_node(
         array $node,
@@ -1200,7 +1595,7 @@ class NistCveVaultSync {
         int $depth
     ): array {
         if ($depth > 16) {
-            return ['state' => 'neutral', 'fixed_in' => ''];
+            return ['state' => 'neutral', 'fixed_in' => '', 'ranges' => [], 'unfixed' => false];
         }
 
         $operator = strtoupper((string) ($node['operator'] ?? 'OR'));
@@ -1254,12 +1649,14 @@ class NistCveVaultSync {
 
                 if (self::does_cpe_match_component($part, $vendor, $product, $target_sw, $norm_slug, $short_name, $is_core, $context, $expected_vendors, $cve_signals)) {
                     if (!$is_vuln) {
-                        $outcomes[] = ['state' => 'not_matched', 'fixed_in' => ''];
+                        $outcomes[] = ['state' => 'not_matched', 'fixed_in' => '', 'ranges' => [], 'unfixed' => false];
                     } else {
                         $ver_eval = self::evaluate_cpe_version_match($match, $cpe_ver, $version);
                         $outcomes[] = [
                             'state'    => $ver_eval['matched'] ? 'matched' : 'not_matched',
                             'fixed_in' => $ver_eval['fixed_in'],
+                            'ranges'   => !empty($ver_eval['range']) ? [$ver_eval['range']] : [],
+                            'unfixed'  => !empty($ver_eval['range']['unfixed']),
                         ];
                     }
                 } elseif (!$is_vuln && !$is_core && $part === 'a' && $vendor === 'wordpress' && $product === 'wordpress') {
@@ -1269,10 +1666,10 @@ class NistCveVaultSync {
                         || !empty($match['versionEndIncluding']) || !empty($match['versionEndExcluding'])
                         || ($cpe_ver !== '*' && $cpe_ver !== '-' && $cpe_ver !== '');
                     if (!$has_wp_bounds) {
-                        $outcomes[] = ['state' => 'matched', 'fixed_in' => ''];
+                        $outcomes[] = ['state' => 'matched', 'fixed_in' => '', 'ranges' => [], 'unfixed' => false];
                     } elseif ($wp_ver !== '' && $wp_ver !== '0.0.0') {
                         $wp_eval = self::evaluate_cpe_version_match($match, $cpe_ver, $wp_ver);
-                        $outcomes[] = ['state' => $wp_eval['matched'] ? 'matched' : 'not_matched', 'fixed_in' => ''];
+                        $outcomes[] = ['state' => $wp_eval['matched'] ? 'matched' : 'not_matched', 'fixed_in' => '', 'ranges' => [], 'unfixed' => false];
                     }
                 }
             }
@@ -1280,11 +1677,13 @@ class NistCveVaultSync {
 
         $relevant = array_values(array_filter($outcomes, static fn(array $o): bool => $o['state'] !== 'neutral'));
         if (empty($relevant)) {
-            return ['state' => 'neutral', 'fixed_in' => ''];
+            return ['state' => 'neutral', 'fixed_in' => '', 'ranges' => [], 'unfixed' => false];
         }
 
         $node_state    = 'not_matched';
         $node_fixed_in = '';
+        $node_ranges   = [];
+        $node_unfixed  = false;
 
         if ($operator === 'AND') {
             $all_matched = true;
@@ -1296,6 +1695,12 @@ class NistCveVaultSync {
                 if ($node_fixed_in === '' && $o['fixed_in'] !== '') {
                     $node_fixed_in = $o['fixed_in'];
                 }
+                if (!empty($o['ranges'])) {
+                    $node_ranges = array_merge($node_ranges, $o['ranges']);
+                }
+                if (!empty($o['unfixed'])) {
+                    $node_unfixed = true;
+                }
             }
             $node_state = $all_matched ? 'matched' : 'not_matched';
         } else {
@@ -1303,6 +1708,8 @@ class NistCveVaultSync {
                 if ($o['state'] === 'matched') {
                     $node_state    = 'matched';
                     $node_fixed_in = $o['fixed_in'];
+                    $node_ranges   = $o['ranges'] ?? [];
+                    $node_unfixed  = !empty($o['unfixed']);
                     break;
                 }
             }
@@ -1312,6 +1719,8 @@ class NistCveVaultSync {
             if ($node_state === 'matched') {
                 $node_state    = 'not_matched';
                 $node_fixed_in = '';
+                $node_ranges   = [];
+                $node_unfixed  = false;
             } elseif ($node_state === 'not_matched') {
                 $node_state = 'matched';
             }
@@ -1320,6 +1729,8 @@ class NistCveVaultSync {
         return [
             'state'    => $node_state,
             'fixed_in' => $node_fixed_in,
+            'ranges'   => $node_ranges,
+            'unfixed'  => $node_unfixed,
         ];
     }
 
@@ -1420,52 +1831,201 @@ class NistCveVaultSync {
     /**
      * Evaluate bounded, exact, and open-ended lower-bound CPE version ranges.
      *
-     * @return array{matched: bool, fixed_in: string}
+     * @return array{matched: bool, fixed_in: string, range: array<string, mixed>}
      */
     private static function evaluate_cpe_version_match(array $match, string $cpe_ver, string $version): array {
-        $start_inc = trim((string) ($match['versionStartIncluding'] ?? ''));
-        $start_exc = trim((string) ($match['versionStartExcluding'] ?? ''));
-        $end_exc   = trim((string) ($match['versionEndExcluding'] ?? ''));
-        $end_inc   = trim((string) ($match['versionEndIncluding'] ?? ''));
+        $start_inc = self::normalize_version((string) ($match['versionStartIncluding'] ?? ''));
+        $start_exc = self::normalize_version((string) ($match['versionStartExcluding'] ?? ''));
+        $end_exc   = self::normalize_version((string) ($match['versionEndExcluding'] ?? ''));
+        $end_inc   = self::normalize_version((string) ($match['versionEndIncluding'] ?? ''));
+        $norm_ver  = self::normalize_version($version);
 
         $has_exact = ($cpe_ver !== '*' && $cpe_ver !== '-' && $cpe_ver !== '');
-        $has_bound = ($start_inc !== '' || $start_exc !== '' || $end_exc !== '' || $end_inc !== '' || $has_exact);
-        if (!$has_bound || $version === '' || $version === '0.0.0') {
-            return ['matched' => false, 'fixed_in' => ''];
+        $exact_ver = $has_exact ? self::normalize_version($cpe_ver) : '';
+        $has_bound = ($start_inc !== '' || $start_exc !== '' || $end_exc !== '' || $end_inc !== '' || $exact_ver !== '');
+        if (!$has_bound || $norm_ver === '') {
+            return ['matched' => false, 'fixed_in' => '', 'range' => []];
         }
 
-        if ($has_exact && $start_inc === '' && $start_exc === '' && $end_exc === '' && $end_inc === '') {
-            if (version_compare($version, $cpe_ver, '==')) {
-                return ['matched' => true, 'fixed_in' => '<= ' . $cpe_ver];
+        if ($exact_ver !== '' && $start_inc === '' && $start_exc === '' && $end_exc === '' && $end_inc === '') {
+            if (version_compare($norm_ver, $exact_ver, '==')) {
+                return [
+                    'matched'  => true,
+                    'fixed_in' => '<= ' . $exact_ver,
+                    'range'    => ['start_inc' => '', 'start_exc' => '', 'end_inc' => '', 'end_exc' => '', 'exact' => $exact_ver, 'unfixed' => false],
+                ];
             }
-            return ['matched' => false, 'fixed_in' => ''];
+            return ['matched' => false, 'fixed_in' => '', 'range' => []];
         }
 
-        if ($start_inc !== '' && version_compare($version, $start_inc, '<')) {
-            return ['matched' => false, 'fixed_in' => ''];
+        $range = [
+            'start_inc' => $start_inc,
+            'start_exc' => $start_exc,
+            'end_inc'   => $end_inc,
+            'end_exc'   => $end_exc,
+            'exact'     => '',
+            'unfixed'   => ($end_exc === '' && $end_inc === '' && ($start_inc !== '' || $start_exc !== '')),
+        ];
+
+        if ($start_inc !== '' && version_compare($norm_ver, $start_inc, '<')) {
+            return ['matched' => false, 'fixed_in' => '', 'range' => []];
         }
-        if ($start_exc !== '' && version_compare($version, $start_exc, '<=')) {
-            return ['matched' => false, 'fixed_in' => ''];
+        if ($start_exc !== '' && version_compare($norm_ver, $start_exc, '<=')) {
+            return ['matched' => false, 'fixed_in' => '', 'range' => []];
         }
         if ($end_exc !== '') {
-            if (version_compare($version, $end_exc, '>=')) {
-                return ['matched' => false, 'fixed_in' => ''];
+            if (version_compare($norm_ver, $end_exc, '>=')) {
+                return ['matched' => false, 'fixed_in' => '', 'range' => []];
             }
-            return ['matched' => true, 'fixed_in' => $end_exc];
+            return ['matched' => true, 'fixed_in' => $end_exc, 'range' => $range];
         }
         if ($end_inc !== '') {
-            if (version_compare($version, $end_inc, '>')) {
-                return ['matched' => false, 'fixed_in' => ''];
+            if (version_compare($norm_ver, $end_inc, '>')) {
+                return ['matched' => false, 'fixed_in' => '', 'range' => []];
             }
-            return ['matched' => true, 'fixed_in' => '<= ' . $end_inc];
+            return ['matched' => true, 'fixed_in' => '<= ' . $end_inc, 'range' => $range];
         }
 
         // Open-ended range with lower bound (versionStartIncluding / versionStartExcluding) and no upper bound
         if ($start_inc !== '' || $start_exc !== '') {
-            return ['matched' => true, 'fixed_in' => 'Latest'];
+            return ['matched' => true, 'fixed_in' => 'Latest', 'range' => $range];
         }
 
-        return ['matched' => false, 'fixed_in' => ''];
+        return ['matched' => false, 'fixed_in' => '', 'range' => []];
+    }
+
+    /**
+     * Fetch structured, slug-authoritative advisories from WPVulnerability.net API.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public static function fetch_wpvulnerability_for_component(string $slug, string $name, string $version, string $type = 'plugin'): array {
+        $canonical_slug = self::resolve_canonical_slug($slug);
+        $norm_ver       = self::normalize_version($version);
+        if ($canonical_slug === '' || $norm_ver === '') {
+            return [];
+        }
+
+        $has_wpvuln_mock = (self::$wpvuln_get_callback !== null && is_callable(self::$wpvuln_get_callback));
+        // Skip network/mock crosstalk during pure-NVD unit tests unless WPVulnerability mock is explicitly active
+        if ((defined('WEBCAREPROSCAN_TESTING') && WEBCAREPROSCAN_TESTING && !$has_wpvuln_mock)
+            || (!function_exists('wp_safe_remote_get') && !function_exists('wp_remote_get') && !$has_wpvuln_mock)
+        ) {
+            return [];
+        }
+
+        $comp_type = ($type === 'core' || $canonical_slug === 'wordpress')
+            ? 'core'
+            : ($type === 'theme' ? 'theme' : 'plugin');
+        $target_arg = ($comp_type === 'core') ? $norm_ver : $canonical_slug;
+        $endpoint   = sprintf(
+            'https://www.wpvulnerability.net/%s/%s/',
+            $comp_type,
+            rawurlencode($target_arg)
+        );
+
+        $req_args = [
+            'timeout'    => 5,
+            'headers'    => ['Accept' => 'application/json'],
+            'user-agent' => 'WEBCARE-CVE-Audit/' . (defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '1.0'),
+        ];
+
+        $res = $has_wpvuln_mock
+            ? call_user_func(self::$wpvuln_get_callback, $endpoint, $req_args)
+            : (function_exists('wp_safe_remote_get') ? wp_safe_remote_get($endpoint, $req_args) : wp_remote_get($endpoint, $req_args));
+
+        if (is_wp_error($res) || (int) wp_remote_retrieve_response_code($res) !== 200) {
+            return [];
+        }
+
+        $body  = json_decode((string) wp_remote_retrieve_body($res), true);
+        $vulns = $body['data']['vulnerability'] ?? [];
+        if (!is_array($vulns) || empty($vulns)) {
+            return [];
+        }
+
+        $matched = [];
+        foreach ($vulns as $v) {
+            if (!is_array($v)) {
+                continue;
+            }
+            $op       = is_array($v['operator'] ?? null) ? $v['operator'] : [];
+            $min_ver  = self::normalize_version((string) ($op['min_version'] ?? ''));
+            $max_ver  = self::normalize_version((string) ($op['max_version'] ?? ''));
+            $min_op   = strtolower((string) ($op['min_operator'] ?? 'ge'));
+            $max_op   = strtolower((string) ($op['max_operator'] ?? 'lt'));
+            $unfixed  = !empty($op['unfixed']) && (string) $op['unfixed'] !== '0';
+
+            if ($min_ver === '' && $max_ver === '' && !$unfixed) {
+                continue;
+            }
+            if ($min_ver === '' && $max_ver === '' && $unfixed) {
+                // Only match open unfixed entry against current component slug if explicitly marked unfixed
+                $range = ['start_inc' => '', 'start_exc' => '', 'end_inc' => '', 'end_exc' => '', 'exact' => '', 'unfixed' => true];
+                $fixed_in = 'Unpatched';
+            } else {
+                $range = [
+                    'start_inc' => ($min_ver !== '' && $min_op !== 'gt') ? $min_ver : '',
+                    'start_exc' => ($min_ver !== '' && $min_op === 'gt') ? $min_ver : '',
+                    'end_inc'   => ($max_ver !== '' && $max_op === 'le') ? $max_ver : '',
+                    'end_exc'   => ($max_ver !== '' && $max_op !== 'le') ? $max_ver : '',
+                    'exact'     => '',
+                    'unfixed'   => $unfixed && $max_ver === '',
+                ];
+                $eval = self::evaluate_range_list($norm_ver, [$range]);
+                if (!$eval['matched']) {
+                    continue;
+                }
+                $fixed_in = $eval['fixed_in'];
+            }
+
+            $cve_id = '';
+            $ref_url = '';
+            if (!empty($v['source']) && is_array($v['source'])) {
+                foreach ($v['source'] as $src) {
+                    if (!is_array($src) || empty($src['id'])) {
+                        continue;
+                    }
+                    $sid = strtoupper(trim((string) $src['id']));
+                    if (str_starts_with($sid, 'CVE-')) {
+                        $cve_id = $sid;
+                        if (!empty($src['link'])) {
+                            $ref_url = (string) $src['link'];
+                        }
+                        break;
+                    }
+                }
+            }
+            if ($cve_id === '') {
+                continue;
+            }
+
+            $cvss        = !empty($v['impact']['cvss']['score']) ? (float) $v['impact']['cvss']['score'] : 7.5;
+            $cvss_vector = (string) ($v['impact']['cvss']['vector'] ?? '');
+            $cwe         = (string) ($v['impact']['cwe'][0]['cwe'] ?? '');
+            $severity    = $cvss >= 9.0 ? 'critical' : ($cvss >= 7.0 ? 'high' : ($cvss >= 4.0 ? 'medium' : 'low'));
+
+            $matched[] = [
+                'cve_id'          => $cve_id,
+                'title'           => substr((string) ($v['name'] ?? $cve_id), 0, 120),
+                'severity'        => $severity,
+                'cvss'            => $cvss,
+                'cvss_vector'     => $cvss_vector,
+                'cwe'             => $cwe,
+                'published'       => '',
+                'last_modified'   => '',
+                'fixed_in'        => $fixed_in,
+                'unfixed'         => !empty($range['unfixed']),
+                'affected_ranges' => [$range],
+                'source'          => 'wpvulnerability',
+                'canonical_slug'  => $canonical_slug,
+                'component_type'  => $comp_type,
+                'reference'       => $ref_url !== '' ? $ref_url : "https://nvd.nist.gov/vuln/detail/{$cve_id}",
+                'cve_details'     => (string) ($v['impact']['cwe'][0]['description'] ?? ($v['name'] ?? '')),
+            ];
+        }
+
+        return $matched;
     }
 
     /**

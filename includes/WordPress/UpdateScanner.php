@@ -102,10 +102,7 @@ class UpdateScanner {
         foreach ($all_plugins as $plugin_file => $plugin_data) {
             $plugin_name = $plugin_data['Name'] ?? dirname($plugin_file);
             $cur_version = $plugin_data['Version'] ?? '0.0.0';
-            $plugin_slug = dirname($plugin_file);
-            if ($plugin_slug === '.' || empty($plugin_slug)) {
-                $plugin_slug = sanitize_title(basename($plugin_file, '.php'));
-            }
+            $plugin_slug = self::resolve_plugin_slug($plugin_file, $update_plugins);
 
             $is_outdated = false;
             $is_abandoned = false;
@@ -339,10 +336,7 @@ class UpdateScanner {
             $plugin_name = $plugin_data['Name'] ?? dirname($plugin_file);
             $cur_version = $plugin_data['Version'] ?? '0.0.0';
             $author = $plugin_data['Author'] ?? ($plugin_data['AuthorName'] ?? '');
-            $plugin_slug = dirname($plugin_file);
-            if ($plugin_slug === '.' || empty($plugin_slug)) {
-                $plugin_slug = sanitize_title(basename($plugin_file, '.php'));
-            }
+            $plugin_slug = self::resolve_plugin_slug($plugin_file, $update_plugins);
 
             $is_outdated = false;
             $new_version = $cur_version;
@@ -666,7 +660,7 @@ class UpdateScanner {
      */
     public static function get_core_cves($version) {
         $version = (string) ($version ?? '0.0.0');
-        $cache_key = 'webcareproscan_cve_core_' . sanitize_key($version);
+        $cache_key = 'webcareproscan_cve_v2_core_' . sanitize_key($version);
         $cached = get_transient($cache_key);
         if ($cached !== false && is_array($cached)) {
             return $cached;
@@ -683,16 +677,42 @@ class UpdateScanner {
                     'severity'    => $item['severity'],
                     'cvss'        => $item['cvss'],
                     'fixed_in'    => $item['fixed_in'],
+                    'source'      => 'curated_db',
                     'reference'   => "https://nvd.nist.gov/vuln/detail/{$item['cve_id']}",
                     'cve_details' => $item['description']
                 ];
             }
         }
 
-        self::merge_nist_vault_cves($cves, 'wordpress', (string) $version);
+        self::merge_nist_vault_cves($cves, 'core', 'wordpress', (string) $version);
+        self::merge_wpvulnerability_cves($cves, 'core', 'wordpress', (string) $version, 'WordPress Core');
 
         set_transient($cache_key, $cves, self::CACHE_TTL);
         return $cves;
+    }
+
+    /**
+     * Resolve canonical plugin slug using WordPress.org update metadata and known aliases (e.g. hello -> hello-dolly).
+     */
+    private static function resolve_plugin_slug(string $plugin_file, mixed $update_plugins = null): string {
+        $raw = dirname($plugin_file);
+        if ($raw === '.' || $raw === '') {
+            $raw = sanitize_title(basename($plugin_file, '.php'));
+        }
+        if (is_object($update_plugins)) {
+            if (!empty($update_plugins->response[$plugin_file]->slug)) {
+                $raw = (string) $update_plugins->response[$plugin_file]->slug;
+            } elseif (!empty($update_plugins->no_update[$plugin_file]->slug)) {
+                $raw = (string) $update_plugins->no_update[$plugin_file]->slug;
+            }
+        }
+        if (class_exists('\\WebCareProScanner\\Firewall\\NistCveVaultSync')) {
+            return \WebCareProScanner\Firewall\NistCveVaultSync::resolve_canonical_slug($raw);
+        }
+        if (class_exists('\\WebCareProScanner\\Firewall\\CVEIntelligenceService')) {
+            return strtolower(\WebCareProScanner\Firewall\CVEIntelligenceService::resolve_canonical_slug($raw));
+        }
+        return strtolower($raw);
     }
 
     /**
@@ -704,7 +724,10 @@ class UpdateScanner {
      * @return array
      */
     public static function get_plugin_cves($slug, $version, $name = '') {
-        $cache_key = 'webcareproscan_cve_plugin_' . sanitize_key($slug . '_' . $version);
+        $canon_slug = class_exists('\\WebCareProScanner\\Firewall\\NistCveVaultSync')
+            ? \WebCareProScanner\Firewall\NistCveVaultSync::resolve_canonical_slug((string) $slug)
+            : strtolower((string) $slug);
+        $cache_key = 'webcareproscan_cve_v2_plugin_' . sanitize_key($canon_slug . '_' . $version);
         $cached = get_transient($cache_key);
         if ($cached !== false && is_array($cached)) {
             return $cached;
@@ -712,26 +735,26 @@ class UpdateScanner {
 
         $cves = [];
         $known_plugin_db = self::get_known_plugin_vulnerabilities();
+        $db_items = $known_plugin_db[$canon_slug] ?? ($known_plugin_db[$slug] ?? []);
 
-        if (isset($known_plugin_db[$slug])) {
-            foreach ($known_plugin_db[$slug] as $item) {
-                if (self::is_version_affected($version, $item['affected_versions'])) {
-                    $cves[] = [
-                        'cve_id'      => $item['cve_id'],
-                        'title'       => $item['title'],
-                        'severity'    => $item['severity'],
-                        'cvss'        => $item['cvss'],
-                        'fixed_in'    => $item['fixed_in'],
-                        'reference'   => "https://nvd.nist.gov/vuln/detail/{$item['cve_id']}",
-                        'cve_details' => $item['description']
-                    ];
-                }
+        foreach ($db_items as $item) {
+            if (self::is_version_affected($version, $item['affected_versions'])) {
+                $cves[] = [
+                    'cve_id'      => $item['cve_id'],
+                    'title'       => $item['title'],
+                    'severity'    => $item['severity'],
+                    'cvss'        => $item['cvss'],
+                    'fixed_in'    => $item['fixed_in'],
+                    'source'      => 'curated_db',
+                    'reference'   => "https://nvd.nist.gov/vuln/detail/{$item['cve_id']}",
+                    'cve_details' => $item['description']
+                ];
             }
         }
 
-        self::merge_threat_intel_cves($cves, (string) $slug, (string) $version);
-        self::merge_nist_vault_cves($cves, (string) $slug, (string) $version);
-        self::merge_wpvulnerability_cves($cves, 'plugin', (string) $slug, (string) $version);
+        self::merge_threat_intel_cves($cves, $canon_slug, (string) $version);
+        self::merge_nist_vault_cves($cves, 'plugin', $canon_slug, (string) $version);
+        self::merge_wpvulnerability_cves($cves, 'plugin', $canon_slug, (string) $version, (string) $name);
 
         set_transient($cache_key, $cves, self::CACHE_TTL);
         return $cves;
@@ -746,7 +769,7 @@ class UpdateScanner {
      * @return array
      */
     public static function get_theme_cves($slug, $version, $name = '') {
-        $cache_key = 'webcareproscan_cve_theme_' . sanitize_key($slug . '_' . $version);
+        $cache_key = 'webcareproscan_cve_v2_theme_' . sanitize_key($slug . '_' . $version);
         $cached = get_transient($cache_key);
         if ($cached !== false && is_array($cached)) {
             return $cached;
@@ -764,6 +787,7 @@ class UpdateScanner {
                         'severity'    => $item['severity'],
                         'cvss'        => $item['cvss'],
                         'fixed_in'    => $item['fixed_in'],
+                        'source'      => 'curated_db',
                         'reference'   => "https://nvd.nist.gov/vuln/detail/{$item['cve_id']}",
                         'cve_details' => $item['description']
                     ];
@@ -772,21 +796,21 @@ class UpdateScanner {
         }
 
         self::merge_threat_intel_cves($cves, (string) $slug, (string) $version);
-        self::merge_nist_vault_cves($cves, (string) $slug, (string) $version);
-        self::merge_wpvulnerability_cves($cves, 'theme', (string) $slug, (string) $version);
+        self::merge_nist_vault_cves($cves, 'theme', (string) $slug, (string) $version);
+        self::merge_wpvulnerability_cves($cves, 'theme', (string) $slug, (string) $version, (string) $name);
 
         set_transient($cache_key, $cves, self::CACHE_TTL);
         return $cves;
     }
 
     /**
-     * Merge cached NIST NVD advisories from the encrypted NistCveVaultSync store.
+     * Merge cached advisories from the encrypted NistCveVaultSync store with strict type & version validation.
      */
-    private static function merge_nist_vault_cves(array &$cves, string $slug, string $version): void {
+    private static function merge_nist_vault_cves(array &$cves, string $type, string $slug, string $version): void {
         if ($slug === '' || $version === '' || !class_exists('\\WebCareProScanner\\Firewall\\NistCveVaultSync')) {
             return;
         }
-        $nist_cves = \WebCareProScanner\Firewall\NistCveVaultSync::get_component_cves($slug, $version);
+        $nist_cves = \WebCareProScanner\Firewall\NistCveVaultSync::get_component_cves($slug, $version, $type);
         if (empty($nist_cves)) {
             return;
         }
@@ -806,39 +830,14 @@ class UpdateScanner {
     }
 
     /**
-     * Query the free WPVulnerability.net API for real-time CVEs affecting an installed plugin/theme,
-     * cached per slug+version so repeated page loads are instant.
-     *
-     * @param array  $cves
-     * @param string $type 'plugin' or 'theme'
-     * @param string $slug
-     * @param string $version
+     * Merge slug-authoritative advisories from WPVulnerability.net API.
      */
-    private static function merge_wpvulnerability_cves(array &$cves, string $type, string $slug, string $version): void {
-        if ($slug === '' || $version === '' || (defined('WEBCAREPROSCAN_TESTING') && WEBCAREPROSCAN_TESTING)) {
+    private static function merge_wpvulnerability_cves(array &$cves, string $type, string $slug, string $version, string $name = ''): void {
+        if ($slug === '' || $version === '' || !class_exists('\\WebCareProScanner\\Firewall\\NistCveVaultSync')) {
             return;
         }
-        if (!function_exists('wp_remote_get')) {
-            return;
-        }
-
-        $endpoint = sprintf(
-            'https://www.wpvulnerability.net/%s/%s/',
-            $type === 'theme' ? 'theme' : 'plugin',
-            rawurlencode(strtolower($slug))
-        );
-
-        $res = wp_remote_get($endpoint, [
-            'timeout'    => 4,
-            'user-agent' => 'WEBCARE-CVE-Audit/' . (defined('WEBCAREPROSCAN_VERSION') ? WEBCAREPROSCAN_VERSION : '1.0'),
-        ]);
-        if (is_wp_error($res) || wp_remote_retrieve_response_code($res) !== 200) {
-            return;
-        }
-
-        $body = json_decode(wp_remote_retrieve_body($res), true);
-        $vulns = $body['data']['vulnerability'] ?? [];
-        if (!is_array($vulns) || empty($vulns)) {
+        $vulns = \WebCareProScanner\Firewall\NistCveVaultSync::fetch_wpvulnerability_for_component($slug, $name !== '' ? $name : $slug, $version, $type);
+        if (empty($vulns)) {
             return;
         }
 
@@ -849,56 +848,12 @@ class UpdateScanner {
             }
         }
 
-        foreach ($vulns as $v) {
-            if (!is_array($v)) {
-                continue;
+        foreach ($vulns as $item) {
+            $cve_id = strtoupper((string) ($item['cve_id'] ?? ''));
+            if ($cve_id !== '' && !isset($seen[$cve_id])) {
+                $seen[$cve_id] = true;
+                $cves[]        = $item;
             }
-            $op = $v['operator'] ?? [];
-            $min_ver = (string) ($op['min_version'] ?? '');
-            $max_ver = (string) ($op['max_version'] ?? '');
-            $min_op  = (string) ($op['min_operator'] ?? 'ge');
-            $max_op  = (string) ($op['max_operator'] ?? 'lt');
-
-            if ($min_ver !== '' && !version_compare($version, $min_ver, $min_op === 'gt' ? '>' : '>=')) {
-                continue;
-            }
-            if ($max_ver !== '' && !version_compare($version, $max_ver, $max_op === 'le' ? '<=' : '<')) {
-                continue;
-            }
-            if ($min_ver === '' && $max_ver === '') {
-                continue;
-            }
-
-            $cve_id = '';
-            $cvss = 7.5;
-            if (!empty($v['source']) && is_array($v['source'])) {
-                foreach ($v['source'] as $src) {
-                    if (!empty($src['id']) && str_starts_with(strtoupper((string) $src['id']), 'CVE-')) {
-                        $cve_id = strtoupper((string) $src['id']);
-                        break;
-                    }
-                }
-            }
-            if ($cve_id === '' || isset($seen[$cve_id])) {
-                continue;
-            }
-            if (!empty($v['impact']['cvss']['score'])) {
-                $cvss = (float) $v['impact']['cvss']['score'];
-            }
-
-            $severity = $cvss >= 9.0 ? 'critical' : ($cvss >= 7.0 ? 'high' : ($cvss >= 4.0 ? 'medium' : 'low'));
-            $fixed_in = $max_ver !== '' ? $max_ver : 'Latest';
-            $seen[$cve_id] = true;
-
-            $cves[] = [
-                'cve_id'      => $cve_id,
-                'title'       => (string) ($v['name'] ?? $cve_id),
-                'severity'    => $severity,
-                'cvss'        => $cvss,
-                'fixed_in'    => $fixed_in,
-                'reference'   => "https://nvd.nist.gov/vuln/detail/{$cve_id}",
-                'cve_details' => (string) ($v['impact']['cwe'][0]['description'] ?? ($v['name'] ?? '')),
-            ];
         }
     }
 

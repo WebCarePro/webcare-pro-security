@@ -50,6 +50,9 @@ class CVEIntelligenceService {
         'aioseo'               => 'all-in-one-seo-pack',
         'wordpress-seo'        => 'wordpress-seo',
         'yoast-seo'            => 'wordpress-seo',
+        'hello'                => 'hello-dolly',
+        'hello-dolly'          => 'hello-dolly',
+        'hello_dolly'          => 'hello-dolly',
     ];
 
     /**

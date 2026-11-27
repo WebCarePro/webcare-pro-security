@@ -973,7 +973,17 @@ final class ScanController extends AbstractApiController {
                     );
                 }
                 if (class_exists('\\WebCareProScanner\\Firewall\\NistCveVaultSync')) {
-                    self::run_isolated_audit_engine($scan_id, 'nist_cve_vault', 'NIST NVD CVE Vault Check', static fn() => \WebCareProScanner\Firewall\NistCveVaultSync::collect_vault_findings((string) $scan_id), $all_deep_findings, $engine_diagnostics);
+                    self::run_isolated_audit_engine(
+                        $scan_id,
+                        'nist_cve_vault',
+                        'NIST NVD CVE Vault Check',
+                        static fn() => self::deduplicate_vault_findings_against_updates(
+                            \WebCareProScanner\Firewall\NistCveVaultSync::collect_vault_findings((string) $scan_id),
+                            $all_deep_findings
+                        ),
+                        $all_deep_findings,
+                        $engine_diagnostics
+                    );
                 }
             }
 
@@ -5202,11 +5212,14 @@ final class ScanController extends AbstractApiController {
 
         // 11b. NIST NVD CVE Vault Check (and background sync trigger if run headless/cron)
         if (!empty($custom_options['scan_cve_vulnerabilities']) && class_exists('\\WebCareProScanner\\Firewall\\NistCveVaultSync')) {
-            self::run_isolated_audit_engine($scan_id, 'nist_cve_vault', 'NIST NVD CVE Vault Check', static function () use ($scan_id) {
+            self::run_isolated_audit_engine($scan_id, 'nist_cve_vault', 'NIST NVD CVE Vault Check', static function () use ($scan_id, $findings) {
                 if (defined('DOING_CRON') && DOING_CRON) {
                     \WebCareProScanner\Firewall\NistCveVaultSync::maybe_run_daily_sync();
                 }
-                return \WebCareProScanner\Firewall\NistCveVaultSync::collect_vault_findings((string) $scan_id);
+                return self::deduplicate_vault_findings_against_updates(
+                    \WebCareProScanner\Firewall\NistCveVaultSync::collect_vault_findings((string) $scan_id),
+                    $findings
+                );
             }, $findings, $engine_diagnostics);
         }
 
@@ -5245,6 +5258,86 @@ final class ScanController extends AbstractApiController {
         }
 
         return $findings;
+    }
+
+    /**
+     * Suppress duplicate `nist-cve` Vault findings when `wordpress-updates` already emitted the exact
+     * same component and CVE set in the same scan pass.
+     *
+     * @param list<\WebCareProScanner\Findings\Finding> $vault_findings
+     * @param list<\WebCareProScanner\Findings\Finding> $existing_findings
+     * @return list<\WebCareProScanner\Findings\Finding>
+     */
+    public static function deduplicate_vault_findings_against_updates(array $vault_findings, array $existing_findings): array {
+        if (empty($vault_findings) || empty($existing_findings)) {
+            return $vault_findings;
+        }
+        $canon = static function (string $slug): string {
+            $s = strtolower(trim($slug));
+            return class_exists('\\WebCareProScanner\\Firewall\\NistCveVaultSync')
+                ? \WebCareProScanner\Firewall\NistCveVaultSync::resolve_canonical_slug($s)
+                : $s;
+        };
+
+        $covered = [];
+        foreach ($existing_findings as $ef) {
+            if (!is_object($ef) || !method_exists($ef, 'to_array')) {
+                continue;
+            }
+            $row = $ef->to_array();
+            if (($row['engine'] ?? '') !== 'wordpress-updates') {
+                continue;
+            }
+            $ev = json_decode((string) ($row['evidence'] ?? ''), true);
+            if (!is_array($ev) || empty($ev['cves']) || !is_array($ev['cves'])) {
+                continue;
+            }
+            $comp_type = (string) ($ev['type'] ?? '');
+            $comp_slug = $canon((string) ($ev['slug'] ?? ($comp_type === 'core' ? 'wordpress' : '')));
+            if ($comp_type === '' || $comp_slug === '') {
+                continue;
+            }
+            $comp_key = $comp_type . ':' . $comp_slug;
+            foreach ($ev['cves'] as $c) {
+                $cid = strtoupper((string) ($c['cve_id'] ?? ''));
+                if ($cid !== '') {
+                    $covered[$comp_key][$cid] = true;
+                }
+            }
+        }
+
+        if (empty($covered)) {
+            return $vault_findings;
+        }
+
+        $unique = [];
+        foreach ($vault_findings as $vf) {
+            if (!is_object($vf) || !method_exists($vf, 'to_array')) {
+                continue;
+            }
+            $row = $vf->to_array();
+            $ev  = json_decode((string) ($row['evidence'] ?? ''), true);
+            $comp_type = is_array($ev) ? (string) ($ev['type'] ?? '') : '';
+            $comp_slug = is_array($ev) ? $canon((string) ($ev['slug'] ?? ($comp_type === 'core' ? 'wordpress' : ''))) : '';
+            $comp_key  = $comp_type . ':' . $comp_slug;
+
+            if ($comp_type !== '' && $comp_slug !== '' && isset($covered[$comp_key]) && !empty($ev['cves']) && is_array($ev['cves'])) {
+                $has_uncovered = false;
+                foreach ($ev['cves'] as $c) {
+                    $cid = strtoupper((string) ($c['cve_id'] ?? ''));
+                    if ($cid !== '' && !isset($covered[$comp_key][$cid])) {
+                        $has_uncovered = true;
+                        break;
+                    }
+                }
+                if (!$has_uncovered) {
+                    continue;
+                }
+            }
+            $unique[] = $vf;
+        }
+
+        return $unique;
     }
 
     /**

@@ -1321,7 +1321,11 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
 
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px', paddingTop: '8px', borderTop: '1px solid #f1f5f9', fontSize: '11px' }}>
                                           <span style={{ color: '#64748b' }}>
-                                            Fixed in release: <strong style={{ color: '#16a34a' }}>v{cve.fixed_in}</strong>
+                                            {cve.fixed_in && (cve.fixed_in === 'Latest' || cve.fixed_in.startsWith('Unpatched'))
+                                              ? <>Patch status: <strong style={{ color: '#ea580c' }}>Unpatched upstream (consider Virtual Patch)</strong></>
+                                              : cve.fixed_in && cve.fixed_in.startsWith('<=')
+                                              ? <>Affected versions: <strong style={{ color: '#16a34a' }}>Up to {cve.fixed_in.replace(/^<=\s*/, 'v')} (Patched in newer releases)</strong></>
+                                              : <>Fixed in release: <strong style={{ color: '#16a34a' }}>v{cve.fixed_in}</strong></>}
                                           </span>
                                           <a
                                             href={cve.reference}
