@@ -85,10 +85,11 @@ class TableScanner {
     }
 
     /**
-     * Get all text-like columns for a table and identify a single-column integer primary key for safe keyset pagination.
+     * Get all text-like columns for a table, identify single-column integer primary keys
+     * for keyset pagination, and compute deterministic ORDER BY columns for offset fallback.
      *
      * @param string $table
-     * @return array ['columns' => [...], 'primary_key' => string|null]
+     * @return array{columns: list<string>, primary_key: string|null, order_by_columns: list<string>}
      */
     public function get_table_metadata($table) {
         global $wpdb;
@@ -97,8 +98,8 @@ class TableScanner {
         $primary_key = null;
 
         // Safely validate table name matches word characters only
-        if (!preg_match('/^[a-zA-Z0-9_]+$/', $table)) {
-            return ['columns' => [], 'primary_key' => null];
+        if (!preg_match('/^[a-zA-Z0-9_]+$/', (string) $table)) {
+            return ['columns' => [], 'primary_key' => null, 'order_by_columns' => []];
         }
 
         if (isset($wpdb->last_error)) {
@@ -108,38 +109,58 @@ class TableScanner {
         $cols_info = $wpdb->get_results("SHOW COLUMNS FROM `{$table}`");
         if (!empty($wpdb->last_error)) {
             $this->last_error = substr(sanitize_text_field((string) $wpdb->last_error), 0, 180);
-            return ['columns' => [], 'primary_key' => null];
+            return ['columns' => [], 'primary_key' => null, 'order_by_columns' => []];
         }
         if (empty($cols_info)) {
-            return ['columns' => [], 'primary_key' => null];
+            return ['columns' => [], 'primary_key' => null, 'order_by_columns' => []];
         }
 
         $text_types = ['varchar', 'text', 'tinytext', 'mediumtext', 'longtext', 'json'];
         $pri_cols = [];
+        $uni_cols = [];
+        $all_safe_cols = [];
 
         foreach ($cols_info as $col) {
+            $field = (string) ($col->Field ?? '');
+            if ($field === '' || !preg_match('/^[a-zA-Z0-9_]+$/', $field)) {
+                continue;
+            }
+            $all_safe_cols[] = $field;
             $type = strtolower((string) ($col->Type ?? ''));
-            if (($col->Key ?? '') === 'PRI') {
-                $pri_cols[] = ['field' => (string) $col->Field, 'type' => $type];
+            $key = strtoupper((string) ($col->Key ?? ''));
+
+            if ($key === 'PRI') {
+                $pri_cols[] = ['field' => $field, 'type' => $type];
+            } elseif ($key === 'UNI') {
+                $uni_cols[] = $field;
             }
 
             foreach ($text_types as $text_type) {
                 if (strpos($type, $text_type) !== false) {
-                    $columns[] = $col->Field;
+                    $columns[] = $field;
                     break;
                 }
             }
         }
 
         // Only use keyset pagination (WHERE pk > %d) for single-column integer primary keys;
-        // composite or string/UUID primary keys fall back safely to LIMIT/OFFSET.
+        // composite or string/UUID primary keys fall back safely to deterministic ordered LIMIT/OFFSET.
         if (count($pri_cols) === 1 && preg_match('/\b(?:tiny|small|medium|big)?int\b/i', $pri_cols[0]['type'])) {
             $primary_key = $pri_cols[0]['field'];
         }
 
+        if (!empty($pri_cols)) {
+            $order_by_columns = array_map(static fn(array $p): string => $p['field'], $pri_cols);
+        } elseif (!empty($uni_cols)) {
+            $order_by_columns = $uni_cols;
+        } else {
+            $order_by_columns = array_slice($all_safe_cols, 0, 3);
+        }
+
         return [
-            'columns'     => $columns,
-            'primary_key' => $primary_key
+            'columns'          => $columns,
+            'primary_key'      => $primary_key,
+            'order_by_columns' => $order_by_columns,
         ];
     }
 
@@ -152,9 +173,10 @@ class TableScanner {
      * @param int $last_id Keyset cursor or offset
      * @param int $batch_size
      * @param string $scan_id
+     * @param list<string>|null $order_by_columns Deterministic ordering columns for LIMIT/OFFSET fallback
      * @return array ['findings' => Finding[], 'rows_scanned' => int, 'next_cursor' => int|null]
      */
-    public function scan_table_batch($table, $columns, $primary_key, $last_id = 0, $batch_size = 100, $scan_id = '') {
+    public function scan_table_batch($table, $columns, $primary_key, $last_id = 0, $batch_size = 100, $scan_id = '', ?array $order_by_columns = null) {
         global $wpdb;
         $this->last_error = null;
         $findings = [];
@@ -163,21 +185,53 @@ class TableScanner {
             return ['findings' => [], 'rows_scanned' => 0, 'next_cursor' => null];
         }
 
-        $select_cols = array_map(function($c) { return "`{$c}`"; }, $columns);
-        if ($primary_key && !in_array("`{$primary_key}`", $select_cols)) {
+        $safe_columns = array_values(array_filter(
+            array_map(static fn($c): string => (string) $c, $columns),
+            static fn(string $c): bool => (bool) preg_match('/^[a-zA-Z0-9_]+$/', $c)
+        ));
+        if (empty($safe_columns)) {
+            return ['findings' => [], 'rows_scanned' => 0, 'next_cursor' => null];
+        }
+
+        if ($primary_key !== null && $primary_key !== '' && !preg_match('/^[a-zA-Z0-9_]+$/', (string) $primary_key)) {
+            $primary_key = null;
+        }
+
+        $select_cols = array_map(static fn(string $c): string => "`{$c}`", $safe_columns);
+        if ($primary_key && !in_array("`{$primary_key}`", $select_cols, true)) {
             array_unshift($select_cols, "`{$primary_key}`");
         }
         $col_sql = implode(', ', $select_cols);
 
-        // Keyset pagination when primary key exists, otherwise standard LIMIT/OFFSET
+        // Keyset pagination when single integer primary key exists, otherwise deterministic ordered LIMIT/OFFSET
         if ($primary_key) {
             $raw_query = "SELECT {$col_sql} FROM `{$table}` WHERE `{$primary_key}` > %d ORDER BY `{$primary_key}` ASC LIMIT %d";
             // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
             $sql = $wpdb->prepare($raw_query, $last_id, $batch_size);
         } else {
-            $raw_query = "SELECT {$col_sql} FROM `{$table}` LIMIT %d OFFSET %d";
+            if ($order_by_columns === null) {
+                $meta = $this->get_table_metadata((string) $table);
+                if ($this->last_error !== null) {
+                    return ['findings' => [], 'rows_scanned' => 0, 'next_cursor' => null];
+                }
+                $order_by_columns = $meta['order_by_columns'] ?? [];
+            }
+
+            $safe_order_cols = [];
+            foreach ($order_by_columns as $order_col) {
+                $order_col = (string) $order_col;
+                if ($order_col !== '' && preg_match('/^[a-zA-Z0-9_]+$/', $order_col) && !in_array($order_col, $safe_order_cols, true)) {
+                    $safe_order_cols[] = $order_col;
+                }
+            }
+            if (empty($safe_order_cols)) {
+                $safe_order_cols = array_slice($safe_columns, 0, 3);
+            }
+            $order_sql = implode(', ', array_map(static fn(string $c): string => "`{$c}` ASC", $safe_order_cols));
+
+            $raw_query = "SELECT {$col_sql} FROM `{$table}` ORDER BY {$order_sql} LIMIT %d OFFSET %d";
             // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
-            $sql = $wpdb->prepare($raw_query, $batch_size, $last_id);
+            $sql = $wpdb->prepare($raw_query, $batch_size, max(0, (int) $last_id));
         }
 
         if (isset($wpdb->last_error)) {
@@ -442,7 +496,8 @@ class TableScanner {
                     $meta['primary_key'],
                     $cursor,
                     $batch_size,
-                    $scan_id
+                    $scan_id,
+                    $meta['order_by_columns'] ?? null
                 );
 
                 if ($this->last_error !== null) {

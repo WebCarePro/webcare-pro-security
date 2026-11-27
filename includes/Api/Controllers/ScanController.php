@@ -914,9 +914,16 @@ final class ScanController extends AbstractApiController {
                 }, $all_deep_findings, $engine_diagnostics);
 
                 $assert_lease_active();
-                self::run_isolated_audit_engine($scan_id, 'database', 'Database & Persistence Scanner', static function () use ($scan_id) {
-                    return (new DatabaseScanner())->scan((string) $scan_id, 100);
-                }, $all_deep_findings, $engine_diagnostics);
+                $db_scanner = new DatabaseScanner();
+                self::run_isolated_audit_engine(
+                    $scan_id,
+                    'database',
+                    'Database & Persistence Scanner',
+                    static fn() => $db_scanner->scan((string) $scan_id, 100),
+                    $all_deep_findings,
+                    $engine_diagnostics,
+                    static fn(): ?string => $db_scanner->get_last_scan_error()
+                );
 
                 $assert_lease_active();
                 self::run_isolated_audit_engine($scan_id, 'content', 'Content & Post Scanner', static function () use ($scan_id) {
@@ -1282,7 +1289,7 @@ final class ScanController extends AbstractApiController {
                 ScanLock::force_release($scan_id);
             }
 
-            if ($e instanceof \WebCareProScanner\Scan\ScanLeaseLostException || str_contains(strtolower($e->getMessage()), 'lease')) {
+            if ($e instanceof \WebCareProScanner\Scan\ScanLeaseLostException) {
                 return new \WP_Error(
                     'scan_lock_conflict',
                     $e->getMessage(),
@@ -5374,7 +5381,7 @@ final class ScanController extends AbstractApiController {
                 'timestamp'      => gmdate('Y-m-d\TH:i:s\Z'),
             ];
         } catch (\Throwable $e) {
-            if ($e instanceof \WebCareProScanner\Scan\ScanLeaseLostException || str_contains(strtolower($e->getMessage()), 'lease')) {
+            if ($e instanceof \WebCareProScanner\Scan\ScanLeaseLostException) {
                 throw $e;
             }
 

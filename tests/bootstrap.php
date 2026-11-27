@@ -249,6 +249,15 @@ if (!function_exists('untrailingslashit')) {
     }
 }
 
+if (!function_exists('esc_sql')) {
+    function esc_sql(string|array $data): string|array {
+        if (is_array($data)) {
+            return array_map('esc_sql', $data);
+        }
+        return addslashes($data);
+    }
+}
+
 if (!class_exists('WP_Error')) {
     class WP_Error {
         protected array $errors = [];

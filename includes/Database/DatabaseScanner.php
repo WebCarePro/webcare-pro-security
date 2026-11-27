@@ -16,6 +16,8 @@ class DatabaseScanner {
     private $cron_persistence_scanner;
     private $snippet_code_auditor;
     private ?string $last_trigger_error = null;
+    /** @var list<string> */
+    private array $last_scan_errors = [];
 
     public function __construct() {
         $this->table_scanner = new TableScanner();
@@ -33,6 +35,25 @@ class DatabaseScanner {
     }
 
     /**
+     * Return all sanitized sub-engine/table errors recorded during the most recent scan().
+     *
+     * @return list<string>
+     */
+    public function get_last_scan_errors(): array {
+        return $this->last_scan_errors;
+    }
+
+    /**
+     * Return a concise combined error summary if any part of the database scan failed, or null when complete.
+     */
+    public function get_last_scan_error(): ?string {
+        if (empty($this->last_scan_errors)) {
+            return null;
+        }
+        return substr(implode('; ', array_unique($this->last_scan_errors)), 0, 220);
+    }
+
+    /**
      * Run full database inspection with resource awareness.
      *
      * @param string $scan_id
@@ -40,6 +61,7 @@ class DatabaseScanner {
      * @return Finding[]
      */
     public function scan($scan_id, $batch_size = 100) {
+        $this->last_scan_errors = [];
         $findings = [];
         $monitor = new ResourceMonitor(70, 20, 'balanced');
         $configured_db_batch = (int) (\WebCareProScanner\System\SettingsManager::get('scan_db_batch_size', 500) ?: $batch_size);
@@ -66,6 +88,7 @@ class DatabaseScanner {
         $trigger_findings = $this->scan_rogue_triggers((string) $scan_id);
         $findings = array_merge($findings, $trigger_findings);
         if ($this->last_trigger_error !== null) {
+            $this->last_scan_errors[] = 'MySQL trigger audit: ' . $this->last_trigger_error;
             $findings[] = $this->build_degraded_finding('rogue_triggers', 'MySQL Trigger Audit', $this->last_trigger_error);
         }
 
@@ -77,6 +100,7 @@ class DatabaseScanner {
             $cron_findings = $this->cron_persistence_scanner->scan((string) $scan_id);
             $findings = array_merge($findings, $cron_findings);
         } catch (\Throwable $e) {
+            $this->last_scan_errors[] = 'WP-Cron persistence: ' . $e->getMessage();
             $findings[] = $this->build_degraded_finding('cron_persistence', 'WP-Cron Persistence Audit', $e->getMessage());
         }
 
@@ -89,14 +113,21 @@ class DatabaseScanner {
             $findings = array_merge($findings, $snippet_findings);
             $snippet_err = $this->snippet_code_auditor->get_last_error();
             if ($snippet_err !== null) {
+                $this->last_scan_errors[] = 'Database snippet auditor: ' . $snippet_err;
                 $findings[] = $this->build_degraded_finding('snippet_auditor', 'Database Snippet Auditor', $snippet_err);
             }
         } catch (\Throwable $e) {
+            $this->last_scan_errors[] = 'Database snippet auditor: ' . $e->getMessage();
             $findings[] = $this->build_degraded_finding('snippet_auditor', 'Database Snippet Auditor', $e->getMessage());
         }
 
         // 6. Discover all tables and calculate grand total row estimate upfront
         $tables = $this->table_scanner->get_tables();
+        $tables_err = $this->table_scanner->get_last_error();
+        if ($tables_err !== null) {
+            $this->last_scan_errors[] = 'Table discovery: ' . $tables_err;
+            $findings[] = $this->build_degraded_finding('database_tables', 'MySQL Table Discovery', $tables_err);
+        }
         $total_tables = count($tables);
         $total_rows_scanned = 0;
 
@@ -120,6 +151,12 @@ class DatabaseScanner {
             }
 
             $meta = $this->table_scanner->get_table_metadata($table);
+            $meta_err = $this->table_scanner->get_last_error();
+            if ($meta_err !== null) {
+                $this->last_scan_errors[] = "Table '{$table}' metadata: {$meta_err}";
+                $findings[] = $this->build_degraded_finding('database_tables', "MySQL Table '{$table}' Metadata", $meta_err);
+                continue;
+            }
             if (empty($meta['columns'])) {
                 continue;
             }
@@ -164,8 +201,16 @@ class DatabaseScanner {
                     $meta['primary_key'],
                     $cursor,
                     $adaptive_row_batch,
-                    $scan_id
+                    $scan_id,
+                    $meta['order_by_columns'] ?? null
                 );
+
+                $batch_err = $this->table_scanner->get_last_error();
+                if ($batch_err !== null) {
+                    $this->last_scan_errors[] = "Table '{$table}' batch scan: {$batch_err}";
+                    $findings[] = $this->build_degraded_finding('database_tables', "MySQL Table '{$table}' Row Scan", $batch_err);
+                    break;
+                }
 
                 $batch_rows = (int) ($batch_res['rows_scanned'] ?? 0);
                 $table_rows_scanned += $batch_rows;
@@ -204,6 +249,7 @@ class DatabaseScanner {
         }
 
         if (!empty($scan_id)) {
+            $db_incomplete = !empty($this->last_scan_errors);
             // Retain the final completion summary for 120 seconds so frontend poller never misses it
             set_transient("webcareproscan_scan_db_progress_{$scan_id}", [
                 'current_table'        => 'All MySQL Tables',
@@ -214,7 +260,9 @@ class DatabaseScanner {
                 'overall_rows_scanned' => $total_rows_scanned,
                 'overall_total_rows'   => max($grand_total_rows, $total_rows_scanned),
                 'overall_rows_left'    => 0,
-                'completed'            => true,
+                'completed'            => !$db_incomplete,
+                'incomplete'           => $db_incomplete,
+                'errors'               => $this->last_scan_errors,
             ], 120);
         }
 

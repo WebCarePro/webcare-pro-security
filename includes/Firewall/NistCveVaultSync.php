@@ -475,19 +475,19 @@ class NistCveVaultSync {
         }
         $norm_slug = self::resolve_canonical_slug($slug);
         if ($norm_slug === 'wordpress' || $type === 'core') {
-            return ['author' => 'WordPress', 'vendor_hints' => ['wordpress']];
+            return array_merge($extra, ['author' => 'WordPress', 'vendor_hints' => ['wordpress']]);
         }
         foreach (self::collect_installed_components() as $comp) {
             if ((($comp['slug'] ?? '') === $norm_slug || ($comp['raw_slug'] ?? '') === strtolower(trim($slug)))
                 && ($type === '' || $type === 'component' || ($comp['type'] ?? '') === $type)
             ) {
-                return [
+                return array_merge($extra, [
                     'author'       => (string) ($comp['author'] ?? ''),
                     'vendor_hints' => is_array($comp['vendor_hints'] ?? null) ? $comp['vendor_hints'] : [],
-                ];
+                ]);
             }
         }
-        return [];
+        return $extra;
     }
 
     /**
@@ -1595,7 +1595,7 @@ class NistCveVaultSync {
         int $depth
     ): array {
         if ($depth > 16) {
-            return ['state' => 'neutral', 'fixed_in' => '', 'ranges' => [], 'unfixed' => false];
+            return ['state' => 'unknown', 'fixed_in' => '', 'ranges' => [], 'unfixed' => false];
         }
 
         $operator = strtoupper((string) ($node['operator'] ?? 'OR'));
@@ -1659,18 +1659,15 @@ class NistCveVaultSync {
                             'unfixed'  => !empty($ver_eval['range']['unfixed']),
                         ];
                     }
-                } elseif (!$is_vuln && !$is_core && $part === 'a' && $vendor === 'wordpress' && $product === 'wordpress') {
-                    // Platform "running on WordPress" prerequisite inside an AND configuration
-                    $wp_ver = (string) ($context['wp_version'] ?? (function_exists('get_bloginfo') ? (string) get_bloginfo('version') : ''));
-                    $has_wp_bounds = !empty($match['versionStartIncluding']) || !empty($match['versionStartExcluding'])
-                        || !empty($match['versionEndIncluding']) || !empty($match['versionEndExcluding'])
-                        || ($cpe_ver !== '*' && $cpe_ver !== '-' && $cpe_ver !== '');
-                    if (!$has_wp_bounds) {
-                        $outcomes[] = ['state' => 'matched', 'fixed_in' => '', 'ranges' => [], 'unfixed' => false];
-                    } elseif ($wp_ver !== '' && $wp_ver !== '0.0.0') {
-                        $wp_eval = self::evaluate_cpe_version_match($match, $cpe_ver, $wp_ver);
-                        $outcomes[] = ['state' => $wp_eval['matched'] ? 'matched' : 'not_matched', 'fixed_in' => '', 'ranges' => [], 'unfixed' => false];
-                    }
+                } elseif (!$is_vuln || $part === 'o' || $part === 'h' || ($part === 'a' && $vendor === 'php' && $product === 'php')) {
+                    // Environmental / prerequisite constraint (OS, hardware, WP core prerequisite, PHP runtime, or non-vulnerable dependency)
+                    $env_eval = self::evaluate_environmental_cpe($part, $vendor, $product, $cpe_ver, $match, $is_core, $context);
+                    $outcomes[] = [
+                        'state'    => $env_eval,
+                        'fixed_in' => '',
+                        'ranges'   => [],
+                        'unfixed'  => false,
+                    ];
                 }
             }
         }
@@ -1686,11 +1683,19 @@ class NistCveVaultSync {
         $node_unfixed  = false;
 
         if ($operator === 'AND') {
-            $all_matched = true;
+            $all_matched     = true;
+            $saw_unknown     = false;
+            $saw_not_matched = false;
             foreach ($relevant as $o) {
+                if ($o['state'] === 'not_matched') {
+                    $all_matched     = false;
+                    $saw_not_matched = true;
+                    break;
+                }
                 if ($o['state'] !== 'matched') {
                     $all_matched = false;
-                    break;
+                    $saw_unknown = true;
+                    continue;
                 }
                 if ($node_fixed_in === '' && $o['fixed_in'] !== '') {
                     $node_fixed_in = $o['fixed_in'];
@@ -1702,8 +1707,10 @@ class NistCveVaultSync {
                     $node_unfixed = true;
                 }
             }
-            $node_state = $all_matched ? 'matched' : 'not_matched';
+            $node_state = $all_matched ? 'matched' : ($saw_not_matched ? 'not_matched' : ($saw_unknown ? 'unknown' : 'not_matched'));
         } else {
+            $saw_unknown     = false;
+            $saw_not_matched = false;
             foreach ($relevant as $o) {
                 if ($o['state'] === 'matched') {
                     $node_state    = 'matched';
@@ -1712,6 +1719,14 @@ class NistCveVaultSync {
                     $node_unfixed  = !empty($o['unfixed']);
                     break;
                 }
+                if ($o['state'] === 'not_matched') {
+                    $saw_not_matched = true;
+                } elseif ($o['state'] === 'unknown') {
+                    $saw_unknown = true;
+                }
+            }
+            if ($node_state !== 'matched') {
+                $node_state = (!$saw_not_matched && $saw_unknown) ? 'unknown' : 'not_matched';
             }
         }
 
@@ -1732,6 +1747,78 @@ class NistCveVaultSync {
             'ranges'   => $node_ranges,
             'unfixed'  => $node_unfixed,
         ];
+    }
+
+    /**
+     * Evaluate non-component environmental CPE constraints (host OS, PHP runtime, WordPress core platform, or unsupported hardware/dependencies).
+     *
+     * @return 'matched'|'not_matched'|'unknown'
+     */
+    private static function evaluate_environmental_cpe(
+        string $part,
+        string $vendor,
+        string $product,
+        string $cpe_ver,
+        array $match,
+        bool $is_core,
+        array $context
+    ): string {
+        $has_bounds = !empty($match['versionStartIncluding']) || !empty($match['versionStartExcluding'])
+            || !empty($match['versionEndIncluding']) || !empty($match['versionEndExcluding'])
+            || ($cpe_ver !== '*' && $cpe_ver !== '-' && $cpe_ver !== '');
+
+        // 1. WordPress platform prerequisite
+        if (!$is_core && $part === 'a' && $vendor === 'wordpress' && $product === 'wordpress') {
+            $wp_ver = (string) ($context['wp_version'] ?? (function_exists('get_bloginfo') ? (string) get_bloginfo('version') : ''));
+            if (!$has_bounds) {
+                return 'matched';
+            }
+            if ($wp_ver === '' || $wp_ver === '0.0.0') {
+                return 'unknown';
+            }
+            $wp_eval = self::evaluate_cpe_version_match($match, $cpe_ver, $wp_ver);
+            return $wp_eval['matched'] ? 'matched' : 'not_matched';
+        }
+
+        // 2. PHP runtime prerequisite
+        if ($part === 'a' && $vendor === 'php' && $product === 'php') {
+            $php_ver = (string) ($context['php_version'] ?? PHP_VERSION);
+            if (!$has_bounds) {
+                return 'matched';
+            }
+            $php_eval = self::evaluate_cpe_version_match($match, $cpe_ver, $php_ver);
+            return $php_eval['matched'] ? 'matched' : 'not_matched';
+        }
+
+        // 3. Operating System CPE (o:<vendor>:<product>) against actual server OS
+        if ($part === 'o') {
+            $host_os = strtolower(trim((string) ($context['host_os'] ?? PHP_OS_FAMILY)));
+            $is_win_cpe   = ($vendor === 'microsoft' && str_contains($product, 'windows'));
+            $is_mac_cpe   = ($vendor === 'apple' && ($product === 'macos' || $product === 'mac_os_x' || $product === 'os_x'));
+            $is_linux_cpe = (($vendor === 'linux' && ($product === 'linux_kernel' || $product === 'linux'))
+                || in_array($vendor, ['debian', 'ubuntu', 'canonical', 'redhat', 'fedoraproject', 'centos', 'alpine', 'suse'], true));
+
+            if ($is_win_cpe) {
+                return str_contains($host_os, 'win') ? 'matched' : 'not_matched';
+            }
+            if ($is_mac_cpe) {
+                return ($host_os === 'darwin' || str_contains($host_os, 'mac')) ? 'matched' : 'not_matched';
+            }
+            if ($is_linux_cpe) {
+                if (!str_contains($host_os, 'linux')) {
+                    return 'not_matched';
+                }
+                if ($vendor === 'linux') {
+                    return 'matched';
+                }
+                $distro_hint = strtolower((string) ($context['host_distro'] ?? php_uname('v') . ' ' . php_uname('r')));
+                return str_contains($distro_hint, $vendor) ? 'matched' : 'unknown';
+            }
+            return 'unknown';
+        }
+
+        // Hardware or unrecognized non-vulnerable prerequisites cannot be verified locally
+        return 'unknown';
     }
 
     /**
