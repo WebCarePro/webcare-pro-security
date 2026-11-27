@@ -484,6 +484,7 @@ class TableScanner {
                                     $raw_src = $src_m[1] !== '' ? $src_m[1] : ($src_m[2] !== '' ? $src_m[2] : ($src_m[3] ?? ''));
                                     $src_url = str_starts_with($raw_src, '//') ? 'https:' . $raw_src : $raw_src;
                                     $src_host = strtolower((string) wp_parse_url($src_url, PHP_URL_HOST));
+                                    // phpcs:ignore PluginCheck.CodeAnalysis.Offloading.OffloadedContent -- Allowlist of trusted CDN hostnames for malware/injection detection, not offloaded assets.
                                     $trusted_hosts = [
                                         'googletagmanager.com', 'www.googletagmanager.com', 'www.google-analytics.com', 'ssl.google-analytics.com',
                                         'www.clarity.ms', 'connect.facebook.net', 'cdnjs.cloudflare.com', 'code.jquery.com',

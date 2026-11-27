@@ -298,8 +298,8 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
 
                 $has_trusted_same_site_referer = false;
                 if ($is_plausible_browser_ua && $referer !== '' && $canonical_url !== '') {
-                    $ref_parts = parse_url($referer);
-                    $can_parts = parse_url($canonical_url);
+                    $ref_parts = wp_parse_url($referer);
+                    $can_parts = wp_parse_url($canonical_url);
                     if (is_array($ref_parts) && is_array($can_parts) && !empty($ref_parts['host']) && !empty($can_parts['host'])) {
                         $ref_scheme = strtolower((string) ($ref_parts['scheme'] ?? ''));
                         $can_scheme = strtolower((string) ($can_parts['scheme'] ?? ''));

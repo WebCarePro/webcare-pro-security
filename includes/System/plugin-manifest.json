@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-27T19:06:37.179Z",
+  "generated_at": "2026-11-27T19:13:26.344Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -336,8 +336,8 @@
       "size": 20365
     },
     "includes/Content/HTMLAnalyzer.php": {
-      "sha256": "69d1662e41bab9067ddffe091ac308e873dcceef3cfb341aaa3080b8ec254fda",
-      "size": 19189
+      "sha256": "248a1b1f29379585d73c9b6679cdfdc24dbda4a50ae34c6cacde6502eb4b9385",
+      "size": 19516
     },
     "includes/Content/ScriptInventoryMonitor.php": {
       "sha256": "22426ce8282a297c01bf4e66857046dfeae32cefdfb1fed137541e284d51eda5",
@@ -444,8 +444,8 @@
       "size": 16755
     },
     "includes/Database/TableScanner.php": {
-      "sha256": "12bc02d9d7781ac60c0b40e0a722475afc7bd46978370d4b60623232a354b29f",
-      "size": 32987
+      "sha256": "36efefb87289abf72fda8c3b25f76c0fc142f44a5f8d578c2df89254b0922d14",
+      "size": 33185
     },
     "includes/Filesystem/DirectoryWalker.php": {
       "sha256": "caa823d84f9169ca8cb93d81f7595d84667e4248113067ff475f5c4ffb4116e1",
@@ -660,8 +660,8 @@
       "size": 16339
     },
     "includes/Firewall/Evaluators/AiAgentBehaviorEvaluator.php": {
-      "sha256": "0dca5e87c6a981e8caa86bf4dd0da2c721ab1d420067b433713890b6a4b60134",
-      "size": 25605
+      "sha256": "dce2c1301b4c80a62e7a6cab7e4a8402a66a905b8079fcdffcb5f7b48d6e683d",
+      "size": 25611
     },
     "includes/Firewall/Evaluators/AuthAndAjaxSurfaceEvaluator.php": {
       "sha256": "202cfc2d5d14fcf57ee8da9f9b8d5cffdf7e6cf58bee4da01fa43934defd2c23",
@@ -732,8 +732,8 @@
       "size": 14036
     },
     "includes/Firewall/NistCveVaultSync.php": {
-      "sha256": "043c5fa7ee4f1f6afd87523e05a533a887684a712cc9cf445e4b6ecfc7414e0f",
-      "size": 118792
+      "sha256": "bbfc6a9b1e4de2f45cf55f7482330ff798e69c771a7d0e6f0c1a4bf3175352f7",
+      "size": 118513
     },
     "includes/Firewall/OfficialCrawlerRegistry.php": {
       "sha256": "b82c0a1da8dc5266a21f298ad8ea580ad626804b45adb291ba8ce31edfea1d9c",

@@ -394,9 +394,7 @@ class NistCveVaultSync {
             }
             $canonical_slug = $wporg_slug !== '' ? self::resolve_canonical_slug($wporg_slug) : self::resolve_canonical_slug($raw_slug_l);
 
-            $author = function_exists('wp_strip_all_tags')
-                ? wp_strip_all_tags((string) ($data['Author'] ?? ($data['AuthorName'] ?? '')))
-                : trim(strip_tags((string) ($data['Author'] ?? ($data['AuthorName'] ?? ''))));
+            $author = wp_strip_all_tags((string) ($data['Author'] ?? ($data['AuthorName'] ?? '')));
             $items[] = [
                 'slug'           => $canonical_slug,
                 'raw_slug'       => $raw_slug_l,
@@ -418,9 +416,7 @@ class NistCveVaultSync {
                     $is_outdated = true;
                     $latest_ver  = (string) ($update_themes->response[$slug]['new_version'] ?? $latest_ver);
                 }
-                $author = function_exists('wp_strip_all_tags')
-                    ? wp_strip_all_tags((string) $theme->get('Author'))
-                    : trim(strip_tags((string) $theme->get('Author')));
+                $author = wp_strip_all_tags((string) $theme->get('Author'));
                 $items[] = [
                     'slug'           => $raw_slug_l,
                     'raw_slug'       => $raw_slug_l,
