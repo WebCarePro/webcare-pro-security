@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-27T19:51:27.802Z",
+  "generated_at": "2026-11-27T21:53:41.408Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -732,8 +732,8 @@
       "size": 14036
     },
     "includes/Firewall/NistCveVaultSync.php": {
-      "sha256": "bbfc6a9b1e4de2f45cf55f7482330ff798e69c771a7d0e6f0c1a4bf3175352f7",
-      "size": 118513
+      "sha256": "12d0ef02045bc5d3ac472b6409529e146a5435225c5a4ec47aec1db2e448bc21",
+      "size": 120343
     },
     "includes/Firewall/OfficialCrawlerRegistry.php": {
       "sha256": "b82c0a1da8dc5266a21f298ad8ea580ad626804b45adb291ba8ce31edfea1d9c",
@@ -1132,8 +1132,8 @@
       "size": 39419
     },
     "includes/WordPress/UpdateScanner.php": {
-      "sha256": "f767908fef48f75d926b77f72f9ef76ef4882e1c050ced3515a9440c6eddab97",
-      "size": 59335
+      "sha256": "6992de6f21148966d246fc64d988ab1a32eae097157fb59ba3c0b1118c4095bd",
+      "size": 59559
     },
     "includes/WordPress/UserRemediationManager.php": {
       "sha256": "79726aa103672f54dd78c3f94ddebf1a0406c293535d0247495b304db9ceaadf",

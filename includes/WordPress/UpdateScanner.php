@@ -839,7 +839,12 @@ class UpdateScanner {
         if (!\WebCareProScanner\Firewall\NistCveVaultSync::is_wpvulnerability_enabled()) {
             return;
         }
-        $vulns = \WebCareProScanner\Firewall\NistCveVaultSync::fetch_wpvulnerability_for_component($slug, $name !== '' ? $name : $slug, $version, $type);
+        $cached_today = \WebCareProScanner\Firewall\NistCveVaultSync::get_same_day_vault_cves($slug, $version, $type);
+        if ($cached_today !== null) {
+            $vulns = $cached_today;
+        } else {
+            $vulns = \WebCareProScanner\Firewall\NistCveVaultSync::fetch_wpvulnerability_for_component($slug, $name !== '' ? $name : $slug, $version, $type);
+        }
         if (empty($vulns)) {
             return;
         }

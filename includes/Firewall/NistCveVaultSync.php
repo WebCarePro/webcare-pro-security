@@ -2294,6 +2294,54 @@ class NistCveVaultSync {
     }
 
     /**
+     * Return cached CVEs from the local vault if this component+version was already checked today (UTC).
+     * Returns null when the component has not been checked today or its version changed.
+     *
+     * @return list<array<string, mixed>>|null
+     */
+    public static function get_same_day_vault_cves(string $slug, string $version, string $type = 'plugin'): ?array {
+        $canonical_slug = self::resolve_canonical_slug($slug);
+        $norm_ver       = self::normalize_version($version);
+        if ($canonical_slug === '' || $norm_ver === '') {
+            return null;
+        }
+
+        $comp_type = ($type === 'core' || $canonical_slug === 'wordpress')
+            ? 'core'
+            : ($type === 'theme' ? 'theme' : 'plugin');
+
+        $state   = self::get_state();
+        $checked = is_array($state['checked'] ?? null) ? $state['checked'] : [];
+        $key     = $comp_type . ':' . $canonical_slug;
+        $entry   = $checked[$key] ?? null;
+
+        if (!is_array($entry)) {
+            return null;
+        }
+
+        $checked_at = (int) ($entry['checked_at'] ?? 0);
+        $entry_ver  = self::normalize_version((string) ($entry['version'] ?? ''));
+        if ($checked_at <= 0 || gmdate('Y-m-d', $checked_at) !== gmdate('Y-m-d') || $entry_ver !== $norm_ver) {
+            return null;
+        }
+
+        $vault   = self::get_vault();
+        $matches = [];
+        foreach ($vault as $record) {
+            if (!is_array($record)) {
+                continue;
+            }
+            $rec_slug = self::resolve_canonical_slug((string) ($record['slug'] ?? ''));
+            $rec_type = (string) ($record['type'] ?? 'plugin');
+            if ($rec_slug === $canonical_slug && $rec_type === $comp_type) {
+                $matches[] = $record;
+            }
+        }
+
+        return $matches;
+    }
+
+    /**
      * Fetch structured, slug-authoritative advisories from WPVulnerability.net API.
      *
      * @return list<array<string, mixed>>
