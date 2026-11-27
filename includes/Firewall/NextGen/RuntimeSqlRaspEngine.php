@@ -668,11 +668,12 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
     /**
      * Check if current SQL query originates from a verified security scanner (Wordfence, Solid Security, Sucuri, etc.) or Core schema maintenance.
      *
+     * @param array|null $backtrace_frames Optional override for deterministic unit testing.
      * @return bool
      */
-    public static function is_legitimate_security_or_core_caller(): bool {
+    public static function is_legitimate_security_or_core_caller(?array $backtrace_frames = null): bool {
         // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_debug_backtrace -- Provenance validation for RASP
-        $frames = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 25);
+        $frames = $backtrace_frames ?? debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 25);
         $origin_frame = null;
 
         // Skip internal RASP, WAF, $wpdb, and DB drop-in wrapper frames to locate the true direct SQL originator
@@ -699,34 +700,132 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
             return false;
         }
 
-        // Anchor legitimate security plugin callers to verified WP_PLUGIN_DIR (resolving symlinks via realpath)
-        $plugin_dir_raw = defined('WP_PLUGIN_DIR') ? (string) WP_PLUGIN_DIR : '';
-        if ($plugin_dir_raw !== '') {
-            $plugin_dir_real = realpath($plugin_dir_raw);
-            $plugin_root     = rtrim(wp_normalize_path($plugin_dir_real !== false ? $plugin_dir_real : $plugin_dir_raw), '/');
-            $origin_real     = realpath((string) $origin_frame['file']);
-            $resolved_origin = wp_normalize_path($origin_real !== false ? $origin_real : $origin_file);
+        // Anchor legitimate security plugin callers strictly to realpath-verified WP_PLUGIN_DIR descendants (fail closed)
+        if (self::is_verified_plugin_descendant((string) $origin_frame['file'], [
+            'wordfence',
+            'better-wp-security',
+            'sucuri-scanner',
+            'all-in-one-wp-security-and-firewall',
+        ])) {
+            return true;
+        }
 
-            $legitimate_plugin_slugs = [
-                'wordfence',
-                'better-wp-security',
-                'sucuri-scanner',
-                'all-in-one-wp-security-and-firewall',
-            ];
-            foreach ($legitimate_plugin_slugs as $slug) {
-                if (str_starts_with($resolved_origin, $plugin_root . '/' . $slug . '/')) {
+        // Anchor legitimate WordPress Core schema maintenance callers in /wp-admin/includes/
+        $admin_includes_raw  = defined('ABSPATH') ? (string) ABSPATH . 'wp-admin/includes' : '';
+        $admin_includes_real = $admin_includes_raw !== '' ? realpath($admin_includes_raw) : false;
+        $origin_real         = realpath((string) $origin_frame['file']);
+        if ($admin_includes_real !== false && $origin_real !== false) {
+            $admin_includes_dir = rtrim(wp_normalize_path($admin_includes_real), '/') . '/';
+            $resolved_origin    = wp_normalize_path($origin_real);
+            if (str_starts_with($resolved_origin, $admin_includes_dir)) {
+                if (
+                    str_ends_with($resolved_origin, '/wp-admin/includes/upgrade.php')
+                    || str_ends_with($resolved_origin, '/wp-admin/includes/schema.php')
+                ) {
                     return true;
                 }
             }
         }
 
-        // Anchor legitimate WordPress Core schema maintenance callers in /wp-admin/includes/
-        $admin_includes_dir = defined('ABSPATH') ? wp_normalize_path(ABSPATH . 'wp-admin/includes/') : '';
-        if ($admin_includes_dir !== '' && str_starts_with($origin_file, $admin_includes_dir)) {
-            if (
-                str_ends_with($origin_file, '/wp-admin/includes/upgrade.php')
-                || str_ends_with($origin_file, '/wp-admin/includes/schema.php')
-            ) {
+        return false;
+    }
+
+    /**
+     * Resolve WP_PLUGIN_DIR, the approved plugin directory, and the caller file via realpath().
+     * Fails closed whenever any path cannot be resolved or escapes the verified plugin root (including symlinks).
+     *
+     * @param string   $file_path
+     * @param string[] $allowed_slugs
+     */
+    private static function is_verified_plugin_descendant(string $file_path, array $allowed_slugs): bool {
+        $plugin_dir_raw = defined('WP_PLUGIN_DIR') ? (string) WP_PLUGIN_DIR : '';
+        if ($plugin_dir_raw === '') {
+            return false;
+        }
+        $plugin_dir_real = realpath($plugin_dir_raw);
+        $file_real       = realpath($file_path);
+        if ($plugin_dir_real === false || $file_real === false) {
+            return false;
+        }
+        $resolved_root   = rtrim(wp_normalize_path($plugin_dir_real), '/');
+        $resolved_origin = wp_normalize_path($file_real);
+
+        foreach ($allowed_slugs as $slug) {
+            $slug_dir_real = realpath($plugin_dir_real . DIRECTORY_SEPARATOR . $slug);
+            if ($slug_dir_real === false) {
+                continue;
+            }
+            $resolved_slug_dir = rtrim(wp_normalize_path($slug_dir_real), '/');
+            if (!str_starts_with($resolved_slug_dir . '/', $resolved_root . '/')) {
+                continue;
+            }
+            if (str_starts_with($resolved_origin, $resolved_slug_dir . '/')) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Resolve WP_PLUGIN_DIR and a caller path via realpath() with zero lexical fallback.
+     * Excludes generic AJAX/POST routers and any symlink targets outside WP_PLUGIN_DIR.
+     */
+    private static function is_verified_any_plugin_descendant(string $file_path): bool {
+        $plugin_dir_raw = defined('WP_PLUGIN_DIR') ? (string) WP_PLUGIN_DIR : '';
+        if ($plugin_dir_raw === '') {
+            return false;
+        }
+        $plugin_dir_real = realpath($plugin_dir_raw);
+        $file_real       = realpath($file_path);
+        if ($plugin_dir_real === false || $file_real === false) {
+            return false;
+        }
+        $resolved_root   = rtrim(wp_normalize_path($plugin_dir_real), '/') . '/';
+        $resolved_origin = wp_normalize_path($file_real);
+
+        if (!str_starts_with($resolved_origin, $resolved_root)) {
+            return false;
+        }
+
+        return !str_ends_with($resolved_origin, '/admin-ajax.php')
+            && !str_ends_with($resolved_origin, '/admin-post.php');
+    }
+
+    /**
+     * Recursively inspect userdata/feed payload arguments (depth-bounded) for privileged roles or capabilities.
+     */
+    private static function contains_privileged_role_payload(mixed $value, int $depth = 0): bool {
+        if ($depth > 5) {
+            return false;
+        }
+        if (is_object($value)) {
+            $value = get_object_vars($value);
+        }
+        if (!is_array($value)) {
+            return false;
+        }
+        if (!empty($value['role']) && is_string($value['role'])) {
+            if (class_exists(FirewallEngine::class) && FirewallEngine::is_privileged_role($value['role'])) {
+                return true;
+            }
+        }
+        if (!empty($value['roles']) && is_array($value['roles'])) {
+            foreach ($value['roles'] as $r_item) {
+                if (is_string($r_item) && class_exists(FirewallEngine::class) && FirewallEngine::is_privileged_role($r_item)) {
+                    return true;
+                }
+            }
+        }
+        if (!empty($value['wp_capabilities']) && is_array($value['wp_capabilities'])) {
+            foreach (array_keys(array_filter($value['wp_capabilities'])) as $cap_item) {
+                if (class_exists(FirewallEngine::class) && FirewallEngine::is_privileged_role((string) $cap_item)) {
+                    return true;
+                }
+            }
+        }
+        foreach ($value as $nested) {
+            if ((is_array($nested) || is_object($nested)) && self::contains_privileged_role_payload($nested, $depth + 1)) {
                 return true;
             }
         }
@@ -762,27 +861,30 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
             return false;
         }
 
-        $origin_file = wp_normalize_path((string) $origin_frame['file']);
-        $origin_real = realpath((string) $origin_frame['file']);
-        $resolved_origin = wp_normalize_path($origin_real !== false ? $origin_real : $origin_file);
+        $origin_raw  = (string) $origin_frame['file'];
+        $origin_real = realpath($origin_raw);
+        $origin_file = $origin_real !== false ? wp_normalize_path($origin_real) : wp_normalize_path($origin_raw);
 
-        $is_core_origin = (
-            str_contains($origin_file, '/wp-includes/user.php')
-            || str_contains($origin_file, '/wp-includes/pluggable.php')
-        );
+        $is_core_origin = false;
+        if ($origin_real !== false && defined('ABSPATH')) {
+            $wp_includes_real = realpath((string) ABSPATH . 'wp-includes');
+            if ($wp_includes_real !== false) {
+                $wp_includes_dir = rtrim(wp_normalize_path($wp_includes_real), '/') . '/';
+                $is_core_origin  = str_starts_with($origin_file, $wp_includes_dir)
+                    && (
+                        str_ends_with($origin_file, '/wp-includes/user.php')
+                        || str_ends_with($origin_file, '/wp-includes/pluggable.php')
+                    );
+            }
+        }
 
-        $is_wc_origin = (
-            str_contains($origin_file, '/plugins/woocommerce/includes/wc-user-functions.php')
-            || str_contains($origin_file, '/plugins/woocommerce/includes/data-stores/class-wc-customer-data-store')
-            || str_contains($origin_file, '/plugins/woocommerce/packages/')
-            || str_contains($origin_file, '/plugins/woocommerce/src/StoreApi/')
-        );
-
-        $plugin_dir_raw  = defined('WP_PLUGIN_DIR') ? (string) WP_PLUGIN_DIR : '';
-        $plugin_dir_real = $plugin_dir_raw !== '' ? realpath($plugin_dir_raw) : false;
-        $plugin_root     = $plugin_dir_raw !== ''
-            ? rtrim(wp_normalize_path($plugin_dir_real !== false ? $plugin_dir_real : $plugin_dir_raw), '/') . '/'
-            : '/wp-content/plugins/';
+        $is_wc_origin = self::is_verified_plugin_descendant($origin_raw, ['woocommerce'])
+            && (
+                str_contains($origin_file, '/woocommerce/includes/wc-user-functions.php')
+                || str_contains($origin_file, '/woocommerce/includes/data-stores/class-wc-customer-data-store')
+                || str_contains($origin_file, '/woocommerce/packages/')
+                || str_contains($origin_file, '/woocommerce/src/StoreApi/')
+            );
 
         $verified_registration_slugs = [
             'gravityformsuserregistration',
@@ -791,22 +893,11 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
             'ultimate-member',
             'user-registration',
         ];
-        $is_verified_registration_origin = false;
-        foreach ($verified_registration_slugs as $reg_slug) {
-            if (
-                str_starts_with($resolved_origin, $plugin_root . $reg_slug . '/')
-                || str_starts_with($origin_file, $plugin_root . $reg_slug . '/')
-            ) {
-                $is_verified_registration_origin = true;
-                break;
-            }
-        }
+        $is_verified_registration_origin = self::is_verified_plugin_descendant($origin_raw, $verified_registration_slugs);
 
         $is_registered_plugin_origin = !$is_core_origin
             && !$is_wc_origin
-            && (str_starts_with($resolved_origin, $plugin_root) || str_starts_with($origin_file, $plugin_root))
-            && !str_ends_with($origin_file, '/admin-ajax.php')
-            && !str_ends_with($origin_file, '/admin-post.php');
+            && self::is_verified_any_plugin_descendant($origin_raw);
 
         if (!$is_core_origin && !$is_wc_origin && !$is_registered_plugin_origin) {
             return false;
@@ -884,30 +975,8 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                         $has_recognized_registration_frame = true;
 
                         foreach ((array) ($ff['args'] ?? []) as $arg) {
-                            if (is_object($arg)) {
-                                $arg = get_object_vars($arg);
-                            }
-                            if (!is_array($arg)) {
-                                continue;
-                            }
-                            if (!empty($arg['role']) && is_string($arg['role'])) {
-                                if (class_exists(FirewallEngine::class) && FirewallEngine::is_privileged_role($arg['role'])) {
-                                    return false;
-                                }
-                            }
-                            if (!empty($arg['roles']) && is_array($arg['roles'])) {
-                                foreach ($arg['roles'] as $r_item) {
-                                    if (is_string($r_item) && class_exists(FirewallEngine::class) && FirewallEngine::is_privileged_role($r_item)) {
-                                        return false;
-                                    }
-                                }
-                            }
-                            if (!empty($arg['wp_capabilities']) && is_array($arg['wp_capabilities'])) {
-                                foreach (array_keys(array_filter($arg['wp_capabilities'])) as $cap_item) {
-                                    if (class_exists(FirewallEngine::class) && FirewallEngine::is_privileged_role((string) $cap_item)) {
-                                        return false;
-                                    }
-                                }
+                            if (self::contains_privileged_role_payload($arg)) {
+                                return false;
                             }
                         }
                     }

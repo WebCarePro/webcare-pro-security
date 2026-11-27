@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-27T18:59:38.046Z",
+  "generated_at": "2026-11-27T19:06:37.179Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -660,8 +660,8 @@
       "size": 16339
     },
     "includes/Firewall/Evaluators/AiAgentBehaviorEvaluator.php": {
-      "sha256": "d42eeb8c997088db7d625d0a5b423701f6091d5f13345998eb87efcf9eed1bff",
-      "size": 24395
+      "sha256": "0dca5e87c6a981e8caa86bf4dd0da2c721ab1d420067b433713890b6a4b60134",
+      "size": 25605
     },
     "includes/Firewall/Evaluators/AuthAndAjaxSurfaceEvaluator.php": {
       "sha256": "202cfc2d5d14fcf57ee8da9f9b8d5cffdf7e6cf58bee4da01fa43934defd2c23",
@@ -724,8 +724,8 @@
       "size": 21068
     },
     "includes/Firewall/NextGen/RuntimeSqlRaspEngine.php": {
-      "sha256": "67877ab9ecdf55f02befb646d93b812e4ef8e481927fb5f89c5e11551f9ba088",
-      "size": 66478
+      "sha256": "43b31ab0c091b97e92add429ba00178c19964c861f29059eb669f26908690051",
+      "size": 68804
     },
     "includes/Firewall/NextGen/UpgraderDeltaSentinel.php": {
       "sha256": "6fb903f1e5f4f42372718156306b49c49f52eef97d3826a09d95e17c5bd70da6",

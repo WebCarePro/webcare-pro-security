@@ -288,20 +288,34 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
             } else {
                 // Automated bot POST without render timestamp.
                 // Only soften weight (+15 instead of +25) when the request has BOTH a plausible browser UA
-                // AND a Referer matching the site's configured canonical origin (never trusting client-supplied HTTP_HOST).
-                $referer        = (string) ($ctx->headers['referer'] ?? ($ctx->server['HTTP_REFERER'] ?? ''));
-                $referer_host   = $referer !== '' ? strtolower((string) parse_url($referer, PHP_URL_HOST)) : '';
-                $canonical_url  = function_exists('home_url') ? (string) home_url() : '';
-                $canonical_host = $canonical_url !== '' ? strtolower((string) parse_url($canonical_url, PHP_URL_HOST)) : '';
+                // AND a Referer matching the site's configured canonical origin (scheme, host, effective port — never trusting client-supplied HTTP_HOST).
+                $referer       = (string) ($ctx->headers['referer'] ?? ($ctx->server['HTTP_REFERER'] ?? ''));
+                $canonical_url = function_exists('home_url') ? (string) home_url() : '';
 
                 $is_plausible_browser_ua = $ua !== ''
                     && str_contains($ua, 'Mozilla/')
                     && (str_contains($ua, 'Chrome/') || str_contains($ua, 'Safari/') || str_contains($ua, 'Firefox/') || str_contains($ua, 'OPR/') || str_contains($ua, 'Edg/'));
 
-                $has_trusted_same_site_referer = $is_plausible_browser_ua
-                    && $referer_host !== ''
-                    && $canonical_host !== ''
-                    && $referer_host === $canonical_host;
+                $has_trusted_same_site_referer = false;
+                if ($is_plausible_browser_ua && $referer !== '' && $canonical_url !== '') {
+                    $ref_parts = parse_url($referer);
+                    $can_parts = parse_url($canonical_url);
+                    if (is_array($ref_parts) && is_array($can_parts) && !empty($ref_parts['host']) && !empty($can_parts['host'])) {
+                        $ref_scheme = strtolower((string) ($ref_parts['scheme'] ?? ''));
+                        $can_scheme = strtolower((string) ($can_parts['scheme'] ?? ''));
+                        $ref_host   = strtolower((string) $ref_parts['host']);
+                        $can_host   = strtolower((string) $can_parts['host']);
+                        $ref_port   = (int) ($ref_parts['port'] ?? ($ref_scheme === 'https' ? 443 : ($ref_scheme === 'http' ? 80 : 0)));
+                        $can_port   = (int) ($can_parts['port'] ?? ($can_scheme === 'https' ? 443 : ($can_scheme === 'http' ? 80 : 0)));
+
+                        $scheme_matches = ($ref_scheme !== '' && $ref_scheme === $can_scheme)
+                            || ($is_https && $ref_scheme === 'https' && $can_scheme === 'http' && $ref_port === 443 && !isset($can_parts['port']));
+                        $port_matches = ($ref_port > 0 && $ref_port === $can_port)
+                            || ($is_https && $ref_scheme === 'https' && $can_scheme === 'http' && $ref_port === 443 && !isset($can_parts['port']));
+
+                        $has_trusted_same_site_referer = ($ref_host === $can_host) && $scheme_matches && $port_matches;
+                    }
+                }
 
                 $risk_score += $has_trusted_same_site_referer ? 15 : 25;
                 $signals[] = 'missing_render_timestamp';

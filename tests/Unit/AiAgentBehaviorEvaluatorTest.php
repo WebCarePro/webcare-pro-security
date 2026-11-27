@@ -113,4 +113,31 @@ final class AiAgentBehaviorEvaluatorTest extends TestCase {
         $this->assertSame(WafAction::Challenge, $verdict->action);
         $this->assertSame('WAF-AI-AGENT-STEPUP', $verdict->ruleId);
     }
+
+    public function test_non_canonical_port_in_referer_triggers_stepup(): void {
+        $_SERVER['HTTPS'] = 'on';
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+
+        $ctx = new RequestContext(
+            ip: '198.51.100.62',
+            method: 'POST',
+            uri: '/contact-us-email/',
+            userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 OPR/125.0.0.0',
+            headers: [
+                'host' => 'example.com',
+                'referer' => 'https://example.com:8443/contact-us-email/',
+                'accept-language' => 'en-US,en;q=0.9',
+            ],
+            server: [
+                'HTTPS' => 'on',
+                'HTTP_HOST' => 'example.com',
+                'HTTP_REFERER' => 'https://example.com:8443/contact-us-email/',
+            ]
+        );
+
+        $verdict = $this->evaluator->evaluate_runtime_request($ctx);
+        $this->assertNotNull($verdict);
+        $this->assertSame(WafAction::Challenge, $verdict->action);
+        $this->assertSame('WAF-AI-AGENT-STEPUP', $verdict->ruleId);
+    }
 }
