@@ -172,6 +172,44 @@ final class ScanController extends AbstractApiController {
             'permission_callback' => $permission,
         ]);
 
+        register_rest_route($namespace, '/scanner/delete-user', [
+            'methods'             => 'POST',
+            'callback'            => [self::class, 'delete_flagged_user'],
+            'permission_callback' => $permission,
+        ]);
+
+    }
+
+    /**
+     * Safely delete a flagged WordPress user account from a security finding.
+     */
+    public static function delete_flagged_user(\WP_REST_Request $request): \WP_REST_Response {
+        if (!current_user_can('delete_users')) {
+            return new \WP_REST_Response(['success' => false, 'message' => __('Insufficient permissions to delete users.', 'webcare-pro-security')], 403);
+        }
+
+        $user_id  = absint($request->get_param('user_id'));
+        $issue_id = absint($request->get_param('issue_id'));
+        if ($user_id <= 0) {
+            return new \WP_REST_Response(['success' => false, 'message' => __('Invalid user ID.', 'webcare-pro-security')], 400);
+        }
+        if ($user_id === get_current_user_id()) {
+            return new \WP_REST_Response(['success' => false, 'message' => __('You cannot delete your own currently logged-in account.', 'webcare-pro-security')], 400);
+        }
+
+        require_once ABSPATH . 'wp-admin/includes/user.php';
+        $deleted = wp_delete_user($user_id, get_current_user_id());
+        if (!$deleted) {
+            return new \WP_REST_Response(['success' => false, 'message' => __('Failed to delete user.', 'webcare-pro-security')], 500);
+        }
+
+        if ($issue_id > 0) {
+            global $wpdb;
+            $table = $wpdb->prefix . 'webcareproscan_findings';
+            $wpdb->update($table, ['status' => 'resolved'], ['id' => $issue_id], ['%s'], ['%d']);
+        }
+
+        return new \WP_REST_Response(['success' => true, 'user_id' => $user_id], 200);
     }
 
     /**

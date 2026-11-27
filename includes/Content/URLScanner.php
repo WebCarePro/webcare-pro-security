@@ -47,8 +47,11 @@ class URLScanner {
                 continue;
             }
 
-            // 1. Raw IP address in external URL
+            // 1. Raw IP address in external URL (ignore localhost/loopback dev URLs)
             if (preg_match('/^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$/', $host)) {
+                if ($host === '127.0.0.1' || $host === '0.0.0.0') {
+                    continue;
+                }
                 $url_path = isset($parsed['path']) ? $parsed['path'] : '';
 
                 // Contextual Disambiguation: Staging / Migration URLs in Local WP Paths

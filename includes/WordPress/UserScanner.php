@@ -496,6 +496,10 @@ class UserScanner {
                     $poisoned = [];
                     foreach ($forbidden_global_caps as $f_cap) {
                         if (!empty($r_caps[$f_cap])) {
+                            // Yoast SEO intentionally grants upload_files & unfiltered_html to wpseo_editor / wpseo_manager
+                            if (in_array($r_name, ['wpseo_editor', 'wpseo_manager'], true) && in_array($f_cap, ['upload_files', 'unfiltered_html'], true)) {
+                                continue;
+                            }
                             $poisoned[] = $f_cap;
                         }
                     }

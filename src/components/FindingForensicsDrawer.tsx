@@ -1049,9 +1049,20 @@ export const FindingForensicsDrawer: React.FC<FindingForensicsDrawerProps> = ({
                 <span style={{ fontSize: '10.5px', fontWeight: 700, color: 'var(--webcare-text-muted, #64748b)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                   Authored Posts
                 </span>
-                <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--webcare-text-primary, #0f172a)' }}>
-                  {issue.authored_posts_count ?? 1} published posts
-                </span>
+                {issue.user_id ? (
+                  <a
+                    href={`edit.php?post_type=post&author=${issue.user_id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ fontSize: '12px', fontWeight: 700, color: 'var(--webcare-primary, #4f46e5)', textDecoration: 'underline' }}
+                  >
+                    {issue.authored_posts_count ?? 0} published posts ↗
+                  </a>
+                ) : (
+                  <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--webcare-text-primary, #0f172a)' }}>
+                    {issue.authored_posts_count ?? 0} published posts
+                  </span>
+                )}
               </div>
 
               {/* Password Hash Engine */}

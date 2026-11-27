@@ -73,7 +73,7 @@ class SerializedDataScanner {
                 ];
             }
 
-            if (!self::is_allowed_commerce_class($clean_class)) {
+            if (!self::is_allowed_commerce_class($clean_class) && !str_starts_with($clean_class, 'Gravity_Forms\\')) {
                 return [
                     'type'     => 'serialized_unexpected_object',
                     'severity' => 'high',

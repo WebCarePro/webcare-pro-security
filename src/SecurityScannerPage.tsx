@@ -233,6 +233,32 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
   dbRowCache,
   loadDbRow,
 }) => {
+  const handleDeleteUser = async (issueId: number | string, userId: number, userLogin?: string | null) => {
+    const label = userLogin ? `${userLogin} (ID: ${userId})` : `User #${userId}`;
+    if (!window.confirm(`Permanently delete WordPress user ${label}? Their posts will be reassigned to your account.`)) {
+      return;
+    }
+    try {
+      const restBase = (window as any).webcareproscanData?.restUrl || '/wp-json/webcare-pro-security/v1';
+      const nonce = (window as any).webcareproscanData?.nonce || '';
+      const res = await fetch(`${restBase.replace(/\/$/, '')}/scanner/delete-user`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-WP-Nonce': nonce,
+        },
+        body: JSON.stringify({ issue_id: issueId, user_id: userId }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.success) {
+        window.alert(data?.message || 'Failed to delete user.');
+        return;
+      }
+      window.location.reload();
+    } catch {
+      window.alert('Network error while deleting user.');
+    }
+  };
   // Navigation & Subtab State
   const [dashboardSubTab, setDashboardSubTab] = useState<
     'issues' | 'attack_chain' | 'persistence' | 'baseline' | 'transactions' | 'whitelist' | 'quarantine' | 'files'
@@ -2300,9 +2326,32 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                                   ? 'Manage App Passwords in WP-Admin ↗'
                                   : issue.type === 'user_missing_capabilities'
                                   ? 'Fix Capabilities in WP-Admin ↗'
-                                  : 'Update Password in WP-Admin ↗'}
+                                  : issue.type === 'tampered_role_definition'
+                                  ? 'Users & Roles in WP-Admin ↗'
+                                  : 'Edit User in WP-Admin ↗'}
                               </span>
                             </a>
+                          )}
+
+                          {!isOrphanedAuthor && isUser && issue.status === 'open' && userId !== null && issue.type !== 'tampered_role_definition' && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteUser(issue.id, userId, issue.user_login)}
+                              className="webcare-btn"
+                              style={{
+                                background: '#fef2f2',
+                                color: '#dc2626',
+                                border: '1px solid #fecaca',
+                                padding: '6px 12px',
+                                borderRadius: '7px',
+                                fontSize: '12px',
+                                fontWeight: 700,
+                                cursor: 'pointer',
+                              }}
+                              title="Permanently delete this WordPress user account"
+                            >
+                              Delete User
+                            </button>
                           )}
 
                           {/* 1c. Post / Page Action in Cards View */}
@@ -3128,9 +3177,32 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                                         ? 'Manage App Passwords ↗'
                                         : issue.type === 'user_missing_capabilities'
                                         ? 'Fix Capabilities ↗'
-                                        : 'Update Password ↗'}
+                                        : issue.type === 'tampered_role_definition'
+                                        ? 'Users & Roles ↗'
+                                        : 'Edit User ↗'}
                                     </span>
                                   </a>
+                                )}
+
+                                {!isOrphanedAuthor && isUser && issue.status === 'open' && userId !== null && issue.type !== 'tampered_role_definition' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteUser(issue.id, userId, issue.user_login)}
+                                    className="webcare-btn"
+                                    style={{
+                                      background: '#fef2f2',
+                                      color: '#dc2626',
+                                      border: '1px solid #fecaca',
+                                      fontSize: '12px',
+                                      padding: '4px 10px',
+                                      borderRadius: '6px',
+                                      fontWeight: 700,
+                                      cursor: 'pointer',
+                                    }}
+                                    title="Permanently delete this WordPress user account"
+                                  >
+                                    Delete User
+                                  </button>
                                 )}
 
                                 {/* 1c. Post / Page Action */}
