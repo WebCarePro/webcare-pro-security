@@ -108,11 +108,35 @@ class UpdateScanner {
             }
 
             $is_outdated = false;
+            $is_abandoned = false;
             $new_version = $cur_version;
 
             if (!empty($update_plugins->response[$plugin_file])) {
                 $is_outdated = true;
                 $new_version = $update_plugins->response[$plugin_file]->new_version ?? 'Latest';
+                if (empty($update_plugins->response[$plugin_file]->package)) {
+                    $is_abandoned = true;
+                }
+            }
+
+            if ($is_abandoned) {
+                $findings[] = new Finding([
+                    'engine'       => 'wordpress-updates',
+                    'type'         => 'abandoned_plugin',
+                    'severity'     => 'medium',
+                    'confidence'   => 95,
+                    'file_path'    => WP_PLUGIN_DIR . '/' . $plugin_file,
+                    'description'  => "Plugin '{$plugin_name}' (v{$cur_version}) appears to be closed, removed, or abandoned in the official WordPress.org repository with no download package.",
+                    'evidence'     => wp_json_encode([
+                        'type'         => 'plugin',
+                        'slug'         => $plugin_slug,
+                        'file'         => $plugin_file,
+                        'name'         => $plugin_name,
+                        'installed'    => $cur_version,
+                        'is_abandoned' => true,
+                    ]),
+                    'code_snippet' => "Status: Closed / Abandoned on WordPress.org (v{$cur_version})",
+                ]);
             }
 
             // Check CVEs for this plugin
@@ -665,6 +689,8 @@ class UpdateScanner {
             }
         }
 
+        self::merge_nist_vault_cves($cves, 'wordpress', (string) $version);
+
         set_transient($cache_key, $cves, self::CACHE_TTL);
         return $cves;
     }
@@ -747,7 +773,7 @@ class UpdateScanner {
 
         self::merge_threat_intel_cves($cves, (string) $slug, (string) $version);
         self::merge_nist_vault_cves($cves, (string) $slug, (string) $version);
-        self::merge_wpvulnerability_cves($cves, 'plugin', (string) $slug, (string) $version);
+        self::merge_wpvulnerability_cves($cves, 'theme', (string) $slug, (string) $version);
 
         set_transient($cache_key, $cves, self::CACHE_TTL);
         return $cves;

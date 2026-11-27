@@ -185,23 +185,40 @@ export const SetupWizard = () => {
     referrer_policy: 'strict-origin-when-cross-origin',
   });
 
-  // Step 11: 14-Pass Malware Scanner
-  const [customScanOptions, setCustomScanOptions] = useState<{ [key: string]: boolean }>({
+  // Step 11: 24-Engine Malware & Security Scanner
+  const [customScanOptions, setCustomScanOptionsState] = useState<{ [key: string]: boolean }>({
+    check_domain_blocklist: true,
+    check_spamvertised: true,
+    check_spam_ip: true,
+    scan_ip_detection: true,
+    scan_public_config: true,
+    scan_public_quarantine: true,
+    scan_core_integrity: true,
+    scan_theme_integrity: true,
+    scan_plugin_integrity: true,
+    scan_cve_vulnerabilities: true,
+    scan_unbundled_files: true,
     scan_known_malware: true,
     scan_backdoors_heuristics: true,
-    scan_core_integrity: true,
-    scan_plugin_integrity: true,
-    scan_theme_integrity: true,
-    scan_unbundled_files: true,
+    scan_malicious_urls: true,
+    scan_posts_content: true,
+    scan_comments_content: true,
+    scan_options_content: true,
     scan_vulnerable_software: true,
     scan_rogue_admins: true,
-    scan_malicious_urls: true,
-    scan_public_quarantine: true,
-    check_domain_blocklist: true,
-    monitor_firewall_status: true,
-    scan_password_strength: true,
+    scan_password_strength: false,
     monitor_disk_space: true,
+    monitor_firewall_status: true,
+    scan_outside_root: false,
+    scan_images_executable: true,
   });
+  const setCustomScanOptions = (
+    updater: { [key: string]: boolean } | ((prev: { [key: string]: boolean }) => { [key: string]: boolean })
+  ) => {
+    setCustomScanOptionsState((prev) =>
+      typeof updater === 'function' ? { ...prev, ...updater(prev) } : { ...prev, ...updater }
+    );
+  };
 
   const [scannerSettings, setScannerSettings] = useState<any>({
     auto_quarantine_high_confidence: true,

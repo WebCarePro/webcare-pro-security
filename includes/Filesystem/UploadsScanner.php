@@ -66,6 +66,9 @@ class UploadsScanner {
             $max_files_limit = ($uploads_mode === 'deep_raster') ? 25000 : 5000;
             $monitor = new \WebCareProScanner\Resource\ResourceMonitor(70, 20, 'balanced');
 
+            $symlink_scanner = new SymlinkScanner();
+            $js_scanner      = new \WebCareProScanner\Malware\JavaScriptSecurityScanner();
+
             foreach ($iterator as $item) {
                 // Adaptive breathing & memory headroom check before each file
                 if ($monitor->throttle_and_check()) {
@@ -73,6 +76,13 @@ class UploadsScanner {
                 }
 
                 try {
+                    if ($item->isLink()) {
+                        $sym_finding = $symlink_scanner->scan($item->getPathname(), $scan_id);
+                        if ($sym_finding) {
+                            $findings[] = $sym_finding;
+                        }
+                        continue;
+                    }
                     if (!$item->isFile()) {
                         continue;
                     }
@@ -130,7 +140,50 @@ class UploadsScanner {
                     continue;
                 }
 
-                // 2. Dangerous server overrides (.htaccess / web.config in uploads)
+                // 2. Dangerous server overrides (.htaccess / web.config / .user.ini / php.ini in uploads)
+                if ($lower_name === '.user.ini' || $lower_name === 'php.ini') {
+                    $ini_content = @file_get_contents($real_path, false, null, 0, 8192) ?: '';
+                    $findings[] = new Finding([
+                        'engine'       => 'uploads-scanner',
+                        'type'         => 'server_override_in_uploads',
+                        'severity'     => 'critical',
+                        'confidence'   => 99,
+                        'file_path'    => $real_path,
+                        'code_snippet' => self::sanitize_utf8(substr($ini_content, 0, 250)),
+                        'description'  => "PHP-FPM configuration override '{$basename}' found inside uploads directory. Used by attackers for auto_prepend_file polyglot execution.",
+                        'evidence'     => "Found {$basename} inside media uploads: {$rel_path}",
+                    ]);
+                    continue;
+                }
+
+                // 2b. Client-side phishing / ClickFix / skimmer scripts (.html, .htm, .shtml, .js, .mjs, .cjs) in uploads
+                if (in_array($ext, ['html', 'htm', 'shtml', 'js', 'mjs', 'cjs'], true)) {
+                    if (($lower_name === 'index.html' || $lower_name === 'index.htm') && \WebCareProScanner\System\SettingsManager::is_safe_directory_index($real_path)) {
+                        continue;
+                    }
+                    if (!\WebCareProScanner\Integrity\ChecksumProvider::is_authentic_known_library($real_path)) {
+                        $raw_web = $file_size <= 1572864 ? ((string) @file_get_contents($real_path)) : '';
+                        $js_hits = $raw_web !== '' ? $js_scanner->scan_content($raw_web, $real_path, $scan_id) : [];
+                        if (!empty($js_hits)) {
+                            $findings = array_merge($findings, $js_hits);
+                            continue;
+                        }
+                        if (in_array($ext, ['html', 'htm', 'shtml'], true) && $raw_web !== '' && preg_match('/(<script\b|<form\b[^>]*action\s*=|navigator\.clipboard|http-equiv\s*=\s*[\'"]?refresh)/i', $raw_web, $wm)) {
+                            $findings[] = new Finding([
+                                'engine'       => 'uploads-scanner',
+                                'type'         => 'phishing_html_in_uploads',
+                                'severity'     => 'high',
+                                'confidence'   => 92,
+                                'file_path'    => $real_path,
+                                'code_snippet' => $this->extract_context_snippet($raw_web, $wm[0]),
+                                'description'  => "Active HTML page '{$basename}' with embedded script/form/redirect found inside uploads: {$rel_path}",
+                                'evidence'     => "Matched active markup '{$wm[0]}' in uploaded HTML file.",
+                            ]);
+                            continue;
+                        }
+                    }
+                }
+
                 if ($lower_name === '.htaccess' || $lower_name === 'web.config') {
                     $content = @file_get_contents($real_path, false, null, 0, 2048) ?: '';
                     // Legitimate security plugins (Forminator, WooCommerce, WPForms) place protective .htaccess files
@@ -302,8 +355,11 @@ class UploadsScanner {
             }
         }
 
-        // Check for embedded active PHP
-        if (preg_match('/(<\?php|<\?=\s*)/i', $content, $m)) {
+        // Decode HTML entities so &#106;avascript: or &#x6a;avascript: cannot evade protocol checks
+        $decoded_svg = html_entity_decode($content, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
+        // Check for embedded active PHP (including comment-separated <?php/*...*/ and short echo <?=)
+        if (preg_match('/(<\?php\b|<\?php\/\*|<\?=)/i', $content, $m)) {
             return new Finding([
                 'engine'       => 'uploads-scanner',
                 'type'         => 'disguised_php_in_uploads',
@@ -317,7 +373,7 @@ class UploadsScanner {
         }
 
         // Check for script tags in SVG content
-        if (preg_match('/<script\b[^>]*>/i', $content, $m)) {
+        if (preg_match('/<script\b[^>]*>/i', $decoded_svg, $m)) {
             return new Finding([
                 'engine'       => 'uploads-scanner',
                 'type'         => 'malicious_svg_in_uploads',
@@ -330,8 +386,8 @@ class UploadsScanner {
             ]);
         }
 
-        // Check for javascript: URI in href, src, xlink:href
-        if (preg_match('/(?:href|src|xlink:href)\s*=\s*[\'"]\s*javascript:[^\'"]+/i', $content, $m)) {
+        // Check for javascript:/vbscript:/data:text/html or base64 SVG URI in href, src, xlink:href, values, to, from (quoted or unquoted)
+        if (preg_match('/(?:href|src|xlink:href|to|from|values)\s*=\s*[\'"]?\s*(?:javascript|vbscript|data\s*:\s*(?:text\/html|image\/svg\+xml\s*;\s*base64))\s*:/i', $decoded_svg, $m)) {
             return new Finding([
                 'engine'       => 'uploads-scanner',
                 'type'         => 'malicious_svg_in_uploads',
@@ -339,27 +395,27 @@ class UploadsScanner {
                 'confidence'   => 95,
                 'file_path'    => $real_path,
                 'code_snippet' => substr($m[0], 0, 200),
-                'description'  => "SVG image '{$basename}' contains javascript: pseudo-protocol handler.",
-                'evidence'     => "Found 'javascript:' payload in SVG attribute."
+                'description'  => "SVG image '{$basename}' contains executable URI protocol handler.",
+                'evidence'     => "Found executable URI payload in SVG attribute."
             ]);
         }
 
-        // Check for inline event handlers: onload=, onerror=, onmouseover=, onclick=
-        if (preg_match('/\b(onload|onerror|onclick|onmouseover|onfocus|onblur)\s*=\s*[\'"][^\'"]+/i', $content, $m)) {
+        // Check for inline DOM & SMIL animation event handlers (quoted OR unquoted: onload=alert(1), onbegin=..., ontoggle=...)
+        if (preg_match('/[\s"\'\/](on(?:load|error|click|mouseover|mouseenter|mousemove|focus|blur|begin|end|repeat|toggle|animationstart|transitionend))\s*=\s*(?:[\'"][^\'"]+|[^\s>]+)/i', $decoded_svg, $m)) {
             return new Finding([
                 'engine'       => 'uploads-scanner',
                 'type'         => 'malicious_svg_in_uploads',
                 'severity'     => 'high',
-                'confidence'   => 92,
+                'confidence'   => 94,
                 'file_path'    => $real_path,
-                'code_snippet' => substr($m[0], 0, 200),
-                'description'  => "SVG image '{$basename}' contains inline DOM event handler ({$m[1]}).",
-                'evidence'     => "Found active inline DOM event handler '{$m[0]}' in SVG file."
+                'code_snippet' => substr(trim($m[0]), 0, 200),
+                'description'  => "SVG image '{$basename}' contains inline DOM/SMIL event handler ({$m[1]}).",
+                'evidence'     => "Found active inline event handler '{$m[1]}' in SVG file."
             ]);
         }
 
-        // Check for dangerous remote embedding tags: <foreignObject>, <iframe>, <embed>, <object>
-        if (preg_match('/<(foreignObject|iframe|embed|object)\b[^>]*>/i', $content, $m)) {
+        // Check for dangerous remote embedding or SMIL href-mutation tags: <foreignObject>, <iframe>, <embed>, <object>
+        if (preg_match('/<(foreignObject|iframe|embed|object)\b[^>]*>/i', $decoded_svg, $m)) {
             return new Finding([
                 'engine'       => 'uploads-scanner',
                 'type'         => 'malicious_svg_in_uploads',
@@ -384,70 +440,62 @@ class UploadsScanner {
             return null;
         }
 
-        // True PHP polyglot webshells in images MUST contain a valid PHP opening tag with printable ASCII executable tokens.
-        // Plain compressed raster data in PNG/WebP/JPEG can contain random bytes matching '<?=' followed by binary noise,
-        // which cannot execute in PHP. We require legitimate PHP syntax characters (printable ASCII) immediately following the tag.
-        $php_pattern = '/<\?(?:php\s+[\x20-\x7E\r\n\t]{0,500}?(?:\b(?:eval|assert|system|passthru|shell_exec|exec|base64_decode|gzinflate)\b|\$_[A-Z]+|\$[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*)\b|\=\s*(?:\b(?:eval|assert|system|passthru|shell_exec|exec|base64_decode)\b|\$_[A-Z]+|\$[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*)\b)/i';
-
-        // 1. Read header up to 8KB (covers image headers, EXIF Comment, IPTC, and head polyglots)
-        $header = @file_get_contents($real_path, false, null, 0, 8192);
-        if ($header === false || empty($header)) {
-            return null;
-        }
+        // True PHP polyglot webshells in images contain <?php (with whitespace or /* comment) or <?= followed by printable ASCII executable syntax.
+        $php_pattern = '/<\?(?:php(?:\s+|\/\*[\s\S]{0,120}?\*\/)[\x20-\x7E\r\n\t]{0,500}?(?:\b(?:eval|assert|system|passthru|shell_exec|exec|popen|proc_open|base64_decode|gzinflate|gzdecode|include|require)\b|\$_[A-Z]+|\$[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*)|\=\s*\(?\s*(?:\b(?:eval|assert|system|passthru|shell_exec|exec|base64_decode)\b|\$_[A-Z]+|\$[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*))/i';
+        $phar_stub_pattern = '/\b__HALT_COMPILER\s*\(\s*\)/i';
 
         $detected_pattern = null;
         $snippet = '';
 
-        // 1a. Detect Phar archive compiler stub (__HALT_COMPILER) disguised inside media/document files (phar:// deserialization polyglot)
-        $phar_stub_pattern = '/\b__HALT_COMPILER\s*\(\s*\)/i';
-        if (preg_match($phar_stub_pattern, $header, $m_phar)) {
-            return new Finding([
-                'engine'       => 'uploads-scanner',
-                'type'         => 'phar_polyglot_in_uploads',
-                'severity'     => 'critical',
-                'confidence'   => 100,
-                'file_path'    => $real_path,
-                'code_snippet' => $this->extract_context_snippet($header, $m_phar[0]),
-                'description'  => "Media file '{$basename}' in uploads contains a PHP Phar archive stub (__HALT_COMPILER), enabling phar:// deserialization attacks.",
-                'evidence'     => "Found '__HALT_COMPILER()' Phar polyglot stub inside .{$ext} upload."
-            ]);
+        // Stream the ENTIRE file in 64 KB sliding chunks (with 1 KB overlap) so payloads hidden in the middle (>8KB) are NEVER missed
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
+        $fp = @fopen($real_path, 'rb');
+        if (!$fp) {
+            return null;
         }
+        $carry = '';
+        $is_first_chunk = true;
+        try {
+            while (!feof($fp)) {
+                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fread
+                $chunk = @fread($fp, 65536);
+                if ($chunk === false || $chunk === '') {
+                    break;
+                }
+                $window = $carry . $chunk;
 
-        if (preg_match($php_pattern, $header, $m)) {
-            $detected_pattern = $m[0];
-            $snippet = $this->extract_context_snippet($header, $m[0]);
-        }
+                if ($is_first_chunk && $file_size <= 128 * 1024 && preg_match('/^\s*<\?php\b/i', $window, $m_head)) {
+                    $detected_pattern = $m_head[0];
+                    $snippet = $this->extract_context_snippet($window, $m_head[0]);
+                    break;
+                }
+                $is_first_chunk = false;
 
-        // 2. If file is larger than 8KB, check trailing 8KB (where attackers append webshells or Phar stubs after JPEG \xFF\xD9 or PNG IEND)
-        if (!$detected_pattern && $file_size > 8192) {
-            $tail_offset = max(0, $file_size - 8192);
-            $tail = @file_get_contents($real_path, false, null, $tail_offset, 8192);
-            if ($tail !== false) {
-                if (preg_match($phar_stub_pattern, $tail, $m_phar_tail)) {
+                if (preg_match($phar_stub_pattern, $window, $m_phar)) {
                     return new Finding([
                         'engine'       => 'uploads-scanner',
                         'type'         => 'phar_polyglot_in_uploads',
                         'severity'     => 'critical',
                         'confidence'   => 100,
                         'file_path'    => $real_path,
-                        'code_snippet' => $this->extract_context_snippet($tail, $m_phar_tail[0]),
-                        'description'  => "Media file '{$basename}' in uploads contains an appended PHP Phar archive stub (__HALT_COMPILER), enabling phar:// deserialization attacks.",
-                        'evidence'     => "Found trailing '__HALT_COMPILER()' Phar polyglot stub inside .{$ext} upload."
+                        'code_snippet' => $this->extract_context_snippet($window, $m_phar[0]),
+                        'description'  => "Media file '{$basename}' contains a PHP Phar archive stub (__HALT_COMPILER), enabling phar:// deserialization attacks.",
+                        'evidence'     => "Found '__HALT_COMPILER()' Phar polyglot stub inside .{$ext} file.",
                     ]);
                 }
-                if (preg_match($php_pattern, $tail, $m)) {
-                    $detected_pattern = $m[0];
-                    $snippet = $this->extract_context_snippet($tail, $m[0]);
-                }
-            }
-        }
 
-        // 3. Masquerading full PHP script disguised with media extension (starts with <?php)
-        if (!$detected_pattern && $file_size <= 128 * 1024) {
-            if (preg_match('/^\s*<\?php/i', $header, $m)) {
-                $detected_pattern = $m[0];
-                $snippet = $this->extract_context_snippet($header, $m[0]);
+                // Fast-path check before running full PCRE on pure binary chunk
+                if (str_contains($window, '<?') && preg_match($php_pattern, $window, $m)) {
+                    $detected_pattern = $m[0];
+                    $snippet = $this->extract_context_snippet($window, $m[0]);
+                    break;
+                }
+
+                $carry = strlen($chunk) > 1024 ? substr($chunk, -1024) : $chunk;
             }
+        } finally {
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+            @fclose($fp);
         }
 
         if ($detected_pattern) {

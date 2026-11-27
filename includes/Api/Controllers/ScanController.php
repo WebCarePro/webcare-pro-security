@@ -322,25 +322,20 @@ final class ScanController extends AbstractApiController {
         $file_limit = (int) apply_filters('webcareproscan_file_limit', 0, $target);
 
         if ($target === 'custom') {
-            $has_filesystem_scan = !empty($custom_options['scan_known_malware'])
+            $needs_full_abspath = !empty($custom_options['scan_known_malware'])
                 || !empty($custom_options['scan_backdoors_heuristics'])
                 || !empty($custom_options['scan_malicious_urls'])
+                || !empty($custom_options['scan_images_executable'])
                 || !empty($custom_options['scan_core_integrity'])
-                || !empty($custom_options['scan_theme_integrity'])
-                || !empty($custom_options['scan_plugin_integrity'])
                 || !empty($custom_options['scan_unbundled_files'])
-                || !empty($custom_options['scan_outside_root'])
-                || !empty($custom_options['scan_images_executable']);
+                || !empty($custom_options['scan_outside_root']);
+
+            $has_filesystem_scan = $needs_full_abspath
+                || !empty($custom_options['scan_theme_integrity'])
+                || !empty($custom_options['scan_plugin_integrity']);
 
             if ($has_filesystem_scan) {
-                if (!empty($custom_options['scan_outside_root'])) {
-                    $parent = dirname(ABSPATH);
-                    if (is_dir($parent) && is_readable($parent) && realpath($parent) !== realpath(ABSPATH)) {
-                        $paths[] = untrailingslashit($parent);
-                    } else {
-                        $paths[] = untrailingslashit(ABSPATH);
-                    }
-                } elseif (!empty($custom_options['scan_core_integrity']) || !empty($custom_options['scan_unbundled_files'])) {
+                if ($needs_full_abspath) {
                     $paths[] = untrailingslashit(ABSPATH);
                 } else {
                     if (!empty($custom_options['scan_plugin_integrity'])) {
@@ -348,9 +343,6 @@ final class ScanController extends AbstractApiController {
                     }
                     if (!empty($custom_options['scan_theme_integrity'])) {
                         $paths[] = get_theme_root();
-                    }
-                    if (empty($paths)) {
-                        $paths[] = untrailingslashit(ABSPATH);
                     }
                 }
             }
@@ -422,7 +414,8 @@ final class ScanController extends AbstractApiController {
         ], ['id' => $scan_id]);
 
         if ($target === 'custom' && !empty($custom_options)) {
-            set_transient("webcareproscan_custom_options_{$scan_id}", $custom_options, HOUR_IN_SECONDS);
+            set_transient("webcareproscan_custom_options_{$scan_id}", $custom_options, DAY_IN_SECONDS);
+            update_option("webcareproscan_scan_opts_{$scan_id}", $custom_options, false);
         }
 
         set_transient("webcareproscan_scan_start_micro_{$scan_id}", $start_micro, HOUR_IN_SECONDS);
@@ -521,6 +514,7 @@ final class ScanController extends AbstractApiController {
         $table_files = $wpdb->prefix . 'webcareproscan_scan_files';
 
         $file_scanner = new FileScanner();
+        $batch_custom_options = self::get_scan_custom_options($scan_id);
         $processed_count = 0;
         $accumulated_weight = 0.0;
         $bytes_consumed = 0;
@@ -544,7 +538,7 @@ final class ScanController extends AbstractApiController {
                 break;
             }
 
-            $findings = $file_scanner->scan_file($filepath, (string) $scan_id);
+            $findings = $file_scanner->scan_file($filepath, (string) $scan_id, $batch_custom_options);
             $rel_path = ltrim(str_replace(wp_normalize_path(ABSPATH), '', wp_normalize_path($filepath)), '/');
             $file_size = @filesize($filepath) ?: 0;
             $file_status = !empty($findings) ? 'threat' : 'clean';
@@ -874,7 +868,7 @@ final class ScanController extends AbstractApiController {
                     }
                 }
             } elseif ($target === 'custom') {
-                $custom_options = get_transient("webcareproscan_custom_options_{$scan_id}");
+                $custom_options = self::get_scan_custom_options($scan_id);
                 if (!is_array($custom_options)) {
                     $req_custom = $request->get_param('custom_options');
                     if (is_array($req_custom)) {
@@ -888,7 +882,14 @@ final class ScanController extends AbstractApiController {
                 // 1. Scan core files against repository versions for changes
                 if (!empty($custom_options['scan_core_integrity'])) {
                     $core_integrity = new CoreIntegrity();
-                    $all_deep_findings = array_merge($all_deep_findings, $core_integrity->verify((string) $scan_id));
+                    $core_results = $core_integrity->verify((string) $scan_id);
+                    if (empty($custom_options['scan_unbundled_files'])) {
+                        $core_results = array_values(array_filter($core_results, static function ($f) {
+                            $arr = is_array($f) ? $f : $f->to_array();
+                            return ($arr['type'] ?? '') !== 'unknown_core_file';
+                        }));
+                    }
+                    $all_deep_findings = array_merge($all_deep_findings, $core_results);
                 }
 
                 // 2. Scan theme files against repository versions for changes
@@ -914,7 +915,36 @@ final class ScanController extends AbstractApiController {
                     $all_deep_findings = array_merge($all_deep_findings, $unbundled);
                 }
 
-                // 5. Scan for publicly accessible configuration, backup, or log files
+                // 4b. Deep Backdoor, Persistence, Hook, Cron, Snippet & Secret Exposure Audits
+                if (!empty($custom_options['scan_backdoors_heuristics'])) {
+                    try {
+                        $persistence = new PersistenceScanner();
+                        $all_deep_findings = array_merge($all_deep_findings, $persistence->scan((string) $scan_id));
+                    } catch (\Throwable $e) {}
+                    try {
+                        $hook_sentinel = new \WebCareProScanner\WordPress\HookInfiltrationSentinel();
+                        $all_deep_findings = array_merge($all_deep_findings, $hook_sentinel->scan((string) $scan_id));
+                    } catch (\Throwable $e) {}
+                    try {
+                        $cron_persist = new \WebCareProScanner\Database\CronPersistenceScanner();
+                        $all_deep_findings = array_merge($all_deep_findings, $cron_persist->scan((string) $scan_id));
+                    } catch (\Throwable $e) {}
+                    try {
+                        $snippet_auditor = new \WebCareProScanner\Database\SnippetCodeAuditor();
+                        $all_deep_findings = array_merge($all_deep_findings, $snippet_auditor->scan((string) $scan_id));
+                    } catch (\Throwable $e) {}
+                    try {
+                        $db_triggers = new DatabaseScanner();
+                        $all_deep_findings = array_merge($all_deep_findings, $db_triggers->scan_rogue_triggers((string) $scan_id));
+                    } catch (\Throwable $e) {}
+                }
+
+                // 4c. Scan loose files directly outside WordPress installation root (without recursing sibling vhosts)
+                if (!empty($custom_options['scan_outside_root'])) {
+                    $all_deep_findings = array_merge($all_deep_findings, self::audit_outside_root_loose_files((string) $scan_id, $custom_options));
+                }
+
+                // 5. Scan for publicly accessible configuration, backup, or log files + Credential Exposure
                 if (!empty($custom_options['scan_public_config'])) {
                     $important_fim = new ImportantFileFIM();
                     $all_deep_findings = array_merge($all_deep_findings, $important_fim->verify((string) $scan_id));
@@ -922,6 +952,20 @@ final class ScanController extends AbstractApiController {
                     $all_deep_findings = array_merge($all_deep_findings, $config_scanner->scan((string) $scan_id));
                     $exposed = self::audit_exposed_sensitive_files((string) $scan_id);
                     $all_deep_findings = array_merge($all_deep_findings, $exposed);
+                    $all_deep_findings = array_merge($all_deep_findings, self::collect_silo_security_findings((string) $scan_id, true, false, false));
+                }
+
+                // 5b. FIM Vault Drift & Script Inventory Drift (when calibrated)
+                if (!empty($custom_options['scan_core_integrity']) || !empty($custom_options['scan_plugin_integrity']) || !empty($custom_options['scan_theme_integrity']) || !empty($custom_options['scan_malicious_urls'])) {
+                    $all_deep_findings = array_merge(
+                        $all_deep_findings,
+                        self::collect_silo_security_findings(
+                            (string) $scan_id,
+                            false,
+                            !empty($custom_options['scan_plugin_integrity']) || !empty($custom_options['scan_theme_integrity']),
+                            !empty($custom_options['scan_malicious_urls']) || !empty($custom_options['scan_backdoors_heuristics'])
+                        )
+                    );
                 }
 
                 // 6. Scan for publicly accessible quarantined files
@@ -936,10 +980,22 @@ final class ScanController extends AbstractApiController {
                     $all_deep_findings = array_merge($all_deep_findings, $ip_findings);
                 }
 
-                // 8. Scan posts for known dangerous URLs and suspicious content
+                // 8. Scan posts & custom DB tables (including postmeta / Elementor) for dangerous URLs & content
                 if (!empty($custom_options['scan_posts_content'])) {
                     $content_scanner = new ContentScanner();
                     $all_deep_findings = array_merge($all_deep_findings, $content_scanner->scan_posts_only((string) $scan_id, 100));
+                    try {
+                        $table_scanner = new \WebCareProScanner\Database\TableScanner();
+                        foreach ($table_scanner->get_tables() as $tbl) {
+                            if (str_ends_with($tbl, 'options') || str_ends_with($tbl, 'comments')) {
+                                continue;
+                            }
+                            $batch_rows = $table_scanner->scan_table_batch($tbl, 0, 250, (string) $scan_id);
+                            if (!empty($batch_rows['findings'])) {
+                                $all_deep_findings = array_merge($all_deep_findings, $batch_rows['findings']);
+                            }
+                        }
+                    } catch (\Throwable $e) {}
                 }
 
                 // 9. Scan comments for known dangerous URLs and suspicious content
@@ -960,12 +1016,20 @@ final class ScanController extends AbstractApiController {
                     $all_deep_findings = array_merge($all_deep_findings, $update_scanner->scan((string) $scan_id));
                 }
 
-                // 12. Scan for suspicious admin users created outside of WordPress
+                // 11b. NIST NVD CVE Vault Check (and background sync trigger if run headless/cron)
+                if (!empty($custom_options['scan_cve_vulnerabilities']) && class_exists('\\WebCareProScanner\\Firewall\\NistCveVaultSync')) {
+                    if (defined('DOING_CRON') && DOING_CRON) {
+                        \WebCareProScanner\Firewall\NistCveVaultSync::maybe_run_daily_sync();
+                    }
+                    $all_deep_findings = array_merge($all_deep_findings, \WebCareProScanner\Firewall\NistCveVaultSync::collect_vault_findings((string) $scan_id));
+                }
+
+                // 12. Scan for suspicious admin users created outside of WordPress (without leaking password checks)
                 if (!empty($custom_options['scan_rogue_admins'])) {
                     $rogue_detector = new \WebCareProScanner\Database\RogueAdminAnomalyDetector();
                     $all_deep_findings = array_merge($all_deep_findings, $rogue_detector->scan((string) $scan_id));
                     $user_scanner = new UserScanner();
-                    $all_deep_findings = array_merge($all_deep_findings, $user_scanner->scan((string) $scan_id, true, $lease_token));
+                    $all_deep_findings = array_merge($all_deep_findings, $user_scanner->scan((string) $scan_id, true, $lease_token, false));
                 }
 
                 // 13. Check the strength of passwords
@@ -997,6 +1061,8 @@ final class ScanController extends AbstractApiController {
                     $reputation_findings = self::audit_reputation_checks((string) $scan_id, $custom_options);
                     $all_deep_findings = array_merge($all_deep_findings, $reputation_findings);
                 }
+
+                delete_option("webcareproscan_scan_opts_{$scan_id}");
             } elseif ($target === 'filesystem_only') {
                 // Filesystem-only scan: no additional deep audit engines needed
             } else {
@@ -1111,6 +1177,23 @@ final class ScanController extends AbstractApiController {
                     if ($e instanceof \WebCareProScanner\Scan\ScanLeaseLostException || str_contains(strtolower($e->getMessage()), 'lease')) {
                         throw $e;
                     }
+                }
+
+                // System, Exposure, Vault CVE, Credential Leak, FIM Drift & Script Drift Audits on Complete Scans
+                if ($target === 'full') {
+                    try {
+                        $all_deep_findings = array_merge($all_deep_findings, self::audit_exposed_sensitive_files((string) $scan_id));
+                        $all_deep_findings = array_merge($all_deep_findings, self::audit_quarantine_exposure((string) $scan_id));
+                        $all_deep_findings = array_merge($all_deep_findings, self::audit_visitor_ip_detection((string) $scan_id));
+                        $all_deep_findings = array_merge($all_deep_findings, self::audit_disk_space((string) $scan_id));
+                        $all_deep_findings = array_merge($all_deep_findings, self::audit_waf_status((string) $scan_id));
+                        $all_deep_findings = array_merge($all_deep_findings, self::collect_silo_security_findings((string) $scan_id, true, true, true));
+                    } catch (\Throwable $e) {}
+                }
+                if (class_exists('\\WebCareProScanner\\Firewall\\NistCveVaultSync')) {
+                    try {
+                        $all_deep_findings = array_merge($all_deep_findings, \WebCareProScanner\Firewall\NistCveVaultSync::collect_vault_findings((string) $scan_id));
+                    } catch (\Throwable $e) {}
                 }
             }
 
@@ -3578,34 +3661,42 @@ final class ScanController extends AbstractApiController {
                     }
                 }
             }
-            // 4b. Check if finding is a Server/Network Configuration entity (e.g. reverse proxy, IP detection, network headers)
+            // 4b. Check if finding is a Server/Network/Reputation/System/CVE non-file entity
             elseif (
-                $engine === 'ip-detection' ||
-                $engine === 'waf-status' ||
+                in_array($engine, ['ip-detection', 'waf-status', 'firewall', 'system-storage', 'reputation', 'nist-cve'], true) ||
                 $type === 'reverse_proxy_misconfigured' ||
-                strpos($filePath, 'server:') === 0
+                str_starts_with($filePath, 'server:') ||
+                str_starts_with($filePath, 'system:') ||
+                str_starts_with($filePath, 'firewall:') ||
+                str_starts_with($filePath, 'domain:') ||
+                str_starts_with($filePath, 'ip:') ||
+                str_starts_with($filePath, 'cve:') ||
+                str_starts_with($filePath, 'ram:')
             ) {
                 $item['is_server_config'] = true;
-                $item['is_network'] = true;
+                $item['is_network'] = in_array($engine, ['ip-detection', 'reputation'], true) || str_starts_with($filePath, 'domain:') || str_starts_with($filePath, 'ip:');
+                $item['is_software_update'] = ($engine === 'nist-cve' || str_starts_with($filePath, 'cve:'));
                 $item['is_file'] = false;
                 $item['is_dir'] = false;
                 $item['can_view'] = false;
                 $item['file_exists'] = false;
 
-                // Environment reconciliation: If running on local development or Docker container, reconcile open false-positives
-                $env_type = function_exists('wp_get_environment_type') ? wp_get_environment_type() : (defined('WP_ENVIRONMENT_TYPE') ? WP_ENVIRONMENT_TYPE : 'production');
-                $is_local_env = in_array($env_type, ['local', 'development'], true);
-                $site_url = get_site_url();
-                $host = wp_parse_url($site_url, PHP_URL_HOST) ?: '';
-                $is_local_host = in_array($host, ['localhost', '127.0.0.1', '::1'], true)
-                    || (bool) preg_match('/\.(local|test|site|internal|lan|docker|localwp|ddev)$/i', $host);
-                $is_docker = file_exists('/.dockerenv')
-                    || (file_exists('/proc/1/cgroup') && strpos(@file_get_contents('/proc/1/cgroup'), 'docker') !== false);
+                // Environment reconciliation: ONLY reconcile reverse_proxy_misconfigured on localhost/Docker
+                if ($type === 'reverse_proxy_misconfigured') {
+                    $env_type = function_exists('wp_get_environment_type') ? wp_get_environment_type() : (defined('WP_ENVIRONMENT_TYPE') ? WP_ENVIRONMENT_TYPE : 'production');
+                    $is_local_env = in_array($env_type, ['local', 'development'], true);
+                    $site_url = get_site_url();
+                    $host = wp_parse_url($site_url, PHP_URL_HOST) ?: '';
+                    $is_local_host = in_array($host, ['localhost', '127.0.0.1', '::1'], true)
+                        || (bool) preg_match('/\.(local|test|site|internal|lan|docker|localwp|ddev)$/i', $host);
+                    $is_docker = file_exists('/.dockerenv')
+                        || (file_exists('/proc/1/cgroup') && strpos(@file_get_contents('/proc/1/cgroup'), 'docker') !== false);
 
-                if (($is_local_env || $is_local_host || $is_docker) && ($item['status'] ?? 'open') === 'open') {
-                    $item['status'] = 'ignored';
-                    $item['is_whitelisted'] = false;
-                    $item['ignore_reason'] = 'Local development / Docker container environment (internal IP is normal).';
+                    if (($is_local_env || $is_local_host || $is_docker) && ($item['status'] ?? 'open') === 'open') {
+                        $item['status'] = 'ignored';
+                        $item['is_whitelisted'] = false;
+                        $item['ignore_reason'] = 'Local development / Docker container environment (internal IP is normal).';
+                    }
                 }
             }
             // 5. Otherwise treat as a Filesystem finding
@@ -4855,7 +4946,7 @@ final class ScanController extends AbstractApiController {
             'wordpress_version'      => get_bloginfo('version'),
             'ssl_active'             => is_ssl(),
             'opcache_status'         => $opcache_status,
-            'engines_active'         => 23,
+            'engines_active'         => 24,
         ];
     }
 
@@ -5034,7 +5125,152 @@ final class ScanController extends AbstractApiController {
     }
 
     /**
-     * Audit exposed sensitive files (.env, debug.log, backup.sql, .git/config, wp-config.php.bak)
+     * Resolve persisted custom_options for a running custom scan (returns null for non-custom scans).
+     */
+    private static function get_scan_custom_options(int $scan_id): ?array {
+        if ($scan_id <= 0) {
+            return null;
+        }
+        $opts = get_transient("webcareproscan_custom_options_{$scan_id}");
+        if (is_array($opts)) {
+            return $opts;
+        }
+        $opt_db = get_option("webcareproscan_scan_opts_{$scan_id}", null);
+        if (is_array($opt_db)) {
+            return $opt_db;
+        }
+        return null;
+    }
+
+    /**
+     * Scan loose top-level files directly inside dirname(ABSPATH) without recursing into sibling websites.
+     */
+    public static function audit_outside_root_loose_files(string $scan_id, ?array $custom_options = null): array {
+        $findings = [];
+        $parent = dirname(untrailingslashit(ABSPATH));
+        if (!is_dir($parent) || !is_readable($parent) || realpath($parent) === realpath(ABSPATH)) {
+            return $findings;
+        }
+        $entries = @scandir($parent);
+        if (!is_array($entries)) {
+            return $findings;
+        }
+        $scanner = new FileScanner();
+        $parent_wp_config = realpath($parent . '/wp-config.php');
+        foreach ($entries as $entry) {
+            if ($entry === '.' || $entry === '..') {
+                continue;
+            }
+            $full = $parent . '/' . $entry;
+            if (!is_file($full) || !is_readable($full)) {
+                continue;
+            }
+            if ($parent_wp_config && realpath($full) === $parent_wp_config) {
+                continue;
+            }
+            $ext = strtolower(pathinfo($full, PATHINFO_EXTENSION));
+            if (!in_array($ext, ['php', 'phtml', 'pht', 'php7', 'php8', 'phar', 'suspected', 'sh', 'py', 'pl', 'cgi', 'js', 'sql', 'bak', 'env'], true)) {
+                continue;
+            }
+            $sub = $scanner->scan_file($full, $scan_id, $custom_options);
+            if (!empty($sub)) {
+                $findings = array_merge($findings, $sub);
+            }
+        }
+        return $findings;
+    }
+
+    /**
+     * Collect findings from previously siloed security engines (CredentialExposureScanner, FimDriftDetector, ScriptInventoryMonitor).
+     */
+    public static function collect_silo_security_findings(
+        string $scan_id,
+        bool $include_credentials = true,
+        bool $include_fim_drift = true,
+        bool $include_script_drift = true
+    ): array {
+        $findings = [];
+
+        // 1. Plaintext AI / Cloud / Payment / SSH Credential Exposure
+        if ($include_credentials && class_exists('\\WebCareProScanner\\Security\\CredentialExposureScanner')) {
+            try {
+                $cred_report = \WebCareProScanner\Security\CredentialExposureScanner::run_scan(true);
+                foreach (($cred_report['findings'] ?? []) as $cf) {
+                    $findings[] = new \WebCareProScanner\Findings\Finding([
+                        'engine'       => 'credential-exposure',
+                        'type'         => 'exposed_credential_' . sanitize_key((string) ($cf['type'] ?? 'secret')),
+                        'severity'     => (string) ($cf['severity'] ?? 'critical'),
+                        'confidence'   => 98,
+                        'file_path'    => (string) ($cf['file'] ?? ''),
+                        'line_number'  => isset($cf['line']) ? (int) $cf['line'] : null,
+                        'code_snippet' => isset($cf['masked']) ? 'Masked secret: ' . (string) $cf['masked'] : null,
+                        'description'  => sprintf('%s in %s: %s', (string) ($cf['title'] ?? 'Exposed Secret'), (string) ($cf['file'] ?? 'file'), (string) ($cf['description'] ?? '')),
+                        'evidence'     => wp_json_encode($cf),
+                    ]);
+                }
+            } catch (\Throwable $e) {}
+        }
+
+        // 2. Calibrated FIM Vault Drift (catches tampered premium/custom plugins & themes without WP.org checksums)
+        if ($include_fim_drift && class_exists('\\WebCareProScanner\\Integrity\\FimDriftDetector') && class_exists('\\WebCareProScanner\\Integrity\\FimVaultManager')) {
+            try {
+                $v_status = \WebCareProScanner\Integrity\FimVaultManager::get_vault_status();
+                if (!empty($v_status['is_calibrated'])) {
+                    $drift = \WebCareProScanner\Integrity\FimDriftDetector::audit_drift('all', 100);
+                    foreach (($drift['drift_items'] ?? []) as $di) {
+                        $change = (string) ($di['change_type'] ?? 'modified');
+                        if ($change === 'deleted') {
+                            continue;
+                        }
+                        $rel = (string) ($di['rel_path'] ?? $di['path'] ?? '');
+                        if ($rel === '') {
+                            continue;
+                        }
+                        $findings[] = new \WebCareProScanner\Findings\Finding([
+                            'engine'      => 'fim-vault',
+                            'type'        => 'fim_baseline_' . sanitize_key($change),
+                            'severity'    => (string) ($di['severity'] ?? 'high'),
+                            'confidence'  => 95,
+                            'file_path'   => $rel,
+                            'description' => sprintf('Calibrated FIM baseline drift (%s) detected on %s.', $change, $rel),
+                            'evidence'    => wp_json_encode($di),
+                        ]);
+                    }
+                }
+            } catch (\Throwable $e) {}
+        }
+
+        // 3. Third-Party Checkout / Auth Script Inventory Drift (Magecart SRI/domain drift)
+        if ($include_script_drift && class_exists('\\WebCareProScanner\\Content\\ScriptInventoryMonitor')) {
+            try {
+                $alerts = get_option(\WebCareProScanner\Content\ScriptInventoryMonitor::OPTION_ALERTS, []);
+                if (is_array($alerts)) {
+                    foreach (array_slice($alerts, 0, 50) as $al) {
+                        if (!is_array($al) || ($al['status'] ?? 'open') === 'dismissed') {
+                            continue;
+                        }
+                        $src = (string) ($al['src'] ?? $al['handle'] ?? 'unknown-script');
+                        $findings[] = new \WebCareProScanner\Findings\Finding([
+                            'engine'       => 'script-inventory',
+                            'type'         => 'unauthorized_external_script_drift',
+                            'severity'     => !empty($al['sensitive_page']) ? 'critical' : 'high',
+                            'confidence'   => 92,
+                            'file_path'    => 'server:script-inventory:' . md5($src),
+                            'code_snippet' => $src,
+                            'description'  => sprintf('Unauthorized external JavaScript drift detected (%s): %s', (string) ($al['reason'] ?? 'new_external_script'), $src),
+                            'evidence'     => wp_json_encode($al),
+                        ]);
+                    }
+                }
+            } catch (\Throwable $e) {}
+        }
+
+        return $findings;
+    }
+
+    /**
+     * Audit exposed sensitive files (.env, debug.log, backup.sql, .git/config)
+     * Note: wp-config.php backups are audited by ConfigScanner to prevent duplicate findings.
      */
     public static function audit_exposed_sensitive_files(string $scan_id): array {
         $findings = [];
@@ -5042,9 +5278,6 @@ final class ScanController extends AbstractApiController {
             '.env'                 => ['severity' => 'critical', 'desc' => 'Environment configuration file containing plain-text database credentials, API keys, or JWT secrets.'],
             'debug.log'            => ['severity' => 'medium',   'desc' => 'WordPress debug log file containing stack traces, SQL errors, or sensitive payload data.'],
             'wp-content/debug.log' => ['severity' => 'medium',   'desc' => 'WordPress debug log in wp-content containing runtime exceptions and system filepaths.'],
-            'wp-config.php.bak'    => ['severity' => 'critical', 'desc' => 'Backup copy of wp-config.php accessible via HTTP request, leaking raw database credentials.'],
-            'wp-config.bak'        => ['severity' => 'critical', 'desc' => 'Backup copy of wp-config.php accessible via HTTP request.'],
-            'wp-config.old'        => ['severity' => 'critical', 'desc' => 'Archived wp-config file leaking database secrets.'],
             '.git/config'          => ['severity' => 'high',     'desc' => 'Exposed Git version control repository exposing source code commits and deploy keys.'],
             'backup.sql'           => ['severity' => 'critical', 'desc' => 'Raw database dump backup file accessible in web root.'],
             'database.sql'         => ['severity' => 'critical', 'desc' => 'Raw database SQL dump file located in publicly accessible folder.'],
@@ -5227,7 +5460,7 @@ final class ScanController extends AbstractApiController {
             'pass@123', 'admin@123', 'change_me', 'iloveyou'
         ];
 
-        $admins = get_users(['role' => 'administrator', 'number' => 50]);
+        $admins = get_users(['role__in' => ['administrator', 'editor', 'shop_manager'], 'number' => 200]);
         foreach ($admins as $admin) {
             $test_passwords = array_unique(array_filter([
                 $admin->user_login,
@@ -5308,7 +5541,7 @@ final class ScanController extends AbstractApiController {
 
         if (!$waf_enabled || $waf_mode === 'disabled') {
             $findings[] = new \WebCareProScanner\Findings\Finding([
-                'engine'      => 'firewall',
+                'engine'      => 'waf-status',
                 'type'        => 'waf_inactive',
                 'severity'    => 'high',
                 'confidence'  => 100,
@@ -5318,7 +5551,7 @@ final class ScanController extends AbstractApiController {
             ]);
         } elseif ($waf_mode === 'learning') {
             $findings[] = new \WebCareProScanner\Findings\Finding([
-                'engine'      => 'firewall',
+                'engine'      => 'waf-status',
                 'type'        => 'waf_learning_mode',
                 'severity'    => 'low',
                 'confidence'  => 100,
@@ -5348,19 +5581,19 @@ final class ScanController extends AbstractApiController {
         // Skip loopback/local dev hosts for public DNSBL checks unless a test domain is explicitly passed
         $is_local_host = in_array(strtolower((string)$host), ['localhost', '127.0.0.1', '::1'], true) || preg_match('/\.(local|test|example|invalid)$/i', (string)$host);
 
-        // 1. Check if website is on a domain blocklist (Spamhaus DBL & SURBL)
+        // 1. Check if website is on a domain blocklist (Spamhaus DBL)
         if (!empty($opts['check_domain_blocklist']) && !empty($host) && (!$is_local_host || !empty($test_host))) {
             // Forward lookup format: {domain}.dbl.spamhaus.org
             $dbl_query = "{$host}.dbl.spamhaus.org";
             $ip = @gethostbyname($dbl_query);
-            // 127.0.1.x indicates legitimate Spamhaus DBL listing; 127.255.255.x indicates public resolver rate-limit
-            if ($ip && $ip !== $dbl_query && strpos($ip, '127.0.1.') === 0) {
+            // 127.0.1.2..127.0.1.106 indicates legitimate Spamhaus DBL listing; 127.0.1.255 / 127.255.255.x indicates resolver error/IP query
+            if ($ip && $ip !== $dbl_query && str_starts_with($ip, '127.0.1.') && $ip !== '127.0.1.255') {
                 $findings[] = new \WebCareProScanner\Findings\Finding([
                     'engine'      => 'reputation',
                     'type'        => 'domain_blocklisted',
                     'severity'    => 'critical',
                     'confidence'  => 95,
-                    'file_path'   => "domain:{$host}",
+                    'file_path'   => "domain:{$host}:dbl",
                     'description' => "CRITICAL REPUTATION ALERT: The domain '{$host}' is listed on the Spamhaus Domain Blocklist (DBL) as spam, malicious, or compromised.",
                     'evidence'    => "Spamhaus DBL response code: {$ip}"
                 ]);
@@ -5368,71 +5601,75 @@ final class ScanController extends AbstractApiController {
         }
 
         // 2. Check if website is being "Spamvertised" (SURBL multi.surbl.org)
+        // CRITICAL: 127.0.0.1 on SURBL means "Query Refused (public DNS resolver blocked)", NOT listed! Real listings are bitmask >= 127.0.0.2.
         if (!empty($opts['check_spamvertised']) && !empty($host) && (!$is_local_host || !empty($test_host))) {
             $surbl_query = "{$host}.multi.surbl.org";
             $surbl_res = @gethostbyname($surbl_query);
-            if ($surbl_res && $surbl_res !== $surbl_query && strpos($surbl_res, '127.0.0.') === 0) {
+            if ($surbl_res && $surbl_res !== $surbl_query && str_starts_with($surbl_res, '127.0.0.') && $surbl_res !== '127.0.0.1') {
                 $findings[] = new \WebCareProScanner\Findings\Finding([
                     'engine'      => 'reputation',
                     'type'        => 'domain_spamvertised',
                     'severity'    => 'critical',
                     'confidence'  => 95,
-                    'file_path'   => "domain:{$host}",
+                    'file_path'   => "domain:{$host}:surbl",
                     'description' => "CRITICAL REPUTATION ALERT: The domain '{$host}' is listed on SURBL as actively 'Spamvertised' in bulk unsolicited email or phishing campaigns.",
                     'evidence'    => "SURBL return code: {$surbl_res}"
                 ]);
             }
         }
 
-        // 3. Check if website IP is generating spam (Spamcop, Barracuda, Spamhaus ZEN)
+        // 3. Check if website IP is generating spam (Spamcop, Barracuda, Spamhaus ZEN — IPv4 reverse-octet DNSBLs)
         if (!empty($opts['check_spam_ip'])) {
             $test_ip = apply_filters('webcareproscan_test_reputation_ip', $opts['test_ip'] ?? null);
             $raw_srv_ip = isset($_SERVER['SERVER_ADDR']) ? sanitize_text_field((string) wp_unslash($_SERVER['SERVER_ADDR'])) : '';
             $server_ip = !empty($test_ip) ? $test_ip : ($raw_srv_ip ?: gethostbyname($host ?: 'localhost'));
 
-            if (filter_var($server_ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) || !empty($test_ip)) {
+            $is_valid_ipv4 = filter_var($server_ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false;
+            $is_public_ipv4 = filter_var($server_ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 | FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) !== false;
+
+            if ($is_valid_ipv4 && ($is_public_ipv4 || !empty($test_ip))) {
                 $rev_ip = implode('.', array_reverse(explode('.', $server_ip)));
 
-                // 3.1 Spamcop SCBL
+                // 3.1 Spamcop SCBL (127.0.0.2 is listed)
                 $spamcop_query = "{$rev_ip}.bl.spamcop.net";
                 $sc_res = @gethostbyname($spamcop_query);
-                if ($sc_res && $sc_res !== $spamcop_query && strpos($sc_res, '127.0.0.') === 0) {
+                if ($sc_res && $sc_res !== $spamcop_query && $sc_res === '127.0.0.2') {
                     $findings[] = new \WebCareProScanner\Findings\Finding([
                         'engine'      => 'reputation',
                         'type'        => 'server_ip_spam_blocklisted',
                         'severity'    => 'high',
                         'confidence'  => 95,
-                        'file_path'   => "ip:{$server_ip}",
+                        'file_path'   => "ip:{$server_ip}:spamcop",
                         'description' => "Server outbound IP '{$server_ip}' is actively listed on the Spamcop Blocking List (SCBL) as an active source of unsolicited spam.",
                         'evidence'    => "Spamcop DNSBL code: {$sc_res}"
                     ]);
                 }
 
-                // 3.2 Barracuda Reputation Network (BRBL)
+                // 3.2 Barracuda Reputation Network (BRBL — 127.0.0.2 is listed)
                 $barracuda_query = "{$rev_ip}.b.barracudacentral.org";
                 $bc_res = @gethostbyname($barracuda_query);
-                if ($bc_res && $bc_res !== $barracuda_query && strpos($bc_res, '127.0.0.') === 0) {
+                if ($bc_res && $bc_res !== $barracuda_query && $bc_res === '127.0.0.2') {
                     $findings[] = new \WebCareProScanner\Findings\Finding([
                         'engine'      => 'reputation',
                         'type'        => 'server_ip_spam_blocklisted',
                         'severity'    => 'high',
                         'confidence'  => 90,
-                        'file_path'   => "ip:{$server_ip}",
+                        'file_path'   => "ip:{$server_ip}:barracuda",
                         'description' => "Server outbound IP '{$server_ip}' is listed on the Barracuda Reputation Network blocklist (BRBL). Outbound transactional emails may be rejected as spam.",
                         'evidence'    => "Barracuda DNSBL code: {$bc_res}"
                     ]);
                 }
 
-                // 3.3 Spamhaus ZEN
+                // 3.3 Spamhaus ZEN (127.0.0.2..11 are SBL/CSS/XBL/PBL listings; 127.255.255.* are open-resolver error codes)
                 $zen_query = "{$rev_ip}.zen.spamhaus.org";
                 $zen_res = @gethostbyname($zen_query);
-                if ($zen_res && $zen_res !== $zen_query && strpos($zen_res, '127.0.0.') === 0) {
+                if ($zen_res && $zen_res !== $zen_query && in_array($zen_res, ['127.0.0.2', '127.0.0.3', '127.0.0.4', '127.0.0.9', '127.0.0.10', '127.0.0.11'], true)) {
                     $findings[] = new \WebCareProScanner\Findings\Finding([
                         'engine'      => 'reputation',
                         'type'        => 'server_ip_spam_blocklisted',
                         'severity'    => 'high',
                         'confidence'  => 90,
-                        'file_path'   => "ip:{$server_ip}",
+                        'file_path'   => "ip:{$server_ip}:spamhaus-zen",
                         'description' => "Server outbound IP '{$server_ip}' is listed on the Spamhaus ZEN anti-spam database. Outbound transactional emails may be rejected as spam.",
                         'evidence'    => "Spamhaus ZEN code: {$zen_res}"
                     ]);

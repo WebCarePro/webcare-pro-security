@@ -249,10 +249,10 @@ class HookInfiltrationSentinel {
                 }
             }
 
-            // Flag 3: Suspicious function names commonly used by malware
+            // Flag 3: Suspicious function names commonly used by malware (strip leading namespace backslash!)
             if (is_string($function)) {
-                $suspicious_names = ['eval', 'assert', 'passthru', 'shell_exec', 'system', 'base64_decode', 'create_function'];
-                if (in_array(strtolower($function), $suspicious_names, true)) {
+                $suspicious_names = ['eval', 'assert', 'passthru', 'shell_exec', 'system', 'exec', 'popen', 'proc_open', 'pcntl_exec', 'base64_decode', 'create_function'];
+                if (in_array(strtolower(ltrim($function, '\\')), $suspicious_names, true)) {
                     return [
                         'type'        => 'dangerous_native_hook_callback',
                         'severity'    => 'critical',

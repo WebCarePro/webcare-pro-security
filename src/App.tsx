@@ -2953,7 +2953,7 @@ Source Code,${escapeCsv(code)}
     apiRequest({ path: '/webcare-pro-security/v1/settings' })
       .then((res: any) => {
         if (res?.settings?.custom_scan_options) {
-          setCustomScanOptions(res.settings.custom_scan_options);
+          setCustomScanOptions((prev) => ({ ...prev, ...res.settings.custom_scan_options }));
         }
       })
       .catch((err) => console.warn('Could not load custom scan settings:', err));
@@ -3021,17 +3021,13 @@ Source Code,${escapeCsv(code)}
   };
 
   const handleSaveCustomScanPreferences = async (optsToSave: Record<string, boolean>) => {
-    try {
-      await apiRequest({
-        path: '/webcare-pro-security/v1/settings',
-        method: 'POST',
-        data: {
-          custom_scan_options: optsToSave,
-        },
-      });
-    } catch (e) {
-      console.error('Failed to save custom scan preferences', e);
-    }
+    await apiRequest({
+      path: '/webcare-pro-security/v1/settings',
+      method: 'POST',
+      data: {
+        custom_scan_options: optsToSave,
+      },
+    });
   };
 
   const isResumingRef = useRef<boolean>(false);
@@ -3175,13 +3171,12 @@ Source Code,${escapeCsv(code)}
         throw lastDeepError;
       }
 
-      setProgress(100);
-      setScanStage('Scan completed successfully!');
       // Real-time NIST NVD CVE Audit (4 plugins/themes/core per 30s)
+      const effectiveCustomOpts = customOptionsToUse || customScanOptions;
       const shouldRunCveCheck =
-        target === 'full' ||
-        target === 'plugins_themes' ||
-        (target === 'custom' && (!optionsToUse || optionsToUse.scan_cve_vulnerabilities !== false));
+        targetType === 'full' ||
+        targetType === 'plugins_themes' ||
+        (targetType === 'custom' && (!effectiveCustomOpts || effectiveCustomOpts.scan_cve_vulnerabilities !== false));
 
       if (shouldRunCveCheck) {
         try {
@@ -3190,7 +3185,7 @@ Source Code,${escapeCsv(code)}
           let nistRes: any = await apiRequest({
             path: '/webcare-pro-security/v1/cve/nist-scan-batch',
             method: 'POST',
-            data: { start: true },
+            data: { start: true, scan_id: scanId },
           });
 
           while (nistRes?.success) {
@@ -3213,7 +3208,7 @@ Source Code,${escapeCsv(code)}
             nistRes = await apiRequest({
               path: '/webcare-pro-security/v1/cve/nist-scan-batch',
               method: 'POST',
-              data: { start: false },
+              data: { start: false, scan_id: scanId },
             });
           }
           setProgress(100);
@@ -3222,6 +3217,7 @@ Source Code,${escapeCsv(code)}
         }
       }
 
+      setScanStage('Scan completed successfully!');
       setCurrentFile('Audit finalized.');
       await loadLatestScan();
     } catch (err: any) {
@@ -3723,6 +3719,10 @@ Source Code,${escapeCsv(code)}
       issue.is_network ||
       issue.engine === 'ip-detection' ||
       issue.engine === 'waf-status' ||
+      issue.engine === 'firewall' ||
+      issue.engine === 'system-storage' ||
+      issue.engine === 'reputation' ||
+      issue.engine === 'nist-cve' ||
       issue.type === 'reverse_proxy_misconfigured' ||
       issue.type === 'plugin_checksums_unavailable' ||
       issue.type === 'theme_checksums_unavailable' ||
@@ -3730,6 +3730,13 @@ Source Code,${escapeCsv(code)}
       !issue.file_path ||
       issue.file_path.startsWith('cron:') ||
       issue.file_path.startsWith('wp_options:') ||
+      /^[a-z0-9_]+options:/i.test(issue.file_path) ||
+      issue.file_path.startsWith('ram:') ||
+      issue.file_path.startsWith('domain:') ||
+      issue.file_path.startsWith('ip:') ||
+      issue.file_path.startsWith('system:') ||
+      issue.file_path.startsWith('firewall:') ||
+      issue.file_path.startsWith('cve:') ||
       issue.file_path.startsWith('db:') ||
       issue.file_path.startsWith('table:') ||
       issue.file_path.startsWith('user:') ||
@@ -8973,11 +8980,15 @@ Source Code,${escapeCsv(code)}
         onClose={() => setIsCustomScanModalOpen(false)}
         options={customScanOptions}
         onOptionsChange={(newOpts) => setCustomScanOptions(newOpts)}
-        onStartScan={(optionsToRun, saveDefault) => {
+        onStartScan={async (optionsToRun, saveDefault) => {
           setCustomScanOptions(optionsToRun);
           setScanTarget('custom');
           if (saveDefault) {
-            handleSaveCustomScanPreferences(optionsToRun);
+            try {
+              await handleSaveCustomScanPreferences(optionsToRun);
+            } catch (e) {
+              console.warn('Could not persist default custom scan preferences:', e);
+            }
           }
           handleStartScan('custom', optionsToRun);
         }}

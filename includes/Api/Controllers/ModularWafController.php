@@ -2210,28 +2210,43 @@ final class ModularWafController extends AbstractApiController {
 
     public static function fetch_nist_cve_component(\WP_REST_Request $request) {
         $params  = $request->get_json_params() ?: [];
-        $slug    = sanitize_text_field((string) ($params['slug'] ?? ''));
-        $name    = sanitize_text_field((string) ($params['name'] ?? $slug));
-        $version = sanitize_text_field((string) ($params['version'] ?? '0.0.0'));
+        $slug    = sanitize_text_field(wp_unslash((string) ($params['slug'] ?? '')));
+        $name    = sanitize_text_field(wp_unslash((string) ($params['name'] ?? $slug)));
+        $version = sanitize_text_field(wp_unslash((string) ($params['version'] ?? '0.0.0')));
+        $type    = sanitize_key(wp_unslash((string) ($params['type'] ?? '')));
         if ($slug === '') {
             return new \WP_Error('missing_slug', __('Component slug is required.', 'webcare-pro-security'), ['status' => 400]);
         }
-        return rest_ensure_response(\WebCareProScanner\Firewall\NistCveVaultSync::fetch_single_component($slug, $name, $version));
+        if ($type === '') {
+            $type = strtolower($slug) === 'wordpress' ? 'core' : 'plugin';
+        }
+        return rest_ensure_response(\WebCareProScanner\Firewall\NistCveVaultSync::fetch_single_component($slug, $name, $version, $type));
     }
 
     public static function save_nist_api_key(\WP_REST_Request $request) {
         $params = $request->get_json_params() ?: [];
-        $key    = (string) ($params['api_key'] ?? '');
-        $ok     = \WebCareProScanner\Firewall\NistCveVaultSync::save_api_key($key);
+        $key    = trim((string) wp_unslash($params['api_key'] ?? ''));
+        if ($key !== '' && !\WebCareProScanner\Firewall\NistCveVaultSync::is_valid_api_key_format($key)) {
+            return rest_ensure_response([
+                'success' => false,
+                'message' => __('Invalid NIST NVD API Key format. Expected a 36-character UUID key from nvd.nist.gov.', 'webcare-pro-security'),
+                'status'  => \WebCareProScanner\Firewall\NistCveVaultSync::get_status(),
+            ]);
+        }
+        $ok = \WebCareProScanner\Firewall\NistCveVaultSync::save_api_key($key);
         return rest_ensure_response([
             'success' => $ok,
+            'message' => $key === ''
+                ? __('NIST NVD API Key cleared. Using free public rate limit.', 'webcare-pro-security')
+                : __('NIST NVD API Key encrypted & saved in Vault.', 'webcare-pro-security'),
             'status'  => \WebCareProScanner\Firewall\NistCveVaultSync::get_status(),
         ]);
     }
 
     public static function run_nist_cve_scan_batch(\WP_REST_Request $request) {
-        $params = $request->get_json_params() ?: [];
-        $start  = !empty($params['start']);
-        return rest_ensure_response(\WebCareProScanner\Firewall\NistCveVaultSync::process_scan_batch($start));
+        $params  = $request->get_json_params() ?: [];
+        $start   = !empty($params['start']);
+        $scan_id = isset($params['scan_id']) ? (int) $params['scan_id'] : 0;
+        return rest_ensure_response(\WebCareProScanner\Firewall\NistCveVaultSync::process_scan_batch($start, $scan_id));
     }
 }

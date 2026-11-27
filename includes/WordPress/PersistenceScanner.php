@@ -498,7 +498,21 @@ class PersistenceScanner {
             return $results;
         }
 
-        $files = glob($mu_dir . '/*.php') ?: [];
+        $files = [];
+        try {
+            $mu_iter = new \RecursiveIteratorIterator(
+                new \RecursiveDirectoryIterator($mu_dir, \FilesystemIterator::SKIP_DOTS),
+                \RecursiveIteratorIterator::SELF_FIRST,
+                \RecursiveIteratorIterator::CATCH_GET_CHILD
+            );
+            foreach ($mu_iter as $mu_item) {
+                if ($mu_item->isFile() && strtolower($mu_item->getExtension()) === 'php') {
+                    $files[] = $mu_item->getPathname();
+                }
+            }
+        } catch (\Throwable $e) {
+            $files = glob($mu_dir . '/*.php') ?: [];
+        }
         foreach ($files as $file) {
             $filename = basename($file);
             $content = @file_get_contents($file) ?: '';
@@ -619,6 +633,16 @@ class PersistenceScanner {
                 $threat_summary = $ast['reason'];
                 $snippet = $ast['snippet'];
                 $evidence = $ast['evidence'];
+            } else {
+                // Run full HeuristicEngine on drop-ins (catches backdoored object-cache.php / db.php / advanced-cache.php even when a caching plugin is active!)
+                $drop_heuristics = $this->heuristic_engine->scan_file($file, 'dropin_' . time());
+                if (!empty($drop_heuristics)) {
+                    $first_drop = reset($drop_heuristics);
+                    $status = 'malicious';
+                    $threat_summary = $first_drop->description;
+                    $snippet = $first_drop->code_snippet;
+                    $evidence = $first_drop->evidence;
+                }
             }
 
             // Verify legitimate plugin backing

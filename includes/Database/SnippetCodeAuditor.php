@@ -62,34 +62,52 @@ class SnippetCodeAuditor {
         $snippets_table = $wpdb->prefix . 'snippets';
 
         try {
-            // Check if table exists (<1ms)
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-            $table_exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $snippets_table));
-            if ($table_exists !== $snippets_table) {
-                return $findings;
-            }
+            // Audit both active=1 and staged inactive snippets across site and multisite tables, plus Header Footer Code Manager (hfcm_scripts)
+            $candidate_tables = array_unique([
+                $snippets_table,
+                ($wpdb->base_prefix ?? $wpdb->prefix) . 'ms_snippets',
+            ]);
 
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-            $sql = "SELECT id, name, code, active FROM `{$snippets_table}` WHERE active = 1 LIMIT 500";
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-            $rows = $wpdb->get_results($sql, OBJECT);
-
-            if (empty($rows) || !is_array($rows)) {
-                return $findings;
-            }
-
-            foreach ($rows as $row) {
-                $id = (int) ($row->id ?? 0);
-                $name = sanitize_text_field($row->name ?? "Snippet #{$id}");
-                $code = (string) ($row->code ?? '');
-
-                if (empty(trim($code))) {
+            foreach ($candidate_tables as $tbl) {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+                $exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $tbl));
+                if ($exists !== $tbl) {
                     continue;
                 }
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+                $rows = $wpdb->get_results("SELECT id, name, code, active FROM `{$tbl}` LIMIT 500", OBJECT);
+                if (!is_array($rows)) {
+                    continue;
+                }
+                foreach ($rows as $row) {
+                    $id   = (int) ($row->id ?? 0);
+                    $name = sanitize_text_field($row->name ?? "Snippet #{$id}");
+                    $code = (string) ($row->code ?? '');
+                    if (trim($code) === '') {
+                        continue;
+                    }
+                    $state_tag  = !empty($row->active) ? 'active' : 'staged/inactive';
+                    $context_id = "{$tbl}:#{$id} ({$name} [{$state_tag}])";
+                    $findings   = array_merge($findings, $this->audit_code_string($code, $context_id, $scan_id, 'php'));
+                }
+            }
 
-                $context_id = "{$snippets_table}:#{$id} ({$name})";
-                $snippet_findings = $this->audit_code_string($code, $context_id, $scan_id, 'php');
-                $findings = array_merge($findings, $snippet_findings);
+            // Header Footer Code Manager (wp_hfcm_scripts, 1M+ installs)
+            $hfcm_table = $wpdb->prefix . 'hfcm_scripts';
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $hfcm_table)) === $hfcm_table) {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+                $hfcm_rows = $wpdb->get_results("SELECT script_id, name, snippet, status FROM `{$hfcm_table}` LIMIT 500", OBJECT);
+                if (is_array($hfcm_rows)) {
+                    foreach ($hfcm_rows as $hrow) {
+                        $hid   = (int) ($hrow->script_id ?? 0);
+                        $hname = sanitize_text_field($hrow->name ?? "HFCM #{$hid}");
+                        $hcode = (string) ($hrow->snippet ?? '');
+                        if (trim($hcode) !== '') {
+                            $findings = array_merge($findings, $this->audit_code_string($hcode, "{$hfcm_table}:#{$hid} ({$hname})", $scan_id, 'mixed'));
+                        }
+                    }
+                }
             }
         } catch (\Throwable $e) {
             // Fails gracefully on schema differences
@@ -113,11 +131,26 @@ class SnippetCodeAuditor {
             $rows = $wpdb->get_results(
                 "SELECT ID, post_title, post_content, post_type 
                  FROM `{$wpdb->posts}` 
-                 WHERE post_type IN ('wpcode', 'elementor_snippet', 'wbcr-snippets', 'custom_css_js', 'custom_css') 
-                   AND post_status = 'publish' 
-                 LIMIT 250",
+                 WHERE post_type IN ('wpcode', 'elementor_snippet', 'wbcr-snippets', 'custom-css-js', 'custom_css_js', 'custom_css', 'astra-advanced-hook', 'gp_elements', 'kadence_element') 
+                   AND post_status IN ('publish', 'draft', 'private') 
+                 LIMIT 500",
                 OBJECT
             );
+
+            // Also audit Woody Snippets code stored in wp_postmeta (wbcr_inp_snippet_code)
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            $woody_meta = $wpdb->get_results(
+                "SELECT post_id, meta_value FROM `{$wpdb->postmeta}` WHERE meta_key = 'wbcr_inp_snippet_code' LIMIT 250",
+                OBJECT
+            );
+            if (is_array($woody_meta)) {
+                foreach ($woody_meta as $wm) {
+                    $wcode = (string) ($wm->meta_value ?? '');
+                    if (trim($wcode) !== '') {
+                        $findings = array_merge($findings, $this->audit_code_string($wcode, "{$wpdb->postmeta}:post_#{$wm->post_id}:wbcr_inp_snippet_code", $scan_id, 'php'));
+                    }
+                }
+            }
 
             if (empty($rows) || !is_array($rows)) {
                 return $findings;
@@ -240,6 +273,14 @@ class SnippetCodeAuditor {
 
             $virtual_file = "/database_snippet/{$context_id}.php";
             $res = $this->webshell_detector->scan($virtual_file, $php_code, $scan_id);
+            if ($res === null && class_exists('\\WebCareProScanner\\Malware\\DeobfuscationEngine')) {
+                $deobf = new \WebCareProScanner\Malware\DeobfuscationEngine();
+                $res = $deobf->scan($virtual_file, $php_code, $scan_id);
+            }
+            if ($res === null && class_exists('\\WebCareProScanner\\Malware\\ObfuscationDetector')) {
+                $obf = new \WebCareProScanner\Malware\ObfuscationDetector();
+                $res = $obf->scan($virtual_file, $php_code, $scan_id);
+            }
             if ($res !== null) {
                 $findings[] = new Finding([
                     'engine'      => 'database-snippets',
@@ -254,8 +295,25 @@ class SnippetCodeAuditor {
             }
         }
 
-        // 2. JavaScript Code Inspection
+        // 2. JavaScript & External <script src="..."> Inspection
         if ($mode === 'js' || $mode === 'mixed') {
+            if (stripos($unslashed_code, '<script') !== false && class_exists('\\WebCareProScanner\\Content\\HTMLAnalyzer')) {
+                $html_analyzer = new \WebCareProScanner\Content\HTMLAnalyzer();
+                foreach ($html_analyzer->detect_hidden_elements($unslashed_code) as $hh) {
+                    if ($hh['type'] === 'remote_script_injection' || $hh['type'] === 'hidden_iframe') {
+                        $findings[] = new Finding([
+                            'engine'       => 'database-snippets',
+                            'type'         => 'database_stored_js_trojan',
+                            'severity'     => 'critical',
+                            'confidence'   => $hh['confidence'] ?? 96,
+                            'file_path'    => $context_id,
+                            'description'  => $hh['desc'],
+                            'evidence'     => $hh['snippet'],
+                            'code_snippet' => substr($hh['snippet'], 0, 400),
+                        ]);
+                    }
+                }
+            }
             // Extract raw JS if wrapped in <script> tags, or evaluate raw JS
             $js_to_scan = $unslashed_code;
             if (preg_match_all('/<script\b[^>]*>([\s\S]*?)<\/script>/i', $unslashed_code, $matches)) {

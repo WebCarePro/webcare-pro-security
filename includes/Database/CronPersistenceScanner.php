@@ -62,6 +62,9 @@ class CronPersistenceScanner {
         'touch',
     ];
 
+    /** @var array<string, bool> Per-scan deduplication guard */
+    private static array $completed_scans = [];
+
     /**
      * Scan cron option and ActionScheduler tables for persistence backdoors.
      *
@@ -69,6 +72,12 @@ class CronPersistenceScanner {
      * @return Finding[]
      */
     public function scan(string $scan_id): array {
+        if ($scan_id !== '' && isset(self::$completed_scans[$scan_id])) {
+            return [];
+        }
+        if ($scan_id !== '') {
+            self::$completed_scans[$scan_id] = true;
+        }
         $findings = [];
 
         // 1. Audit wp_options['cron']
@@ -235,8 +244,8 @@ class CronPersistenceScanner {
                     continue;
                 }
 
-                // Check A: Is callback directly pointing to a dangerous PHP sink?
-                if (is_string($function) && in_array(strtolower($function), self::DANGEROUS_SINKS, true)) {
+                // Check A: Is callback directly pointing to a dangerous PHP sink? (strip leading backslash)
+                if (is_string($function) && in_array(strtolower(ltrim($function, '\\')), self::DANGEROUS_SINKS, true)) {
                     $findings[] = new Finding([
                         'engine'      => 'database-persistence',
                         'type'        => 'dangerous_cron_callback',
@@ -417,8 +426,8 @@ class CronPersistenceScanner {
                     $hook = (string) ($action->hook ?? '');
                     $args = (string) (!empty($action->extended_args) ? $action->extended_args : ($action->args ?? ''));
 
-                    // Dangerous function in hook column
-                    if (in_array(strtolower($hook), self::DANGEROUS_SINKS, true)) {
+                    // Dangerous function in hook column (strip leading backslash)
+                    if (in_array(strtolower(ltrim($hook, '\\')), self::DANGEROUS_SINKS, true)) {
                         $findings[] = new Finding([
                             'engine'      => 'database-persistence',
                             'type'        => 'dangerous_actionscheduler_hook',

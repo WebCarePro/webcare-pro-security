@@ -97,9 +97,10 @@ class UserScanner {
      * @param string $scan_id
      * @param bool   $admins_only
      * @param string $lease_token Mandatory cryptographic lease token to refresh ScanLock heartbeat.
+     * @param bool   $check_passwords Whether to run dictionary password checks (false when scan_password_strength is disabled).
      * @return Finding[]
      */
-    public function scan($scan_id, $admins_only = false, string $lease_token = '') {
+    public function scan($scan_id, $admins_only = false, string $lease_token = '', bool $check_passwords = true) {
         global $wpdb;
         $findings = [];
 
@@ -162,7 +163,7 @@ class UserScanner {
         }
 
         // 2. Audit Password Strength & Credentials
-        $users_to_audit = $admins_only ? $admins : get_users(['number' => 300]);
+        $users_to_audit = !$check_passwords ? [] : ($admins_only ? $admins : get_users(['number' => 300]));
         $total_to_audit = count($users_to_audit);
         $audit_idx = 0;
 
@@ -299,6 +300,41 @@ class UserScanner {
         // but have been given file upload, file editing, or administrative powers
         $wp_roles = wp_roles();
         $all_users = get_users(['number' => 500]);
+        $seen_user_ids = [];
+        foreach ($all_users as $existing_user) {
+            $seen_user_ids[(int) $existing_user->ID] = true;
+        }
+
+        // Direct SQL sweep beyond the 500-user cap so Trojan non-admin accounts cannot hide on large WooCommerce sites
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $elevated_non_admin_ids = $wpdb->get_col(
+            $wpdb->prepare(
+                "SELECT user_id FROM %i WHERE meta_key = %s AND meta_value NOT LIKE %s AND (meta_value LIKE %s OR meta_value LIKE %s OR meta_value LIKE %s OR meta_value LIKE %s OR meta_value LIKE %s OR meta_value LIKE %s OR meta_value LIKE %s) LIMIT 200",
+                $usermeta_table,
+                $cap_key,
+                '%administrator%',
+                '%manage_options%',
+                '%edit_plugins%',
+                '%activate_plugins%',
+                '%install_plugins%',
+                '%edit_themes%',
+                '%edit_users%',
+                '%unfiltered_html%'
+            )
+        );
+        if (is_array($elevated_non_admin_ids)) {
+            foreach ($elevated_non_admin_ids as $extra_uid) {
+                $uid_int = (int) $extra_uid;
+                if ($uid_int > 0 && !isset($seen_user_ids[$uid_int])) {
+                    $extra_user = get_userdata($uid_int);
+                    if ($extra_user instanceof \WP_User) {
+                        $all_users[] = $extra_user;
+                        $seen_user_ids[$uid_int] = true;
+                    }
+                }
+            }
+        }
+
         $total_all_users = count($all_users);
         $user_cap_idx = 0;
 
@@ -444,7 +480,11 @@ class UserScanner {
         // Detect if subscriber or customer role definition itself was tampered with globally
         $global_roles = get_option($wpdb->prefix . 'user_roles');
         if (is_array($global_roles)) {
-            $check_roles = ['subscriber', 'customer'];
+            $privileged_builtin_roles = ['administrator', 'editor', 'author', 'shop_manager', 'seo_manager', 'seo_editor'];
+            $check_roles = array_values(array_diff(
+                array_unique(array_merge(['subscriber', 'customer', 'contributor'], array_keys($global_roles))),
+                $privileged_builtin_roles
+            ));
             $forbidden_global_caps = [
                 'upload_files', 'edit_plugins', 'edit_themes', 'edit_files', 
                 'manage_options', 'unfiltered_html', 'activate_plugins', 'edit_users'

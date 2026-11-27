@@ -58,19 +58,43 @@ class HTMLAnalyzer {
             }
         }
 
-        // 4. Suspicious remote script injections in content
-        if (preg_match('/<script\s+[^>]*src\s*=\s*["\'](https?:[^"\']+)["\'][^>]*>/i', $html, $matches)) {
-            $src = $matches[1];
-            // Whitelist common legitimate embed/library CDNs and reputable SaaS / e-commerce services
-            $is_whitelisted_cdn = (bool) preg_match('/(youtube\.com|vimeo\.com|cdnjs\.cloudflare\.com|cdn\.jsdelivr\.net|unpkg\.com|code\.jquery\.com|platform\.twitter\.com|connect\.facebook\.net|googletagmanager\.com|google-analytics\.com|recaptcha\.net|google\.com\/recaptcha|stripe\.com|reviews\.io|ordertracker\.com|logwork\.com|trustpilot\.com|yotpo\.com|klaviyo\.com|privy\.com|elfsight\.com|judge\.me|ahrefs\.com)/i', $src);
-            if (!$is_whitelisted_cdn) {
-                $detections[] = [
-                    'type'       => 'remote_script_injection',
-                    'snippet'    => substr($matches[0], 0, 150),
-                    'desc'       => 'Remote JavaScript injection detected within post content. This is a severe XSS risk.',
-                    'severity'   => 'critical',
-                    'confidence' => 98
-                ];
+        // 4. Suspicious remote script injections in content (inspect ALL <script src=...> tags, including protocol-relative //evil.com/x.js, with strict hostname parsing)
+        if (preg_match_all('/<script\b[^>]*\bsrc\s*=\s*["\']((?:https?:)?\/\/[^"\'\s>]+)["\'][^>]*>/i', $html, $all_script_srcs, PREG_SET_ORDER)) {
+            $home_host = strtolower((string) (wp_parse_url(home_url(), PHP_URL_HOST) ?: ''));
+            $trusted_cdn_hosts = [
+                'youtube.com', 'vimeo.com', 'cdnjs.cloudflare.com', 'code.jquery.com',
+                'platform.twitter.com', 'connect.facebook.net', 'googletagmanager.com',
+                'google-analytics.com', 'recaptcha.net', 'google.com', 'gstatic.com',
+                'stripe.com', 'reviews.io', 'ordertracker.com', 'logwork.com',
+                'trustpilot.com', 'yotpo.com', 'klaviyo.com', 'privy.com',
+                'elfsight.com', 'judge.me', 'ahrefs.com',
+            ];
+            foreach ($all_script_srcs as $s_match) {
+                $raw_src = $s_match[1];
+                $norm_src = str_starts_with($raw_src, '//') ? 'https:' . $raw_src : $raw_src;
+                $src_host = rtrim(strtolower((string) (wp_parse_url($norm_src, PHP_URL_HOST) ?: '')), '.');
+                if ($src_host === '') {
+                    continue;
+                }
+                if ($home_host !== '' && ($src_host === $home_host || str_ends_with($src_host, '.' . $home_host))) {
+                    continue;
+                }
+                $is_whitelisted_cdn = false;
+                foreach ($trusted_cdn_hosts as $cdn) {
+                    if ($src_host === $cdn || str_ends_with($src_host, '.' . $cdn)) {
+                        $is_whitelisted_cdn = true;
+                        break;
+                    }
+                }
+                if (!$is_whitelisted_cdn) {
+                    $detections[] = [
+                        'type'       => 'remote_script_injection',
+                        'snippet'    => substr($s_match[0], 0, 150),
+                        'desc'       => sprintf('Remote JavaScript injection from untrusted host "%s" detected within content.', esc_html($src_host)),
+                        'severity'   => 'critical',
+                        'confidence' => 98,
+                    ];
+                }
             }
         }
 
@@ -161,6 +185,26 @@ class HTMLAnalyzer {
             if (!empty($geo_cloak_hits)) {
                 $detections = array_merge($detections, $geo_cloak_hits);
             }
+        }
+
+        // 10. 2026–2027 Unicode Tag-Plane (U+E0000..U+E007F) & Stored Indirect Prompt Injection / MCP Poisoning
+        if (preg_match('/(?:\xF3\xA0[\x80-\x81][\x80-\xBF]){8,}/', $html)) {
+            $detections[] = [
+                'type'       => 'unicode_tag_smuggling',
+                'snippet'    => '[Invisible Unicode Tag-Plane U+E0000..U+E007F payload]',
+                'desc'       => 'Invisible Unicode Tag-Plane ASCII smuggling payload detected in content (used for AI prompt injection & covert instructions).',
+                'severity'   => 'critical',
+                'confidence' => 96,
+            ];
+        }
+        if (preg_match('/(?:display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0|font-size\s*:\s*0|<!--)[\s\S]{0,300}?(?:ignore\s+(?:all\s+)?(?:previous|prior)\s+instructions|<\|im_start\|>\s*system|\[INST\]\s*<<SYS>>|\b(?:wp_create_user|update_option)\b[\s\S]{0,80}\badministrator\b)/i', $html, $pi_match)) {
+            $detections[] = [
+                'type'       => 'indirect_prompt_injection',
+                'snippet'    => substr($pi_match[0], 0, 160),
+                'desc'       => 'Hidden Indirect Prompt Injection / AI Agent poisoning directive concealed in content.',
+                'severity'   => 'critical',
+                'confidence' => 95,
+            ];
         }
 
         // 10. WordPress 6.5+ / 7.0+ Interactivity API & Gutenberg Block Directive Sanitization

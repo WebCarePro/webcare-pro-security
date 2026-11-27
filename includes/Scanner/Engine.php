@@ -117,21 +117,25 @@ class Engine {
                 if ($current->isDir()) {
                     $name = strtolower($current->getFilename());
 
-                    // System VCS exclusions
-                    if ($skip_vcs && in_array($name, ['.git', '.svn', '.hg', '.github', '.gitlab'], true)) {
+                    // System VCS exclusions (skip heavy binary object stores, allow scanning hooks/root for dropped shells)
+                    if ($skip_vcs && in_array($name, ['objects', 'logs'], true) && (str_contains($pathname, '/.git/') || str_contains($pathname, '/.svn/'))) {
+                        return false;
+                    }
+                    if ($skip_vcs && in_array($name, ['.svn', '.hg'], true)) {
                         return false;
                     }
                     // Heavy vendor/dependency folders
                     if ($skip_vendor && in_array($name, ['node_modules', 'bower_components'], true)) {
                         return false;
                     }
-                    // Cache and backup folders
+                    // Cache folders (if skip_cache enabled, executables inside them are still audited below)
                     if ($skip_cache && in_array($name, ['cache', 'wfcache', 'w3tc-cache', 'et-cache', 'wpo-cache', 'litespeed', 'breeze', 'wp-rocket', 'autoptimize', 'sg-cachepress', 'siteground-cache', 'hummingbird-assets', 'fast-velocity-minify', 'borlabs-cookie', 'wp-fastest-cache', 'supercache', 'comet-cache'], true)) {
                         return false;
                     }
 
-                    // Internal plugin storage and self-plugin exclusions
-                    if (in_array($name, ['.vault', '.backups', 'webcare-backups', 'webcare-pro-security', 'webcare-quarantine', 'webcare-pro-quarantine', 'webcare-vault', 'webcare-waf', '.vscode', '.idea'], true)) {
+                    // Internal WebCare Pro secure storage and self-plugin exclusions ONLY
+                    // NOTE: .vscode, .idea, .backups, .git, .github are intentionally NOT excluded so attackers cannot cloak webshells inside hidden dot-directories!
+                    if (in_array($name, ['.vault', 'webcare-backups', 'webcare-pro-security', 'webcare-quarantine', 'webcare-pro-quarantine', 'webcare-vault', 'webcare-waf'], true)) {
                         return false;
                     }
                     if (defined('WEBCAREPROSCAN_PATH')) {
@@ -148,10 +152,16 @@ class Engine {
             });
 
             $iterator = new \RecursiveIteratorIterator($filter_iterator, \RecursiveIteratorIterator::SELF_FIRST);
-            $allowed_exts = ['php', 'phtml', 'php3', 'php4', 'php5', 'php7', 'php8', 'phar', 'inc', 'suspected', 'js', 'sh', 'pl', 'cgi'];
+            $allowed_exts = [
+                'php', 'phtml', 'pht', 'php3', 'php4', 'php5', 'php7', 'php8', 'phar', 'hphp', 'phps', 'pgif', 'inc', 'module', 'suspected',
+                'js', 'mjs', 'cjs', 'html', 'htm', 'shtml', 'svg', 'svgz',
+                'sh', 'pl', 'cgi', 'py', 'rb', 'ini',
+            ];
+            $vcs_exec_exts = ['php', 'phtml', 'pht', 'php3', 'php4', 'php5', 'php7', 'php8', 'phar', 'hphp', 'phps', 'inc', 'suspected', 'sh', 'py', 'pl', 'cgi'];
 
             foreach ($iterator as $item) {
-                if ($item->isFile()) {
+                $is_symlink = $item->isLink();
+                if ($is_symlink || $item->isFile()) {
                     $pathname = str_replace('\\', '/', $item->getPathname());
                     if (defined('WEBCAREPROSCAN_PATH')) {
                         $plugin_root = str_replace('\\', '/', untrailingslashit(WEBCAREPROSCAN_PATH));
@@ -168,9 +178,26 @@ class Engine {
                         continue;
                     }
 
+                    // Always enqueue symlinks so SymlinkScanner inspects out-of-root / /etc/passwd links
+                    if ($is_symlink) {
+                        $callback($item->getPathname());
+                        $count++;
+                        if ($limit > 0 && $count >= $limit) {
+                            break;
+                        }
+                        continue;
+                    }
+
                     $filename = $item->getFilename();
                     $ext = strtolower($item->getExtension());
                     $is_dotfile = str_starts_with($filename, '.');
+
+                    // Inside .git/ metadata directory, only enqueue executable webshells or server override dotfiles
+                    if ($skip_vcs && str_contains($pathname, '/.git/')) {
+                        if (!in_array($ext, $vcs_exec_exts, true) && !in_array(strtolower($filename), ['.htaccess', '.user.ini', 'php.ini'], true)) {
+                            continue;
+                        }
+                    }
 
                     // Check if file is executable code, recognized script extension, dotfile, or double-extension
                     if (in_array($ext, $allowed_exts, true) || $is_dotfile || substr_count($filename, '.') > 1) {

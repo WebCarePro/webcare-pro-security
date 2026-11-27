@@ -105,11 +105,11 @@ class RogueAdminAnomalyDetector {
             }
         }
 
-        // 3. Detect users with direct administrator capability injections or elevated user_level
+        // 3. Detect users with direct administrator capability injections, elevated user_level, or forged 0000-00-00 registration timestamps
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
         $admin_meta = $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT m.user_id, m.meta_value, u.user_login, u.user_email 
+                "SELECT m.user_id, m.meta_value, u.user_login, u.user_email, u.user_registered 
                  FROM `{$wpdb->usermeta}` m 
                  JOIN `{$wpdb->users}` u ON m.user_id = u.ID 
                  WHERE m.meta_key = %s AND (m.meta_value LIKE %s OR m.meta_value LIKE %s)",
@@ -120,6 +120,18 @@ class RogueAdminAnomalyDetector {
         );
 
         foreach ($admin_meta as $row) {
+            $reg_ts = trim((string) ($row->user_registered ?? ''));
+            if ($reg_ts === '' || str_starts_with($reg_ts, '0000-00-00')) {
+                $findings[] = new Finding([
+                    'engine'      => 'database-micro-anomaly',
+                    'type'        => 'rogue_admin_zero_timestamp',
+                    'severity'    => 'critical',
+                    'confidence'  => 96,
+                    'file_path'   => "db:{$usermeta_table}:user_id_{$row->user_id}",
+                    'description' => "Administrator account '{$row->user_login}' has an uninitialized or forged SQL registration timestamp ('{$reg_ts}'), strongly indicating direct SQL injection user creation.",
+                    'evidence'    => "User ID: {$row->user_id}, Login: {$row->user_login}, user_registered: {$reg_ts}",
+                ]);
+            }
             $caps = SerializedDataScanner::safe_unserialize($row->meta_value);
             if (!is_array($caps)) {
                 $findings[] = new Finding([

@@ -59,10 +59,12 @@ class ContentScanner {
                 break;
             }
 
+            // Note: WordPress 7.0+ FSE Block Templates (wp_template, wp_template_part, wp_navigation, wp_block)
+            // are intentionally INCLUDED so site-wide header/footer ClickFix, EtherHiding, and skimmer injections are caught!
             $excluded_post_types = [
-                'wp_navigation', 'wp_template', 'wp_template_part', 'wp_global_styles', 
+                'wp_global_styles',
                 'nav_menu_item', 'revision', 'attachment', 'custom_css', 'oembed_cache',
-                'custom-css-js', 'wplconsentlogs', 'action_log'
+                'wplconsentlogs', 'action_log'
             ];
             $placeholders = implode("', '", array_map('esc_sql', $excluded_post_types));
 

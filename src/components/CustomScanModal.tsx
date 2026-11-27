@@ -135,7 +135,7 @@ export const CUSTOM_SCAN_OPTIONS_CATALOG: CustomScanOptionDef[] = [
     category: 'General Options',
     defaultChecked: true,
     engineTag: 'NIST NVD CVE',
-    tagClass: 'pill-integrity',
+    tagClass: 'pill-vulnerability',
     highlightTerm: 'vulnerability check',
     highlightVariant: 'variant-emerald',
   },
@@ -272,7 +272,7 @@ export const CUSTOM_SCAN_OPTIONS_CATALOG: CustomScanOptionDef[] = [
     label: 'Scan files outside your WordPress installation',
     description: 'Scans parent and adjacent web directories (when server permissions allow) for orphaned scripts and lateral movement files.',
     category: 'General Options',
-    defaultChecked: true,
+    defaultChecked: false,
     engineTag: 'Filesystem Root',
     tagClass: 'pill-integrity',
     highlightTerm: 'outside your WordPress',
@@ -332,7 +332,7 @@ export const CustomScanModal: React.FC<CustomScanModalProps> = ({
     }));
   };
 
-  const handleApplyPreset = (type: 'recommended' | 'all' | 'none' | 'malware' | 'database') => {
+  const handleApplyPreset = (type: 'recommended' | 'all' | 'none' | 'malware' | 'database' | 'vulnerabilities') => {
     const next: Record<string, boolean> = { ...localOptions };
     if (type === 'recommended') {
       CUSTOM_SCAN_OPTIONS_CATALOG.forEach((item) => {
@@ -357,6 +357,8 @@ export const CustomScanModal: React.FC<CustomScanModalProps> = ({
           'scan_theme_integrity',
           'scan_plugin_integrity',
           'scan_unbundled_files',
+          'scan_public_config',
+          'scan_public_quarantine',
         ].includes(item.key);
         next[item.key] = isMalware;
       });
@@ -370,6 +372,20 @@ export const CustomScanModal: React.FC<CustomScanModalProps> = ({
           'scan_password_strength',
         ].includes(item.key);
         next[item.key] = isDb;
+      });
+    } else if (type === 'vulnerabilities') {
+      CUSTOM_SCAN_OPTIONS_CATALOG.forEach((item) => {
+        const isVuln = [
+          'scan_cve_vulnerabilities',
+          'scan_vulnerable_software',
+          'check_domain_blocklist',
+          'check_spamvertised',
+          'check_spam_ip',
+          'scan_ip_detection',
+          'monitor_disk_space',
+          'monitor_firewall_status',
+        ].includes(item.key);
+        next[item.key] = isVuln;
       });
     }
     setLocalOptions(next);
@@ -399,8 +415,9 @@ export const CustomScanModal: React.FC<CustomScanModalProps> = ({
     onClose();
   };
 
-  const activeCount = Object.entries(localOptions).filter(([k, v]) => Boolean(v)).length;
+  const activeCount = CUSTOM_SCAN_OPTIONS_CATALOG.filter((item) => Boolean(localOptions[item.key])).length;
   const totalCount = CUSTOM_SCAN_OPTIONS_CATALOG.length;
+  const recommendedCount = CUSTOM_SCAN_OPTIONS_CATALOG.filter((item) => item.defaultChecked).length;
 
   return (
     <div
@@ -515,7 +532,7 @@ export const CustomScanModal: React.FC<CustomScanModalProps> = ({
               onClick={() => handleApplyPreset('recommended')}
               className="webcare-custom-scan-preset-btn is-recommended"
             >
-              Recommended (22)
+              Recommended ({recommendedCount})
             </button>
             <button
               type="button"
@@ -544,6 +561,13 @@ export const CustomScanModal: React.FC<CustomScanModalProps> = ({
               className="webcare-custom-scan-preset-btn"
             >
               Database & Content
+            </button>
+            <button
+              type="button"
+              onClick={() => handleApplyPreset('vulnerabilities')}
+              className="webcare-custom-scan-preset-btn"
+            >
+              CVEs & System
             </button>
           </div>
 

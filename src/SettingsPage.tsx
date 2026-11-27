@@ -6297,7 +6297,7 @@ function NistCveSyncSettingsCard({ apiRequest }: { apiRequest: (opts: any) => Pr
             NIST NVD Background CVE Sync &amp; API Key
           </h3>
           <p style={{ margin: '2px 0 0', fontSize: '13px', color: 'var(--webcare-text-secondary, #475569)' }}>
-            Checked <strong>{status ? `${status.checked_count} / ${status.total_components}` : '0 / 0'}</strong> plugins &amp; themes &bull; Last Fetch: <strong>{status?.last_fetch_human || 'Never'}</strong> &bull; {status?.has_api_key ? 'NIST API Connected (25 req / 35s)' : 'Free NIST Fetch (5 req / 35s)'}
+            Checked <strong>{status ? `${status.checked_count} / ${status.total_components}` : '0 / 0'}</strong> plugins, themes &amp; core &bull; Last Fetch: <strong>{status?.last_fetch_human || 'Never'}</strong> &bull; {status?.has_api_key ? 'NIST API Connected (25 req / 35s)' : 'Free NIST Fetch (4 req / 30s)'}
           </p>
           <p style={{ margin: '6px 0 0', fontSize: '12px', color: 'var(--webcare-text-muted, #64748b)' }}>
             Syncs CVE advisories for your installed plugins and themes in the background and stores them in your local vault. Without an API key, NIST allows 5 requests per 35 seconds; with a free API key, rate limits increase to 25 requests per 35 seconds.{' '}
@@ -6359,10 +6359,14 @@ function NistCveSyncSettingsCard({ apiRequest }: { apiRequest: (opts: any) => Pr
                 method: 'POST',
                 data: { api_key: apiKeyInput },
               });
-              if (res?.success) {
+              if (res?.status) {
                 setStatus(res.status);
+              }
+              if (res?.success) {
                 setApiKeyInput('');
-                setNotice({ type: 'success', text: 'NIST NVD API Key encrypted & saved in Vault.' });
+                setNotice({ type: 'success', text: res?.message || 'NIST NVD API Key encrypted & saved in Vault.' });
+              } else {
+                setNotice({ type: 'error', text: res?.message || 'Invalid NIST NVD API Key format.' });
               }
             } catch (e: any) {
               setNotice({ type: 'error', text: e?.message || 'Failed to save NIST API Key.' });

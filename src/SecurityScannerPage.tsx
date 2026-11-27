@@ -259,6 +259,10 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
       iss.is_network ||
       iss.engine === 'ip-detection' ||
       iss.engine === 'waf-status' ||
+      iss.engine === 'firewall' ||
+      iss.engine === 'system-storage' ||
+      iss.engine === 'reputation' ||
+      iss.engine === 'nist-cve' ||
       iss.type === 'reverse_proxy_misconfigured' ||
       iss.type === 'plugin_checksums_unavailable' ||
       iss.type === 'theme_checksums_unavailable' ||
@@ -266,6 +270,13 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
       !iss.file_path ||
       iss.file_path.startsWith('cron:') ||
       iss.file_path.startsWith('wp_options:') ||
+      /^[a-z0-9_]+options:/i.test(iss.file_path) ||
+      iss.file_path.startsWith('ram:') ||
+      iss.file_path.startsWith('domain:') ||
+      iss.file_path.startsWith('ip:') ||
+      iss.file_path.startsWith('system:') ||
+      iss.file_path.startsWith('firewall:') ||
+      iss.file_path.startsWith('cve:') ||
       iss.file_path.startsWith('db:') ||
       iss.file_path.startsWith('table:') ||
       iss.file_path.startsWith('user:') ||
@@ -530,7 +541,7 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
           <div className="webcare-hero-highlights">
             <span className="webcare-hero-highlight-pill">
               <ShieldCheck size={13} color="#10b981" />
-              <span>23 Active Security Engines</span>
+              <span>24 Active Security Engines</span>
             </span>
             <span className="webcare-hero-highlight-pill">
               <Sparkles size={13} color="#0284c7" />

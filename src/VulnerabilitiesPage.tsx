@@ -129,6 +129,50 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
   }, []);
   const [actionFeedback, setActionFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  const handleFetchSingleNist = async (item: ComponentItem) => {
+    const slug = getCompSlug(item);
+    const key = `nist-${slug}`;
+    setBusyActionKey(key);
+    setActionFeedback(null);
+    try {
+      const res = await apiRequest({
+        path: '/webcare-pro-security/v1/cve/nist-fetch-component',
+        method: 'POST',
+        data: {
+          slug,
+          name: item.name,
+          version: item.installed_version || '0.0.0',
+          type: item.type,
+        },
+      });
+      if (res?.status) {
+        setNistStatus(res.status);
+      }
+      if (res?.success) {
+        const count = Array.isArray(res.cves) ? res.cves.length : 0;
+        setActionFeedback({
+          type: 'success',
+          text: count > 0
+            ? `NIST NVD audit complete for ${item.name} (v${item.installed_version}): ${count} active CVE advisory(s) found.`
+            : `NIST NVD audit complete for ${item.name} (v${item.installed_version}): 0 active CVEs (Clean).`,
+        });
+        await loadReport();
+      } else {
+        setActionFeedback({
+          type: 'error',
+          text: res?.error || res?.message || `NIST NVD check failed for ${item.name}.`,
+        });
+      }
+    } catch (err: any) {
+      setActionFeedback({
+        type: 'error',
+        text: err?.message || `Network error contacting NIST NVD for ${item.name}.`,
+      });
+    } finally {
+      setBusyActionKey(null);
+    }
+  };
+
   const loadReport = async () => {
     setLoading(true);
     setError(null);
@@ -877,30 +921,7 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
                               type="button"
                               className="webcare-btn-micro"
                               disabled={busyActionKey === `nist-${getCompSlug(item)}`}
-                              onClick={async () => {
-                                const slug = getCompSlug(item);
-                                const key = `nist-${slug}`;
-                                setBusyActionKey(key);
-                                try {
-                                  const res = await apiRequest({
-                                    path: '/webcare-pro-security/v1/cve/nist-fetch-component',
-                                    method: 'POST',
-                                    data: {
-                                      slug,
-                                      name: item.name,
-                                      version: item.installed_version || '0.0.0',
-                                    },
-                                  });
-                                  if (res && res.success) {
-                                    if (res.status) setNistStatus(res.status);
-                                    await loadInventory(true);
-                                  }
-                                } catch {
-                                  // Ignore transient network errors
-                                } finally {
-                                  setBusyActionKey(null);
-                                }
-                              }}
+                              onClick={() => handleFetchSingleNist(item)}
                               title="Live-query NIST NVD for this component"
                             >
                               <RefreshCw size={11} className={busyActionKey === `nist-${getCompSlug(item)}` ? 'webcare-spin' : ''} />
@@ -955,50 +976,6 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
                                       Shield Without Updating
                                     </button>
                                   )}
-
-                                  <button
-                                    type="button"
-                                    disabled={busyActionKey === `nist-${getCompSlug(item)}`}
-                                    onClick={async () => {
-                                      const slug = getCompSlug(item);
-                                      setBusyActionKey(`nist-${slug}`);
-                                      try {
-                                        const res = await apiRequest({
-                                          path: '/webcare-pro-security/v1/cve/nist-fetch-component',
-                                          method: 'POST',
-                                          data: {
-                                            slug,
-                                            name: item.name,
-                                            version: item.installed_version || '0.0.0',
-                                          },
-                                        });
-                                        if (res && res.success) {
-                                          if (res.status) setNistStatus(res.status);
-                                          await loadInventory(true);
-                                        }
-                                      } catch (e) {
-                                        // Ignore transient network errors
-                                      } finally {
-                                        setBusyActionKey(null);
-                                      }
-                                    }}
-                                    style={{
-                                      display: 'inline-flex',
-                                      alignItems: 'center',
-                                      gap: '4px',
-                                      padding: '4px 8px',
-                                      borderRadius: '6px',
-                                      fontSize: '11px',
-                                      fontWeight: 600,
-                                      cursor: 'pointer',
-                                      background: 'var(--webcare-bg-panel)',
-                                      color: 'var(--webcare-text-secondary)',
-                                      border: '1px solid var(--webcare-border-subtle)',
-                                    }}
-                                    title="Live-fetch CVE advisories from NIST NVD for this component and store in Vault"
-                                  >
-                                    Fetch NIST
-                                  </button>
 
                                   {item.is_outdated && item.type === 'plugin' && item.file ? (
                                     <button
@@ -1177,29 +1154,7 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
                                   <button
                                     type="button"
                                     disabled={busyActionKey === `nist-${getCompSlug(item)}`}
-                                    onClick={async () => {
-                                      const slug = getCompSlug(item);
-                                      setBusyActionKey(`nist-${slug}`);
-                                      try {
-                                        const res = await apiRequest({
-                                          path: '/webcare-pro-security/v1/cve/nist-fetch-component',
-                                          method: 'POST',
-                                          data: {
-                                            slug,
-                                            name: item.name,
-                                            version: item.installed_version || '0.0.0',
-                                          },
-                                        });
-                                        if (res && res.success) {
-                                          if (res.status) setNistStatus(res.status);
-                                          await loadInventory(true);
-                                        }
-                                      } catch (e) {
-                                        // Ignore transient network errors
-                                      } finally {
-                                        setBusyActionKey(null);
-                                      }
-                                    }}
+                                    onClick={() => handleFetchSingleNist(item)}
                                     style={{
                                       display: 'inline-flex',
                                       alignItems: 'center',
@@ -1215,7 +1170,8 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
                                     }}
                                     title="Live-fetch CVE advisories from NIST NVD for this component and store in Vault"
                                   >
-                                    Fetch NIST
+                                    <RefreshCw size={11} className={busyActionKey === `nist-${getCompSlug(item)}` ? 'webcare-spin' : ''} />
+                                    {busyActionKey === `nist-${getCompSlug(item)}` ? 'Fetching…' : 'Fetch NIST'}
                                   </button>
 
                                   {item.is_outdated && item.type === 'plugin' && item.file ? (

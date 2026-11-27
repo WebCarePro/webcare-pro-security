@@ -41,6 +41,30 @@ class CredentialExposureScanner {
             'severity'    => 'high',
             'description' => 'Google AI / Cloud API credential exposed in file contents.',
         ],
+        'groq_api_key' => [
+            'title'       => 'Groq LPU Inference API Key',
+            'pattern'     => '/\b(gsk_[A-Za-z0-9]{48,56})\b/',
+            'severity'    => 'critical',
+            'description' => 'Plaintext Groq AI inference API key exposed in accessible file contents.',
+        ],
+        'huggingface_token' => [
+            'title'       => 'Hugging Face Access Token',
+            'pattern'     => '/\b(hf_[A-Za-z0-9]{34,40})\b/',
+            'severity'    => 'high',
+            'description' => 'Plaintext Hugging Face model/repository token exposed in accessible storage.',
+        ],
+        'perplexity_api_key' => [
+            'title'       => 'Perplexity AI API Key',
+            'pattern'     => '/\b(pplx-[A-Za-z0-9]{40,56})\b/',
+            'severity'    => 'high',
+            'description' => 'Plaintext Perplexity AI API key exposed in accessible file contents.',
+        ],
+        'xai_grok_api_key' => [
+            'title'       => 'xAI Grok API Key',
+            'pattern'     => '/\b(xai-[A-Za-z0-9]{48,90})\b/',
+            'severity'    => 'critical',
+            'description' => 'Plaintext xAI Grok secret API key exposed in accessible file contents.',
+        ],
         'stripe_secret_key' => [
             'title'       => 'Stripe Secret Live Key',
             'pattern'     => '/\b(sk_live_[0-9a-zA-Z]{24,34})\b/',

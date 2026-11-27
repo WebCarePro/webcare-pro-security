@@ -109,14 +109,15 @@ class ImportantFileFIM {
         $wp_content_dir = defined('WP_CONTENT_DIR') ? WP_CONTENT_DIR : ABSPATH . 'wp-content';
 
         $dropins = [
-            'db.php'             => 'Custom Database Driver / Replication drop-in',
-            'object-cache.php'   => 'External Object Cache drop-in',
-            'advanced-cache.php' => 'Advanced Page Caching drop-in',
-            'sunrise.php'        => 'Multisite Domain Mapping drop-in',
-            'blog-deleted.php'   => 'Custom Blog Deleted drop-in',
-            'blog-inactive.php'  => 'Custom Blog Inactive drop-in',
-            'blog-suspended.php' => 'Custom Blog Suspended drop-in',
-            'maintenance.php'    => 'Custom Maintenance Mode drop-in',
+            'db.php'                  => 'Custom Database Driver / Replication drop-in',
+            'object-cache.php'        => 'External Object Cache drop-in',
+            'advanced-cache.php'      => 'Advanced Page Caching drop-in',
+            'install.php'             => 'Custom WordPress Install Script drop-in',
+            'sunrise.php'             => 'Multisite Domain Mapping drop-in',
+            'blog-deleted.php'        => 'Custom Blog Deleted drop-in',
+            'blog-inactive.php'       => 'Custom Blog Inactive drop-in',
+            'blog-suspended.php'      => 'Custom Blog Suspended drop-in',
+            'maintenance.php'         => 'Custom Maintenance Mode drop-in',
             'fatal-error-handler.php' => 'Custom Fatal Error Handler drop-in',
         ];
 
@@ -183,18 +184,29 @@ class ImportantFileFIM {
             return $findings;
         }
 
-        $files = @scandir($mu_dir);
-        if (!is_array($files)) {
-            return $findings;
+        $mu_paths = [];
+        try {
+            $mu_iter = new \RecursiveIteratorIterator(
+                new \RecursiveDirectoryIterator($mu_dir, \FilesystemIterator::SKIP_DOTS),
+                \RecursiveIteratorIterator::SELF_FIRST,
+                \RecursiveIteratorIterator::CATCH_GET_CHILD
+            );
+            foreach ($mu_iter as $mu_item) {
+                if ($mu_item->isFile()) {
+                    $mu_paths[] = $mu_item->getPathname();
+                }
+            }
+        } catch (\Throwable $e) {
+            foreach ((@scandir($mu_dir) ?: []) as $entry) {
+                if ($entry !== '.' && $entry !== '..' && is_file($mu_dir . '/' . $entry)) {
+                    $mu_paths[] = $mu_dir . '/' . $entry;
+                }
+            }
         }
 
-        foreach ($files as $f) {
-            if ($f === '.' || $f === '..' || $f === 'index.php') {
-                continue;
-            }
-
-            $path = $mu_dir . '/' . $f;
-            if (!is_file($path)) {
+        foreach ($mu_paths as $path) {
+            $f = basename($path);
+            if ($f === 'index.php' && dirname(wp_normalize_path($path)) === wp_normalize_path($mu_dir)) {
                 continue;
             }
 

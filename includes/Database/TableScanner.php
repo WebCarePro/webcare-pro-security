@@ -191,15 +191,15 @@ class TableScanner {
                 }
             }
 
-            // Check if option/postmeta or custom snippets table legitimately stores custom code (e.g. Code Snippets, WPCode, header/footer scripts)
+            // Check if option/postmeta or custom snippets table legitimately stores custom code (e.g. Code Snippets, WPCode, header/footer scripts — audited deeply by SnippetCodeAuditor)
             $is_custom_code_storage = false;
-            $is_snippets_table = (bool) preg_match('/(_snippets|_wpcode_snippets|_code_snippets)$/i', $table);
+            $is_snippets_table = (bool) preg_match('/(_snippets|_wpcode_snippets|_code_snippets|_hfcm_scripts)$/i', $table);
             if ($is_snippets_table) {
                 $is_custom_code_storage = true;
             } elseif ($is_options_table && isset($row['option_name'])) {
-                $is_custom_code_storage = (bool) preg_match('/(header_script|footer_script|custom_js|custom_css|gtm|tag_manager|analytics|pixel|tracking|elementor|theme_mods|forminator|options|settings|the7|dt_|redux|astra|generatepress|custom_code|snippet|wp_footer|wp_header|head_code|footer_code|inline_script)/i', $row['option_name']);
+                $is_custom_code_storage = (bool) preg_match('/^(header_script|footer_script|custom_js|custom_css|ihaf_|wpcode_|et_divi|theme_mods_)/i', $row['option_name']);
             } elseif (isset($row['meta_key'])) {
-                $is_custom_code_storage = (bool) preg_match('/(_custom_js|_custom_css|_elementor_data|_elementor_css|_elementor_page_settings)/i', $row['meta_key']);
+                $is_custom_code_storage = (bool) preg_match('/^(_custom_js|_custom_css|_elementor_data|_elementor_page_settings)$/i', $row['meta_key']);
             }
 
             foreach ($columns as $column) {
@@ -207,22 +207,41 @@ class TableScanner {
                     continue;
                 }
 
-                $raw_val = $row[$column];
+                $raw_val = (string) $row[$column];
                 $strings_to_check = [];
 
                 if (SerializedDataScanner::is_serialized($raw_val)) {
+                    $pop_hit = $this->serialized_scanner->inspect_serialized_string($raw_val);
+                    if ($pop_hit !== null) {
+                        $findings[] = new Finding([
+                            'engine'       => 'database-table',
+                            'type'         => $pop_hit['type'] ?? 'serialized_object_injection',
+                            'severity'     => $pop_hit['severity'] ?? 'critical',
+                            'confidence'   => $pop_hit['confidence'] ?? 95,
+                            'file_path'    => "{$table}.{$column}" . ($row_id !== null ? " [ID: {$row_id}]" : ''),
+                            'description'  => $pop_hit['desc'] ?? 'Serialized PHP Object Injection gadget detected in database row.',
+                            'evidence'     => $pop_hit['evidence'] ?? '',
+                            'code_snippet' => substr($raw_val, 0, 180),
+                        ]);
+                    }
                     $strings_to_check = $this->serialized_scanner->extract_strings_safely($raw_val);
                 } else {
-                    $strings_to_check = [$raw_val];
+                    // Unescape JSON-encoded HTML/script payloads (such as Elementor _elementor_data `<script>...<\/script>` or `\u003cscript`)
+                    if ((str_starts_with(ltrim($raw_val), '[') || str_starts_with(ltrim($raw_val), '{')) && (str_contains($raw_val, '<\/') || str_contains($raw_val, '\u003c') || str_contains($raw_val, '\u003C'))) {
+                        $unescaped_json = str_ireplace(['\/', '\u003c', '\u003e', '\u0022', '\u0027'], ['/', '<', '>', '"', "'"], $raw_val);
+                        $strings_to_check = [$unescaped_json];
+                    } else {
+                        $strings_to_check = [$raw_val];
+                    }
                 }
 
                 foreach ($strings_to_check as $str) {
                     if (strlen($str) < 10) continue;
 
                     foreach ($this->patterns as $rule_key => $rule) {
-                        // If stored in legitimate custom code settings or dedicated snippet tables, only flag critical exploit payloads (eval/base64/droppers/remote script fetching)
+                        // In legitimate custom-code storage / Elementor JSON, still catch ALL exploit payloads including 2026 ClickFix, EtherHiding, skimmers, and external untrusted script tags!
                         if ($is_custom_code_storage && in_array($rule_key, ['script_tag_injection', 'iframe_injection'], true)) {
-                            $has_exploit = preg_match('/(eval\s*\(|base64_decode\s*\(|document\.write\s*\(\s*unescape|String\.fromCharCode|\bwindow\[[\'"]ev|fetch\s*\(\s*[\'"]https?:|new\s+Function\s*\()/i', $str);
+                            $has_exploit = preg_match('/(eval\s*\(|base64_decode\s*\(|document\.write\s*\(|String\.fromCharCode|\bwindow\[[\'"]ev|fetch\s*\(\s*[\'"]https?:|new\s+Function\s*\(|atob\s*\(|navigator\.clipboard|clipboardData\.setData|execCommand\s*\(\s*[\'"]copy|eth_call|JsonRpcProvider|bsc-dataseed|readContract|navigator\.sendBeacon|<script\b[^>]*\bsrc\s*=\s*[\'"](?:https?:)?\/\/)/i', $str);
                             if (!$has_exploit) {
                                 continue;
                             }
@@ -233,39 +252,46 @@ class TableScanner {
 
                             // Whitelist check: Legitimate media embeds (YouTube, Vimeo, Google Maps, WordPress.org)
                             if ($rule_key === 'iframe_injection') {
-                                $is_trusted_embed = preg_match('/src=["\']https?:\/\/(www\.)?(youtube\.com|youtube-nocookie\.com|vimeo\.com|player\.vimeo\.com|wordpress\.org|maps\.google\.com|google\.com\/maps|spotify\.com|soundcloud\.com)/i', $matches[0]);
+                                $is_trusted_embed = preg_match('/src=["\']https?:\/\/(www\.)?(youtube\.com|youtube-nocookie\.com|vimeo\.com|player\.vimeo\.com|wordpress\.org|maps\.google\.com|google\.com\/maps|spotify\.com|soundcloud\.com)\//i', $matches[0]);
                                 if ($is_trusted_embed && !preg_match('/(display\s*:\s*none|visibility\s*:\s*hidden|width\s*:\s*0|height\s*:\s*0)/i', $matches[0])) {
-                                    continue; // Legitimate media embed
+                                    continue;
                                 }
                             }
 
-                            // Whitelist check: Legitimate tracking scripts, popular CDNs, email log transcripts, and non-executable data islands (Schema.org JSON-LD / JSON data)
                             if ($rule_key === 'script_tag_injection') {
-                                // Exclude outgoing email activity logs (e.g. Post SMTP session transcripts storing alert emails)
                                 if (strpos($table, 'post_smtp_logs') !== false || strpos($table, 'actionscheduler_logs') !== false) {
                                     continue;
                                 }
 
-                                // Benign data script tags (e.g. Schema.org JSON-LD, structured data, state islands, Quoted-Printable email logs)
+                                // Benign data script tags (Schema.org JSON-LD)
                                 if (preg_match('/<script[^>]*type\s*=\s*["\']?(?:application\/(?:ld\+json|json)|applic=\s*nation\/ld\+json)/i', $matches[0])) {
-                                    // Ensure it does not contain inline execution escapes or javascript URI droppers
                                     if (!preg_match('/(eval\s*\(|base64_decode\s*\(|document\.write|window\[|\bjavascript:)/i', $matches[0])) {
-                                        continue; // Legitimate structured data / JSON-LD metadata
+                                        continue;
                                     }
                                 }
 
-                                // Reputable CDNs, verified analytics (Ahrefs, Google), and review/settings scripts (Judge.me, Ahrefs, Cloudflare)
-                                if (preg_match('/(googletagmanager\.com|google-analytics\.com|clarity\.ms|connect\.facebook\.net|cdnjs\.cloudflare\.com|cdn\.jsdelivr\.net|unpkg\.com|code\.jquery\.com|stripe\.com|recaptcha\.net|google\.com\/recaptcha|ahrefs\.com|analytics\.ahrefs\.com|judge\.me|jdgm-settings-script|mutationobserver)/i', $matches[0])) {
-                                    continue; // Legitimate analytics/marketing/library script
+                                // Strict hostname verification ONLY on external <script src="..."> (NEVER skip inline scripts just because a comment mentions a CDN or MutationObserver!)
+                                if (preg_match('/^<script\b[^>]*\bsrc\s*=\s*["\']((?:https?:)?\/\/[^"\'\s>]+)["\'][^>]*>\s*<\/script>$/is', trim($matches[0]), $src_m)) {
+                                    $src_url = str_starts_with($src_m[1], '//') ? 'https:' . $src_m[1] : $src_m[1];
+                                    $src_host = strtolower((string) wp_parse_url($src_url, PHP_URL_HOST));
+                                    $trusted_hosts = [
+                                        'googletagmanager.com', 'www.googletagmanager.com', 'www.google-analytics.com', 'ssl.google-analytics.com',
+                                        'www.clarity.ms', 'connect.facebook.net', 'cdnjs.cloudflare.com', 'code.jquery.com',
+                                        'js.stripe.com', 'www.google.com', 'www.gstatic.com', 'www.recaptcha.net',
+                                        'analytics.ahrefs.com', 'cdn.judge.me',
+                                    ];
+                                    if (in_array($src_host, $trusted_hosts, true)) {
+                                        continue;
+                                    }
                                 }
 
-                                // Whitelist check: Benign local jQuery DOM handlers & UI listeners without malicious sinks
+                                // Benign local jQuery DOM handlers ONLY when free of ClickFix, EtherHiding, redirects, and decoders
                                 if (preg_match('/<script\b[^>]*>([\s\S]*?)<\/script>/i', $matches[0], $script_body_match)) {
                                     $script_body = trim($script_body_match[1]);
-                                    $has_exploit_sink = (bool) preg_match('/(eval\s*\(|base64_decode\s*\(|document\.write\s*\(\s*unescape|String\.fromCharCode|\bwindow\[[\'"]ev|fetch\s*\(\s*[\'"]https?:|new\s+Function\s*\(|atob\s*\(|fromCharCode|navigator\.sendBeacon|location\.replace\s*\(\s*[\'"]https?:|location\.href\s*=\s*[\'"]https?:)/i', $script_body);
-                                    if (!$has_exploit_sink) {
+                                    $has_exploit_sink = (bool) preg_match('/(eval\s*\(|base64_decode\s*\(|document\.write\s*\(|String\.fromCharCode|\bwindow\[[\'"]ev|fetch\s*\(\s*[\'"]https?:|new\s+Function\s*\(|atob\s*\(|fromCharCode|navigator\.sendBeacon|navigator\.clipboard|clipboardData|execCommand|eth_call|JsonRpcProvider|bsc-dataseed|readContract|WebSocket|serviceWorker|location\.replace|location\.href\s*=|document\.location)/i', $script_body);
+                                    if (!$has_exploit_sink && !preg_match('/<script\b[^>]*\bsrc\s*=/i', $matches[0])) {
                                         if (preg_match('/(?:jQuery\s*\(|\$\s*\(|document\.addEventListener\s*\(\s*[\'"]DOMContentLoaded[\'"]|window\.addEventListener\s*\(\s*[\'"]load[\'"])/i', $script_body)) {
-                                            continue; // Safe local DOM event listener
+                                            continue;
                                         }
                                     }
                                 }

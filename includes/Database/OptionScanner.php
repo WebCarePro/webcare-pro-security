@@ -107,8 +107,41 @@ class OptionScanner {
             }
         }
 
-        // 2. Check for oversized autoloaded options (denial of service / hidden payloads)
-        $large_options_sql = "SELECT option_name, LENGTH(option_value) AS value_len FROM `{$options_table}` WHERE autoload = 'yes' OR autoload = 'on' HAVING value_len > 500000 ORDER BY value_len DESC LIMIT 10";
+        // 1c. Privilege-Escalation Takeover Check: default_role + users_can_register & upload_path hijacking
+        $default_role = strtolower((string) get_option('default_role', 'subscriber'));
+        $anyone_can_register = (bool) get_option('users_can_register', false);
+        if (in_array($default_role, ['administrator', 'editor', 'shop_manager', 'author'], true)) {
+            $is_crit = ($default_role === 'administrator' || $anyone_can_register);
+            $findings[] = new Finding([
+                'engine'      => 'database-options',
+                'type'        => 'rogue_default_role_escalation',
+                'severity'    => $is_crit ? 'critical' : 'high',
+                'confidence'  => 100,
+                'file_path'   => $options_table . ':default_role',
+                'description' => sprintf(
+                    "CRITICAL PRIVILEGE ESCALATION: WordPress 'default_role' is set to '%s'%s. Attackers exploit option-update flaws to register instant administrator accounts.",
+                    $default_role,
+                    $anyone_can_register ? ' while open user registration (users_can_register=1) is ENABLED' : ''
+                ),
+                'evidence'    => "default_role={$default_role}, users_can_register=" . ($anyone_can_register ? '1' : '0'),
+            ]);
+        }
+
+        $upload_path_opt = trim((string) get_option('upload_path', ''));
+        if ($upload_path_opt !== '' && (str_contains($upload_path_opt, '..') || str_starts_with($upload_path_opt, '/tmp') || str_starts_with($upload_path_opt, '/var/tmp'))) {
+            $findings[] = new Finding([
+                'engine'      => 'database-options',
+                'type'        => 'suspicious_upload_path_option',
+                'severity'    => 'high',
+                'confidence'  => 95,
+                'file_path'   => $options_table . ':upload_path',
+                'description' => "Database option 'upload_path' points to a suspicious traversal or temporary directory ('{$upload_path_opt}').",
+                'evidence'    => "upload_path={$upload_path_opt}",
+            ]);
+        }
+
+        // 2. Check for oversized autoloaded options (WP 7.0+ autoload values: 'yes', 'on', 'auto', 'auto-on')
+        $large_options_sql = "SELECT option_name, LENGTH(option_value) AS value_len FROM `{$options_table}` WHERE autoload IN ('yes', 'on', 'auto', 'auto-on') HAVING value_len > 500000 ORDER BY value_len DESC LIMIT 10";
         // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.NotPrepared
         $large_options = $wpdb->get_results($large_options_sql);
 
@@ -189,14 +222,31 @@ class OptionScanner {
         ];
 
         $escaped_options = "'" . implode("', '", array_map('esc_sql', $target_option_patterns)) . "'";
-        $script_options_sql = "SELECT option_name, option_value FROM `{$options_table}` WHERE option_name IN ({$escaped_options}) OR option_name LIKE 'widget_%' LIMIT 60";
+        $script_options_sql = "SELECT option_name, option_value FROM `{$options_table}` WHERE option_name IN ({$escaped_options}) OR option_name LIKE 'widget_%' LIMIT 200";
         // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.NotPrepared
         $script_options = $wpdb->get_results($script_options_sql);
 
         if (!empty($script_options)) {
             $html_analyzer = new \WebCareProScanner\Content\HTMLAnalyzer();
+            $url_scanner   = new \WebCareProScanner\Content\URLScanner();
 
             foreach ($script_options as $s_opt) {
+                if (SerializedDataScanner::is_serialized($s_opt->option_value)) {
+                    $pop_hit = $this->serialized_scanner->inspect_serialized_string((string) $s_opt->option_value);
+                    if ($pop_hit !== null) {
+                        $findings[] = new Finding([
+                            'engine'       => 'database-options',
+                            'type'         => $pop_hit['type'] ?? 'serialized_object_injection',
+                            'severity'     => $pop_hit['severity'] ?? 'critical',
+                            'confidence'   => $pop_hit['confidence'] ?? 95,
+                            'file_path'    => $options_table . ':' . $s_opt->option_name,
+                            'description'  => sprintf('PHP Object Injection POP-chain gadget detected in option "%s": %s', $s_opt->option_name, $pop_hit['desc'] ?? ''),
+                            'evidence'     => $pop_hit['evidence'] ?? '',
+                            'code_snippet' => substr((string) $s_opt->option_value, 0, 200),
+                        ]);
+                    }
+                }
+
                 $raw_val = SerializedDataScanner::safe_unserialize($s_opt->option_value);
                 $opt_text = stripslashes(is_array($raw_val) || is_object($raw_val) ? wp_json_encode($raw_val, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) : (string) $raw_val);
 
@@ -204,10 +254,10 @@ class OptionScanner {
                     continue;
                 }
 
-                // Check HTML analyzer detections for meta refresh, base href, and inline redirects
+                // Check HTML analyzer detections for meta refresh, base href, prompt injection, and inline redirects
                 $hits = $html_analyzer->detect_hidden_elements($opt_text);
                 foreach ($hits as $hit) {
-                    if (in_array($hit['type'], ['content_meta_refresh_redirect', 'content_base_href_hijack', 'content_dom_redirect', 'content_malicious_inline_js', 'hidden_iframe', 'remote_script_injection'], true)) {
+                    if (in_array($hit['type'], ['content_meta_refresh_redirect', 'content_base_href_hijack', 'content_dom_redirect', 'content_malicious_inline_js', 'hidden_iframe', 'remote_script_injection', 'unicode_tag_smuggling', 'indirect_prompt_injection'], true)) {
                         $findings[] = new Finding([
                             'engine'      => 'database-options',
                             'type'        => 'option_script_redirect_injection',
@@ -224,6 +274,22 @@ class OptionScanner {
                             'code_snippet'=> substr($hit['snippet'], 0, 150),
                         ]);
                     }
+                }
+
+                // Check URL threat intelligence on widget/header/footer options
+                foreach ($url_scanner->scan_urls($opt_text) as $uh) {
+                    if (($uh['severity'] ?? 'low') === 'low') {
+                        continue;
+                    }
+                    $findings[] = new Finding([
+                        'engine'      => 'database-options',
+                        'type'        => $uh['type'] ?? 'suspicious_option_url',
+                        'severity'    => $uh['severity'] ?? 'high',
+                        'confidence'  => $uh['confidence'] ?? 85,
+                        'file_path'   => $options_table . ':' . $s_opt->option_name,
+                        'description' => sprintf('Suspicious external URL in option "%s": %s', $s_opt->option_name, $uh['desc'] ?? ''),
+                        'evidence'    => 'URL: ' . ($uh['url'] ?? ''),
+                    ]);
                 }
             }
         }

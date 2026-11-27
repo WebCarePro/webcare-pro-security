@@ -1334,6 +1334,7 @@ class SettingsManager {
             'scan_core_integrity'        => true,
             'scan_theme_integrity'       => true,
             'scan_plugin_integrity'      => true,
+            'scan_cve_vulnerabilities'   => true,
             'scan_unbundled_files'       => true,
             'scan_known_malware'         => true,
             'scan_backdoors_heuristics'  => true,
@@ -1346,7 +1347,7 @@ class SettingsManager {
             'scan_password_strength'     => false, // Disabled by default matching screenshot
             'monitor_disk_space'         => true,
             'monitor_firewall_status'    => true,
-            'scan_outside_root'          => true,
+            'scan_outside_root'          => false, // Opt-in so default scans never crawl sibling vhosts
             'scan_images_executable'     => true,
         ];
     }
@@ -1358,7 +1359,7 @@ class SettingsManager {
         $defaults = self::get_default_custom_scan_options();
         $clean = [];
         foreach ($defaults as $key => $default_val) {
-            $clean[$key] = !empty($opts[$key]);
+            $clean[$key] = array_key_exists($key, $opts) ? !empty($opts[$key]) : $default_val;
         }
         return $clean;
     }

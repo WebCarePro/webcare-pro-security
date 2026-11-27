@@ -51,8 +51,7 @@ class CommentScanner {
                 $comment_content = (string) ($comment['comment_content'] ?? '');
                 
                 // 1. Scan for XSS Payloads in comments
-                // Comments shouldn't contain raw script tags or event handlers
-                if (preg_match('/(<script|onmouseover=|onload=|onerror=)/i', $comment_content)) {
+                if (preg_match('/(<script\b|<iframe\b|<svg\b|<object\b|<embed\b|\bon(?:mouseover|load|error|click|focus|toggle|begin|animationstart)\s*=|javascript\s*:)/i', $comment_content)) {
                     $findings[] = new Finding([
                         'engine'       => 'content-comments',
                         'type'         => 'xss_payload_in_comment',
@@ -63,6 +62,23 @@ class CommentScanner {
                         'evidence'     => substr($comment_content, 0, 150),
                         'code_snippet' => $comment_content,
                     ]);
+                }
+
+                // 1b. Scan for 2026–2027 Stored Indirect Prompt Injection & Unicode Tag-Plane Smuggling in comments
+                if (class_exists('\\WebCareProScanner\\Security\\PromptInjectionGuard')) {
+                    $pi_res = \WebCareProScanner\Security\PromptInjectionGuard::inspect_prompt($comment_content, 'comment');
+                    if (!empty($pi_res['is_malicious']) && (int) ($pi_res['score'] ?? 0) >= 60) {
+                        $findings[] = new Finding([
+                            'engine'       => 'content-comments',
+                            'type'         => 'prompt_injection_in_comment',
+                            'severity'     => 'critical',
+                            'confidence'   => min(100, (int) $pi_res['score']),
+                            'file_path'    => "comment:{$comment['comment_ID']} by {$comment['comment_author']}",
+                            'description'  => 'Stored AI Indirect Prompt Injection / MCP tool-poisoning payload detected in comment.',
+                            'evidence'     => implode(', ', (array) ($pi_res['matched_rules'] ?? ['prompt_injection'])),
+                            'code_snippet' => substr($comment_content, 0, 250),
+                        ]);
+                    }
                 }
 
                 // 2. Scan URLs in content and author URL
