@@ -34,6 +34,9 @@ function mountFirewall() {
             }
             url.searchParams.delete('subtab');
             window.history.pushState({ tab: canonicalSub, section }, '', url.toString());
+            window.dispatchEvent(new CustomEvent('webcare:route-change', {
+              detail: { page: 'webcare-pro-firewall', tab: canonicalSub, section: section || '' },
+            }));
           } catch (e) {}
         }}
       />

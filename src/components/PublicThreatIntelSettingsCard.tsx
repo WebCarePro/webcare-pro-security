@@ -14,6 +14,7 @@ export const PublicThreatIntelSettingsCard: React.FC<PublicThreatIntelSettingsCa
     threat_intel_enabled: true,
     threat_intel_cisa_kev_enabled: true,
     threat_intel_nvd_cve_enabled: true,
+    threat_intel_wpvulnerability_enabled: true,
     threat_intel_public_cidr_enabled: true,
   });
 
@@ -28,6 +29,7 @@ export const PublicThreatIntelSettingsCard: React.FC<PublicThreatIntelSettingsCa
             threat_intel_enabled: s.threat_intel_enabled !== false,
             threat_intel_cisa_kev_enabled: s.threat_intel_cisa_kev_enabled !== false,
             threat_intel_nvd_cve_enabled: s.threat_intel_nvd_cve_enabled !== false,
+            threat_intel_wpvulnerability_enabled: s.threat_intel_wpvulnerability_enabled !== false,
             threat_intel_public_cidr_enabled: s.threat_intel_public_cidr_enabled !== false,
           });
         }
@@ -66,34 +68,52 @@ export const PublicThreatIntelSettingsCard: React.FC<PublicThreatIntelSettingsCa
     label: string;
     desc: string;
     badge: string;
+    enabled: boolean;
     indented?: boolean;
+    requiresMaster?: boolean;
   }> = [
     {
       key: 'threat_intel_enabled',
       label: 'Master Threat Intelligence Synchronization',
       desc: 'Enables automated background synchronization of free, public vulnerability catalogs and malicious network feeds.',
       badge: prefs.threat_intel_enabled ? 'Active' : 'Disabled',
+      enabled: prefs.threat_intel_enabled,
     },
     {
       key: 'threat_intel_cisa_kev_enabled',
       label: 'CISA Known Exploited Vulnerabilities (KEV)',
       desc: "Fetches CISA's official catalog of actively exploited in-the-wild zero-days with ETag and Last-Modified caching headers.",
       badge: prefs.threat_intel_cisa_kev_enabled ? 'CISA Active' : 'Off',
+      enabled: prefs.threat_intel_cisa_kev_enabled,
       indented: true,
+      requiresMaster: true,
     },
     {
       key: 'threat_intel_nvd_cve_enabled',
       label: 'NVD CVE 2.0 (Incremental WordPress Delta)',
       desc: 'Pulls official WordPress CVE advisories directly from NIST NVD 2.0 without sending any local plugin information.',
       badge: prefs.threat_intel_nvd_cve_enabled ? 'NVD Active' : 'Off',
+      enabled: prefs.threat_intel_nvd_cve_enabled,
       indented: true,
+      requiresMaster: true,
+    },
+    {
+      key: 'threat_intel_wpvulnerability_enabled',
+      label: 'WPVulnerability.net API (WordPress Vulnerability Database)',
+      desc: 'Queries WPVulnerability.net by plugin/theme/core slug for WordPress-specific CVE version ranges. Uncheck to skip external WPVulnerability.net lookups and rely only on NIST NVD / WordPress.org.',
+      badge: prefs.threat_intel_wpvulnerability_enabled ? 'WPVuln Active' : 'Off',
+      enabled: prefs.threat_intel_wpvulnerability_enabled,
+      indented: true,
+      requiresMaster: false,
     },
     {
       key: 'threat_intel_public_cidr_enabled',
       label: 'Public Malicious Botnet & Scanner CIDRs (Spamhaus DROP / FireHOL)',
       desc: 'Pulls verified high-confidence drop lists and network blocksets to preemptively stop brute-force attacks and automated scanners.',
       badge: prefs.threat_intel_public_cidr_enabled ? 'CIDRs Active' : 'Off',
+      enabled: prefs.threat_intel_public_cidr_enabled,
       indented: true,
+      requiresMaster: true,
     },
   ];
 
@@ -122,10 +142,10 @@ export const PublicThreatIntelSettingsCard: React.FC<PublicThreatIntelSettingsCa
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }} role="status" aria-live="polite">
           {savedNotice && (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '12.5px', fontWeight: 600, color: '#059669' }}>
-              <CheckCircle2 size={15} /> Saved
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '12.5px', fontWeight: 600, color: 'var(--webcare-status-clean, #059669)' }}>
+              <CheckCircle2 size={15} aria-hidden="true" /> Saved
             </span>
           )}
           <button
@@ -144,58 +164,64 @@ export const PublicThreatIntelSettingsCard: React.FC<PublicThreatIntelSettingsCa
               borderColor: '#4338ca',
             }}
           >
-            <Save size={14} />
+            <Save size={14} aria-hidden="true" />
             <span>{saving ? 'Saving...' : 'Save Feed Settings'}</span>
           </button>
         </div>
       </div>
 
       {error && (
-        <div style={{ marginBottom: '12px', padding: '10px 12px', borderRadius: '8px', background: '#fef2f2', border: '1px solid #fecaca', color: '#dc2626', fontSize: '13px' }}>
+        <div role="alert" style={{ marginBottom: '12px', padding: '10px 12px', borderRadius: '8px', background: 'var(--webcare-status-critical-soft, #fef2f2)', border: '1px solid var(--webcare-status-critical-border, #fecaca)', color: 'var(--webcare-status-critical, #dc2626)', fontSize: '13px' }}>
           {error}
         </div>
       )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        {rows.map((row) => (
-          <label
-            key={row.key}
-            className="webcare-firewall-rule-card"
-            style={{
-              display: 'flex',
-              alignItems: 'flex-start',
-              justifyContent: 'space-between',
-              gap: '14px',
-              padding: '14px 16px',
-              borderRadius: '10px',
-              border: '1px solid var(--webcare-border, #e2e8f0)',
-              marginLeft: row.indented ? '16px' : '0',
-              cursor: 'pointer',
-              opacity: row.indented && !prefs.threat_intel_enabled ? 0.55 : 1,
-            }}
-          >
-            <div style={{ flex: 1 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                <span style={{ fontSize: '13.5px', fontWeight: 700, color: 'var(--webcare-text-primary, #0f172a)' }}>
-                  {row.label}
-                </span>
-                <span className="webcare-firewall-role-chip" style={{ fontSize: '11px', fontWeight: 600 }}>
-                  {row.badge}
-                </span>
+        {rows.map((row) => {
+          const lockedByMaster = Boolean(row.requiresMaster && row.indented && !prefs.threat_intel_enabled);
+          const inputId = `webcare-intel-${row.key}`;
+          return (
+            <label
+              key={row.key}
+              htmlFor={inputId}
+              className="webcare-firewall-rule-card"
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                justifyContent: 'space-between',
+                gap: '14px',
+                padding: '14px 16px',
+                borderRadius: '10px',
+                border: '1px solid var(--webcare-border, #e2e8f0)',
+                marginLeft: row.indented ? '16px' : '0',
+                cursor: lockedByMaster ? 'not-allowed' : 'pointer',
+                opacity: lockedByMaster ? 0.55 : 1,
+              }}
+            >
+              <div style={{ flex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: '13.5px', fontWeight: 700, color: 'var(--webcare-text-primary, #0f172a)' }}>
+                    {row.label}
+                  </span>
+                  <span className={`webcare-badge-pill ${row.enabled ? 'webcare-badge-info' : 'webcare-badge-neutral'}`} style={{ fontSize: '11px', fontWeight: 600 }}>
+                    {row.badge}
+                  </span>
+                </div>
+                <p style={{ margin: '4px 0 0', fontSize: '12.5px', lineHeight: 1.5, color: 'var(--webcare-text-secondary, #475569)' }}>
+                  {row.desc}
+                </p>
               </div>
-              <p style={{ margin: '4px 0 0', fontSize: '12.5px', lineHeight: 1.5, color: 'var(--webcare-text-secondary, #475569)' }}>
-                {row.desc}
-              </p>
-            </div>
-            <input
-              type="checkbox"
-              checked={prefs[row.key]}
-              disabled={loading || (row.indented && !prefs.threat_intel_enabled)}
-              onChange={(e) => setPrefs((prev) => ({ ...prev, [row.key]: e.target.checked }))}
-              style={{ marginTop: '3px', width: '18px', height: '18px', accentColor: '#4f46e5', cursor: 'pointer' }}
-            />
-          </label>
-        ))}
+              <input
+                id={inputId}
+                type="checkbox"
+                checked={prefs[row.key]}
+                disabled={loading || lockedByMaster}
+                onChange={(e) => setPrefs((prev) => ({ ...prev, [row.key]: e.target.checked }))}
+                style={{ marginTop: '3px', width: '18px', height: '18px', accentColor: 'var(--webcare-accent-primary, #4f46e5)', cursor: lockedByMaster ? 'not-allowed' : 'pointer' }}
+              />
+            </label>
+          );
+        })}
       </div>
     </div>
   );

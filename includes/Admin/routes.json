@@ -122,6 +122,18 @@
             { "id": "attack-test", "label": "Firewall Self-Test", "mode": "developer" },
             { "id": "threat-feeds", "label": "Public Threat Feeds", "mode": "developer" }
           ]
+        },
+        {
+          "id": "drill",
+          "label": "Attack Drill",
+          "mode": "developer",
+          "description": "Simulated WAF self-test attacks and rule response verification."
+        },
+        {
+          "id": "intel",
+          "label": "Cloud Threat Intel",
+          "mode": "developer",
+          "description": "Public threat intelligence feeds, KEV catalog, NVD delta, and IP reputation lookup."
         }
       ]
     },

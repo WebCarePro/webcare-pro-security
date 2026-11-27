@@ -699,9 +699,10 @@ export const FirewallPage = ({
       try {
         const urlParams = new URLSearchParams(window.location.search);
         const requestedTab = urlParams.get('tab');
-        if (requestedTab && engineerTabs.includes(requestedTab)) {
+        const normalizedRequested = requestedTab ? normalizeFirewallTab(requestedTab) : null;
+        if (normalizedRequested && engineerTabs.includes(normalizedRequested)) {
           setMode('developer');
-          toast.info(`Switched to Developer Mode for ${requestedTab.replace('_', ' ')}.`);
+          toast.info(`Switched to Developer Mode for ${normalizedRequested.replace('_', ' ')}.`);
           return;
         }
       } catch (e) {}
@@ -729,22 +730,25 @@ export const FirewallPage = ({
 
   const doSwitchTab = (tab: 'stream' | 'rules' | 'caf' | 'drill' | 'supply_chain' | 'behavioral' | 'server_sec' | 'intel' | 'cloudflare' | 'vpatch' | 'ai_defense' | 'custom_rules', sectionParam?: string) => {
     setActiveTab(tab);
+    const canonicalTabParam = tab === 'rules' ? 'rules' : tab === 'custom_rules' ? 'custom-rules' : tab === 'behavioral' ? 'bots' : tab === 'caf' ? 'adaptive' : tab === 'vpatch' ? 'virtual-patches' : tab === 'ai_defense' ? 'ai-defense' : tab === 'supply_chain' ? 'supply-chain' : tab === 'server_sec' ? 'server' : tab === 'stream' ? 'traffic' : tab;
+    if (onSubTabChange) {
+      onSubTabChange(canonicalTabParam as any, sectionParam);
+      return;
+    }
     try {
       const url = new URL(window.location.href);
-      const urlTabParam = tab === 'rules' ? 'rules' : tab === 'custom_rules' ? 'custom-rules' : tab === 'behavioral' ? 'bots' : tab === 'caf' ? 'adaptive' : tab === 'vpatch' ? 'virtual-patches' : tab === 'ai_defense' ? 'ai-defense' : tab === 'supply_chain' ? 'supply-chain' : tab === 'server_sec' ? 'server' : tab === 'stream' ? 'traffic' : tab;
-      url.searchParams.set('tab', urlTabParam);
+      url.searchParams.set('tab', canonicalTabParam);
       if (sectionParam) {
         url.searchParams.set('section', sectionParam);
       } else {
         url.searchParams.delete('section');
       }
       url.searchParams.delete('subtab');
-      window.history.pushState({ tab: urlTabParam, section: sectionParam }, '', url.toString());
+      window.history.pushState({ tab: canonicalTabParam, section: sectionParam }, '', url.toString());
+      window.dispatchEvent(new CustomEvent('webcare:route-change', {
+        detail: { page: 'webcare-pro-firewall', tab: canonicalTabParam, section: sectionParam || '' },
+      }));
     } catch (e) {}
-    if (onSubTabChange) {
-      const canonicalTabParam = tab === 'rules' ? 'rules' : tab === 'custom_rules' ? 'custom-rules' : tab === 'behavioral' ? 'bots' : tab === 'caf' ? 'adaptive' : tab === 'vpatch' ? 'virtual-patches' : tab === 'ai_defense' ? 'ai-defense' : tab === 'supply_chain' ? 'supply-chain' : tab === 'server_sec' ? 'server' : tab === 'stream' ? 'traffic' : tab;
-      onSubTabChange(canonicalTabParam as any, sectionParam);
-    }
   };
 
   // Safe Mode (15-Minute Test Mode) State & Handlers

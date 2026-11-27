@@ -81,6 +81,7 @@ interface ScannerSettings {
   threat_intel_enabled?: boolean;
   threat_intel_cisa_kev_enabled?: boolean;
   threat_intel_nvd_cve_enabled?: boolean;
+  threat_intel_wpvulnerability_enabled?: boolean;
   threat_intel_public_cidr_enabled?: boolean;
   email_report_items_limit?: number;
 
@@ -513,6 +514,7 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
       email: 'email',
       webhooks: 'webhooks',
       threat_intel: 'threat_intel',
+      'threat-intel': 'threat_intel',
       cloudflare: 'cloudflare',
       headers: 'headers',
       ai: 'ai',
@@ -678,10 +680,11 @@ export const SettingsPage = ({ apiRequest, onNavigateToDashboard, onNavigateToNo
     if (isSimpleMode && engineerTabs.includes(activeSubTab)) {
       try {
         const urlParams = new URLSearchParams(window.location.search);
-        const requestedTab = (urlParams.get('tab') || urlParams.get('subtab')) as SettingsSubTab | null;
-        if (requestedTab && engineerTabs.includes(requestedTab)) {
+        const requestedTab = urlParams.get('tab') || urlParams.get('subtab');
+        const normalizedRequested = normalizeSubTab(requestedTab);
+        if (normalizedRequested && engineerTabs.includes(normalizedRequested)) {
           setMode('developer');
-          toast.info(`Switched to Developer Mode for ${requestedTab.replace('_', ' ')}.`);
+          toast.info(`Switched to Developer Mode for ${normalizedRequested.replace('_', ' ')}.`);
           return;
         }
       } catch (e) {}

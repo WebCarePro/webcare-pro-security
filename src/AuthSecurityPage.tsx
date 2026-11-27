@@ -492,11 +492,17 @@ export const AuthSecurityPage = ({
 
   // Auto-switch to Developer Mode on explicit deep link to an engineer-only tab, or fallback to '2fa' if switched manually to Simple Mode
   useEffect(() => {
+    const normalizeAuthTab = (raw: string | null): string | null => {
+      if (!raw) return null;
+      if (raw === 'app-passwords') return 'app_passwords';
+      if (raw === 'zero-trust') return 'zero_trust';
+      return raw;
+    };
     const engineerTabs = ['admins', 'zero_trust', 'sessions', 'app_passwords'];
     if (isSimpleMode && engineerTabs.includes(activeTab)) {
       try {
         const urlParams = new URLSearchParams(window.location.search);
-        const requestedTab = urlParams.get('tab') || urlParams.get('subtab');
+        const requestedTab = normalizeAuthTab(urlParams.get('tab') || urlParams.get('subtab'));
         if (requestedTab && engineerTabs.includes(requestedTab)) {
           setMode('developer');
           toast.info(`Switched to Developer Mode for ${requestedTab.replace('_', ' ')}.`);
@@ -511,7 +517,8 @@ export const AuthSecurityPage = ({
   useEffect(() => {
     try {
       const urlParams = new URLSearchParams(window.location.search);
-      const urlTab = urlParams.get('tab') || urlParams.get('subtab');
+      const rawUrlTab = urlParams.get('tab') || urlParams.get('subtab');
+      const urlTab = rawUrlTab === 'app-passwords' ? 'app_passwords' : rawUrlTab === 'zero-trust' ? 'zero_trust' : rawUrlTab;
       if (urlTab && ['2fa', 'passkeys', 'admins', 'zero_trust', 'sessions', 'lockouts', 'app_passwords', 'settings'].includes(urlTab)) {
         setActiveTab(urlTab as any);
         return;
@@ -528,8 +535,9 @@ export const AuthSecurityPage = ({
     const handleSync = () => {
       try {
         const urlParams = new URLSearchParams(window.location.search);
-        const sub = urlParams.get('tab') || urlParams.get('subtab');
-        if (sub && ['2fa', 'passkeys', 'admins', 'zero_trust', 'sessions', 'lockouts', 'settings'].includes(sub)) {
+        const rawSub = urlParams.get('tab') || urlParams.get('subtab');
+        const sub = rawSub === 'app-passwords' ? 'app_passwords' : rawSub === 'zero-trust' ? 'zero_trust' : rawSub;
+        if (sub && ['2fa', 'passkeys', 'admins', 'zero_trust', 'sessions', 'lockouts', 'app_passwords', 'settings'].includes(sub)) {
           setActiveTab(sub as any);
         } else if (!sub) {
           setActiveTab('2fa');

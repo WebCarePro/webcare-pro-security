@@ -42,6 +42,8 @@ final class RouteRegistryTest extends TestCase {
     public function test_is_valid_route_validates_correctly(): void {
         $this->assertTrue(RouteRegistry::is_valid_route('webcare-pro-firewall'));
         $this->assertTrue(RouteRegistry::is_valid_route('webcare-pro-firewall', 'cloudflare'));
+        $this->assertTrue(RouteRegistry::is_valid_route('webcare-pro-firewall', 'intel'));
+        $this->assertTrue(RouteRegistry::is_valid_route('webcare-pro-firewall', 'drill'));
         $this->assertTrue(RouteRegistry::is_valid_route('webcare-pro-firewall', 'server', 'server-rules'));
 
         $this->assertFalse(RouteRegistry::is_valid_route('invalid-pillar'));

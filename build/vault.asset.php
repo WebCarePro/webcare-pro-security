@@ -3,4 +3,4 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-return array('dependencies' => array('react', 'wp-api-fetch', 'wp-element'), 'version' => '30ed927076687423ccc4');
+return array('dependencies' => array('react', 'wp-api-fetch', 'wp-element'), 'version' => '74b94284b3e6e45f28e9');

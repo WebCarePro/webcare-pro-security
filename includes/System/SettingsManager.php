@@ -1128,9 +1128,10 @@ class SettingsManager {
             // 9. Cloud Threat Intelligence & Community Blacklists (Opt-in required for automated feed sync)
             'threat_intel_enabled'               => false,
             'threat_intel_block_blacklisted_ips' => false,
-            'threat_intel_cisa_kev_enabled'      => true,
-            'threat_intel_nvd_cve_enabled'       => true,
-            'threat_intel_public_cidr_enabled'   => true,
+            'threat_intel_cisa_kev_enabled'        => true,
+            'threat_intel_nvd_cve_enabled'         => true,
+            'threat_intel_wpvulnerability_enabled' => true,
+            'threat_intel_public_cidr_enabled'     => true,
             'waf_auto_enforce_virtual_patches'   => true, // Automatically enforce vendor-verified high-confidence virtual patches
 
             // 10. Multi-Factor Authentication (2FA), Login Hardening & Session Sentinel
@@ -2106,9 +2107,10 @@ class SettingsManager {
         // 9. Cloud Threat Intelligence & Community Blacklists
         $clean['threat_intel_enabled']               = !empty($merged['threat_intel_enabled']);
         $clean['threat_intel_block_blacklisted_ips'] = !empty($merged['threat_intel_block_blacklisted_ips']);
-        $clean['threat_intel_cisa_kev_enabled']      = !isset($merged['threat_intel_cisa_kev_enabled']) || !empty($merged['threat_intel_cisa_kev_enabled']);
-        $clean['threat_intel_nvd_cve_enabled']       = !isset($merged['threat_intel_nvd_cve_enabled']) || !empty($merged['threat_intel_nvd_cve_enabled']);
-        $clean['threat_intel_public_cidr_enabled']   = !isset($merged['threat_intel_public_cidr_enabled']) || !empty($merged['threat_intel_public_cidr_enabled']);
+        $clean['threat_intel_cisa_kev_enabled']        = !isset($merged['threat_intel_cisa_kev_enabled']) || !empty($merged['threat_intel_cisa_kev_enabled']);
+        $clean['threat_intel_nvd_cve_enabled']         = !isset($merged['threat_intel_nvd_cve_enabled']) || !empty($merged['threat_intel_nvd_cve_enabled']);
+        $clean['threat_intel_wpvulnerability_enabled'] = !isset($merged['threat_intel_wpvulnerability_enabled']) || !empty($merged['threat_intel_wpvulnerability_enabled']);
+        $clean['threat_intel_public_cidr_enabled']     = !isset($merged['threat_intel_public_cidr_enabled']) || !empty($merged['threat_intel_public_cidr_enabled']);
 
         // 10. Multi-Factor Authentication (2FA), Login Hardening & Session Sentinel
         $clean['auth_2fa_enabled']          = !empty($merged['auth_2fa_enabled']);

@@ -2218,18 +2218,39 @@ class NistCveVaultSync {
     }
 
     /**
+     * Check whether the optional WPVulnerability.net lookup feed is enabled in settings.
+     */
+    public static function is_wpvulnerability_enabled(): bool {
+        if (class_exists('\\WebCareProScanner\\System\\SettingsManager')) {
+            $settings = \WebCareProScanner\System\SettingsManager::get_settings();
+            if (array_key_exists('threat_intel_wpvulnerability_enabled', $settings)) {
+                return !empty($settings['threat_intel_wpvulnerability_enabled']);
+            }
+        }
+        $raw = get_option('webcareproscan_settings', []);
+        if (is_array($raw) && array_key_exists('threat_intel_wpvulnerability_enabled', $raw)) {
+            return !empty($raw['threat_intel_wpvulnerability_enabled']);
+        }
+        return true;
+    }
+
+    /**
      * Fetch structured, slug-authoritative advisories from WPVulnerability.net API.
      *
      * @return list<array<string, mixed>>
      */
     public static function fetch_wpvulnerability_for_component(string $slug, string $name, string $version, string $type = 'plugin'): array {
+        $has_wpvuln_mock = (self::$wpvuln_get_callback !== null && is_callable(self::$wpvuln_get_callback));
+        if (!self::is_wpvulnerability_enabled()) {
+            return [];
+        }
+
         $canonical_slug = self::resolve_canonical_slug($slug);
         $norm_ver       = self::normalize_version($version);
         if ($canonical_slug === '' || $norm_ver === '') {
             return [];
         }
 
-        $has_wpvuln_mock = (self::$wpvuln_get_callback !== null && is_callable(self::$wpvuln_get_callback));
         // Skip network/mock crosstalk during pure-NVD unit tests unless WPVulnerability mock is explicitly active
         if ((defined('WEBCAREPROSCAN_TESTING') && WEBCAREPROSCAN_TESTING && !$has_wpvuln_mock)
             || (!function_exists('wp_safe_remote_get') && !function_exists('wp_remote_get') && !$has_wpvuln_mock)

@@ -44,6 +44,66 @@ export const PILLAR_MAP: Record<string, RoutePillar> = PILLARS.reduce((acc, pill
   return acc;
 }, {} as Record<string, RoutePillar>);
 
+const TAB_ALIAS_MAP: Record<string, Record<string, string>> = {
+  'webcare-pro-firewall': {
+    'waf-rules': 'rules',
+    waf_rules: 'rules',
+    protection: 'rules',
+    stream: 'traffic',
+    caf: 'adaptive',
+    behavioral: 'bots',
+    'custom-waf-rules': 'custom-rules',
+    custom_waf_rules: 'custom-rules',
+    'rule-builder': 'custom-rules',
+    builder: 'custom-rules',
+    custom: 'custom-rules',
+    'modular-waf': 'custom-rules',
+    custom_rules: 'custom-rules',
+    modular_waf: 'custom-rules',
+    dossier: 'custom-rules',
+    nextgen: 'custom-rules',
+    vpatch: 'virtual-patches',
+    supply_chain: 'supply-chain',
+    ai_defense: 'ai-defense',
+    server_sec: 'server',
+    'attack-test': 'drill',
+    'threat-intel': 'intel',
+    threat_intel: 'intel',
+  },
+  'webcare-pro-scanner': {
+    'file-integrity': 'file-changes',
+    fim: 'file-changes',
+    vulnerabilities: 'risks',
+    scan: 'malware',
+  },
+  'webcare-pro-login': {
+    app_passwords: 'app-passwords',
+  },
+  'webcare-pro-backups': {
+    backup: 'database',
+    diagnostics: 'diagnostics',
+    forensics: 'diagnostics',
+  },
+  'webcare-pro-settings': {
+    health: 'doctor',
+    troubleshooter: 'doctor',
+    emergency: 'lockdown',
+    containment: 'lockdown',
+    notifications: 'alerts',
+    email: 'alerts',
+    schedule: 'schedules',
+    'cron-manager': 'cron',
+    import_export: 'import-export',
+    cleanup: 'data',
+    about: 'support',
+  },
+};
+
+export function resolveCanonicalTabId(pillarId: string, rawTabId: string): string {
+  if (!rawTabId) return '';
+  return TAB_ALIAS_MAP[pillarId]?.[rawTabId] || rawTabId;
+}
+
 /**
  * Generate a canonical admin URL based on pillar, tab, section, and extra args.
  */
@@ -59,7 +119,7 @@ export function buildAdminUrl(
   params.set('page', page);
 
   // Discard section if tabId is empty
-  let effectiveTab = tabId;
+  let effectiveTab = resolveCanonicalTabId(page, tabId);
   let effectiveSection = effectiveTab ? sectionId : '';
 
   // Validate tab and section against pillar schema if known
@@ -187,18 +247,21 @@ export function parseCurrentRoute(): {
 
   const urlTab = params.get('tab') || '';
   const urlSection = params.get('section') || '';
+  const canonicalUrlTab = resolveCanonicalTabId(page, urlTab);
 
-  let resolvedTab = urlTab;
+  let resolvedTab = canonicalUrlTab;
   let activeTab: RouteTab | undefined = undefined;
   let tabWasInvalid = false;
 
   if (pillar) {
-    if (urlTab) {
-      activeTab = pillar.tabs.find((t) => t.id === urlTab);
+    if (canonicalUrlTab) {
+      activeTab = pillar.tabs.find((t) => t.id === canonicalUrlTab);
       if (!activeTab) {
         tabWasInvalid = true;
         resolvedTab = pillar.default_tab || '';
         activeTab = pillar.tabs.find((t) => t.id === resolvedTab);
+      } else if (canonicalUrlTab !== urlTab) {
+        tabWasInvalid = true;
       }
     } else if (pillar.default_tab) {
       resolvedTab = pillar.default_tab;

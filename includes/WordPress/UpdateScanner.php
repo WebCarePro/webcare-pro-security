@@ -836,6 +836,9 @@ class UpdateScanner {
         if ($slug === '' || $version === '' || !class_exists('\\WebCareProScanner\\Firewall\\NistCveVaultSync')) {
             return;
         }
+        if (!\WebCareProScanner\Firewall\NistCveVaultSync::is_wpvulnerability_enabled()) {
+            return;
+        }
         $vulns = \WebCareProScanner\Firewall\NistCveVaultSync::fetch_wpvulnerability_for_component($slug, $name !== '' ? $name : $slug, $version, $type);
         if (empty($vulns)) {
             return;

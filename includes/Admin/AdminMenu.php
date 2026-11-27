@@ -204,7 +204,7 @@ class AdminMenu {
         elseif ($tab_param === 'forensics' || $tab_param === 'diagnostics') $active_tab = 'forensics';
         elseif ($tab_param === 'vault') $active_tab = 'vault';
         elseif ($tab_param === 'waf_logs' || $tab_param === 'bans-allow-lists' || $tab_param === 'cloudflare-waf-logs') $active_tab = 'waf_logs';
-        elseif (in_array($tab_param, ['firewall', 'waf-rules', 'rules', 'protection', 'vpatch', 'caf', 'adaptive', 'bots'], true)) $active_tab = 'firewall';
+        elseif (in_array($tab_param, ['firewall', 'waf-rules', 'rules', 'protection', 'vpatch', 'virtual-patches', 'caf', 'adaptive', 'bots', 'intel', 'threat-intel', 'threat_intel', 'drill', 'attack-test'], true)) $active_tab = 'firewall';
         elseif ($tab_param === 'auth' || $tab_param === '2fa') $active_tab = 'auth';
         elseif ($tab_param === 'notifications') $active_tab = 'notifications';
         elseif ($tab_param === 'activity_logs') $active_tab = 'activity_logs';
