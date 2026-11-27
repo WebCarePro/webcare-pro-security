@@ -765,7 +765,8 @@ final class ScanController extends AbstractApiController {
             $target = $scan_row ? ($scan_row['scan_target'] ?? 'plugins_themes') : 'plugins_themes';
         }
 
-        $all_deep_findings = [];
+        $all_deep_findings  = [];
+        $engine_diagnostics = [];
 
         $assert_lease_active = static function () use ($scan_id, $lease_token): void {
             if (!ScanLock::heartbeat($scan_id, $lease_token)) {
@@ -879,323 +880,105 @@ final class ScanController extends AbstractApiController {
                     }
                 }
 
-                // 1. Scan core files against repository versions for changes
-                if (!empty($custom_options['scan_core_integrity'])) {
-                    $core_integrity = new CoreIntegrity();
-                    $core_results = $core_integrity->verify((string) $scan_id);
-                    if (empty($custom_options['scan_unbundled_files'])) {
-                        $core_results = array_values(array_filter($core_results, static function ($f) {
-                            $arr = is_array($f) ? $f : $f->to_array();
-                            return ($arr['type'] ?? '') !== 'unknown_core_file';
-                        }));
-                    }
-                    $all_deep_findings = array_merge($all_deep_findings, $core_results);
-                }
-
-                // 2. Scan theme files against repository versions for changes
-                if (!empty($custom_options['scan_theme_integrity'])) {
-                    $theme_integrity = new ThemeIntegrity();
-                    $all_deep_findings = array_merge($all_deep_findings, $theme_integrity->verify((string) $scan_id));
-                }
-
-                // 3. Scan plugin files against repository versions for changes
-                if (!empty($custom_options['scan_plugin_integrity'])) {
-                    $plugin_integrity = new PluginIntegrity();
-                    $all_deep_findings = array_merge($all_deep_findings, $plugin_integrity->verify((string) $scan_id));
-                }
-
-                // 4. Scan wp-admin and wp-includes for files not bundled with WordPress
-                if (!empty($custom_options['scan_unbundled_files']) && empty($custom_options['scan_core_integrity'])) {
-                    $core_integrity = new CoreIntegrity();
-                    $core_results = $core_integrity->verify((string) $scan_id);
-                    $unbundled = array_filter($core_results, function ($f) {
-                        $arr = is_array($f) ? $f : $f->to_array();
-                        return in_array($arr['type'] ?? '', ['unknown_core_file'], true);
-                    });
-                    $all_deep_findings = array_merge($all_deep_findings, $unbundled);
-                }
-
-                // 4b. Deep Backdoor, Persistence, Hook, Cron, Snippet & Secret Exposure Audits
-                if (!empty($custom_options['scan_backdoors_heuristics'])) {
-                    try {
-                        $persistence = new PersistenceScanner();
-                        $all_deep_findings = array_merge($all_deep_findings, $persistence->scan((string) $scan_id));
-                    } catch (\Throwable $e) {}
-                    try {
-                        $hook_sentinel = new \WebCareProScanner\WordPress\HookInfiltrationSentinel();
-                        $all_deep_findings = array_merge($all_deep_findings, $hook_sentinel->scan((string) $scan_id));
-                    } catch (\Throwable $e) {}
-                    try {
-                        $cron_persist = new \WebCareProScanner\Database\CronPersistenceScanner();
-                        $all_deep_findings = array_merge($all_deep_findings, $cron_persist->scan((string) $scan_id));
-                    } catch (\Throwable $e) {}
-                    try {
-                        $snippet_auditor = new \WebCareProScanner\Database\SnippetCodeAuditor();
-                        $all_deep_findings = array_merge($all_deep_findings, $snippet_auditor->scan((string) $scan_id));
-                    } catch (\Throwable $e) {}
-                    try {
-                        $db_triggers = new DatabaseScanner();
-                        $all_deep_findings = array_merge($all_deep_findings, $db_triggers->scan_rogue_triggers((string) $scan_id));
-                    } catch (\Throwable $e) {}
-                }
-
-                // 4c. Scan loose files directly outside WordPress installation root (without recursing sibling vhosts)
-                if (!empty($custom_options['scan_outside_root'])) {
-                    $all_deep_findings = array_merge($all_deep_findings, self::audit_outside_root_loose_files((string) $scan_id, $custom_options));
-                }
-
-                // 5. Scan for publicly accessible configuration, backup, or log files + Credential Exposure
-                if (!empty($custom_options['scan_public_config'])) {
-                    $important_fim = new ImportantFileFIM();
-                    $all_deep_findings = array_merge($all_deep_findings, $important_fim->verify((string) $scan_id));
-                    $config_scanner = new \WebCareProScanner\WordPress\ConfigScanner();
-                    $all_deep_findings = array_merge($all_deep_findings, $config_scanner->scan((string) $scan_id));
-                    $exposed = self::audit_exposed_sensitive_files((string) $scan_id);
-                    $all_deep_findings = array_merge($all_deep_findings, $exposed);
-                    $all_deep_findings = array_merge($all_deep_findings, self::collect_silo_security_findings((string) $scan_id, true, false, false));
-                }
-
-                // 5b. FIM Vault Drift & Script Inventory Drift (when calibrated)
-                if (!empty($custom_options['scan_core_integrity']) || !empty($custom_options['scan_plugin_integrity']) || !empty($custom_options['scan_theme_integrity']) || !empty($custom_options['scan_malicious_urls'])) {
-                    $all_deep_findings = array_merge(
-                        $all_deep_findings,
-                        self::collect_silo_security_findings(
-                            (string) $scan_id,
-                            false,
-                            !empty($custom_options['scan_plugin_integrity']) || !empty($custom_options['scan_theme_integrity']),
-                            !empty($custom_options['scan_malicious_urls']) || !empty($custom_options['scan_backdoors_heuristics'])
-                        )
-                    );
-                }
-
-                // 6. Scan for publicly accessible quarantined files
-                if (!empty($custom_options['scan_public_quarantine'])) {
-                    $quarantine_exposure = self::audit_quarantine_exposure((string) $scan_id);
-                    $all_deep_findings = array_merge($all_deep_findings, $quarantine_exposure);
-                }
-
-                // 7. Scan for misconfigured visitor IP detection headers
-                if (!empty($custom_options['scan_ip_detection'])) {
-                    $ip_findings = self::audit_visitor_ip_detection((string) $scan_id);
-                    $all_deep_findings = array_merge($all_deep_findings, $ip_findings);
-                }
-
-                // 8. Scan posts & custom DB tables (including postmeta / Elementor) for dangerous URLs & content
-                if (!empty($custom_options['scan_posts_content'])) {
-                    $content_scanner = new ContentScanner();
-                    $all_deep_findings = array_merge($all_deep_findings, $content_scanner->scan_posts_only((string) $scan_id, 100));
-                    try {
-                        $table_scanner = new \WebCareProScanner\Database\TableScanner();
-                        foreach ($table_scanner->get_tables() as $tbl) {
-                            if (str_ends_with($tbl, 'options') || str_ends_with($tbl, 'comments')) {
-                                continue;
-                            }
-                            $batch_rows = $table_scanner->scan_table_batch($tbl, 0, 250, (string) $scan_id);
-                            if (!empty($batch_rows['findings'])) {
-                                $all_deep_findings = array_merge($all_deep_findings, $batch_rows['findings']);
-                            }
-                        }
-                    } catch (\Throwable $e) {}
-                }
-
-                // 9. Scan comments for known dangerous URLs and suspicious content
-                if (!empty($custom_options['scan_comments_content'])) {
-                    $content_scanner = new ContentScanner();
-                    $all_deep_findings = array_merge($all_deep_findings, $content_scanner->scan_comments_only((string) $scan_id, 100));
-                }
-
-                // 10. Scan WordPress core, plugin, and theme options
-                if (!empty($custom_options['scan_options_content'])) {
-                    $option_scanner = new \WebCareProScanner\Database\OptionScanner();
-                    $all_deep_findings = array_merge($all_deep_findings, $option_scanner->scan_options((string) $scan_id));
-                }
-
-                // 11. Scan for out of date, abandoned, and vulnerable plugins, themes, and WP
-                if (!empty($custom_options['scan_vulnerable_software'])) {
-                    $update_scanner = new UpdateScanner();
-                    $all_deep_findings = array_merge($all_deep_findings, $update_scanner->scan((string) $scan_id));
-                }
-
-                // 11b. NIST NVD CVE Vault Check (and background sync trigger if run headless/cron)
-                if (!empty($custom_options['scan_cve_vulnerabilities']) && class_exists('\\WebCareProScanner\\Firewall\\NistCveVaultSync')) {
-                    if (defined('DOING_CRON') && DOING_CRON) {
-                        \WebCareProScanner\Firewall\NistCveVaultSync::maybe_run_daily_sync();
-                    }
-                    $all_deep_findings = array_merge($all_deep_findings, \WebCareProScanner\Firewall\NistCveVaultSync::collect_vault_findings((string) $scan_id));
-                }
-
-                // 12. Scan for suspicious admin users created outside of WordPress (without leaking password checks)
-                if (!empty($custom_options['scan_rogue_admins'])) {
-                    $rogue_detector = new \WebCareProScanner\Database\RogueAdminAnomalyDetector();
-                    $all_deep_findings = array_merge($all_deep_findings, $rogue_detector->scan((string) $scan_id));
-                    $user_scanner = new UserScanner();
-                    $all_deep_findings = array_merge($all_deep_findings, $user_scanner->scan((string) $scan_id, true, $lease_token, false));
-                }
-
-                // 13. Check the strength of passwords
-                if (!empty($custom_options['scan_password_strength'])) {
-                    $pwd_findings = self::audit_password_strength((string) $scan_id);
-                    $all_deep_findings = array_merge($all_deep_findings, $pwd_findings);
-                }
-
-                // 14. Monitor disk space
-                if (!empty($custom_options['monitor_disk_space'])) {
-                    $disk_findings = self::audit_disk_space((string) $scan_id);
-                    $all_deep_findings = array_merge($all_deep_findings, $disk_findings);
-                }
-
-                // 15. Monitor Web Application Firewall status
-                if (!empty($custom_options['monitor_firewall_status'])) {
-                    $waf_findings = self::audit_waf_status((string) $scan_id);
-                    $all_deep_findings = array_merge($all_deep_findings, $waf_findings);
-                }
-
-                // 16. Scan images, binary, and other files as if they were executable
-                if (!empty($custom_options['scan_images_executable'])) {
-                    $uploads_scanner = new UploadsScanner();
-                    $all_deep_findings = array_merge($all_deep_findings, $uploads_scanner->scan((string) $scan_id));
-                }
-
-                // 17. Reputation Checks (Domain blocklist, spamvertised, spam IP)
-                if (!empty($custom_options['check_domain_blocklist']) || !empty($custom_options['check_spamvertised']) || !empty($custom_options['check_spam_ip'])) {
-                    $reputation_findings = self::audit_reputation_checks((string) $scan_id, $custom_options);
-                    $all_deep_findings = array_merge($all_deep_findings, $reputation_findings);
-                }
+                $all_deep_findings = array_merge(
+                    $all_deep_findings,
+                    self::execute_custom_deep_engines($scan_id, $custom_options, $lease_token, $engine_diagnostics, $assert_lease_active)
+                );
 
                 delete_option("webcareproscan_scan_opts_{$scan_id}");
             } elseif ($target === 'filesystem_only') {
                 // Filesystem-only scan: no additional deep audit engines needed
             } else {
-                // Full or plugins_themes: execute deep audit engines with heartbeat & fault isolation
+                // Full or plugins_themes: execute deep audit engines with heartbeat, fault isolation & diagnostic tracking
                 $assert_lease_active();
-                try {
+                self::run_isolated_audit_engine($scan_id, 'core_integrity', 'WordPress Core Integrity', static function () use ($scan_id) {
                     set_transient("webcareproscan_active_scan_file_{$scan_id}", 'Core Integrity: Verifying WordPress core files against official WP.org API checksums...', 120);
-                    $core_integrity = new CoreIntegrity();
-                    $all_deep_findings = array_merge($all_deep_findings, $core_integrity->verify((string) $scan_id));
-                } catch (\Throwable $e) {
-                    if ($e instanceof \WebCareProScanner\Scan\ScanLeaseLostException || str_contains(strtolower($e->getMessage()), 'lease')) {
-                        throw $e;
-                    }
-                }
+                    return (new CoreIntegrity())->verify((string) $scan_id);
+                }, $all_deep_findings, $engine_diagnostics);
 
-                try {
+                self::run_isolated_audit_engine($scan_id, 'important_fim', 'Important Files Integrity (FIM)', static function () use ($scan_id) {
                     set_transient("webcareproscan_active_scan_file_{$scan_id}", 'File Integrity: Checking critical system files (wp-config.php, .htaccess, index.php)...', 120);
-                    $important_fim = new ImportantFileFIM();
-                    $all_deep_findings = array_merge($all_deep_findings, $important_fim->verify((string) $scan_id));
-                } catch (\Throwable $e) {
-                    if ($e instanceof \WebCareProScanner\Scan\ScanLeaseLostException || str_contains(strtolower($e->getMessage()), 'lease')) {
-                        throw $e;
-                    }
-                }
+                    return (new ImportantFileFIM())->verify((string) $scan_id);
+                }, $all_deep_findings, $engine_diagnostics);
 
                 $assert_lease_active();
-                try {
+                self::run_isolated_audit_engine($scan_id, 'plugin_integrity', 'Plugin Integrity', static function () use ($scan_id) {
                     set_transient("webcareproscan_active_scan_file_{$scan_id}", 'Plugin Integrity: Verifying installed plugins against official WordPress.org checksums...', 120);
-                    $plugin_integrity = new PluginIntegrity();
-                    $all_deep_findings = array_merge($all_deep_findings, $plugin_integrity->verify((string) $scan_id));
-                } catch (\Throwable $e) {
-                    if ($e instanceof \WebCareProScanner\Scan\ScanLeaseLostException || str_contains(strtolower($e->getMessage()), 'lease')) {
-                        throw $e;
-                    }
-                }
+                    return (new PluginIntegrity())->verify((string) $scan_id);
+                }, $all_deep_findings, $engine_diagnostics);
 
                 $assert_lease_active();
-                try {
+                self::run_isolated_audit_engine($scan_id, 'theme_integrity', 'Theme Integrity', static function () use ($scan_id) {
                     set_transient("webcareproscan_active_scan_file_{$scan_id}", 'Theme Integrity: Verifying active and installed themes against repository checksums...', 120);
-                    $theme_integrity = new ThemeIntegrity();
-                    $all_deep_findings = array_merge($all_deep_findings, $theme_integrity->verify((string) $scan_id));
-                } catch (\Throwable $e) {
-                    if ($e instanceof \WebCareProScanner\Scan\ScanLeaseLostException || str_contains(strtolower($e->getMessage()), 'lease')) {
-                        throw $e;
-                    }
-                }
+                    return (new ThemeIntegrity())->verify((string) $scan_id);
+                }, $all_deep_findings, $engine_diagnostics);
 
                 $assert_lease_active();
-                try {
-                    $db_scanner = new DatabaseScanner();
-                    $all_deep_findings = array_merge($all_deep_findings, $db_scanner->scan((string) $scan_id, 100));
-                } catch (\Throwable $e) {
-                    if ($e instanceof \WebCareProScanner\Scan\ScanLeaseLostException || str_contains(strtolower($e->getMessage()), 'lease')) {
-                        throw $e;
-                    }
-                }
+                self::run_isolated_audit_engine($scan_id, 'database', 'Database & Persistence Scanner', static function () use ($scan_id) {
+                    return (new DatabaseScanner())->scan((string) $scan_id, 100);
+                }, $all_deep_findings, $engine_diagnostics);
 
                 $assert_lease_active();
-                try {
+                self::run_isolated_audit_engine($scan_id, 'content', 'Content & Post Scanner', static function () use ($scan_id) {
                     set_transient("webcareproscan_active_scan_file_{$scan_id}", 'Content & Post Scanner: Inspecting published posts and comments for hidden SEO spam and XSS...', 120);
-                    $content_scanner = new ContentScanner();
-                    $all_deep_findings = array_merge($all_deep_findings, $content_scanner->scan((string) $scan_id, 100));
-                } catch (\Throwable $e) {
-                    if ($e instanceof \WebCareProScanner\Scan\ScanLeaseLostException || str_contains(strtolower($e->getMessage()), 'lease')) {
-                        throw $e;
-                    }
-                }
+                    return (new ContentScanner())->scan((string) $scan_id, 100);
+                }, $all_deep_findings, $engine_diagnostics);
 
                 $assert_lease_active();
-                try {
+                self::run_isolated_audit_engine($scan_id, 'wp_security', 'User & Auth Sentinel', static function () use ($scan_id, $lease_token) {
                     set_transient("webcareproscan_active_scan_file_{$scan_id}", 'User & Auth Sentinel: Auditing user accounts, administrator privileges, and password strength...', 120);
-                    $wp_security = new WordPressSecurityScanner();
-                    $all_deep_findings = array_merge($all_deep_findings, $wp_security->scan((string) $scan_id, $lease_token));
-                } catch (\Throwable $e) {
-                    if ($e instanceof \WebCareProScanner\Scan\ScanLeaseLostException || str_contains(strtolower($e->getMessage()), 'lease')) {
-                        throw $e;
-                    }
-                }
+                    return (new WordPressSecurityScanner())->scan((string) $scan_id, $lease_token);
+                }, $all_deep_findings, $engine_diagnostics);
 
                 $assert_lease_active();
-                try {
+                self::run_isolated_audit_engine($scan_id, 'vulnerable_software', 'Software Updates & CVE Scanner', static function () use ($scan_id) {
                     set_transient("webcareproscan_active_scan_file_{$scan_id}", 'Vulnerability Intelligence: Checking installed plugins, themes, and WP Core against CVE database...', 120);
-                    $update_scanner = new UpdateScanner();
-                    $all_deep_findings = array_merge($all_deep_findings, $update_scanner->scan((string) $scan_id));
-                } catch (\Throwable $e) {
-                    if ($e instanceof \WebCareProScanner\Scan\ScanLeaseLostException || str_contains(strtolower($e->getMessage()), 'lease')) {
-                        throw $e;
-                    }
-                }
+                    return (new UpdateScanner())->scan((string) $scan_id);
+                }, $all_deep_findings, $engine_diagnostics);
 
                 $assert_lease_active();
-                try {
+                self::run_isolated_audit_engine($scan_id, 'uploads_audit', 'Media & Uploads Audit', static function () use ($scan_id) {
                     set_transient("webcareproscan_active_scan_file_{$scan_id}", 'Media & Uploads Audit: Inspecting image metadata and attachments for embedded PHP code...', 120);
-                    $uploads_scanner = new UploadsScanner();
-                    $all_deep_findings = array_merge($all_deep_findings, $uploads_scanner->scan((string) $scan_id));
-                } catch (\Throwable $e) {
-                    if ($e instanceof \WebCareProScanner\Scan\ScanLeaseLostException || str_contains(strtolower($e->getMessage()), 'lease')) {
-                        throw $e;
-                    }
-                }
+                    return (new UploadsScanner())->scan((string) $scan_id);
+                }, $all_deep_findings, $engine_diagnostics);
 
-                // Quick reputation check (skips if non-responsive or local)
-                try {
+                self::run_isolated_audit_engine($scan_id, 'reputation', 'Reputation & DNSBL Checks', static function () use ($scan_id) {
                     set_transient("webcareproscan_active_scan_file_{$scan_id}", 'Reputation Intel: Verifying domain blocklists, Google Safe Browsing, and spamvertising...', 120);
-                    $reputation_findings = self::audit_reputation_checks((string) $scan_id, [
+                    return self::audit_reputation_checks((string) $scan_id, [
                         'check_domain_blocklist' => true,
                         'check_spamvertised'     => true,
                         'check_spam_ip'          => true,
                     ]);
-                    $all_deep_findings = array_merge($all_deep_findings, $reputation_findings);
-                } catch (\Throwable $e) {
-                    if ($e instanceof \WebCareProScanner\Scan\ScanLeaseLostException || str_contains(strtolower($e->getMessage()), 'lease')) {
-                        throw $e;
-                    }
-                }
+                }, $all_deep_findings, $engine_diagnostics);
 
                 // System, Exposure, Vault CVE, Credential Leak, FIM Drift & Script Drift Audits on Complete Scans
                 if ($target === 'full') {
-                    try {
-                        $all_deep_findings = array_merge($all_deep_findings, self::audit_exposed_sensitive_files((string) $scan_id));
-                        $all_deep_findings = array_merge($all_deep_findings, self::audit_quarantine_exposure((string) $scan_id));
-                        $all_deep_findings = array_merge($all_deep_findings, self::audit_visitor_ip_detection((string) $scan_id));
-                        $all_deep_findings = array_merge($all_deep_findings, self::audit_disk_space((string) $scan_id));
-                        $all_deep_findings = array_merge($all_deep_findings, self::audit_waf_status((string) $scan_id));
-                        $all_deep_findings = array_merge($all_deep_findings, self::collect_silo_security_findings((string) $scan_id, true, true, true));
-                    } catch (\Throwable $e) {}
+                    self::run_isolated_audit_engine($scan_id, 'exposed_sensitive_files', 'Exposed Sensitive Files Audit', static fn() => self::audit_exposed_sensitive_files((string) $scan_id), $all_deep_findings, $engine_diagnostics);
+                    self::run_isolated_audit_engine($scan_id, 'quarantine_exposure', 'Quarantine Exposure Audit', static fn() => self::audit_quarantine_exposure((string) $scan_id), $all_deep_findings, $engine_diagnostics);
+                    self::run_isolated_audit_engine($scan_id, 'ip_detection', 'Reverse Proxy & IP Detection Audit', static fn() => self::audit_visitor_ip_detection((string) $scan_id), $all_deep_findings, $engine_diagnostics);
+                    self::run_isolated_audit_engine($scan_id, 'disk_space', 'Server Disk Space Monitor', static fn() => self::audit_disk_space((string) $scan_id), $all_deep_findings, $engine_diagnostics);
+                    self::run_isolated_audit_engine($scan_id, 'waf_status', 'Firewall Status Audit', static fn() => self::audit_waf_status((string) $scan_id), $all_deep_findings, $engine_diagnostics);
+
+                    $silo_errors = [];
+                    self::run_isolated_audit_engine(
+                        $scan_id,
+                        'silo_security',
+                        'Credentials, FIM & Script Drift Audit',
+                        static function () use ($scan_id, &$silo_errors) {
+                            return self::collect_silo_security_findings((string) $scan_id, true, true, true, $silo_errors);
+                        },
+                        $all_deep_findings,
+                        $engine_diagnostics,
+                        static fn(): ?string => !empty($silo_errors) ? implode('; ', $silo_errors) : null
+                    );
                 }
                 if (class_exists('\\WebCareProScanner\\Firewall\\NistCveVaultSync')) {
-                    try {
-                        $all_deep_findings = array_merge($all_deep_findings, \WebCareProScanner\Firewall\NistCveVaultSync::collect_vault_findings((string) $scan_id));
-                    } catch (\Throwable $e) {}
+                    self::run_isolated_audit_engine($scan_id, 'nist_cve_vault', 'NIST NVD CVE Vault Check', static fn() => \WebCareProScanner\Firewall\NistCveVaultSync::collect_vault_findings((string) $scan_id), $all_deep_findings, $engine_diagnostics);
                 }
             }
+
+            // Persist per-engine health/degradation diagnostics (even if all engines succeeded cleanly)
+            self::persist_scan_engine_diagnostics($scan_id, $engine_diagnostics);
 
             // Cross-engine Correlation
             $correlation = new CorrelationEngine();
@@ -1391,17 +1174,18 @@ final class ScanController extends AbstractApiController {
             }
 
             $completed_scan_row = [
-                'id'            => $scan_id,
-                'status'        => 'completed',
-                'issues_found'  => $open_issues_count,
-                'risk_score'    => $summary['score'],
-                'duration'      => $duration_sec,
-                'duration_ms'   => $duration_ms,
-                'scanned_files' => (int) ($scan_row['scanned_files'] ?? ($scan_row['total_files'] ?? 0)),
-                'total_files'   => (int) ($scan_row['total_files'] ?? 0),
-                'created_at'    => $scan_row['created_at'] ?? current_time('mysql'),
-                'started_at'    => $started_at_db,
-                'completed_at'  => $completed_at_exact,
+                'id'                 => $scan_id,
+                'status'             => 'completed',
+                'issues_found'       => $open_issues_count,
+                'risk_score'         => $summary['score'],
+                'duration'           => $duration_sec,
+                'duration_ms'        => $duration_ms,
+                'scanned_files'      => (int) ($scan_row['scanned_files'] ?? ($scan_row['total_files'] ?? 0)),
+                'total_files'        => (int) ($scan_row['total_files'] ?? 0),
+                'created_at'         => $scan_row['created_at'] ?? current_time('mysql'),
+                'started_at'         => $started_at_db,
+                'completed_at'       => $completed_at_exact,
+                'engine_diagnostics' => array_values($engine_diagnostics),
             ];
             $diagnostics = self::build_scan_diagnostics($completed_scan_row);
 
@@ -1796,6 +1580,13 @@ final class ScanController extends AbstractApiController {
                 \WebCareProScanner\Scan\ScanVaultManager::clear_historical_manifests($running_ids);
             }
 
+            // Clean up historical per-scan engine diagnostics options while preserving active scan(s)
+            $diag_like = $wpdb->esc_like('webcareproscan_scan_engine_diag_') . '%';
+            $preserve_names = array_map(static fn(int $rid): string => 'webcareproscan_scan_engine_diag_' . $rid, $running_ids);
+            $preserve_placeholders = implode(', ', array_fill(0, count($preserve_names), '%s'));
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare, PluginCheck.Security.DirectDB.UnescapedDBParameter
+            $wpdb->query($wpdb->prepare("DELETE FROM `{$wpdb->options}` WHERE option_name LIKE %s AND option_name NOT IN ({$preserve_placeholders})", ...array_merge([$diag_like], $preserve_names)));
+
             // Do NOT release lock because the scan is actively running!
             return rest_ensure_response([
                 'success'        => true,
@@ -1824,6 +1615,9 @@ final class ScanController extends AbstractApiController {
         if (class_exists('\\WebCareProScanner\\Scan\\ScanVaultManager')) {
             \WebCareProScanner\Scan\ScanVaultManager::clear_all_manifests();
         }
+        // Clean up persisted per-scan engine diagnostics options
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $wpdb->query($wpdb->prepare("DELETE FROM `{$wpdb->options}` WHERE option_name LIKE %s", $wpdb->esc_like('webcareproscan_scan_engine_diag_') . '%'));
 
         if (ScanLock::is_locked() && !ScanLock::force_release()) {
             return new \WP_Error(
@@ -2017,6 +1811,11 @@ final class ScanController extends AbstractApiController {
                 fwrite($output, "# Active Plugins (" . count($act_plugins) . "): {$act_plugins_str}\r\n");
                 // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
                 fwrite($output, "# Active Engines: " . ($diagnostics['engines_active'] ?? 23) . " Core Security Engines\r\n");
+                if (!empty($diagnostics['degraded_engines'])) {
+                    $deg_labels = implode(', ', array_map(static fn(array $d): string => (string) ($d['label'] ?? $d['engine'] ?? 'unknown'), $diagnostics['degraded_engines']));
+                    // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
+                    fwrite($output, "# Engine Diagnostics: DEGRADED ({$deg_labels})\r\n");
+                }
                 // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
                 fwrite($output, "# Exported: " . current_time('mysql') . "\r\n");
                 // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
@@ -2040,6 +1839,11 @@ final class ScanController extends AbstractApiController {
             fwrite($output, "# Database: {$db_info}\r\n");
             // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
             fwrite($output, "# Active Engines: " . ($diagnostics['engines_active'] ?? 23) . " Core Security Engines\r\n");
+            if (!empty($diagnostics['degraded_engines'])) {
+                $deg_labels = implode(', ', array_map(static fn(array $d): string => (string) ($d['label'] ?? $d['engine'] ?? 'unknown'), $diagnostics['degraded_engines']));
+                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
+                fwrite($output, "# Engine Diagnostics: DEGRADED ({$deg_labels})\r\n");
+            }
             // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
             fwrite($output, "# Exported: " . current_time('mysql') . "\r\n");
             // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
@@ -4018,6 +3822,7 @@ final class ScanController extends AbstractApiController {
                     'core_checksums_unavailable'     => __('WordPress Core Checksums Unavailable', 'webcare-pro-security'),
                     'theme_checksums_unavailable'    => __('Theme Checksums Unavailable', 'webcare-pro-security'),
                     'plugin_checksums_unavailable'   => __('Plugin Checksums Unavailable', 'webcare-pro-security'),
+                    'scan_engine_degraded'           => __('Scan Engine Incomplete / Degraded', 'webcare-pro-security'),
                 ];
 
                 if (!empty($item['type']) && isset($type_map[$item['type']])) {
@@ -4922,6 +4727,26 @@ final class ScanController extends AbstractApiController {
         $db_version = $wpdb ? $wpdb->db_version() : null;
         $db_name = defined('DB_NAME') ? DB_NAME : null;
 
+        $engine_diag_list = !empty($scan['engine_diagnostics']) && is_array($scan['engine_diagnostics'])
+            ? array_values($scan['engine_diagnostics'])
+            : self::load_scan_engine_diagnostics($scan_id);
+
+        $degraded_engines = [];
+        $completed_engines = 0;
+        foreach ($engine_diag_list as $ed) {
+            if (!is_array($ed)) {
+                continue;
+            }
+            $st = strtolower((string) ($ed['status'] ?? 'completed'));
+            if ($st === 'degraded' || $st === 'incomplete') {
+                $degraded_engines[] = $ed;
+            } else {
+                $completed_engines++;
+            }
+        }
+        $is_complete = empty($degraded_engines);
+        $engines_active = max(0, 24 - count($degraded_engines));
+
         return [
             'duration_seconds'       => round($duration_sec, 2),
             'duration_ms'            => $duration_ms,
@@ -4946,7 +4771,13 @@ final class ScanController extends AbstractApiController {
             'wordpress_version'      => get_bloginfo('version'),
             'ssl_active'             => is_ssl(),
             'opcache_status'         => $opcache_status,
-            'engines_active'         => 24,
+            'engines_active'         => $engines_active,
+            'engine_status'          => $is_complete ? 'complete' : 'degraded',
+            'is_complete'            => $is_complete,
+            'engines_completed'      => $completed_engines,
+            'engines_degraded'       => count($degraded_engines),
+            'degraded_engines'       => $degraded_engines,
+            'engine_diagnostics'     => $engine_diag_list,
         ];
     }
 
@@ -5181,13 +5012,390 @@ final class ScanController extends AbstractApiController {
     }
 
     /**
+     * Execute all enabled Custom Scan deep engines with fault isolation and diagnostic tracking.
+     *
+     * @param int $scan_id
+     * @param array $custom_options
+     * @param string $lease_token
+     * @param array $engine_diagnostics Populated by reference with per-engine completion/degradation state
+     * @param callable|null $assert_lease_active Optional lease heartbeat check callback
+     * @return list<\WebCareProScanner\Findings\Finding>
+     */
+    public static function execute_custom_deep_engines(
+        int $scan_id,
+        array $custom_options,
+        string $lease_token = '',
+        array &$engine_diagnostics = [],
+        ?callable $assert_lease_active = null
+    ): array {
+        $findings = [];
+        $heartbeat = $assert_lease_active ?? static function (): void {};
+
+        // 1. Scan core files against repository versions for changes
+        if (!empty($custom_options['scan_core_integrity'])) {
+            $heartbeat();
+            self::run_isolated_audit_engine($scan_id, 'core_integrity', 'WordPress Core Integrity', static function () use ($scan_id, $custom_options) {
+                $core_results = (new CoreIntegrity())->verify((string) $scan_id);
+                if (empty($custom_options['scan_unbundled_files'])) {
+                    $core_results = array_values(array_filter($core_results, static function ($f) {
+                        $arr = is_array($f) ? $f : $f->to_array();
+                        return ($arr['type'] ?? '') !== 'unknown_core_file';
+                    }));
+                }
+                return $core_results;
+            }, $findings, $engine_diagnostics);
+        }
+
+        // 2. Scan theme files against repository versions for changes
+        if (!empty($custom_options['scan_theme_integrity'])) {
+            $heartbeat();
+            self::run_isolated_audit_engine($scan_id, 'theme_integrity', 'Theme Integrity', static fn() => (new ThemeIntegrity())->verify((string) $scan_id), $findings, $engine_diagnostics);
+        }
+
+        // 3. Scan plugin files against repository versions for changes
+        if (!empty($custom_options['scan_plugin_integrity'])) {
+            $heartbeat();
+            self::run_isolated_audit_engine($scan_id, 'plugin_integrity', 'Plugin Integrity', static fn() => (new PluginIntegrity())->verify((string) $scan_id), $findings, $engine_diagnostics);
+        }
+
+        // 4. Scan wp-admin and wp-includes for files not bundled with WordPress
+        if (!empty($custom_options['scan_unbundled_files']) && empty($custom_options['scan_core_integrity'])) {
+            $heartbeat();
+            self::run_isolated_audit_engine($scan_id, 'unbundled_files', 'Unbundled Core Files', static function () use ($scan_id) {
+                $core_results = (new CoreIntegrity())->verify((string) $scan_id);
+                return array_values(array_filter($core_results, static function ($f) {
+                    $arr = is_array($f) ? $f : $f->to_array();
+                    return in_array($arr['type'] ?? '', ['unknown_core_file'], true);
+                }));
+            }, $findings, $engine_diagnostics);
+        }
+
+        // 4b. Deep Backdoor, Persistence, Hook, Cron, Snippet & Rogue Trigger Audits
+        if (!empty($custom_options['scan_backdoors_heuristics'])) {
+            $heartbeat();
+            self::run_isolated_audit_engine($scan_id, 'persistence', 'Persistence & MU-Plugin Sentinel', static fn() => (new PersistenceScanner())->scan((string) $scan_id), $findings, $engine_diagnostics);
+            self::run_isolated_audit_engine($scan_id, 'hook_sentinel', 'LotL Hook Infiltration Sentinel', static fn() => (new \WebCareProScanner\WordPress\HookInfiltrationSentinel())->scan((string) $scan_id), $findings, $engine_diagnostics);
+            self::run_isolated_audit_engine($scan_id, 'cron_persistence', 'WP-Cron Persistence Sentinel', static fn() => (new \WebCareProScanner\Database\CronPersistenceScanner())->scan((string) $scan_id), $findings, $engine_diagnostics);
+
+            $snippet_auditor = new \WebCareProScanner\Database\SnippetCodeAuditor();
+            self::run_isolated_audit_engine(
+                $scan_id,
+                'snippet_auditor',
+                'Database Snippet Auditor',
+                static fn() => $snippet_auditor->scan((string) $scan_id),
+                $findings,
+                $engine_diagnostics,
+                static fn(): ?string => $snippet_auditor->get_last_error()
+            );
+
+            $db_triggers = new DatabaseScanner();
+            self::run_isolated_audit_engine(
+                $scan_id,
+                'rogue_triggers',
+                'MySQL Trigger Persistence Audit',
+                static fn() => $db_triggers->scan_rogue_triggers((string) $scan_id),
+                $findings,
+                $engine_diagnostics,
+                static fn(): ?string => $db_triggers->get_last_trigger_error()
+            );
+        }
+
+        // 4c. Scan loose files directly outside WordPress installation root (without recursing sibling vhosts)
+        if (!empty($custom_options['scan_outside_root'])) {
+            self::run_isolated_audit_engine($scan_id, 'outside_root', 'Outside-Root Loose Files Audit', static fn() => self::audit_outside_root_loose_files((string) $scan_id, $custom_options), $findings, $engine_diagnostics);
+        }
+
+        // 5. Scan for publicly accessible configuration, backup, or log files + Credential Exposure
+        if (!empty($custom_options['scan_public_config'])) {
+            self::run_isolated_audit_engine($scan_id, 'important_fim', 'Critical Config File Integrity', static fn() => (new ImportantFileFIM())->verify((string) $scan_id), $findings, $engine_diagnostics);
+            self::run_isolated_audit_engine($scan_id, 'config_scanner', 'WordPress Configuration Audit', static fn() => (new \WebCareProScanner\WordPress\ConfigScanner())->scan((string) $scan_id), $findings, $engine_diagnostics);
+            self::run_isolated_audit_engine($scan_id, 'exposed_sensitive_files', 'Exposed Sensitive Files Audit', static fn() => self::audit_exposed_sensitive_files((string) $scan_id), $findings, $engine_diagnostics);
+
+            $cred_errors = [];
+            self::run_isolated_audit_engine(
+                $scan_id,
+                'credential_exposure',
+                'Plaintext Credential Exposure Audit',
+                static function () use ($scan_id, &$cred_errors) {
+                    return self::collect_silo_security_findings((string) $scan_id, true, false, false, $cred_errors);
+                },
+                $findings,
+                $engine_diagnostics,
+                static fn(): ?string => !empty($cred_errors) ? implode('; ', $cred_errors) : null
+            );
+        }
+
+        // 5b. FIM Vault Drift & Script Inventory Drift (when calibrated)
+        if (!empty($custom_options['scan_core_integrity']) || !empty($custom_options['scan_plugin_integrity']) || !empty($custom_options['scan_theme_integrity']) || !empty($custom_options['scan_malicious_urls'])) {
+            $drift_errors = [];
+            $inc_fim = !empty($custom_options['scan_plugin_integrity']) || !empty($custom_options['scan_theme_integrity']);
+            $inc_scr = !empty($custom_options['scan_malicious_urls']) || !empty($custom_options['scan_backdoors_heuristics']);
+            self::run_isolated_audit_engine(
+                $scan_id,
+                'silo_drift',
+                'FIM Vault & Script Inventory Drift Audit',
+                static function () use ($scan_id, $inc_fim, $inc_scr, &$drift_errors) {
+                    return self::collect_silo_security_findings((string) $scan_id, false, $inc_fim, $inc_scr, $drift_errors);
+                },
+                $findings,
+                $engine_diagnostics,
+                static fn(): ?string => !empty($drift_errors) ? implode('; ', $drift_errors) : null
+            );
+        }
+
+        // 6. Scan for publicly accessible quarantined files
+        if (!empty($custom_options['scan_public_quarantine'])) {
+            self::run_isolated_audit_engine($scan_id, 'public_quarantine', 'Quarantine Exposure Audit', static fn() => self::audit_quarantine_exposure((string) $scan_id), $findings, $engine_diagnostics);
+        }
+
+        // 7. Scan for misconfigured visitor IP detection headers
+        if (!empty($custom_options['scan_ip_detection'])) {
+            self::run_isolated_audit_engine($scan_id, 'ip_detection', 'Reverse Proxy & IP Detection Audit', static fn() => self::audit_visitor_ip_detection((string) $scan_id), $findings, $engine_diagnostics);
+        }
+
+        // 8. Scan posts & custom DB tables (including postmeta / Elementor) for dangerous URLs & content
+        if (!empty($custom_options['scan_posts_content'])) {
+            $heartbeat();
+            self::run_isolated_audit_engine($scan_id, 'posts_content', 'Posts & FSE Content Scanner', static fn() => (new ContentScanner())->scan_posts_only((string) $scan_id, 100), $findings, $engine_diagnostics);
+
+            $table_errors = [];
+            $table_incomplete = false;
+            self::run_isolated_audit_engine(
+                $scan_id,
+                'database_tables',
+                'Custom Database Tables Scanner',
+                static function () use ($scan_id, &$table_errors, &$table_incomplete) {
+                    $table_scanner = new \WebCareProScanner\Database\TableScanner();
+                    $monitor = class_exists('\\WebCareProScanner\\Resource\\ResourceMonitor')
+                        ? new \WebCareProScanner\Resource\ResourceMonitor(70, 20, 'balanced')
+                        : null;
+                    $res = $table_scanner->scan_all_custom_tables((string) $scan_id, 250, $monitor);
+                    $table_errors = is_array($res['errors'] ?? null) ? $res['errors'] : [];
+                    $table_incomplete = !empty($res['incomplete']);
+                    return is_array($res['findings'] ?? null) ? $res['findings'] : [];
+                },
+                $findings,
+                $engine_diagnostics,
+                static function () use (&$table_errors, &$table_incomplete): ?string {
+                    if (!empty($table_errors)) {
+                        return implode('; ', $table_errors);
+                    }
+                    return $table_incomplete ? 'Custom database table scan stopped early before inspecting all tables.' : null;
+                }
+            );
+        }
+
+        // 9. Scan comments for known dangerous URLs and suspicious content
+        if (!empty($custom_options['scan_comments_content'])) {
+            self::run_isolated_audit_engine($scan_id, 'comments_content', 'Comments Content Scanner', static fn() => (new ContentScanner())->scan_comments_only((string) $scan_id, 100), $findings, $engine_diagnostics);
+        }
+
+        // 10. Scan WordPress core, plugin, and theme options
+        if (!empty($custom_options['scan_options_content'])) {
+            self::run_isolated_audit_engine($scan_id, 'options_content', 'WordPress Options Scanner', static fn() => (new \WebCareProScanner\Database\OptionScanner())->scan_options((string) $scan_id), $findings, $engine_diagnostics);
+        }
+
+        // 11. Scan for out of date, abandoned, and vulnerable plugins, themes, and WP
+        if (!empty($custom_options['scan_vulnerable_software'])) {
+            self::run_isolated_audit_engine($scan_id, 'vulnerable_software', 'Software Updates & CVE Scanner', static fn() => (new UpdateScanner())->scan((string) $scan_id), $findings, $engine_diagnostics);
+        }
+
+        // 11b. NIST NVD CVE Vault Check (and background sync trigger if run headless/cron)
+        if (!empty($custom_options['scan_cve_vulnerabilities']) && class_exists('\\WebCareProScanner\\Firewall\\NistCveVaultSync')) {
+            self::run_isolated_audit_engine($scan_id, 'nist_cve_vault', 'NIST NVD CVE Vault Check', static function () use ($scan_id) {
+                if (defined('DOING_CRON') && DOING_CRON) {
+                    \WebCareProScanner\Firewall\NistCveVaultSync::maybe_run_daily_sync();
+                }
+                return \WebCareProScanner\Firewall\NistCveVaultSync::collect_vault_findings((string) $scan_id);
+            }, $findings, $engine_diagnostics);
+        }
+
+        // 12. Scan for suspicious admin users created outside of WordPress (without leaking password checks)
+        if (!empty($custom_options['scan_rogue_admins'])) {
+            self::run_isolated_audit_engine($scan_id, 'rogue_admins', 'Rogue Administrator Anomaly Audit', static function () use ($scan_id, $lease_token) {
+                $rogue_findings = (new \WebCareProScanner\Database\RogueAdminAnomalyDetector())->scan((string) $scan_id);
+                $user_findings  = (new UserScanner())->scan((string) $scan_id, true, $lease_token, false);
+                return array_merge($rogue_findings, $user_findings);
+            }, $findings, $engine_diagnostics);
+        }
+
+        // 13. Check the strength of passwords
+        if (!empty($custom_options['scan_password_strength'])) {
+            self::run_isolated_audit_engine($scan_id, 'password_strength', 'Password Strength Audit', static fn() => self::audit_password_strength((string) $scan_id), $findings, $engine_diagnostics);
+        }
+
+        // 14. Monitor disk space
+        if (!empty($custom_options['monitor_disk_space'])) {
+            self::run_isolated_audit_engine($scan_id, 'disk_space', 'Server Disk Space Monitor', static fn() => self::audit_disk_space((string) $scan_id), $findings, $engine_diagnostics);
+        }
+
+        // 15. Monitor Web Application Firewall status
+        if (!empty($custom_options['monitor_firewall_status'])) {
+            self::run_isolated_audit_engine($scan_id, 'waf_status', 'Firewall Status Audit', static fn() => self::audit_waf_status((string) $scan_id), $findings, $engine_diagnostics);
+        }
+
+        // 16. Scan images, binary, and other files as if they were executable
+        if (!empty($custom_options['scan_images_executable'])) {
+            self::run_isolated_audit_engine($scan_id, 'uploads_audit', 'Media & Uploads Executable Audit', static fn() => (new UploadsScanner())->scan((string) $scan_id), $findings, $engine_diagnostics);
+        }
+
+        // 17. Reputation Checks (Domain blocklist, spamvertised, spam IP)
+        if (!empty($custom_options['check_domain_blocklist']) || !empty($custom_options['check_spamvertised']) || !empty($custom_options['check_spam_ip'])) {
+            self::run_isolated_audit_engine($scan_id, 'reputation', 'Domain & IP Reputation Checks', static fn() => self::audit_reputation_checks((string) $scan_id, $custom_options), $findings, $engine_diagnostics);
+        }
+
+        return $findings;
+    }
+
+    /**
+     * Execute a single deep-audit engine with fault isolation, sanitized operational logging,
+     * and degraded/incomplete diagnostic emission so failed checks never masquerade as clean passes.
+     */
+    private static function run_isolated_audit_engine(
+        int $scan_id,
+        string $engine_key,
+        string $engine_label,
+        callable $runner,
+        array &$all_findings,
+        array &$engine_diagnostics,
+        ?callable $error_inspector = null
+    ): void {
+        try {
+            $result = $runner();
+            if (is_array($result) && !empty($result)) {
+                $all_findings = array_merge($all_findings, $result);
+            }
+
+            $degraded_reason = ($error_inspector !== null) ? $error_inspector() : null;
+            if (is_string($degraded_reason) && trim($degraded_reason) !== '') {
+                $sanitized_reason = self::sanitize_diagnostic_reason($degraded_reason);
+                self::record_degraded_engine_diagnostic($scan_id, $engine_key, $engine_label, $sanitized_reason, $all_findings, $engine_diagnostics, 'incomplete');
+                return;
+            }
+
+            $engine_diagnostics[$engine_key] = [
+                'engine'         => $engine_key,
+                'label'          => $engine_label,
+                'status'         => 'completed',
+                'findings_count' => is_array($result) ? count($result) : 0,
+                'timestamp'      => gmdate('Y-m-d\TH:i:s\Z'),
+            ];
+        } catch (\Throwable $e) {
+            if ($e instanceof \WebCareProScanner\Scan\ScanLeaseLostException || str_contains(strtolower($e->getMessage()), 'lease')) {
+                throw $e;
+            }
+
+            $short_class = (new \ReflectionClass($e))->getShortName();
+            $raw_reason  = $short_class . ': ' . $e->getMessage();
+            $sanitized_reason = self::sanitize_diagnostic_reason($raw_reason);
+            self::record_degraded_engine_diagnostic($scan_id, $engine_key, $engine_label, $sanitized_reason, $all_findings, $engine_diagnostics, 'degraded');
+        }
+    }
+
+    /**
+     * Sanitize an operational diagnostic reason for safe storage and administrator display.
+     */
+    private static function sanitize_diagnostic_reason(string $raw_reason): string {
+        $clean = sanitize_text_field($raw_reason);
+        $clean = str_replace(["\r", "\n", "\t"], ' ', $clean);
+        if (defined('ABSPATH')) {
+            $clean = str_replace(wp_normalize_path(ABSPATH), '[ABSPATH]/', wp_normalize_path($clean));
+        }
+        $clean = trim((string) preg_replace('/\s+/', ' ', $clean));
+        if ($clean === '') {
+            return 'Unexpected engine execution failure';
+        }
+        return substr($clean, 0, 180);
+    }
+
+    /**
+     * Record a degraded/incomplete engine diagnostic operationally, update per-scan telemetry,
+     * and emit a non-clean diagnostic Finding so an incomplete scan never appears as a clean pass.
+     */
+    private static function record_degraded_engine_diagnostic(
+        int $scan_id,
+        string $engine_key,
+        string $engine_label,
+        string $sanitized_reason,
+        array &$all_findings,
+        array &$engine_diagnostics,
+        string $status = 'degraded'
+    ): void {
+        if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+            try {
+                \WebCareProScanner\System\AuditLogger::log_operational('scan_engine_degraded', [
+                    'scan_id' => $scan_id,
+                    'engine'  => $engine_key,
+                    'label'   => $engine_label,
+                    'status'  => $status,
+                    'reason'  => $sanitized_reason,
+                ]);
+            } catch (\Throwable $ignore) {}
+        }
+
+        $engine_diagnostics[$engine_key] = [
+            'engine'    => $engine_key,
+            'label'     => $engine_label,
+            'status'    => $status,
+            'reason'    => $sanitized_reason,
+            'timestamp' => gmdate('Y-m-d\TH:i:s\Z'),
+        ];
+
+        $all_findings[] = new \WebCareProScanner\Findings\Finding([
+            'engine'       => 'scan-diagnostics',
+            'type'         => 'scan_engine_degraded',
+            'severity'     => 'info',
+            'confidence'   => 100,
+            'file_path'    => "engine:{$engine_key}",
+            'description'  => sprintf(
+                '%s could not complete (%s). Inspection coverage for this check is incomplete.',
+                $engine_label,
+                $sanitized_reason
+            ),
+            'evidence'     => wp_json_encode([
+                'incomplete' => true,
+                'engine'     => $engine_key,
+                'label'      => $engine_label,
+                'status'     => $status,
+                'reason'     => $sanitized_reason,
+            ]),
+            'code_snippet' => "Engine Status: " . strtoupper($status) . " ({$engine_label})",
+        ]);
+    }
+
+    /**
+     * Persist per-scan engine diagnostics for later inspection in latest/history/export endpoints.
+     */
+    private static function persist_scan_engine_diagnostics(int $scan_id, array $engine_diagnostics): void {
+        if ($scan_id <= 0) {
+            return;
+        }
+        $list = array_values($engine_diagnostics);
+        update_option("webcareproscan_scan_engine_diag_{$scan_id}", $list, false);
+    }
+
+    /**
+     * Load persisted per-scan engine diagnostics for a scan ID.
+     */
+    private static function load_scan_engine_diagnostics(int $scan_id): array {
+        if ($scan_id <= 0) {
+            return [];
+        }
+        $stored = get_option("webcareproscan_scan_engine_diag_{$scan_id}", []);
+        return is_array($stored) ? array_values($stored) : [];
+    }
+
+    /**
      * Collect findings from previously siloed security engines (CredentialExposureScanner, FimDriftDetector, ScriptInventoryMonitor).
+     *
+     * @param list<string> $errors Populated by reference with sanitized errors if any silo engine fails
      */
     public static function collect_silo_security_findings(
         string $scan_id,
         bool $include_credentials = true,
         bool $include_fim_drift = true,
-        bool $include_script_drift = true
+        bool $include_script_drift = true,
+        array &$errors = []
     ): array {
         $findings = [];
 
@@ -5208,7 +5416,9 @@ final class ScanController extends AbstractApiController {
                         'evidence'     => wp_json_encode($cf),
                     ]);
                 }
-            } catch (\Throwable $e) {}
+            } catch (\Throwable $e) {
+                $errors[] = 'CredentialExposureScanner: ' . self::sanitize_diagnostic_reason($e->getMessage());
+            }
         }
 
         // 2. Calibrated FIM Vault Drift (catches tampered premium/custom plugins & themes without WP.org checksums)
@@ -5237,7 +5447,9 @@ final class ScanController extends AbstractApiController {
                         ]);
                     }
                 }
-            } catch (\Throwable $e) {}
+            } catch (\Throwable $e) {
+                $errors[] = 'FimDriftDetector: ' . self::sanitize_diagnostic_reason($e->getMessage());
+            }
         }
 
         // 3. Third-Party Checkout / Auth Script Inventory Drift (Magecart SRI/domain drift)
@@ -5262,7 +5474,9 @@ final class ScanController extends AbstractApiController {
                         ]);
                     }
                 }
-            } catch (\Throwable $e) {}
+            } catch (\Throwable $e) {
+                $errors[] = 'ScriptInventoryMonitor: ' . self::sanitize_diagnostic_reason($e->getMessage());
+            }
         }
 
         return $findings;

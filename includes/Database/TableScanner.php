@@ -10,6 +10,7 @@ if (!defined('ABSPATH')) {
 class TableScanner {
 
     private $serialized_scanner;
+    private ?string $last_error = null;
 
     // High risk injection patterns for database text columns
     private $patterns = [
@@ -50,14 +51,29 @@ class TableScanner {
     }
 
     /**
+     * Return the last sanitized database/runtime error observed by TableScanner, if any.
+     */
+    public function get_last_error(): ?string {
+        return $this->last_error;
+    }
+
+    /**
      * Get all tables in the current WordPress database.
      *
      * @return array List of table names
      */
     public function get_tables() {
         global $wpdb;
+        $this->last_error = null;
+        if (isset($wpdb->last_error)) {
+            $wpdb->last_error = '';
+        }
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
         $tables = $wpdb->get_col("SHOW TABLES");
+        if (!empty($wpdb->last_error)) {
+            $this->last_error = substr(sanitize_text_field((string) $wpdb->last_error), 0, 180);
+            return [];
+        }
         if (!is_array($tables)) {
             return [];
         }
@@ -69,13 +85,14 @@ class TableScanner {
     }
 
     /**
-     * Get all text-like columns for a table and identify primary key.
+     * Get all text-like columns for a table and identify a single-column integer primary key for safe keyset pagination.
      *
      * @param string $table
      * @return array ['columns' => [...], 'primary_key' => string|null]
      */
     public function get_table_metadata($table) {
         global $wpdb;
+        $this->last_error = null;
         $columns = [];
         $primary_key = null;
 
@@ -84,18 +101,26 @@ class TableScanner {
             return ['columns' => [], 'primary_key' => null];
         }
 
+        if (isset($wpdb->last_error)) {
+            $wpdb->last_error = '';
+        }
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
         $cols_info = $wpdb->get_results("SHOW COLUMNS FROM `{$table}`");
+        if (!empty($wpdb->last_error)) {
+            $this->last_error = substr(sanitize_text_field((string) $wpdb->last_error), 0, 180);
+            return ['columns' => [], 'primary_key' => null];
+        }
         if (empty($cols_info)) {
             return ['columns' => [], 'primary_key' => null];
         }
 
         $text_types = ['varchar', 'text', 'tinytext', 'mediumtext', 'longtext', 'json'];
+        $pri_cols = [];
 
         foreach ($cols_info as $col) {
-            $type = strtolower($col->Type);
-            if ($col->Key === 'PRI' && $primary_key === null) {
-                $primary_key = $col->Field;
+            $type = strtolower((string) ($col->Type ?? ''));
+            if (($col->Key ?? '') === 'PRI') {
+                $pri_cols[] = ['field' => (string) $col->Field, 'type' => $type];
             }
 
             foreach ($text_types as $text_type) {
@@ -104,6 +129,12 @@ class TableScanner {
                     break;
                 }
             }
+        }
+
+        // Only use keyset pagination (WHERE pk > %d) for single-column integer primary keys;
+        // composite or string/UUID primary keys fall back safely to LIMIT/OFFSET.
+        if (count($pri_cols) === 1 && preg_match('/\b(?:tiny|small|medium|big)?int\b/i', $pri_cols[0]['type'])) {
+            $primary_key = $pri_cols[0]['field'];
         }
 
         return [
@@ -125,9 +156,10 @@ class TableScanner {
      */
     public function scan_table_batch($table, $columns, $primary_key, $last_id = 0, $batch_size = 100, $scan_id = '') {
         global $wpdb;
+        $this->last_error = null;
         $findings = [];
 
-        if (empty($columns) || !preg_match('/^[a-zA-Z0-9_]+$/', $table)) {
+        if (empty($columns) || !is_array($columns) || !preg_match('/^[a-zA-Z0-9_]+$/', (string) $table)) {
             return ['findings' => [], 'rows_scanned' => 0, 'next_cursor' => null];
         }
 
@@ -148,8 +180,15 @@ class TableScanner {
             $sql = $wpdb->prepare($raw_query, $batch_size, $last_id);
         }
 
+        if (isset($wpdb->last_error)) {
+            $wpdb->last_error = '';
+        }
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.NotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
         $rows = $wpdb->get_results($sql, ARRAY_A);
+        if (!empty($wpdb->last_error)) {
+            $this->last_error = substr(sanitize_text_field((string) $wpdb->last_error), 0, 180);
+            return ['findings' => [], 'rows_scanned' => 0, 'next_cursor' => null];
+        }
         if (empty($rows)) {
             return ['findings' => [], 'rows_scanned' => 0, 'next_cursor' => null];
         }
@@ -241,7 +280,7 @@ class TableScanner {
                     foreach ($this->patterns as $rule_key => $rule) {
                         // In legitimate custom-code storage / Elementor JSON, still catch ALL exploit payloads including 2026 ClickFix, EtherHiding, skimmers, and external untrusted script tags!
                         if ($is_custom_code_storage && in_array($rule_key, ['script_tag_injection', 'iframe_injection'], true)) {
-                            $has_exploit = preg_match('/(eval\s*\(|base64_decode\s*\(|document\.write\s*\(|String\.fromCharCode|\bwindow\[[\'"]ev|fetch\s*\(\s*[\'"]https?:|new\s+Function\s*\(|atob\s*\(|navigator\.clipboard|clipboardData\.setData|execCommand\s*\(\s*[\'"]copy|eth_call|JsonRpcProvider|bsc-dataseed|readContract|navigator\.sendBeacon|<script\b[^>]*\bsrc\s*=\s*[\'"](?:https?:)?\/\/)/i', $str);
+                            $has_exploit = preg_match('/(eval\s*\(|base64_decode\s*\(|document\.write\s*\(|String\.fromCharCode|\bwindow\[[\'"]ev|fetch\s*\(\s*[\'"]https?:|new\s+Function\s*\(|atob\s*\(|navigator\.clipboard|clipboardData\.setData|execCommand\s*\(\s*[\'"]copy|eth_call|JsonRpcProvider|bsc-dataseed|readContract|navigator\.sendBeacon|<script\b[^>]*\bsrc\s*=\s*(?:["\']\s*)?(?:https?:)?\/\/)/i', $str);
                             if (!$has_exploit) {
                                 continue;
                             }
@@ -270,9 +309,10 @@ class TableScanner {
                                     }
                                 }
 
-                                // Strict hostname verification ONLY on external <script src="..."> (NEVER skip inline scripts just because a comment mentions a CDN or MutationObserver!)
-                                if (preg_match('/^<script\b[^>]*\bsrc\s*=\s*["\']((?:https?:)?\/\/[^"\'\s>]+)["\'][^>]*>\s*<\/script>$/is', trim($matches[0]), $src_m)) {
-                                    $src_url = str_starts_with($src_m[1], '//') ? 'https:' . $src_m[1] : $src_m[1];
+                                // Strict hostname verification ONLY on external <script src=...> (supports quoted & unquoted attributes; NEVER skip inline scripts just because a comment mentions a CDN or MutationObserver!)
+                                if (preg_match('/^<script\b[^>]*\bsrc\s*=\s*(?:"((?:https?:)?\/\/[^"\s>]+)"|\'((?:https?:)?\/\/[^\'\s>]+)\'|((?:https?:)?\/\/[^\s"\'=<>`]+))[^>]*>\s*<\/script>$/is', trim($matches[0]), $src_m)) {
+                                    $raw_src = $src_m[1] !== '' ? $src_m[1] : ($src_m[2] !== '' ? $src_m[2] : ($src_m[3] ?? ''));
+                                    $src_url = str_starts_with($raw_src, '//') ? 'https:' . $raw_src : $raw_src;
                                     $src_host = strtolower((string) wp_parse_url($src_url, PHP_URL_HOST));
                                     $trusted_hosts = [
                                         'googletagmanager.com', 'www.googletagmanager.com', 'www.google-analytics.com', 'ssl.google-analytics.com',
@@ -316,12 +356,120 @@ class TableScanner {
         // If no primary key was used, increment offset
         if (!$primary_key) {
             $next_cursor = $last_id + $rows_scanned;
+        } elseif ($next_cursor !== null && $next_cursor <= (int) $last_id) {
+            $next_cursor = null;
         }
 
         return [
             'findings'     => $findings,
             'rows_scanned' => $rows_scanned,
             'next_cursor'  => $rows_scanned < $batch_size ? null : $next_cursor
+        ];
+    }
+
+    /**
+     * Scan all custom and secondary WordPress tables across every row batch.
+     * Excludes core options/comments tables (covered by OptionScanner/CommentScanner)
+     * and user-excluded tables, while returning structured errors/incompleteness diagnostics.
+     *
+     * @param string $scan_id
+     * @param int $batch_size
+     * @param \WebCareProScanner\Resource\ResourceMonitor|null $monitor
+     * @return array{findings: Finding[], tables_scanned: int, rows_scanned: int, incomplete: bool, errors: list<string>}
+     */
+    public function scan_all_custom_tables(string $scan_id = '', int $batch_size = 250, ?\WebCareProScanner\Resource\ResourceMonitor $monitor = null): array {
+        global $wpdb;
+        $findings = [];
+        $errors = [];
+        $incomplete = false;
+        $tables_scanned = 0;
+        $rows_scanned = 0;
+        $batch_size = max(1, $batch_size);
+
+        $tables = $this->get_tables();
+        if ($this->last_error !== null) {
+            $errors[] = 'SHOW TABLES failed: ' . $this->last_error;
+            return [
+                'findings'       => [],
+                'tables_scanned' => 0,
+                'rows_scanned'   => 0,
+                'incomplete'     => true,
+                'errors'         => $errors,
+            ];
+        }
+
+        $base_prefix = !empty($wpdb->base_prefix) ? (string) $wpdb->base_prefix : (string) ($wpdb->prefix ?? 'wp_');
+        $quoted_base = preg_quote($base_prefix, '/');
+
+        foreach ($tables as $tbl) {
+            if ($monitor !== null && $monitor->is_nearing_limits()) {
+                $incomplete = true;
+                $errors[] = 'Custom table scan yielded early due to PHP memory/resource limit.';
+                break;
+            }
+
+            // Skip WordPress core options & comments tables (audited by OptionScanner & CommentScanner)
+            if (preg_match('/^' . $quoted_base . '(?:\d+_)?(?:options|comments)$/i', (string) $tbl) === 1) {
+                continue;
+            }
+
+            if (class_exists('\\WebCareProScanner\\System\\SettingsManager') && \WebCareProScanner\System\SettingsManager::is_table_excluded((string) $tbl)) {
+                continue;
+            }
+
+            $meta = $this->get_table_metadata((string) $tbl);
+            if ($this->last_error !== null) {
+                $incomplete = true;
+                $errors[] = sprintf('%s metadata error: %s', (string) $tbl, $this->last_error);
+                continue;
+            }
+            if (empty($meta['columns'])) {
+                continue;
+            }
+
+            $tables_scanned++;
+            $cursor = 0;
+            while ($cursor !== null) {
+                if ($monitor !== null && $monitor->throttle_and_check()) {
+                    $incomplete = true;
+                    $errors[] = sprintf('Custom table scan paused at %s due to resource ceiling.', (string) $tbl);
+                    break 2;
+                }
+
+                $batch_res = $this->scan_table_batch(
+                    (string) $tbl,
+                    $meta['columns'],
+                    $meta['primary_key'],
+                    $cursor,
+                    $batch_size,
+                    $scan_id
+                );
+
+                if ($this->last_error !== null) {
+                    $incomplete = true;
+                    $errors[] = sprintf('%s batch error: %s', (string) $tbl, $this->last_error);
+                    break;
+                }
+
+                $rows_scanned += (int) ($batch_res['rows_scanned'] ?? 0);
+                if (!empty($batch_res['findings'])) {
+                    $findings = array_merge($findings, $batch_res['findings']);
+                }
+
+                $next = $batch_res['next_cursor'] ?? null;
+                if ($next === null || (int) $next <= $cursor) {
+                    break;
+                }
+                $cursor = (int) $next;
+            }
+        }
+
+        return [
+            'findings'       => $findings,
+            'tables_scanned' => $tables_scanned,
+            'rows_scanned'   => $rows_scanned,
+            'incomplete'     => $incomplete,
+            'errors'         => $errors,
         ];
     }
 }

@@ -9,6 +9,38 @@ if (!defined('ABSPATH')) {
     define('ABSPATH', sys_get_temp_dir() . '/wp-mock/');
 }
 
+if (!defined('WP_CONTENT_DIR')) {
+    define('WP_CONTENT_DIR', rtrim(ABSPATH, '/\\') . '/wp-content');
+}
+
+if (!defined('WPMU_PLUGIN_DIR')) {
+    define('WPMU_PLUGIN_DIR', WP_CONTENT_DIR . '/mu-plugins');
+}
+
+if (!defined('WP_PLUGIN_DIR')) {
+    define('WP_PLUGIN_DIR', WP_CONTENT_DIR . '/plugins');
+}
+
+if (!function_exists('human_time_diff')) {
+    function human_time_diff(int $from, int $to = 0): string {
+        $to = $to ?: time();
+        $diff = abs($to - $from);
+        if ($diff < 60) {
+            return $diff . ' secs';
+        }
+        if ($diff < 3600) {
+            return max(1, (int) round($diff / 60)) . ' mins';
+        }
+        return max(1, (int) round($diff / 3600)) . ' hours';
+    }
+}
+
+if (!function_exists('_get_cron_array')) {
+    function _get_cron_array(): array|false {
+        return $GLOBALS['wp_mock_cron_array'] ?? ($GLOBALS['wp_mock_options']['cron'] ?? []);
+    }
+}
+
 if (!defined('MINUTE_IN_SECONDS')) {
     define('MINUTE_IN_SECONDS', 60);
 }

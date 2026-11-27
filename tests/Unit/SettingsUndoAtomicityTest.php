@@ -782,7 +782,7 @@ final class SettingsUndoAtomicityTest extends TestCase
             $this->assertSame(60, (int) $reset['waf_log_retention_days']);
             $this->assertSame(60, (int) get_option(\WebCareProScanner\Firewall\WafFileLogger::RETENTION_OPTION));
             $this->assertSame(
-                ['retention_days' => 30, 'tamper_webhook_url' => ''],
+                ['retention_days' => 7, 'tamper_webhook_url' => ''],
                 get_option('webcareproscan_activity_log_settings')
             );
             $this->assertFalse(

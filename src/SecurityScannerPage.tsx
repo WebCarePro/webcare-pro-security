@@ -263,6 +263,8 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
       iss.engine === 'system-storage' ||
       iss.engine === 'reputation' ||
       iss.engine === 'nist-cve' ||
+      iss.engine === 'scan-diagnostics' ||
+      iss.type === 'scan_engine_degraded' ||
       iss.type === 'reverse_proxy_misconfigured' ||
       iss.type === 'plugin_checksums_unavailable' ||
       iss.type === 'theme_checksums_unavailable' ||
@@ -277,6 +279,7 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
       iss.file_path.startsWith('system:') ||
       iss.file_path.startsWith('firewall:') ||
       iss.file_path.startsWith('cve:') ||
+      iss.file_path.startsWith('engine:') ||
       iss.file_path.startsWith('db:') ||
       iss.file_path.startsWith('table:') ||
       iss.file_path.startsWith('user:') ||
@@ -1368,20 +1371,38 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
                 PHP {currentScan.diagnostics?.php_version || '8.3.36'} ({currentScan.diagnostics?.php_sapi || 'fpm-fcgi'})
               </span>
 
-              <span className="webcare-ribbon-engines-pill" style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '5px',
-                padding: '3px 10px',
-                borderRadius: '6px',
-                background: 'rgba(16, 185, 129, 0.08)',
-                color: '#059669',
-                border: '1px solid rgba(16, 185, 129, 0.2)',
-                fontWeight: 600
-              }}>
-                <ShieldCheck size={11} color="#10b981" />
-                {currentScan.diagnostics?.engines_active || 23} Engines Active
-              </span>
+              {currentScan.diagnostics?.engine_status === 'degraded' && Array.isArray(currentScan.diagnostics?.degraded_engines) && currentScan.diagnostics.degraded_engines.length > 0 ? (
+                <span
+                  className="webcare-badge-pill webcare-badge-warn"
+                  title={currentScan.diagnostics.degraded_engines.map((d: any) => `${d.label || d.engine}: ${d.reason || d.status}`).join(' | ')}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '5px',
+                    padding: '3px 10px',
+                    borderRadius: '6px',
+                    fontWeight: 700
+                  }}
+                >
+                  <AlertTriangle size={11} />
+                  {currentScan.diagnostics.degraded_engines.length} Engine{currentScan.diagnostics.degraded_engines.length === 1 ? '' : 's'} Degraded
+                </span>
+              ) : (
+                <span className="webcare-ribbon-engines-pill" style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '5px',
+                  padding: '3px 10px',
+                  borderRadius: '6px',
+                  background: 'rgba(16, 185, 129, 0.08)',
+                  color: '#059669',
+                  border: '1px solid rgba(16, 185, 129, 0.2)',
+                  fontWeight: 600
+                }}>
+                  <ShieldCheck size={11} color="#10b981" />
+                  {currentScan.diagnostics?.engines_active || 24} Engines Active
+                </span>
+              )}
 
               <button
                 type="button"
@@ -1793,6 +1814,34 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
           </div>
         )}
 
+        {/* Degraded / Incomplete Engine Diagnostic Banner */}
+        {currentScan?.diagnostics?.engine_status === 'degraded' && Array.isArray(currentScan?.diagnostics?.degraded_engines) && currentScan.diagnostics.degraded_engines.length > 0 && (
+          <div
+            className="webcare-badge-warn"
+            style={{
+              margin: '16px 20px 0',
+              padding: '12px 16px',
+              borderRadius: '10px',
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: '12px'
+            }}
+          >
+            <AlertTriangle size={18} style={{ flexShrink: 0, marginTop: '2px' }} />
+            <div style={{ fontSize: '12.5px', lineHeight: 1.5 }}>
+              <strong>
+                Scan Completed With Incomplete Engine Coverage ({currentScan.diagnostics.degraded_engines.length} Degraded Engine{currentScan.diagnostics.degraded_engines.length === 1 ? '' : 's'})
+              </strong>
+              <div style={{ marginTop: '4px' }}>
+                One or more deep-audit engines could not finish cleanly and are NOT marked as clean:{' '}
+                {currentScan.diagnostics.degraded_engines
+                  .map((d: any) => `${d.label || d.engine} (${d.reason || d.status || 'degraded'})`)
+                  .join(' • ')}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* =========================================================
             SUBTAB 1: FINDINGS HUB (SIMPLE VIEW VS TECHNICAL VIEW)
             ========================================================= */}
@@ -1801,20 +1850,28 @@ export const SecurityScannerPage: React.FC<SecurityScannerPageProps> = ({
             {filteredIssues.length === 0 ? (
               <div className="webcare-empty-state-clean">
                 <div className="webcare-empty-state-icon-wrap">
-                  <ShieldCheck size={36} color="#10b981" />
+                  {currentScan?.diagnostics?.engine_status === 'degraded' ? (
+                    <AlertTriangle size={36} color="#d97706" />
+                  ) : (
+                    <ShieldCheck size={36} color="#10b981" />
+                  )}
                 </div>
                 <h4 className="webcare-empty-state-title">
                   {uniqueIssues.length === 0
-                    ? (currentScan?.completed_at && !scanning
-                        ? 'All Clear · Your Website Looks Great & Protected'
-                        : 'No Findings Recorded')
+                    ? (currentScan?.diagnostics?.engine_status === 'degraded'
+                        ? 'Scan Incomplete · Review Degraded Engine Diagnostics'
+                        : (currentScan?.completed_at && !scanning
+                            ? 'All Clear · Your Website Looks Great & Protected'
+                            : 'No Findings Recorded'))
                     : 'No Findings Match Active Filters'}
                 </h4>
                 <p className="webcare-empty-state-desc">
                   {uniqueIssues.length === 0
-                    ? (currentScan?.completed_at && !scanning
-                        ? 'Zero active webshells, backdoor code, unauthorized scripts, or database injections detected. All core files and active components satisfy official security benchmarks.'
-                        : 'Run a security check to inspect your core files, themes, and plugins for potential vulnerabilities.')
+                    ? (currentScan?.diagnostics?.engine_status === 'degraded'
+                        ? 'At least one audit engine encountered a database or runtime error and could not complete inspection. Check the diagnostic banner above and re-run the scan.'
+                        : (currentScan?.completed_at && !scanning
+                            ? 'Zero active webshells, backdoor code, unauthorized scripts, or database injections detected. All core files and active components satisfy official security benchmarks.'
+                            : 'Run a security check to inspect your core files, themes, and plugins for potential vulnerabilities.'))
                     : 'Try resetting your search query or category filters to inspect all security records.'}
                 </p>
                 {uniqueIssues.length > 0 && (

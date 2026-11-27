@@ -20,10 +20,18 @@ class SnippetCodeAuditor {
 
     private $webshell_detector;
     private $js_scanner;
+    private ?string $last_error = null;
 
     public function __construct() {
         $this->webshell_detector = new WebshellDetector();
         $this->js_scanner = new JavaScriptSecurityScanner();
+    }
+
+    /**
+     * Return the last sanitized database/runtime error encountered during snippet scanning.
+     */
+    public function get_last_error(): ?string {
+        return $this->last_error;
     }
 
     /**
@@ -33,6 +41,7 @@ class SnippetCodeAuditor {
      * @return Finding[]
      */
     public function scan(string $scan_id): array {
+        $this->last_error = null;
         $findings = [];
 
         // 1. Audit Code Snippets table (wp_snippets)
@@ -74,8 +83,15 @@ class SnippetCodeAuditor {
                 if ($exists !== $tbl) {
                     continue;
                 }
+                if (isset($wpdb->last_error)) {
+                    $wpdb->last_error = '';
+                }
                 // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
                 $rows = $wpdb->get_results("SELECT id, name, code, active FROM `{$tbl}` LIMIT 500", OBJECT);
+                if (!empty($wpdb->last_error)) {
+                    $this->last_error = substr(sanitize_text_field((string) $wpdb->last_error), 0, 180);
+                    continue;
+                }
                 if (!is_array($rows)) {
                     continue;
                 }
@@ -96,9 +112,14 @@ class SnippetCodeAuditor {
             $hfcm_table = $wpdb->prefix . 'hfcm_scripts';
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
             if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $hfcm_table)) === $hfcm_table) {
+                if (isset($wpdb->last_error)) {
+                    $wpdb->last_error = '';
+                }
                 // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
                 $hfcm_rows = $wpdb->get_results("SELECT script_id, name, snippet, status FROM `{$hfcm_table}` LIMIT 500", OBJECT);
-                if (is_array($hfcm_rows)) {
+                if (!empty($wpdb->last_error)) {
+                    $this->last_error = substr(sanitize_text_field((string) $wpdb->last_error), 0, 180);
+                } elseif (is_array($hfcm_rows)) {
                     foreach ($hfcm_rows as $hrow) {
                         $hid   = (int) ($hrow->script_id ?? 0);
                         $hname = sanitize_text_field($hrow->name ?? "HFCM #{$hid}");
@@ -110,7 +131,7 @@ class SnippetCodeAuditor {
                 }
             }
         } catch (\Throwable $e) {
-            // Fails gracefully on schema differences
+            $this->last_error = substr(sanitize_text_field($e->getMessage()), 0, 180);
         }
 
         return $findings;
@@ -178,7 +199,11 @@ class SnippetCodeAuditor {
                 $findings = array_merge($findings, $snippet_findings);
             }
         } catch (\Throwable $e) {
-            // Fails gracefully on custom schemas
+            $this->last_error = substr(sanitize_text_field($e->getMessage()), 0, 180);
+        }
+
+        if (!empty($wpdb->last_error) && $this->last_error === null) {
+            $this->last_error = substr(sanitize_text_field((string) $wpdb->last_error), 0, 180);
         }
 
         return $findings;

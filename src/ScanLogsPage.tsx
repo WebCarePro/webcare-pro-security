@@ -763,14 +763,14 @@ export const ScanLogsPage: React.FC<ScanLogsPageProps> = ({
                       <td>
                         <span className={`webcare-log-status-pill ${
                           s.status === 'completed'
-                            ? 'is-completed'
+                            ? (s.diagnostics?.engine_status === 'degraded' ? 'is-pending' : 'is-completed')
                             : s.status === 'interrupted' || s.status === 'aborted' || s.status === 'failed'
                             ? 'is-interrupted'
                             : 'is-pending'
                         }`}>
                           <span className="webcare-pulse-dot" />
                           {s.status === 'completed'
-                            ? 'COMPLETED'
+                            ? (s.diagnostics?.engine_status === 'degraded' ? 'DEGRADED' : 'COMPLETED')
                             : s.status === 'interrupted'
                             ? 'INTERRUPTED'
                             : s.status === 'aborted'

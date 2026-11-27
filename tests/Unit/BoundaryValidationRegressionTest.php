@@ -74,20 +74,21 @@ final class BoundaryValidationRegressionTest extends TestCase
         $spoofedIp = '198.51.100.222';
         $googleUa = 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)';
 
-        // 1. Plain /robots.txt metadata crawl gives DNS grace when PTR returns IP
+        // 1. Unknown DNS verdict (pending async verification) must NOT auto-block as BOT-FAKE-CRAWLER-SPOOF
+        delete_transient('webcareproscan_bot_dns_v2_' . md5($spoofedIp . '_googlebot'));
         $_SERVER['REQUEST_URI'] = '/robots.txt';
         $this->assertNull(
             BotReconDefense::inspect_bot($spoofedIp, $googleUa, $settings),
-            'Exact /robots.txt crawl receives DNS grace.'
+            'Pending/unknown DNS state must not falsely block a crawler before background FCrDNS resolves.'
         );
 
-        // 2. Percent-encoded path such as /sitemap%3Cscript%3E.xml must remain unchanged until path parser runs
-        // (sanitize_text_field would leave %3C, whereas raw /<script>/robots.txt or encoded segments must not be normalized away)
+        // 2. Confirmed conflicting PTR/forward-DNS verdict blocks as BOT-FAKE-CRAWLER-SPOOF and preserves raw encoded REQUEST_URI
+        set_transient('webcareproscan_bot_dns_v2_' . md5($spoofedIp . '_googlebot'), 'conflicting', 300);
         $_SERVER['REQUEST_URI'] = '/%3Cscript%3E/robots.txt';
         $resEncoded = BotReconDefense::inspect_bot($spoofedIp, $googleUa, $settings);
         $this->assertIsArray(
             $resEncoded,
-            'Prefixed or percent-encoded URI path must not be silently rewritten into a metadata crawl exception.'
+            'Confirmed conflicting crawler DNS verdict must block even on percent-encoded URI paths.'
         );
         $this->assertSame('/%3Cscript%3E/robots.txt', $_SERVER['REQUEST_URI']);
     }

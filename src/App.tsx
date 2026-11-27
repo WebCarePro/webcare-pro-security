@@ -3723,6 +3723,8 @@ Source Code,${escapeCsv(code)}
       issue.engine === 'system-storage' ||
       issue.engine === 'reputation' ||
       issue.engine === 'nist-cve' ||
+      issue.engine === 'scan-diagnostics' ||
+      issue.type === 'scan_engine_degraded' ||
       issue.type === 'reverse_proxy_misconfigured' ||
       issue.type === 'plugin_checksums_unavailable' ||
       issue.type === 'theme_checksums_unavailable' ||
@@ -3737,6 +3739,7 @@ Source Code,${escapeCsv(code)}
       issue.file_path.startsWith('system:') ||
       issue.file_path.startsWith('firewall:') ||
       issue.file_path.startsWith('cve:') ||
+      issue.file_path.startsWith('engine:') ||
       issue.file_path.startsWith('db:') ||
       issue.file_path.startsWith('table:') ||
       issue.file_path.startsWith('user:') ||

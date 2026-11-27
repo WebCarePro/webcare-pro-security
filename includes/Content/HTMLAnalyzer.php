@@ -46,7 +46,7 @@ class HTMLAnalyzer {
 
         // 3. Hidden or zero-dimension iframes (exclude legitimate video/audio/map embeds)
         if (preg_match('/<iframe[^>]*(?:width\s*=\s*["\']?[01]["\']?|height\s*=\s*["\']?[01]["\']?|style\s*=\s*["\'][^"\']*(?:display\s*:\s*none|visibility\s*:\s*hidden)[^"\']*["\'])[^>]*>/i', $html, $matches)) {
-            $is_trusted_embed = (bool) preg_match('/src\s*=\s*["\']https?:\/\/(?:www\.)?(?:youtube\.com|youtube-nocookie\.com|player\.vimeo\.com|vimeo\.com|spotify\.com|soundcloud\.com|maps\.google\.com|google\.com\/maps)/i', $matches[0]);
+            $is_trusted_embed = (bool) preg_match('/\bsrc\s*=\s*["\']?https?:\/\/(?:www\.)?(?:youtube\.com|youtube-nocookie\.com|player\.vimeo\.com|vimeo\.com|spotify\.com|soundcloud\.com|maps\.google\.com|google\.com\/maps)/i', $matches[0]);
             if (!$is_trusted_embed) {
                 $detections[] = [
                     'type'       => 'hidden_iframe',
@@ -58,47 +58,7 @@ class HTMLAnalyzer {
             }
         }
 
-        // 4. Suspicious remote script injections in content (inspect ALL <script src=...> tags, including protocol-relative //evil.com/x.js, with strict hostname parsing)
-        if (preg_match_all('/<script\b[^>]*\bsrc\s*=\s*["\']((?:https?:)?\/\/[^"\'\s>]+)["\'][^>]*>/i', $html, $all_script_srcs, PREG_SET_ORDER)) {
-            $home_host = strtolower((string) (wp_parse_url(home_url(), PHP_URL_HOST) ?: ''));
-            $trusted_cdn_hosts = [
-                'youtube.com', 'vimeo.com', 'cdnjs.cloudflare.com', 'code.jquery.com',
-                'platform.twitter.com', 'connect.facebook.net', 'googletagmanager.com',
-                'google-analytics.com', 'recaptcha.net', 'google.com', 'gstatic.com',
-                'stripe.com', 'reviews.io', 'ordertracker.com', 'logwork.com',
-                'trustpilot.com', 'yotpo.com', 'klaviyo.com', 'privy.com',
-                'elfsight.com', 'judge.me', 'ahrefs.com',
-            ];
-            foreach ($all_script_srcs as $s_match) {
-                $raw_src = $s_match[1];
-                $norm_src = str_starts_with($raw_src, '//') ? 'https:' . $raw_src : $raw_src;
-                $src_host = rtrim(strtolower((string) (wp_parse_url($norm_src, PHP_URL_HOST) ?: '')), '.');
-                if ($src_host === '') {
-                    continue;
-                }
-                if ($home_host !== '' && ($src_host === $home_host || str_ends_with($src_host, '.' . $home_host))) {
-                    continue;
-                }
-                $is_whitelisted_cdn = false;
-                foreach ($trusted_cdn_hosts as $cdn) {
-                    if ($src_host === $cdn || str_ends_with($src_host, '.' . $cdn)) {
-                        $is_whitelisted_cdn = true;
-                        break;
-                    }
-                }
-                if (!$is_whitelisted_cdn) {
-                    $detections[] = [
-                        'type'       => 'remote_script_injection',
-                        'snippet'    => substr($s_match[0], 0, 150),
-                        'desc'       => sprintf('Remote JavaScript injection from untrusted host "%s" detected within content.', esc_html($src_host)),
-                        'severity'   => 'critical',
-                        'confidence' => 98,
-                    ];
-                }
-            }
-        }
-
-        // 5. Meta refresh cloaked redirect in content
+        // 4. Meta refresh cloaked redirect in content
         if (preg_match('/<meta\s+[^>]*http-equiv\s*=\s*\\\\?["\']?refresh\\\\?["\']?[^>]*content\s*=\s*\\\\?["\']?[0-9]*\s*;\s*url\s*=\s*([^"\'\\\\>\s]+)/i', $html, $m_meta)) {
             $target_url = trim($m_meta[1]);
             $home_host = wp_parse_url(home_url(), PHP_URL_HOST) ?: '';
@@ -115,24 +75,7 @@ class HTMLAnalyzer {
             }
         }
 
-        // 6. Base href tag hijacking
-        if (preg_match('/<base\s+[^>]*href\s*=\s*\\\\?["\'](https?:\/\/[^"\'\\\\>\s]+)/i', $html, $m_base)) {
-            $base_url = trim($m_base[1]);
-            $home_host = wp_parse_url(home_url(), PHP_URL_HOST) ?: '';
-            $base_host = wp_parse_url($base_url, PHP_URL_HOST) ?: '';
-
-            if (!empty($base_host) && $home_host && strtolower($base_host) !== strtolower($home_host) && !str_ends_with(strtolower($base_host), '.' . strtolower($home_host))) {
-                $detections[] = [
-                    'type'       => 'content_base_href_hijack',
-                    'snippet'    => substr($m_base[0], 0, 150),
-                    'desc'       => sprintf('Malicious <base href> tag detected targeting external host "%s". All relative links, scripts, and form submissions will be stolen.', esc_html($base_host)),
-                    'severity'   => 'critical',
-                    'confidence' => 98,
-                ];
-            }
-        }
-
-        // 7. Inline JavaScript redirect in content (<script>...window.location... or location.replace)
+        // 5. Inline JavaScript redirect in content (<script>...window.location... or location.replace)
         if (preg_match_all('/<script\b[^>]*>(.*?)<\/script>/is', $html, $script_matches)) {
             $js_scanner = new \WebCareProScanner\Malware\JavaScriptSecurityScanner();
             foreach ($script_matches[1] as $idx => $script_body) {
@@ -215,26 +158,86 @@ class HTMLAnalyzer {
             }
         }
 
-        // 11. WordPress 7.0+ WP_HTML_Tag_Processor Deep Streaming Security Audit
+        // 11. WordPress 7.0+ WP_HTML_Tag_Processor Deep Streaming Security Audit (with HTML-aware attribute fallback)
+        // Handles quoted, single-quoted, and unquoted attribute values (e.g. <script src=https://evil.example/a.js>).
+        $home_host = strtolower((string) (wp_parse_url(home_url(), PHP_URL_HOST) ?: ''));
+        $trusted_cdn_hosts = [
+            'youtube.com', 'vimeo.com', 'cdnjs.cloudflare.com', 'code.jquery.com',
+            'platform.twitter.com', 'connect.facebook.net', 'googletagmanager.com',
+            'google-analytics.com', 'recaptcha.net', 'google.com', 'gstatic.com',
+            'stripe.com', 'reviews.io', 'ordertracker.com', 'logwork.com',
+            'trustpilot.com', 'yotpo.com', 'klaviyo.com', 'privy.com',
+            'elfsight.com', 'judge.me', 'ahrefs.com',
+        ];
+
+        $inspect_external_script = static function (string $raw_src, string $snippet) use (&$detections, $home_host, $trusted_cdn_hosts): void {
+            $decoded_src = self::decode_html_attribute_value($raw_src);
+            $clean_src   = trim((string) preg_replace('/[\x00-\x20]+/', '', $decoded_src));
+            if ($clean_src === '' || !preg_match('#^(?:https?:)?//#i', $clean_src)) {
+                return;
+            }
+            $norm_src = str_starts_with($clean_src, '//') ? 'https:' . $clean_src : $clean_src;
+            $src_host = rtrim(strtolower((string) (wp_parse_url($norm_src, PHP_URL_HOST) ?: '')), '.');
+            if ($src_host === '') {
+                return;
+            }
+            if ($home_host !== '' && ($src_host === $home_host || str_ends_with($src_host, '.' . $home_host))) {
+                return;
+            }
+            foreach ($trusted_cdn_hosts as $cdn) {
+                if ($src_host === $cdn || str_ends_with($src_host, '.' . $cdn)) {
+                    return;
+                }
+            }
+            $detections[] = [
+                'type'       => 'remote_script_injection',
+                'snippet'    => substr($snippet, 0, 150),
+                'desc'       => sprintf('Remote JavaScript injection from untrusted host "%s" detected within content.', esc_html($src_host)),
+                'severity'   => 'critical',
+                'confidence' => 98,
+            ];
+        };
+
+        $inspect_base_href = static function (string $raw_href, string $snippet) use (&$detections, $home_host): void {
+            $decoded_href = self::decode_html_attribute_value($raw_href);
+            $base_url     = trim((string) preg_replace('/[\x00-\x20]+/', '', $decoded_href));
+            if ($base_url === '' || !preg_match('#^https?://#i', $base_url)) {
+                return;
+            }
+            $base_host = rtrim(strtolower((string) (wp_parse_url($base_url, PHP_URL_HOST) ?: '')), '.');
+            if ($base_host !== '' && $home_host !== '' && $base_host !== $home_host && !str_ends_with($base_host, '.' . $home_host)) {
+                $detections[] = [
+                    'type'       => 'content_base_href_hijack',
+                    'snippet'    => substr($snippet, 0, 150),
+                    'desc'       => sprintf('Malicious <base href> tag detected targeting external host "%s". All relative links, scripts, and form submissions will be stolen.', esc_html($base_host)),
+                    'severity'   => 'critical',
+                    'confidence' => 98,
+                ];
+            }
+        };
+
         if (class_exists('\\WP_HTML_Tag_Processor')) {
             $processor = new \WP_HTML_Tag_Processor($html);
             while ($processor->next_tag()) {
-                $tag_name = strtolower($processor->get_tag());
+                $tag_name = strtolower((string) $processor->get_tag());
+
+                if ($tag_name === 'script') {
+                    $script_src = $processor->get_attribute('src');
+                    if (is_string($script_src) && $script_src !== '') {
+                        $inspect_external_script($script_src, sprintf('<script src="%s">', esc_attr(substr($script_src, 0, 120))));
+                    }
+                } elseif ($tag_name === 'base') {
+                    $base_href = $processor->get_attribute('href');
+                    if (is_string($base_href) && $base_href !== '') {
+                        $inspect_base_href($base_href, sprintf('<base href="%s">', esc_attr(substr($base_href, 0, 120))));
+                    }
+                }
 
                 // Inspect interactive attributes for JavaScript protocol injection
                 foreach (['href', 'src', 'action', 'formaction', 'data', 'poster'] as $attr) {
                     $attr_val = $processor->get_attribute($attr);
                     if (is_string($attr_val) && $attr_val !== '') {
-                        // Multi-pass decode HTML entities (up to 3 passes) and strip ASCII control chars (0x00 - 0x20)
-                        $norm_attr = $attr_val;
-                        for ($i = 0; $i < 3; $i++) {
-                            $decoded = html_entity_decode($norm_attr, ENT_QUOTES | ENT_HTML5, 'UTF-8');
-                            if ($decoded === $norm_attr) {
-                                break;
-                            }
-                            $norm_attr = $decoded;
-                        }
-                        $norm_attr = strtolower(preg_replace('/[\x00-\x20]+/', '', $norm_attr) ?? '');
+                        $norm_attr = strtolower((string) (preg_replace('/[\x00-\x20]+/', '', self::decode_html_attribute_value($attr_val)) ?? ''));
                         if (str_starts_with($norm_attr, 'javascript:') || str_starts_with($norm_attr, 'vbscript:') || str_starts_with($norm_attr, 'data:text/html')) {
                             $detections[] = [
                                 'type'       => 'html_processor_javascript_uri',
@@ -262,8 +265,80 @@ class HTMLAnalyzer {
                     }
                 }
             }
+        } else {
+            // HTML-aware fallback parser when WP_HTML_Tag_Processor is absent (e.g. standalone CLI/unit-test runtime)
+            foreach (self::extract_html_tag_attributes($html, ['script', 'base']) as $tag_entry) {
+                if ($tag_entry['tag'] === 'script' && isset($tag_entry['attrs']['src']) && is_string($tag_entry['attrs']['src'])) {
+                    $inspect_external_script($tag_entry['attrs']['src'], $tag_entry['raw']);
+                } elseif ($tag_entry['tag'] === 'base' && isset($tag_entry['attrs']['href']) && is_string($tag_entry['attrs']['href'])) {
+                    $inspect_base_href($tag_entry['attrs']['href'], $tag_entry['raw']);
+                }
+            }
         }
 
         return $detections;
+    }
+
+    /**
+     * Multi-pass decode HTML character entities (up to 3 passes).
+     */
+    private static function decode_html_attribute_value(string $value): string {
+        $norm = $value;
+        for ($i = 0; $i < 3; $i++) {
+            $decoded = html_entity_decode($norm, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            if ($decoded === $norm) {
+                break;
+            }
+            $norm = $decoded;
+        }
+        return $norm;
+    }
+
+    /**
+     * HTML-aware tag & attribute extractor supporting quoted, single-quoted, and unquoted attribute values.
+     *
+     * @param string $html
+     * @param list<string> $target_tags
+     * @return list<array{tag: string, raw: string, attrs: array<string, string>}>
+     */
+    private static function extract_html_tag_attributes(string $html, array $target_tags): array {
+        $stripped = preg_replace('/<!--[\s\S]*?-->/', '', $html) ?? $html;
+        $tag_alt  = implode('|', array_map(static fn(string $t) => preg_quote(strtolower($t), '/'), $target_tags));
+        $results  = [];
+
+        if (!preg_match_all('/<(' . $tag_alt . ')\b((?:[^>"\']+|"[^"]*"|\'[^\']*\')*)>/i', $stripped, $tag_matches, PREG_SET_ORDER)) {
+            return $results;
+        }
+
+        foreach ($tag_matches as $tm) {
+            $tag_name  = strtolower($tm[1]);
+            $attr_text = $tm[2] ?? '';
+            $attrs     = [];
+
+            if (preg_match_all('/\b([a-zA-Z_:][a-zA-Z0-9_.:-]*)(?:\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s"\'=<>`]+)))?/', $attr_text, $attr_matches, PREG_SET_ORDER)) {
+                foreach ($attr_matches as $am) {
+                    $attr_key = strtolower($am[1]);
+                    $attr_val = '';
+                    if (isset($am[2]) && $am[2] !== '') {
+                        $attr_val = $am[2];
+                    } elseif (isset($am[3]) && $am[3] !== '') {
+                        $attr_val = $am[3];
+                    } elseif (isset($am[4]) && $am[4] !== '') {
+                        $attr_val = $am[4];
+                    }
+                    if (!isset($attrs[$attr_key])) {
+                        $attrs[$attr_key] = $attr_val;
+                    }
+                }
+            }
+
+            $results[] = [
+                'tag'   => $tag_name,
+                'raw'   => $tm[0],
+                'attrs' => $attrs,
+            ];
+        }
+
+        return $results;
     }
 }

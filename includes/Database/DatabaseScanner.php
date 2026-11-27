@@ -15,6 +15,7 @@ class DatabaseScanner {
     private $rogue_admin_detector;
     private $cron_persistence_scanner;
     private $snippet_code_auditor;
+    private ?string $last_trigger_error = null;
 
     public function __construct() {
         $this->table_scanner = new TableScanner();
@@ -22,6 +23,13 @@ class DatabaseScanner {
         $this->rogue_admin_detector = new RogueAdminAnomalyDetector();
         $this->cron_persistence_scanner = new CronPersistenceScanner();
         $this->snippet_code_auditor = new SnippetCodeAuditor();
+    }
+
+    /**
+     * Return the last sanitized database/runtime error observed by scan_rogue_triggers().
+     */
+    public function get_last_trigger_error(): ?string {
+        return $this->last_trigger_error;
     }
 
     /**
@@ -57,6 +65,9 @@ class DatabaseScanner {
         }
         $trigger_findings = $this->scan_rogue_triggers((string) $scan_id);
         $findings = array_merge($findings, $trigger_findings);
+        if ($this->last_trigger_error !== null) {
+            $findings[] = $this->build_degraded_finding('rogue_triggers', 'MySQL Trigger Audit', $this->last_trigger_error);
+        }
 
         // 4. Audit WP-Cron & Scheduled Hook Persistence
         if (!empty($scan_id)) {
@@ -65,7 +76,9 @@ class DatabaseScanner {
         try {
             $cron_findings = $this->cron_persistence_scanner->scan((string) $scan_id);
             $findings = array_merge($findings, $cron_findings);
-        } catch (\Throwable $e) {}
+        } catch (\Throwable $e) {
+            $findings[] = $this->build_degraded_finding('cron_persistence', 'WP-Cron Persistence Audit', $e->getMessage());
+        }
 
         // 5. Audit Database-Stored Code Snippets & Custom Headers/Footers
         if (!empty($scan_id)) {
@@ -74,7 +87,13 @@ class DatabaseScanner {
         try {
             $snippet_findings = $this->snippet_code_auditor->scan((string) $scan_id);
             $findings = array_merge($findings, $snippet_findings);
-        } catch (\Throwable $e) {}
+            $snippet_err = $this->snippet_code_auditor->get_last_error();
+            if ($snippet_err !== null) {
+                $findings[] = $this->build_degraded_finding('snippet_auditor', 'Database Snippet Auditor', $snippet_err);
+            }
+        } catch (\Throwable $e) {
+            $findings[] = $this->build_degraded_finding('snippet_auditor', 'Database Snippet Auditor', $e->getMessage());
+        }
 
         // 6. Discover all tables and calculate grand total row estimate upfront
         $tables = $this->table_scanner->get_tables();
@@ -237,9 +256,13 @@ class DatabaseScanner {
      */
     public function scan_rogue_triggers(string $scan_id): array {
         global $wpdb;
+        $this->last_trigger_error = null;
         $findings = [];
 
         try {
+            if (isset($wpdb->last_error)) {
+                $wpdb->last_error = '';
+            }
             // Query in-memory INFORMATION_SCHEMA metadata (<2ms execution, 0 table locks)
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
             $triggers = $wpdb->get_results(
@@ -248,6 +271,11 @@ class DatabaseScanner {
                  WHERE TRIGGER_SCHEMA = DATABASE()",
                 OBJECT
             );
+
+            if (!empty($wpdb->last_error)) {
+                $this->last_trigger_error = substr(sanitize_text_field((string) $wpdb->last_error), 0, 180);
+                return $findings;
+            }
 
             if (empty($triggers) || !is_array($triggers)) {
                 return $findings;
@@ -307,10 +335,43 @@ class DatabaseScanner {
                 }
             }
         } catch (\Throwable $e) {
-            // Guard against hosting environments where INFORMATION_SCHEMA.TRIGGERS access is restricted
+            $this->last_trigger_error = substr(sanitize_text_field($e->getMessage()), 0, 180);
         }
 
         return $findings;
+    }
+
+    /**
+     * Build a non-clean diagnostic Finding when a database sub-engine fails or is restricted.
+     */
+    private function build_degraded_finding(string $engine_key, string $label, string $raw_reason): Finding {
+        $reason = substr(sanitize_text_field($raw_reason), 0, 180) ?: 'Runtime or database error';
+        if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+            try {
+                \WebCareProScanner\System\AuditLogger::log_operational('scan_engine_degraded', [
+                    'engine' => $engine_key,
+                    'label'  => $label,
+                    'reason' => $reason,
+                ]);
+            } catch (\Throwable $ignore) {}
+        }
+
+        return new Finding([
+            'engine'       => 'scan-diagnostics',
+            'type'         => 'scan_engine_degraded',
+            'severity'     => 'info',
+            'confidence'   => 100,
+            'file_path'    => "engine:{$engine_key}",
+            'description'  => sprintf('%s could not complete (%s). Results for this check are incomplete.', $label, $reason),
+            'evidence'     => wp_json_encode([
+                'incomplete' => true,
+                'engine'     => $engine_key,
+                'label'      => $label,
+                'status'     => 'degraded',
+                'reason'     => $reason,
+            ]),
+            'code_snippet' => "Engine Status: Degraded ({$label})",
+        ]);
     }
 
     public function get_table_scanner() {

@@ -33,6 +33,16 @@ class FindingTranslator {
         $path   = $finding['file_path'] ?? '';
         $basename = basename($path);
 
+        // 0. Scan Engine Diagnostics / Incomplete Audit Notices
+        if ($engine === 'scan-diagnostics' || $type === 'scan_engine_degraded') {
+            return [
+                'what_is_this'        => !empty($finding['description']) ? $finding['description'] : __('One of the background security audit engines encountered a database or runtime error and could not complete.', 'webcare-pro-security'),
+                'is_store_safe'       => __('Your store continues operating normally, but this specific security check was incomplete. Other independent engines still ran.', 'webcare-pro-security'),
+                'recommended_action'  => __('Review the engine diagnostic reason, verify database permissions or PHP logs, and re-run the scan.', 'webcare-pro-security'),
+                'action_button_label' => __('Inspect Engine Diagnostic', 'webcare-pro-security'),
+            ];
+        }
+
         // 1. Webshells, Backdoors & Disguised Upload Polyglots
         if (strpos($engine, 'malware') !== false || strpos($engine, 'uploads') !== false || strpos($type, 'webshell') !== false || strpos($type, 'backdoor') !== false || strpos($type, 'suspected_file') !== false) {
             return [
