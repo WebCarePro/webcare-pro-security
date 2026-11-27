@@ -287,16 +287,23 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
                 }
             } else {
                 // Automated bot POST without render timestamp.
-                // If a valid same-site Referer and modern browser UA are present, reduce weight (+15)
-                // so missing_sec_fetch_on_https (+35) + missing_render_timestamp (+15) = 50 (< 60)
-                // does not false-positive on legitimate human form submissions.
-                $referer = (string) ($ctx->headers['referer'] ?? ($ctx->server['HTTP_REFERER'] ?? ''));
-                $host = (string) ($ctx->headers['host'] ?? ($ctx->server['HTTP_HOST'] ?? ''));
-                $referer_host = $referer !== '' ? (string) parse_url($referer, PHP_URL_HOST) : '';
-                $host_name = $host !== '' ? strtolower(explode(':', $host)[0]) : '';
-                $has_same_site_referer = $referer_host !== '' && $host_name !== '' && strtolower($referer_host) === $host_name;
+                // Only soften weight (+15 instead of +25) when the request has BOTH a plausible browser UA
+                // AND a Referer matching the site's configured canonical origin (never trusting client-supplied HTTP_HOST).
+                $referer        = (string) ($ctx->headers['referer'] ?? ($ctx->server['HTTP_REFERER'] ?? ''));
+                $referer_host   = $referer !== '' ? strtolower((string) parse_url($referer, PHP_URL_HOST)) : '';
+                $canonical_url  = function_exists('home_url') ? (string) home_url() : '';
+                $canonical_host = $canonical_url !== '' ? strtolower((string) parse_url($canonical_url, PHP_URL_HOST)) : '';
 
-                $risk_score += $has_same_site_referer ? 15 : 25;
+                $is_plausible_browser_ua = $ua !== ''
+                    && str_contains($ua, 'Mozilla/')
+                    && (str_contains($ua, 'Chrome/') || str_contains($ua, 'Safari/') || str_contains($ua, 'Firefox/') || str_contains($ua, 'OPR/') || str_contains($ua, 'Edg/'));
+
+                $has_trusted_same_site_referer = $is_plausible_browser_ua
+                    && $referer_host !== ''
+                    && $canonical_host !== ''
+                    && $referer_host === $canonical_host;
+
+                $risk_score += $has_trusted_same_site_referer ? 15 : 25;
                 $signals[] = 'missing_render_timestamp';
             }
         }

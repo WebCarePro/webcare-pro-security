@@ -699,20 +699,24 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
             return false;
         }
 
-        // Anchor legitimate security plugin callers to defined WP_PLUGIN_DIR (with symlink-safe fallback)
-        $plugin_dir = defined('WP_PLUGIN_DIR') ? wp_normalize_path(WP_PLUGIN_DIR) : '';
-        $legitimate_plugin_slugs = [
-            'wordfence',
-            'better-wp-security',
-            'sucuri-scanner',
-            'all-in-one-wp-security-and-firewall',
-        ];
-        foreach ($legitimate_plugin_slugs as $slug) {
-            if (
-                ($plugin_dir !== '' && str_starts_with($origin_file, $plugin_dir . '/' . $slug . '/'))
-                || str_contains($origin_file, '/plugins/' . $slug . '/')
-            ) {
-                return true;
+        // Anchor legitimate security plugin callers to verified WP_PLUGIN_DIR (resolving symlinks via realpath)
+        $plugin_dir_raw = defined('WP_PLUGIN_DIR') ? (string) WP_PLUGIN_DIR : '';
+        if ($plugin_dir_raw !== '') {
+            $plugin_dir_real = realpath($plugin_dir_raw);
+            $plugin_root     = rtrim(wp_normalize_path($plugin_dir_real !== false ? $plugin_dir_real : $plugin_dir_raw), '/');
+            $origin_real     = realpath((string) $origin_frame['file']);
+            $resolved_origin = wp_normalize_path($origin_real !== false ? $origin_real : $origin_file);
+
+            $legitimate_plugin_slugs = [
+                'wordfence',
+                'better-wp-security',
+                'sucuri-scanner',
+                'all-in-one-wp-security-and-firewall',
+            ];
+            foreach ($legitimate_plugin_slugs as $slug) {
+                if (str_starts_with($resolved_origin, $plugin_root . '/' . $slug . '/')) {
+                    return true;
+                }
             }
         }
 
@@ -734,13 +738,14 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
      * Multi-factor verification for legitimate user registrations, password resets,
      * and guest checkout mutations on $wpdb->users.
      *
-     * @param string $sql
+     * @param string     $sql
+     * @param array|null $backtrace_frames Optional override for deterministic unit testing.
      * @return bool
      */
-    public static function is_legitimate_users_table_mutation(string $sql): bool {
-        // 1. Verify caller provenance: immediate caller invoking $wpdb must be Core, WooCommerce, or a bounded registration plugin UPDATE
+    public static function is_legitimate_users_table_mutation(string $sql, ?array $backtrace_frames = null): bool {
+        // 1. Verify caller provenance: immediate caller invoking $wpdb must be Core, WooCommerce, or an explicitly verified registration plugin
         // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_debug_backtrace -- Provenance validation for RASP
-        $frames = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 25);
+        $frames = $backtrace_frames ?? debug_backtrace(0, 25);
         $origin_frame = null;
 
         // Skip internal RASP, WAF, $wpdb, and DB drop-in wrapper frames to locate the true SQL originator
@@ -758,6 +763,8 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
         }
 
         $origin_file = wp_normalize_path((string) $origin_frame['file']);
+        $origin_real = realpath((string) $origin_frame['file']);
+        $resolved_origin = wp_normalize_path($origin_real !== false ? $origin_real : $origin_file);
 
         $is_core_origin = (
             str_contains($origin_file, '/wp-includes/user.php')
@@ -771,10 +778,33 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
             || str_contains($origin_file, '/plugins/woocommerce/src/StoreApi/')
         );
 
-        $plugin_dir = defined('WP_PLUGIN_DIR') ? wp_normalize_path(WP_PLUGIN_DIR) . '/' : '/wp-content/plugins/';
+        $plugin_dir_raw  = defined('WP_PLUGIN_DIR') ? (string) WP_PLUGIN_DIR : '';
+        $plugin_dir_real = $plugin_dir_raw !== '' ? realpath($plugin_dir_raw) : false;
+        $plugin_root     = $plugin_dir_raw !== ''
+            ? rtrim(wp_normalize_path($plugin_dir_real !== false ? $plugin_dir_real : $plugin_dir_raw), '/') . '/'
+            : '/wp-content/plugins/';
+
+        $verified_registration_slugs = [
+            'gravityformsuserregistration',
+            'profile-builder',
+            'wpforms-user-registration',
+            'ultimate-member',
+            'user-registration',
+        ];
+        $is_verified_registration_origin = false;
+        foreach ($verified_registration_slugs as $reg_slug) {
+            if (
+                str_starts_with($resolved_origin, $plugin_root . $reg_slug . '/')
+                || str_starts_with($origin_file, $plugin_root . $reg_slug . '/')
+            ) {
+                $is_verified_registration_origin = true;
+                break;
+            }
+        }
+
         $is_registered_plugin_origin = !$is_core_origin
             && !$is_wc_origin
-            && str_starts_with($origin_file, $plugin_dir)
+            && (str_starts_with($resolved_origin, $plugin_root) || str_starts_with($origin_file, $plugin_root))
             && !str_ends_with($origin_file, '/admin-ajax.php')
             && !str_ends_with($origin_file, '/admin-post.php');
 
@@ -803,8 +833,9 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
         }
 
         // 3. Inspect columns, enforce single-row tuple, and verify role/registration policy in INSERT query
+        // Direct INSERT INTO $wpdb->users is strictly reserved for Core, WooCommerce, or explicitly verified registration plugins
         if (preg_match('/^\s*INSERT\s+INTO\s+`?[a-zA-Z0-9_]+`?\s*\(([^)]+)\)\s*VALUES\s*(.+)$/is', $sql, $insert_matches)) {
-            if (!$is_core_origin && !$is_wc_origin && !$is_registered_plugin_origin) {
+            if (!$is_core_origin && !$is_wc_origin && !$is_verified_registration_origin) {
                 return false;
             }
             $cols = array_map(function ($c) {
@@ -835,31 +866,44 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                     return false;
                 }
 
-                // Inspect full call stack with arguments to verify wp_insert_user($userdata) role boundaries
-                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_debug_backtrace -- RASP argument inspection for guest user creation
-                $full_frames = debug_backtrace(0, 20);
+                // Require a recognized registration operation in the call stack and validate its arguments
+                $full_frames = $frames;
+                $has_recognized_registration_frame = false;
+                $recognized_reg_functions = ['wp_insert_user', 'wp_create_user', 'wc_create_new_customer', 'register_new_user'];
+                $recognized_reg_classes   = ['GF_User_Registration', 'GFUserRegistration', 'WPPB_Form_Builder', 'WPForms_User_Registration', 'UM\\Core\\User', 'UR_Form_Handler'];
+
                 foreach ($full_frames as $ff) {
-                    $fn = (string) ($ff['function'] ?? '');
-                    if (in_array($fn, ['wp_insert_user', 'wp_create_user', 'wc_create_new_customer', 'register_new_user'], true)) {
-                        $arg0 = $ff['args'][0] ?? null;
-                        if (is_object($arg0)) {
-                            $arg0 = get_object_vars($arg0);
-                        }
-                        if (is_array($arg0)) {
-                            if (!empty($arg0['role']) && is_string($arg0['role'])) {
-                                if (class_exists(FirewallEngine::class) && FirewallEngine::is_privileged_role($arg0['role'])) {
+                    $fn    = (string) ($ff['function'] ?? '');
+                    $class = (string) ($ff['class'] ?? '');
+
+                    $is_reg_fn    = in_array($fn, $recognized_reg_functions, true);
+                    $is_reg_class = $class !== '' && in_array($class, $recognized_reg_classes, true)
+                        && in_array($fn, ['create_user', 'process_feed', 'register_user', 'insert_user', 'handle_registration'], true);
+
+                    if ($is_reg_fn || $is_reg_class) {
+                        $has_recognized_registration_frame = true;
+
+                        foreach ((array) ($ff['args'] ?? []) as $arg) {
+                            if (is_object($arg)) {
+                                $arg = get_object_vars($arg);
+                            }
+                            if (!is_array($arg)) {
+                                continue;
+                            }
+                            if (!empty($arg['role']) && is_string($arg['role'])) {
+                                if (class_exists(FirewallEngine::class) && FirewallEngine::is_privileged_role($arg['role'])) {
                                     return false;
                                 }
                             }
-                            if (!empty($arg0['roles']) && is_array($arg0['roles'])) {
-                                foreach ($arg0['roles'] as $r_item) {
+                            if (!empty($arg['roles']) && is_array($arg['roles'])) {
+                                foreach ($arg['roles'] as $r_item) {
                                     if (is_string($r_item) && class_exists(FirewallEngine::class) && FirewallEngine::is_privileged_role($r_item)) {
                                         return false;
                                     }
                                 }
                             }
-                            if (!empty($arg0['wp_capabilities']) && is_array($arg0['wp_capabilities'])) {
-                                foreach (array_keys(array_filter($arg0['wp_capabilities'])) as $cap_item) {
+                            if (!empty($arg['wp_capabilities']) && is_array($arg['wp_capabilities'])) {
+                                foreach (array_keys(array_filter($arg['wp_capabilities'])) as $cap_item) {
                                     if (class_exists(FirewallEngine::class) && FirewallEngine::is_privileged_role((string) $cap_item)) {
                                         return false;
                                     }
@@ -867,6 +911,10 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
                             }
                         }
                     }
+                }
+
+                if (!$has_recognized_registration_frame) {
+                    return false;
                 }
             }
 

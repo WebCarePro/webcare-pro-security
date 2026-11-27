@@ -61,4 +61,56 @@ final class AiAgentBehaviorEvaluatorTest extends TestCase {
         $verdict = $this->evaluator->evaluate_runtime_request($ctx);
         $this->assertNull($verdict);
     }
+
+    public function test_canonical_same_site_referer_with_browser_ua_softens_stepup_on_human_post(): void {
+        $_SERVER['HTTPS'] = 'on';
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+
+        $ctx = new RequestContext(
+            ip: '198.51.100.60',
+            method: 'POST',
+            uri: '/contact-us-email/',
+            userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 OPR/125.0.0.0',
+            headers: [
+                'host' => 'example.com',
+                'referer' => 'https://example.com/contact-us-email/',
+                'accept-language' => 'en-US,en;q=0.9',
+            ],
+            server: [
+                'HTTPS' => 'on',
+                'HTTP_HOST' => 'example.com',
+                'HTTP_REFERER' => 'https://example.com/contact-us-email/',
+            ]
+        );
+
+        $verdict = $this->evaluator->evaluate_runtime_request($ctx);
+        $this->assertNull($verdict);
+    }
+
+    public function test_spoofed_host_matching_referer_mismatching_canonical_origin_triggers_stepup(): void {
+        $_SERVER['HTTPS'] = 'on';
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+
+        $ctx = new RequestContext(
+            ip: '198.51.100.61',
+            method: 'POST',
+            uri: '/contact-us-email/',
+            userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36',
+            headers: [
+                'host' => 'evil-spoof.test',
+                'referer' => 'https://evil-spoof.test/contact-us-email/',
+                'accept-language' => 'en-US,en;q=0.9',
+            ],
+            server: [
+                'HTTPS' => 'on',
+                'HTTP_HOST' => 'evil-spoof.test',
+                'HTTP_REFERER' => 'https://evil-spoof.test/contact-us-email/',
+            ]
+        );
+
+        $verdict = $this->evaluator->evaluate_runtime_request($ctx);
+        $this->assertNotNull($verdict);
+        $this->assertSame(WafAction::Challenge, $verdict->action);
+        $this->assertSame('WAF-AI-AGENT-STEPUP', $verdict->ruleId);
+    }
 }

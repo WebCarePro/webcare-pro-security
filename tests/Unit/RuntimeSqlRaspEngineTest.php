@@ -52,4 +52,54 @@ class RuntimeSqlRaspEngineTest extends TestCase {
 
         $this->assertNull($result, 'Queries executed inside run_internal_query must bypass RASP checks.');
     }
+
+    public function testUsersInsertFromUnrelatedPluginIsRejected(): void {
+        $pluginRoot = defined('WP_PLUGIN_DIR') ? rtrim(str_replace('\\', '/', WP_PLUGIN_DIR), '/') : '/wp-content/plugins';
+        $sql = "INSERT INTO `wp_users` (`user_login`, `user_pass`, `user_email`) VALUES ('rogue', 'hash', 'rogue@example.com')";
+        $frames = [
+            ['file' => $pluginRoot . '/some-unrelated-plugin/rogue.php', 'function' => 'do_something'],
+            ['file' => $pluginRoot . '/some-unrelated-plugin/rogue.php', 'function' => 'wp_insert_user', 'args' => [['role' => 'subscriber']]],
+        ];
+
+        $this->assertFalse(RuntimeSqlRaspEngine::is_legitimate_users_table_mutation($sql, $frames));
+    }
+
+    public function testUsersInsertFromGravityFormsWithoutRegistrationFrameIsRejected(): void {
+        $pluginRoot = defined('WP_PLUGIN_DIR') ? rtrim(str_replace('\\', '/', WP_PLUGIN_DIR), '/') : '/wp-content/plugins';
+        $sql = "INSERT INTO `wp_users` (`user_login`, `user_pass`, `user_email`) VALUES ('student1', 'hash', 's@example.com')";
+        $frames = [
+            ['file' => $pluginRoot . '/gravityformsuserregistration/class-gf-user-registration.php', 'function' => 'arbitrary_helper'],
+        ];
+
+        $this->assertFalse(RuntimeSqlRaspEngine::is_legitimate_users_table_mutation($sql, $frames));
+    }
+
+    public function testUsersInsertWithPrivilegedRoleArgumentIsRejected(): void {
+        $sql = "INSERT INTO `wp_users` (`user_login`, `user_pass`, `user_email`) VALUES ('pwn', 'hash', 'pwn@example.com')";
+        $frames = [
+            ['file' => '/var/www/html/wp-includes/user.php', 'function' => 'wp_insert_user', 'args' => [['user_login' => 'pwn', 'role' => 'administrator']]],
+        ];
+
+        $this->assertFalse(RuntimeSqlRaspEngine::is_legitimate_users_table_mutation($sql, $frames));
+    }
+
+    public function testUsersInsertFromVerifiedGravityFormsRegistrationFlowIsAllowed(): void {
+        $pluginRoot = defined('WP_PLUGIN_DIR') ? rtrim(str_replace('\\', '/', WP_PLUGIN_DIR), '/') : '/wp-content/plugins';
+        $sql = "INSERT INTO `wp_users` (`user_login`, `user_pass`, `user_email`) VALUES ('student1', 'hash', 's@example.com')";
+        $frames = [
+            [
+                'file' => $pluginRoot . '/gravityformsuserregistration/class-gf-user-registration.php',
+                'class' => 'GF_User_Registration',
+                'function' => 'create_user',
+                'args' => [['role' => 'subscriber']],
+            ],
+            [
+                'file' => '/var/www/html/wp-includes/user.php',
+                'function' => 'wp_insert_user',
+                'args' => [['user_login' => 'student1', 'role' => 'subscriber']],
+            ],
+        ];
+
+        $this->assertTrue(RuntimeSqlRaspEngine::is_legitimate_users_table_mutation($sql, $frames));
+    }
 }
