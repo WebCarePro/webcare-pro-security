@@ -86,10 +86,11 @@ class TableScanner {
 
     /**
      * Get all text-like columns for a table, identify single-column integer primary keys
-     * for keyset pagination, and compute deterministic ORDER BY columns for offset fallback.
+     * for keyset pagination, and resolve verified unique ORDER BY columns (PK or NOT-NULL
+     * unique index) for safe offset pagination.
      *
      * @param string $table
-     * @return array{columns: list<string>, primary_key: string|null, order_by_columns: list<string>}
+     * @return array{columns: list<string>, primary_key: string|null, order_by_columns: list<string>, has_unique_ordering: bool, ordering_strategy: string}
      */
     public function get_table_metadata($table) {
         global $wpdb;
@@ -99,7 +100,13 @@ class TableScanner {
 
         // Safely validate table name matches word characters only
         if (!preg_match('/^[a-zA-Z0-9_]+$/', (string) $table)) {
-            return ['columns' => [], 'primary_key' => null, 'order_by_columns' => []];
+            return [
+                'columns'             => [],
+                'primary_key'         => null,
+                'order_by_columns'    => [],
+                'has_unique_ordering' => false,
+                'ordering_strategy'   => 'invalid_table',
+            ];
         }
 
         if (isset($wpdb->last_error)) {
@@ -109,15 +116,28 @@ class TableScanner {
         $cols_info = $wpdb->get_results("SHOW COLUMNS FROM `{$table}`");
         if (!empty($wpdb->last_error)) {
             $this->last_error = substr(sanitize_text_field((string) $wpdb->last_error), 0, 180);
-            return ['columns' => [], 'primary_key' => null, 'order_by_columns' => []];
+            return [
+                'columns'             => [],
+                'primary_key'         => null,
+                'order_by_columns'    => [],
+                'has_unique_ordering' => false,
+                'ordering_strategy'   => 'metadata_error',
+            ];
         }
         if (empty($cols_info)) {
-            return ['columns' => [], 'primary_key' => null, 'order_by_columns' => []];
+            return [
+                'columns'             => [],
+                'primary_key'         => null,
+                'order_by_columns'    => [],
+                'has_unique_ordering' => false,
+                'ordering_strategy'   => 'empty_columns',
+            ];
         }
 
         $text_types = ['varchar', 'text', 'tinytext', 'mediumtext', 'longtext', 'json'];
         $pri_cols = [];
-        $uni_cols = [];
+        $uni_not_null_cols = [];
+        $col_nullable = [];
         $all_safe_cols = [];
 
         foreach ($cols_info as $col) {
@@ -128,11 +148,13 @@ class TableScanner {
             $all_safe_cols[] = $field;
             $type = strtolower((string) ($col->Type ?? ''));
             $key = strtoupper((string) ($col->Key ?? ''));
+            $is_nullable = strtoupper((string) ($col->Null ?? 'YES')) !== 'NO';
+            $col_nullable[$field] = $is_nullable;
 
             if ($key === 'PRI') {
                 $pri_cols[] = ['field' => $field, 'type' => $type];
-            } elseif ($key === 'UNI') {
-                $uni_cols[] = $field;
+            } elseif ($key === 'UNI' && !$is_nullable) {
+                $uni_not_null_cols[] = $field;
             }
 
             foreach ($text_types as $text_type) {
@@ -144,23 +166,98 @@ class TableScanner {
         }
 
         // Only use keyset pagination (WHERE pk > %d) for single-column integer primary keys;
-        // composite or string/UUID primary keys fall back safely to deterministic ordered LIMIT/OFFSET.
+        // composite or string/UUID primary keys fall back safely to unique ordered LIMIT/OFFSET.
         if (count($pri_cols) === 1 && preg_match('/\b(?:tiny|small|medium|big)?int\b/i', $pri_cols[0]['type'])) {
             $primary_key = $pri_cols[0]['field'];
         }
 
+        $has_unique_ordering = false;
+        $ordering_strategy = 'unsafe_no_unique_key';
+        $order_by_columns = [];
+
         if (!empty($pri_cols)) {
             $order_by_columns = array_map(static fn(array $p): string => $p['field'], $pri_cols);
-        } elseif (!empty($uni_cols)) {
-            $order_by_columns = $uni_cols;
+            $has_unique_ordering = true;
+            $ordering_strategy = $primary_key !== null ? 'keyset_int_pk' : 'offset_pk';
+        } elseif (!empty($uni_not_null_cols)) {
+            $order_by_columns = [$uni_not_null_cols[0]];
+            $has_unique_ordering = true;
+            $ordering_strategy = 'offset_unique_index';
         } else {
-            $order_by_columns = array_slice($all_safe_cols, 0, 3);
+            // Inspect composite/named unique indexes when no PRI or single NOT-NULL UNI column was found
+            if (isset($wpdb->last_error)) {
+                $wpdb->last_error = '';
+            }
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+            $index_rows = method_exists($wpdb, 'get_results') ? $wpdb->get_results("SHOW INDEX FROM `{$table}`") : [];
+            if (!empty($wpdb->last_error)) {
+                $this->last_error = substr(sanitize_text_field((string) $wpdb->last_error), 0, 180);
+                return [
+                    'columns'             => [],
+                    'primary_key'         => null,
+                    'order_by_columns'    => [],
+                    'has_unique_ordering' => false,
+                    'ordering_strategy'   => 'metadata_error',
+                ];
+            }
+
+            if (is_array($index_rows) && !empty($index_rows)) {
+                $unique_indexes = [];
+                foreach ($index_rows as $idx_row) {
+                    if ((string) ($idx_row->Non_unique ?? '1') !== '0') {
+                        continue;
+                    }
+                    $key_name = (string) ($idx_row->Key_name ?? '');
+                    $col_name = (string) ($idx_row->Column_name ?? '');
+                    if ($key_name === '' || $col_name === '') {
+                        continue;
+                    }
+                    $unique_indexes[$key_name][] = [
+                        'seq'      => (int) ($idx_row->Seq_in_index ?? 0),
+                        'col'      => $col_name,
+                        'nullable' => ($col_nullable[$col_name] ?? true) || strtoupper((string) ($idx_row->Null ?? '')) === 'YES',
+                        'sub_part' => $idx_row->Sub_part ?? null,
+                    ];
+                }
+
+                foreach ($unique_indexes as $idx_cols) {
+                    usort($idx_cols, static fn(array $a, array $b): int => $a['seq'] <=> $b['seq']);
+                    $candidate_cols = [];
+                    $idx_valid = !empty($idx_cols);
+                    foreach ($idx_cols as $ic) {
+                        if (
+                            $ic['nullable']
+                            || !empty($ic['sub_part'])
+                            || !preg_match('/^[a-zA-Z0-9_]+$/', $ic['col'])
+                            || !in_array($ic['col'], $all_safe_cols, true)
+                        ) {
+                            $idx_valid = false;
+                            break;
+                        }
+                        $candidate_cols[] = $ic['col'];
+                    }
+                    if ($idx_valid) {
+                        $order_by_columns = $candidate_cols;
+                        $has_unique_ordering = true;
+                        $ordering_strategy = 'offset_unique_index';
+                        break;
+                    }
+                }
+            }
+
+            if (!$has_unique_ordering) {
+                // Table lacks a primary key or non-null unique index; retain full column list only for
+                // single-batch reads and flag has_unique_ordering=false so multi-batch OFFSET is refused cleanly.
+                $order_by_columns = $all_safe_cols;
+            }
         }
 
         return [
-            'columns'          => $columns,
-            'primary_key'      => $primary_key,
-            'order_by_columns' => $order_by_columns,
+            'columns'             => $columns,
+            'primary_key'         => $primary_key,
+            'order_by_columns'    => $order_by_columns,
+            'has_unique_ordering' => $has_unique_ordering,
+            'ordering_strategy'   => $ordering_strategy,
         ];
     }
 
@@ -173,13 +270,16 @@ class TableScanner {
      * @param int $last_id Keyset cursor or offset
      * @param int $batch_size
      * @param string $scan_id
-     * @param list<string>|null $order_by_columns Deterministic ordering columns for LIMIT/OFFSET fallback
-     * @return array ['findings' => Finding[], 'rows_scanned' => int, 'next_cursor' => int|null]
+     * @param list<string>|null $order_by_columns Unique ordering columns for LIMIT/OFFSET fallback
+     * @param bool|null $has_unique_ordering Whether $order_by_columns is guaranteed unique (PRI or NOT-NULL UNIQUE index)
+     * @return array{findings: Finding[], rows_scanned: int, next_cursor: int|null, unsafe_pagination?: bool}
      */
-    public function scan_table_batch($table, $columns, $primary_key, $last_id = 0, $batch_size = 100, $scan_id = '', ?array $order_by_columns = null) {
+    public function scan_table_batch($table, $columns, $primary_key, $last_id = 0, $batch_size = 100, $scan_id = '', ?array $order_by_columns = null, ?bool $has_unique_ordering = null) {
         global $wpdb;
         $this->last_error = null;
         $findings = [];
+        $batch_size = max(1, (int) $batch_size);
+        $last_id = max(0, (int) $last_id);
 
         if (empty($columns) || !is_array($columns) || !preg_match('/^[a-zA-Z0-9_]+$/', (string) $table)) {
             return ['findings' => [], 'rows_scanned' => 0, 'next_cursor' => null];
@@ -202,19 +302,25 @@ class TableScanner {
             array_unshift($select_cols, "`{$primary_key}`");
         }
         $col_sql = implode(', ', $select_cols);
+        $offset_mode_unique = true;
 
-        // Keyset pagination when single integer primary key exists, otherwise deterministic ordered LIMIT/OFFSET
+        // Keyset pagination when single integer primary key exists, otherwise unique ordered LIMIT/OFFSET
         if ($primary_key) {
             $raw_query = "SELECT {$col_sql} FROM `{$table}` WHERE `{$primary_key}` > %d ORDER BY `{$primary_key}` ASC LIMIT %d";
             // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
             $sql = $wpdb->prepare($raw_query, $last_id, $batch_size);
         } else {
-            if ($order_by_columns === null) {
+            if ($order_by_columns === null || $has_unique_ordering === null) {
                 $meta = $this->get_table_metadata((string) $table);
                 if ($this->last_error !== null) {
                     return ['findings' => [], 'rows_scanned' => 0, 'next_cursor' => null];
                 }
-                $order_by_columns = $meta['order_by_columns'] ?? [];
+                if ($order_by_columns === null) {
+                    $order_by_columns = $meta['order_by_columns'] ?? [];
+                }
+                $offset_mode_unique = !empty($meta['has_unique_ordering']);
+            } else {
+                $offset_mode_unique = $has_unique_ordering;
             }
 
             $safe_order_cols = [];
@@ -225,13 +331,23 @@ class TableScanner {
                 }
             }
             if (empty($safe_order_cols)) {
-                $safe_order_cols = array_slice($safe_columns, 0, 3);
+                $safe_order_cols = $safe_columns;
+                $offset_mode_unique = false;
             }
+
+            if (!$offset_mode_unique && $last_id > 0) {
+                $this->last_error = sprintf(
+                    'Table %s has no primary key or non-null unique index and cannot be safely offset-paginated across batches.',
+                    (string) $table
+                );
+                return ['findings' => [], 'rows_scanned' => 0, 'next_cursor' => null, 'unsafe_pagination' => true];
+            }
+
             $order_sql = implode(', ', array_map(static fn(string $c): string => "`{$c}` ASC", $safe_order_cols));
 
             $raw_query = "SELECT {$col_sql} FROM `{$table}` ORDER BY {$order_sql} LIMIT %d OFFSET %d";
             // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
-            $sql = $wpdb->prepare($raw_query, $batch_size, max(0, (int) $last_id));
+            $sql = $wpdb->prepare($raw_query, $batch_size, $last_id);
         }
 
         if (isset($wpdb->last_error)) {
@@ -407,17 +523,29 @@ class TableScanner {
             }
         }
 
-        // If no primary key was used, increment offset
+        // If no primary key was used, increment offset only when ordering is uniquely guaranteed
+        $unsafe_pagination = false;
         if (!$primary_key) {
-            $next_cursor = $last_id + $rows_scanned;
+            if (!$offset_mode_unique && $rows_scanned >= $batch_size) {
+                $unsafe_pagination = true;
+                $next_cursor = null;
+                $this->last_error = sprintf(
+                    'Table %s lacks a primary key or non-null unique index; cannot safely offset-paginate beyond %d rows (marked incomplete).',
+                    (string) $table,
+                    $batch_size
+                );
+            } else {
+                $next_cursor = $last_id + $rows_scanned;
+            }
         } elseif ($next_cursor !== null && $next_cursor <= (int) $last_id) {
             $next_cursor = null;
         }
 
         return [
-            'findings'     => $findings,
-            'rows_scanned' => $rows_scanned,
-            'next_cursor'  => $rows_scanned < $batch_size ? null : $next_cursor
+            'findings'          => $findings,
+            'rows_scanned'      => $rows_scanned,
+            'next_cursor'       => $rows_scanned < $batch_size ? null : $next_cursor,
+            'unsafe_pagination' => $unsafe_pagination,
         ];
     }
 
@@ -497,18 +625,19 @@ class TableScanner {
                     $cursor,
                     $batch_size,
                     $scan_id,
-                    $meta['order_by_columns'] ?? null
+                    $meta['order_by_columns'] ?? null,
+                    $meta['has_unique_ordering'] ?? null
                 );
+
+                $rows_scanned += (int) ($batch_res['rows_scanned'] ?? 0);
+                if (!empty($batch_res['findings'])) {
+                    $findings = array_merge($findings, $batch_res['findings']);
+                }
 
                 if ($this->last_error !== null) {
                     $incomplete = true;
                     $errors[] = sprintf('%s batch error: %s', (string) $tbl, $this->last_error);
                     break;
-                }
-
-                $rows_scanned += (int) ($batch_res['rows_scanned'] ?? 0);
-                if (!empty($batch_res['findings'])) {
-                    $findings = array_merge($findings, $batch_res['findings']);
                 }
 
                 $next = $batch_res['next_cursor'] ?? null;

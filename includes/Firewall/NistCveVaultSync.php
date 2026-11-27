@@ -1790,35 +1790,262 @@ class NistCveVaultSync {
             return $php_eval['matched'] ? 'matched' : 'not_matched';
         }
 
-        // 3. Operating System CPE (o:<vendor>:<product>) against actual server OS
+        // 3. Operating System CPE (o:<vendor>:<product>) against actual server OS and version bounds
         if ($part === 'o') {
-            $host_os = strtolower(trim((string) ($context['host_os'] ?? PHP_OS_FAMILY)));
-            $is_win_cpe   = ($vendor === 'microsoft' && str_contains($product, 'windows'));
-            $is_mac_cpe   = ($vendor === 'apple' && ($product === 'macos' || $product === 'mac_os_x' || $product === 'os_x'));
-            $is_linux_cpe = (($vendor === 'linux' && ($product === 'linux_kernel' || $product === 'linux'))
-                || in_array($vendor, ['debian', 'ubuntu', 'canonical', 'redhat', 'fedoraproject', 'centos', 'alpine', 'suse'], true));
+            $os_info   = self::resolve_host_os_info($context);
+            $host_os   = $os_info['family'];
+            if ($host_os === '') {
+                return 'unknown';
+            }
+
+            $is_win_cpe = ($vendor === 'microsoft' && str_contains($product, 'windows'));
+            $is_mac_cpe = ($vendor === 'apple' && ($product === 'macos' || $product === 'mac_os_x' || $product === 'os_x'));
+            $distro_vendor_map = [
+                'debian'        => ['debian'],
+                'ubuntu'        => ['ubuntu'],
+                'canonical'     => ['ubuntu'],
+                'redhat'        => ['rhel', 'redhat', 'fedora', 'centos'],
+                'fedoraproject' => ['fedora'],
+                'centos'        => ['centos'],
+                'alpine'        => ['alpine'],
+                'suse'          => ['suse', 'opensuse', 'sles', 'opensuse-leap', 'opensuse-tumbleweed'],
+            ];
+            $is_linux_kernel_cpe = ($vendor === 'linux' && ($product === 'linux_kernel' || $product === 'linux'));
+            $is_linux_cpe = $is_linux_kernel_cpe || isset($distro_vendor_map[$vendor]);
 
             if ($is_win_cpe) {
-                return str_contains($host_os, 'win') ? 'matched' : 'not_matched';
+                if (!str_contains($host_os, 'win')) {
+                    return 'not_matched';
+                }
+
+                // Check specific Windows edition/product tokens when known (e.g. windows_7, windows_10, windows_11, windows_server_2019)
+                $win_ver = $os_info['os_version'];
+                $product_version_token = '';
+                if ($product !== 'windows') {
+                    if ($os_info['os_product'] !== '') {
+                        if ($os_info['os_product'] !== $product && !str_contains($os_info['os_product'], $product)) {
+                            return 'not_matched';
+                        }
+                    } elseif ($win_ver !== '' && preg_match('/^(\d+\.\d+)\.(\d+)/', $win_ver, $wm)) {
+                        $nt_ver = $wm[1];
+                        $build  = (int) $wm[2];
+                        if (($product === 'windows_7' && $nt_ver !== '6.1')
+                            || ($product === 'windows_8' && $nt_ver !== '6.2')
+                            || ($product === 'windows_8.1' && $nt_ver !== '6.3')
+                            || (str_starts_with($product, 'windows_11') && ($nt_ver !== '10.0' || $build < 22000))
+                            || (str_starts_with($product, 'windows_10') && ($nt_ver !== '10.0' || $build >= 22000))
+                        ) {
+                            return 'not_matched';
+                        }
+                        if (str_contains($product, 'server') || str_starts_with($product, 'windows_11') || str_starts_with($product, 'windows_10')) {
+                            // Desktop vs Server share NT/build ranges; require explicit host_os_product or exact numeric check below if edition wasn't ruled out
+                            if (str_contains($product, 'server')) {
+                                return 'unknown';
+                            }
+                        }
+                    } else {
+                        return 'unknown';
+                    }
+                    if (preg_match('/windows_(\d+(?:\.\d+)?)$/', $product, $pm)) {
+                        $product_version_token = $pm[1];
+                    }
+                }
+
+                if ($has_bounds) {
+                    return self::evaluate_os_version_bounds($match, $cpe_ver, $win_ver);
+                }
+                if ($product_version_token !== '' && $os_info['os_product'] === '' && $win_ver === '') {
+                    return 'unknown';
+                }
+                return 'matched';
             }
+
             if ($is_mac_cpe) {
-                return ($host_os === 'darwin' || str_contains($host_os, 'mac')) ? 'matched' : 'not_matched';
+                if ($host_os !== 'darwin' && !str_contains($host_os, 'mac')) {
+                    return 'not_matched';
+                }
+                if ($has_bounds) {
+                    return self::evaluate_os_version_bounds($match, $cpe_ver, $os_info['os_version']);
+                }
+                return 'matched';
             }
+
             if ($is_linux_cpe) {
                 if (!str_contains($host_os, 'linux')) {
                     return 'not_matched';
                 }
-                if ($vendor === 'linux') {
+                if ($is_linux_kernel_cpe) {
+                    if ($has_bounds) {
+                        return self::evaluate_os_version_bounds($match, $cpe_ver, $os_info['kernel_version']);
+                    }
                     return 'matched';
                 }
-                $distro_hint = strtolower((string) ($context['host_distro'] ?? php_uname('v') . ' ' . php_uname('r')));
-                return str_contains($distro_hint, $vendor) ? 'matched' : 'unknown';
+
+                // Linux distribution CPE: verify distro identity and (when specified) distro version bounds
+                $host_distro = $os_info['distro'];
+                if ($host_distro === '') {
+                    return 'unknown';
+                }
+                $accepted_ids = $distro_vendor_map[$vendor] ?? [$vendor];
+                if (!in_array($host_distro, $accepted_ids, true)) {
+                    return 'not_matched';
+                }
+
+                $distro_ver = $os_info['distro_version'] !== '' ? $os_info['distro_version'] : $os_info['os_version'];
+                // Some NVD CPEs encode major release inside product (e.g. enterprise_linux_8, rhel_9, debian_12)
+                if (preg_match('/(?:_|^)(\d+(?:\.\d+)?)$/', $product, $dpm)) {
+                    if ($distro_ver === '') {
+                        return 'unknown';
+                    }
+                    $req_maj = $dpm[1];
+                    if ($distro_ver !== $req_maj && !str_starts_with($distro_ver, $req_maj . '.')) {
+                        return 'not_matched';
+                    }
+                }
+
+                if ($has_bounds) {
+                    return self::evaluate_os_version_bounds($match, $cpe_ver, $distro_ver);
+                }
+                return 'matched';
             }
+
             return 'unknown';
         }
 
         // Hardware or unrecognized non-vulnerable prerequisites cannot be verified locally
         return 'unknown';
+    }
+
+    /**
+     * Resolve verifiable host OS family, distribution, distribution version, kernel version,
+     * and OS version from explicit context or verified host runtime telemetry.
+     * Never probes local OS files/uname from an incompatible OS when $context overrides host_os.
+     *
+     * @return array{family: string, distro: string, distro_version: string, kernel_version: string, os_version: string, os_product: string}
+     */
+    private static function resolve_host_os_info(array $context): array {
+        $explicit_os    = strtolower(trim((string) ($context['host_os'] ?? '')));
+        $real_family    = strtolower(PHP_OS_FAMILY);
+        $effective_os   = $explicit_os !== '' ? $explicit_os : $real_family;
+        $os_matches_host = ($explicit_os === '')
+            || (str_contains($effective_os, 'win') && $real_family === 'windows')
+            || (str_contains($effective_os, 'linux') && $real_family === 'linux')
+            || (($effective_os === 'darwin' || str_contains($effective_os, 'mac')) && $real_family === 'darwin');
+
+        $distro         = strtolower(trim((string) ($context['host_distro'] ?? '')));
+        $distro_version = trim((string) ($context['host_distro_version'] ?? ''));
+        $kernel_version = trim((string) ($context['host_kernel_version'] ?? ''));
+        $os_version     = trim((string) ($context['host_os_version'] ?? ($context['os_version'] ?? '')));
+        $os_product     = strtolower(trim((string) ($context['host_os_product'] ?? '')));
+
+        if ($kernel_version !== '' && preg_match('/^(\d+(?:\.\d+)*)/', $kernel_version, $km)) {
+            $kernel_version = $km[1];
+        }
+
+        if ($os_matches_host) {
+            if (str_contains($effective_os, 'linux')) {
+                if ($kernel_version === '' && preg_match('/^(\d+(?:\.\d+)*)/', php_uname('r'), $km)) {
+                    $kernel_version = $km[1];
+                }
+                if (($distro === '' || $distro_version === '') && @is_readable('/etc/os-release')) {
+                    $os_release = @file_get_contents('/etc/os-release', false, null, 0, 4096);
+                    if (is_string($os_release) && $os_release !== '') {
+                        if ($distro === '' && preg_match('/^ID=(?:"([^"\r\n]+)"|([^\s\r\n]+))/mi', $os_release, $im)) {
+                            $distro = strtolower(trim($im[1] !== '' ? $im[1] : ($im[2] ?? '')));
+                        }
+                        if ($distro_version === '' && preg_match('/^VERSION_ID=(?:"([^"\r\n]+)"|([^\s\r\n]+))/mi', $os_release, $vm)) {
+                            $distro_version = trim($vm[1] !== '' ? $vm[1] : ($vm[2] ?? ''));
+                        }
+                    }
+                }
+            } elseif (str_contains($effective_os, 'win') && $os_version === '') {
+                $win_rel = trim(php_uname('r'));
+                if (preg_match('/^\d+\.\d+$/', $win_rel) && preg_match('/\bbuild\s+(\d+)/i', php_uname('v'), $bm)) {
+                    $os_version = $win_rel . '.' . $bm[1];
+                }
+            }
+        }
+
+        // Normalize common aliases for distro matching
+        if ($distro === 'canonical') {
+            $distro = 'ubuntu';
+        } elseif ($distro === 'redhat') {
+            $distro = 'rhel';
+        }
+
+        return [
+            'family'         => $effective_os,
+            'distro'         => $distro,
+            'distro_version' => $distro_version,
+            'kernel_version' => $kernel_version,
+            'os_version'     => $os_version,
+            'os_product'     => $os_product,
+        ];
+    }
+
+    /**
+     * Evaluate OS version bounds (exact CPE version and/or versionStart* / versionEnd*).
+     * Returns 'unknown' whenever host OS version cannot be reliably verified or formats are incomparable.
+     *
+     * @return 'matched'|'not_matched'|'unknown'
+     */
+    private static function evaluate_os_version_bounds(array $match, string $cpe_ver, string $host_version): string {
+        $host_version = trim($host_version);
+        if ($host_version === '') {
+            return 'unknown';
+        }
+
+        $start_inc = trim((string) ($match['versionStartIncluding'] ?? ''));
+        $start_exc = trim((string) ($match['versionStartExcluding'] ?? ''));
+        $end_inc   = trim((string) ($match['versionEndIncluding'] ?? ''));
+        $end_exc   = trim((string) ($match['versionEndExcluding'] ?? ''));
+        $has_range = ($start_inc !== '' || $start_exc !== '' || $end_inc !== '' || $end_exc !== '');
+        $has_exact = ($cpe_ver !== '*' && $cpe_ver !== '-' && $cpe_ver !== '');
+
+        if (!$has_range && !$has_exact) {
+            return 'matched';
+        }
+
+        // Reject unverified comparison if host_version or range bounds contain non-numeric codenames (e.g. 22h2, bookworm)
+        $is_numeric_ver = static fn(string $v): bool => (bool) preg_match('/^\d+(?:\.\d+)*$/', self::normalize_version($v));
+
+        if ($has_exact && !$has_range) {
+            if ($is_numeric_ver($cpe_ver) && $is_numeric_ver($host_version)) {
+                $cmp_cpe  = self::normalize_version($cpe_ver);
+                $cmp_host = self::normalize_version($host_version);
+                // Match either exact semver (e.g. 22.04 == 22.04) or exact major.minor prefix if CPE specifies point release without patch (e.g. 12 matches 12.6, 22.04 matches 22.04.3)
+                if (version_compare($cmp_host, $cmp_cpe, '==')) {
+                    return 'matched';
+                }
+                if (substr_count($cmp_cpe, '.') < substr_count($cmp_host, '.') && str_starts_with($cmp_host, $cmp_cpe . '.')) {
+                    return 'matched';
+                }
+                return 'not_matched';
+            }
+
+            // Alphanumeric OS feature tags (e.g. 22h2 vs 23h2, bullseye vs bookworm)
+            $cpe_l  = strtolower(trim($cpe_ver));
+            $host_l = strtolower($host_version);
+            if ($cpe_l === $host_l) {
+                return 'matched';
+            }
+            if (!$is_numeric_ver($cpe_ver) && !$is_numeric_ver($host_version)) {
+                return 'not_matched';
+            }
+            return 'unknown';
+        }
+
+        if (!$is_numeric_ver($host_version)) {
+            return 'unknown';
+        }
+        foreach ([$start_inc, $start_exc, $end_inc, $end_exc] as $bound) {
+            if ($bound !== '' && !$is_numeric_ver($bound)) {
+                return 'unknown';
+            }
+        }
+
+        $res = self::evaluate_cpe_version_match($match, $cpe_ver, $host_version);
+        return $res['matched'] ? 'matched' : 'not_matched';
     }
 
     /**

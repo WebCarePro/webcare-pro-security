@@ -202,8 +202,17 @@ class DatabaseScanner {
                     $cursor,
                     $adaptive_row_batch,
                     $scan_id,
-                    $meta['order_by_columns'] ?? null
+                    $meta['order_by_columns'] ?? null,
+                    $meta['has_unique_ordering'] ?? null
                 );
+
+                $batch_rows = (int) ($batch_res['rows_scanned'] ?? 0);
+                $table_rows_scanned += $batch_rows;
+                $total_rows_scanned += $batch_rows;
+
+                if (!empty($batch_res['findings'])) {
+                    $findings = array_merge($findings, $batch_res['findings']);
+                }
 
                 $batch_err = $this->table_scanner->get_last_error();
                 if ($batch_err !== null) {
@@ -211,10 +220,6 @@ class DatabaseScanner {
                     $findings[] = $this->build_degraded_finding('database_tables', "MySQL Table '{$table}' Row Scan", $batch_err);
                     break;
                 }
-
-                $batch_rows = (int) ($batch_res['rows_scanned'] ?? 0);
-                $table_rows_scanned += $batch_rows;
-                $total_rows_scanned += $batch_rows;
 
                 if (!empty($scan_id)) {
                     $status_msg = sprintf(
@@ -238,10 +243,6 @@ class DatabaseScanner {
                         'overall_rows_left'    => $rows_left,
                         'completed'            => false,
                     ], 120);
-                }
-
-                if (!empty($batch_res['findings'])) {
-                    $findings = array_merge($findings, $batch_res['findings']);
                 }
 
                 $cursor = $batch_res['next_cursor'];
