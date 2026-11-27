@@ -699,19 +699,20 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
             return false;
         }
 
-        // Anchor legitimate security plugin callers to defined WP_PLUGIN_DIR
+        // Anchor legitimate security plugin callers to defined WP_PLUGIN_DIR (with symlink-safe fallback)
         $plugin_dir = defined('WP_PLUGIN_DIR') ? wp_normalize_path(WP_PLUGIN_DIR) : '';
-        if ($plugin_dir !== '') {
-            $legitimate_plugin_prefixes = [
-                $plugin_dir . '/wordfence/',
-                $plugin_dir . '/better-wp-security/',
-                $plugin_dir . '/sucuri-scanner/',
-                $plugin_dir . '/all-in-one-wp-security-and-firewall/',
-            ];
-            foreach ($legitimate_plugin_prefixes as $prefix) {
-                if (str_starts_with($origin_file, $prefix)) {
-                    return true;
-                }
+        $legitimate_plugin_slugs = [
+            'wordfence',
+            'better-wp-security',
+            'sucuri-scanner',
+            'all-in-one-wp-security-and-firewall',
+        ];
+        foreach ($legitimate_plugin_slugs as $slug) {
+            if (
+                ($plugin_dir !== '' && str_starts_with($origin_file, $plugin_dir . '/' . $slug . '/'))
+                || str_contains($origin_file, '/plugins/' . $slug . '/')
+            ) {
+                return true;
             }
         }
 
@@ -802,9 +803,8 @@ class RuntimeSqlRaspEngine implements SecurityModuleInterface {
         }
 
         // 3. Inspect columns, enforce single-row tuple, and verify role/registration policy in INSERT query
-        // Direct INSERT INTO $wpdb->users is strictly reserved for WordPress Core and WooCommerce user stores
         if (preg_match('/^\s*INSERT\s+INTO\s+`?[a-zA-Z0-9_]+`?\s*\(([^)]+)\)\s*VALUES\s*(.+)$/is', $sql, $insert_matches)) {
-            if (!$is_core_origin && !$is_wc_origin) {
+            if (!$is_core_origin && !$is_wc_origin && !$is_registered_plugin_origin) {
                 return false;
             }
             $cols = array_map(function ($c) {

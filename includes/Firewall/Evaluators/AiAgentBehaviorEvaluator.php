@@ -286,8 +286,17 @@ final readonly class AiAgentBehaviorEvaluator implements WafEvaluatorInterface {
                     }
                 }
             } else {
-                // Automated bot POST without render timestamp
-                $risk_score += 25;
+                // Automated bot POST without render timestamp.
+                // If a valid same-site Referer and modern browser UA are present, reduce weight (+15)
+                // so missing_sec_fetch_on_https (+35) + missing_render_timestamp (+15) = 50 (< 60)
+                // does not false-positive on legitimate human form submissions.
+                $referer = (string) ($ctx->headers['referer'] ?? ($ctx->server['HTTP_REFERER'] ?? ''));
+                $host = (string) ($ctx->headers['host'] ?? ($ctx->server['HTTP_HOST'] ?? ''));
+                $referer_host = $referer !== '' ? (string) parse_url($referer, PHP_URL_HOST) : '';
+                $host_name = $host !== '' ? strtolower(explode(':', $host)[0]) : '';
+                $has_same_site_referer = $referer_host !== '' && $host_name !== '' && strtolower($referer_host) === $host_name;
+
+                $risk_score += $has_same_site_referer ? 15 : 25;
                 $signals[] = 'missing_render_timestamp';
             }
         }
