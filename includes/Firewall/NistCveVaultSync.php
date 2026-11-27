@@ -519,6 +519,23 @@ class NistCveVaultSync {
     }
 
     /**
+     * Stop an active background NIST NVD sync and clear any pending cron schedule.
+     */
+    public static function stop_background_sync(): array {
+        if (function_exists('wp_clear_scheduled_hook')) {
+            wp_clear_scheduled_hook(self::CRON_HOOK);
+        }
+        $state = get_option(self::OPTION_SYNC_STATE, []);
+        if (!is_array($state)) {
+            $state = [];
+        }
+        $state['is_running'] = false;
+        $state['queue']      = [];
+        update_option(self::OPTION_SYNC_STATE, $state, false);
+        return self::get_status();
+    }
+
+    /**
      * Process one rate-limited batch of components/pages from the queue.
      */
     public static function process_next_batch(): void {

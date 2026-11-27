@@ -410,6 +410,12 @@ final class ModularWafController extends AbstractApiController {
             'permission_callback' => $permission,
         ]);
 
+        register_rest_route($namespace, '/cve/nist-sync-stop', [
+            'methods'             => 'POST',
+            'callback'            => [self::class, 'stop_nist_cve_sync'],
+            'permission_callback' => $permission,
+        ]);
+
         register_rest_route($namespace, '/cve/nist-fetch-component', [
             'methods'             => 'POST',
             'callback'            => [self::class, 'fetch_nist_cve_component'],
@@ -2204,6 +2210,15 @@ final class ModularWafController extends AbstractApiController {
         return rest_ensure_response([
             'success' => true,
             'message' => __('Background NIST NVD CVE sync started.', 'webcare-pro-security'),
+            'status'  => $status,
+        ]);
+    }
+
+    public static function stop_nist_cve_sync(\WP_REST_Request $request) {
+        $status = \WebCareProScanner\Firewall\NistCveVaultSync::stop_background_sync();
+        return rest_ensure_response([
+            'success' => true,
+            'message' => __('Background NIST NVD CVE sync stopped.', 'webcare-pro-security'),
             'status'  => $status,
         ]);
     }

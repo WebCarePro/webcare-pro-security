@@ -6411,29 +6411,59 @@ function NistCveSyncSettingsCard({ apiRequest }: { apiRequest: (opts: any) => Pr
           </p>
         </div>
 
-        <button
-          type="button"
-          className="button button-primary"
-          disabled={busy || status?.is_running}
-          style={{ background: '#4f46e5', borderColor: '#4338ca', fontWeight: 600 }}
-          onClick={async () => {
-            setBusy(true);
-            setNotice(null);
-            try {
-              const res = await apiRequest({ path: '/cve/nist-sync-start', method: 'POST' });
-              if (res?.success) {
-                setStatus(res.status);
-                setNotice({ type: 'success', text: res.message || 'Background NIST NVD CVE sync started.' });
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="button button-primary"
+            disabled={busy || status?.is_running}
+            style={{ background: '#4f46e5', borderColor: '#4338ca', fontWeight: 600 }}
+            onClick={async () => {
+              setBusy(true);
+              setNotice(null);
+              try {
+                const res = await apiRequest({ path: '/cve/nist-sync-start', method: 'POST' });
+                if (res?.success) {
+                  setStatus(res.status);
+                  setNotice({ type: 'success', text: res.message || 'Background NIST NVD CVE sync started.' });
+                }
+              } catch (e: any) {
+                setNotice({ type: 'error', text: e?.message || 'Failed to start NIST background sync.' });
+              } finally {
+                setBusy(false);
               }
-            } catch (e: any) {
-              setNotice({ type: 'error', text: e?.message || 'Failed to start NIST background sync.' });
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          {status?.is_running ? `Syncing (${status.checked_count}/${status.total_components})…` : 'Start Background NIST Sync'}
-        </button>
+            }}
+          >
+            {status?.is_running ? `Syncing (${status.checked_count}/${status.total_components})…` : 'Start Background NIST Sync'}
+          </button>
+          {status?.is_running && (
+            <button
+              type="button"
+              className="webcare-btn-danger-outline"
+              disabled={busy}
+              style={{ minHeight: '32px' }}
+              onClick={async () => {
+                setBusy(true);
+                setNotice(null);
+                try {
+                  const res = await apiRequest({ path: '/cve/nist-sync-stop', method: 'POST' });
+                  if (res?.status) {
+                    setStatus(res.status);
+                  }
+                  if (res?.success) {
+                    setNotice({ type: 'success', text: res.message || 'Background NIST NVD CVE sync stopped.' });
+                  }
+                } catch (e: any) {
+                  setNotice({ type: 'error', text: e?.message || 'Failed to stop NIST background sync.' });
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              <X size={13} aria-hidden="true" />
+              Stop Sync
+            </button>
+          )}
+        </div>
       </div>
 
       {status?.has_api_key && (

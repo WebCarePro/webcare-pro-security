@@ -692,6 +692,22 @@ const VulnerabilitiesPage = ({ apiRequest, onInspectCve }: VulnerabilitiesPagePr
                   ? `Syncing (${nistStatus.checked_count}/${nistStatus.total_components})…`
                   : 'Sync All with NIST'}
               </button>
+              {nistStatus?.is_running && (
+                <button
+                  type="button"
+                  className="webcare-btn-danger-outline"
+                  onClick={async () => {
+                    try {
+                      const res = await apiRequest({ path: '/webcare-pro-security/v1/cve/nist-sync-stop', method: 'POST' }) as any;
+                      if (res?.status) setNistStatus(res.status);
+                    } catch {
+                      // ignore
+                    }
+                  }}
+                >
+                  Stop Sync
+                </button>
+              )}
             </div>
           </div>
 
