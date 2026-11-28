@@ -525,4 +525,108 @@ final class ScanBackgroundWorkerBindingTest extends TestCase
         delete_option(\WebCareProScanner\Scan\ScanInterruptionForensics::OPTION_PREFIX . 906);
         delete_option(\WebCareProScanner\Scan\ScanInterruptionForensics::OPTION_PREFIX . 907);
     }
+
+    public function test_cas_interruption_requires_explicit_expected_generation_token(): void {
+        $staleUtc = gmdate('Y-m-d H:i:s', time() - 2400);
+        $rows = [
+            909 => [
+                'id'               => 909,
+                'status'           => 'running',
+                'scan_target'      => 'full',
+                'total_files'      => 200,
+                'scanned_files'    => 45,
+                'generation_token' => 'tok_909',
+                'created_at_gmt'   => $staleUtc,
+                'started_at'       => $staleUtc,
+                'duration'         => 0,
+            ],
+            910 => [
+                'id'               => 910,
+                'status'           => 'running',
+                'scan_target'      => 'full',
+                'total_files'      => 150,
+                'scanned_files'    => 30,
+                'generation_token' => '',
+                'created_at_gmt'   => $staleUtc,
+                'started_at'       => $staleUtc,
+                'duration'         => 0,
+            ],
+        ];
+
+        $wpdbMock = new class($rows) extends \wpdb {
+            public array $rows;
+            public int $casTransitions = 0;
+            public function __construct(array $rows) {
+                $this->rows = $rows;
+                $this->mock_get_var_callback = static fn(string $q) => 1;
+            }
+            public function get_row(string $query, string $output = 'OBJECT') {
+                $this->queries[] = $query;
+                if (preg_match('/WHERE id = (\d+)/', $query, $m) && isset($this->rows[(int) $m[1]])) {
+                    return $this->rows[(int) $m[1]];
+                }
+                return null;
+            }
+            public function query(string $query) {
+                $this->queries[] = $query;
+                if (preg_match("/SET status = 'interrupted'.*WHERE id = (\d+) AND status = 'running' AND \(generation_token IS NULL OR generation_token = ''\)/s", $query, $m)) {
+                    $id = (int) $m[1];
+                    $tok = (string) ($this->rows[$id]['generation_token'] ?? '');
+                    if (isset($this->rows[$id]) && $this->rows[$id]['status'] === 'running' && $tok === '') {
+                        $this->rows[$id]['status'] = 'interrupted';
+                        $this->casTransitions++;
+                        return 1;
+                    }
+                    return 0;
+                }
+                if (preg_match("/SET status = 'interrupted'.*WHERE id = (\d+) AND status = 'running'/s", $query)) {
+                    $this->casTransitions++;
+                    return 1;
+                }
+                return parent::query($query);
+            }
+        };
+        $GLOBALS['wpdb'] = $wpdbMock;
+
+        delete_option(\WebCareProScanner\Scan\ScanInterruptionForensics::OPTION_PREFIX . 909);
+        delete_option(\WebCareProScanner\Scan\ScanInterruptionForensics::OPTION_PREFIX . 910);
+
+        $beforeMailCount = isset($GLOBALS['webcare_test_sent_mails']) && is_array($GLOBALS['webcare_test_sent_mails'])
+            ? count($GLOBALS['webcare_test_sent_mails'])
+            : 0;
+
+        // Omitted expected_generation_token must fail closed: return [], leave DB running, persist no dossier, send no notification
+        $omitted = \WebCareProScanner\Scan\ScanInterruptionForensics::record(909, \WebCareProScanner\Scan\ScanInterruptionForensics::REASON_STALE_HEARTBEAT, [
+            'require_cas_transition' => true,
+        ]);
+        $explicitNull = \WebCareProScanner\Scan\ScanInterruptionForensics::record(909, \WebCareProScanner\Scan\ScanInterruptionForensics::REASON_STALE_HEARTBEAT, [
+            'require_cas_transition'    => true,
+            'expected_generation_token' => null,
+        ]);
+
+        $this->assertSame([], $omitted);
+        $this->assertSame([], $explicitNull);
+        $this->assertSame('running', $wpdbMock->rows[909]['status']);
+        $this->assertSame(0, $wpdbMock->casTransitions);
+        $this->assertNull(get_option(\WebCareProScanner\Scan\ScanInterruptionForensics::OPTION_PREFIX . 909, null));
+        $updateQueriesFor909 = array_filter($wpdbMock->queries, static fn(string $q): bool => str_contains($q, "SET status = 'interrupted'") && str_contains($q, '909'));
+        $this->assertSame([], $updateQueriesFor909);
+
+        if (isset($GLOBALS['webcare_test_sent_mails']) && is_array($GLOBALS['webcare_test_sent_mails'])) {
+            $this->assertCount($beforeMailCount, $GLOBALS['webcare_test_sent_mails']);
+        }
+
+        // Explicitly empty string token matches only NULL / '' token via strict CAS predicate
+        $emptyTokenRes = \WebCareProScanner\Scan\ScanInterruptionForensics::record(910, \WebCareProScanner\Scan\ScanInterruptionForensics::REASON_STALE_HEARTBEAT, [
+            'require_cas_transition'    => true,
+            'expected_generation_token' => '',
+        ]);
+        $this->assertNotEmpty($emptyTokenRes);
+        $this->assertSame('interrupted', $wpdbMock->rows[910]['status']);
+        $this->assertSame(1, $wpdbMock->casTransitions);
+        $emptySql = array_values(array_filter($wpdbMock->queries, static fn(string $q): bool => str_contains($q, "(generation_token IS NULL OR generation_token = '')")));
+        $this->assertNotEmpty($emptySql);
+
+        delete_option(\WebCareProScanner\Scan\ScanInterruptionForensics::OPTION_PREFIX . 910);
+    }
 }

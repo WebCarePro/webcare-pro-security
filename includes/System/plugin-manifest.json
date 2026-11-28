@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-28T17:30:06.337Z",
+  "generated_at": "2026-11-28T17:32:26.736Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -928,8 +928,8 @@
       "size": 17418
     },
     "includes/Scan/ScanInterruptionForensics.php": {
-      "sha256": "13ab4018e116d14541396dcf1206b0a939e5c72ed91d81da3c7efecf39042ffe",
-      "size": 21315
+      "sha256": "1d3121e71a19001d9c02426273116068751b82a2e0d3dd3d7f104d9bc77692ab",
+      "size": 21568
     },
     "includes/Scan/ScanLeaseLostException.php": {
       "sha256": "3677fe8d923536cd70dbc5bbaa515b7f2751bb332b0dfe948d53421ffb01e5b0",

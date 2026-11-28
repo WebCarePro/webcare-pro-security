@@ -43,16 +43,21 @@ class ScanInterruptionForensics {
         $scan = $wpdb->get_row($wpdb->prepare("SELECT * FROM `{$table_scans}` WHERE id = %d", $scan_id), ARRAY_A);
 
         $require_cas = !empty($extra_context['require_cas_transition']);
-        $expected_gen = array_key_exists('expected_generation_token', $extra_context)
+        $has_expected_gen = array_key_exists('expected_generation_token', $extra_context)
+            && $extra_context['expected_generation_token'] !== null;
+        $expected_gen = $has_expected_gen
             ? (string) $extra_context['expected_generation_token']
             : null;
 
         if ($require_cas && $reason_code !== self::REASON_MANUAL_ABORT) {
+            if (!$has_expected_gen) {
+                return [];
+            }
             if (!is_array($scan) || ($scan['status'] ?? '') !== 'running') {
                 return [];
             }
             $row_gen = (string) ($scan['generation_token'] ?? '');
-            if ($expected_gen !== null && $row_gen !== $expected_gen) {
+            if ($row_gen !== $expected_gen) {
                 return [];
             }
         }
@@ -164,6 +169,9 @@ class ScanInterruptionForensics {
                     $scan_id
                 );
             } else {
+                if ($require_cas) {
+                    return [];
+                }
                 $cas_sql = $wpdb->prepare(
                     // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
                     "UPDATE `{$table_scans}` SET status = 'interrupted', duration = %d, completed_at = %s WHERE id = %d AND status = 'running'",
