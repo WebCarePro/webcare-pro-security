@@ -359,6 +359,10 @@ class CronControlCenter {
         }
 
         set_transient($lock_key, time(), 180);
+        if (function_exists('ignore_user_abort') && !(defined('WP_CLI') && WP_CLI)) {
+            // phpcs:ignore Squiz.PHP.DiscouragedFunctions.Discouraged
+            @ignore_user_abort(true);
+        }
         $started_micro = microtime(true);
         $log_id        = CronExecutionLogger::start_run($task_id, $hook, $trigger_source, $actor_id);
 

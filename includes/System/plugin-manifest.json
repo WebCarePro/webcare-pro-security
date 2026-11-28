@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-27T22:21:47.946Z",
+  "generated_at": "2026-11-28T17:04:45.185Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -236,8 +236,8 @@
       "size": 42693
     },
     "includes/Api/Controllers/ScanController.php": {
-      "sha256": "d75833692882036e44f53cb7af03c041aedbf1959403bedc480cbd1cccd72ac2",
-      "size": 333395
+      "sha256": "15541ceade5df8fd1c2035a35def1ba8e7dafb6fbbf444d8f237e7b7ef129294",
+      "size": 339131
     },
     "includes/Api/Controllers/SystemController.php": {
       "sha256": "bb56c588a80105672b84cf0b83347e898acc979e14f7e98b8cc7ef2916dffaa6",
@@ -308,8 +308,8 @@
       "size": 54238
     },
     "includes/Backup/DatabaseBackup.php": {
-      "sha256": "54d3d0724f41278cefd53e555455d1e847a1d0a5751f895675d759d17963b5fc",
-      "size": 52304
+      "sha256": "5864acebff9c85426531ad1a38dffc1453aab9644733ee866ca650a6e22b6c56",
+      "size": 53368
     },
     "includes/Cli/WafCliCommand.php": {
       "sha256": "efcfca2f548ea3760156bebbfdd90417e1014f18781c4d313955ba7cb289430c",
@@ -636,8 +636,8 @@
       "size": 127297
     },
     "includes/Firewall/CustomRules/SiteBehavioralAnalyzer.php": {
-      "sha256": "f8c30d9531fdd5afdba8209b3edaea1af12fb885bd607fdb4ad1382c79cf15f6",
-      "size": 94460
+      "sha256": "27dc5d948c2e3fbfb5cec450d59266218b7860bd8b237fd6d4a58ec22fc3c0a1",
+      "size": 95284
     },
     "includes/Firewall/CustomRules/VisualRuleExpressionEngine.php": {
       "sha256": "58d8a1c92cb1c196ab25b80492262805153b199d7df887b0a099c4302d10c23e",
@@ -664,8 +664,8 @@
       "size": 25611
     },
     "includes/Firewall/Evaluators/AuthAndAjaxSurfaceEvaluator.php": {
-      "sha256": "202cfc2d5d14fcf57ee8da9f9b8d5cffdf7e6cf58bee4da01fa43934defd2c23",
-      "size": 29072
+      "sha256": "f0d5b04758cb73dc8adaba888f502d464c8c60ecb30a37b786b583a7864f92dd",
+      "size": 29151
     },
     "includes/Firewall/Evaluators/CommerceAndUploadEvaluator.php": {
       "sha256": "9f024d98c6bdf718b2babb7bae3a5751c69c5040279043a73b5f931414d3bf41",
@@ -704,8 +704,8 @@
       "size": 15973
     },
     "includes/Firewall/MicroWafCompiler.php": {
-      "sha256": "e03d45ba672994998f6b5f5685314ecdb32dbd095e236cf8d35a07a73368fbeb",
-      "size": 110266
+      "sha256": "858ce27b7088793352bd81153932d10ff0e2c42cd2924fd636fb362d9b389322",
+      "size": 110313
     },
     "includes/Firewall/NextGen/CheckoutSkimmerSentinel.php": {
       "sha256": "452eab2134888a51f5e9d0473cf90ba0ff4650055e3d46256efdf4f8b5e42a69",
@@ -732,8 +732,8 @@
       "size": 14036
     },
     "includes/Firewall/NistCveVaultSync.php": {
-      "sha256": "5ca92a4b73dd446bd3b08979325f6260ef34c23dedcce7811d7db45f74ad97bc",
-      "size": 120155
+      "sha256": "5f45189f3ebb51e358b4d79c3f707e6987ada1b24a52522817d20309c2726430",
+      "size": 120694
     },
     "includes/Firewall/OfficialCrawlerRegistry.php": {
       "sha256": "b82c0a1da8dc5266a21f298ad8ea580ad626804b45adb291ba8ce31edfea1d9c",
@@ -872,8 +872,8 @@
       "size": 10105
     },
     "includes/Malware/TaintAnalysisEngine.php": {
-      "sha256": "7aca546466f55159376b9e33d73a18a800a87c28389818e596fbf8731da13d2e",
-      "size": 84110
+      "sha256": "aec2b442f39d1c00933f7dd22d976308b35068bf73bcd233a009e62baac53c6f",
+      "size": 84157
     },
     "includes/Malware/WebshellDetector.php": {
       "sha256": "2de99c15fecd88c1c04cfa5ba30974943d15683bf12e7790d148141bcbaac745",
@@ -884,8 +884,8 @@
       "size": 65450
     },
     "includes/Notifications/WebhookService.php": {
-      "sha256": "a303f3758eec0c47a3d11dd83c4772a3939a773e020643362f94bf979ddf9995",
-      "size": 39217
+      "sha256": "7fc70460c00269ec05388e34f0dfe60bad27685aaa461be8bf9bbb1255344b0b",
+      "size": 39422
     },
     "includes/Plugin.php": {
       "sha256": "a23ab1bf713c4cacd8212350d7260352a69488302cf77a685c789ec4c0fe088d",
@@ -924,24 +924,24 @@
       "size": 11696
     },
     "includes/Scan/ScanBackgroundWorker.php": {
-      "sha256": "276e572d187571dfadfe9e1f23a0c81c4a94438eb5659227fc5514ae703906c8",
-      "size": 14525
+      "sha256": "7a98e4510d6f13df05cc386366d1925e2980a2f8e6ec6c3493ae6ffaf1a036c2",
+      "size": 17418
     },
     "includes/Scan/ScanInterruptionForensics.php": {
-      "sha256": "8a3344c06005be9cb13a1d9dfc7436bb55edaca1cd44c8a9f9e856c56c55954a",
-      "size": 18112
+      "sha256": "37177498c1677d72d3cf0b090dff8a9be168edfe4ac12077b1bd4cc56dcc66ff",
+      "size": 18888
     },
     "includes/Scan/ScanLeaseLostException.php": {
       "sha256": "3677fe8d923536cd70dbc5bbaa515b7f2751bb332b0dfe948d53421ffb01e5b0",
       "size": 245
     },
     "includes/Scan/ScanLock.php": {
-      "sha256": "e9e0c8a68b3ea19682833c40476fd8aba836c29873fc9648f9cd2f3a122f8804",
-      "size": 17069
+      "sha256": "d4cf739ff52bd2c7678b8adf75020e5b97f7f9e50bad1cc7235e09e0542fa75f",
+      "size": 17101
     },
     "includes/Scan/ScanQueueManager.php": {
-      "sha256": "882f005129646206b3b107d99ccf7a4689de1dc45b3b525a8c2c4077fc7f4994",
-      "size": 17797
+      "sha256": "a6cc8a0c7fcac69fd611e7b8d43ab4023c23b5b0526cbbd9015ede4c5832125c",
+      "size": 18094
     },
     "includes/Scan/ScanState.php": {
       "sha256": "0e6453e77ebf5d8510d6fd3003092574c00cb6345908c4408c9c126757e89f76",
@@ -1064,8 +1064,8 @@
       "size": 35691
     },
     "includes/System/Cron/CronControlCenter.php": {
-      "sha256": "f62b8b14b829eec232f9fac0fd3d29375edaec1b205f105e491c2a828f7609ef",
-      "size": 53963
+      "sha256": "1552fee79f85b6913f50155cffa38c4aff2f610961ea95012aeb3668e8c28d24",
+      "size": 54168
     },
     "includes/System/Cron/CronExecutionLogger.php": {
       "sha256": "b7bfee0a86a7c49483757358421501e8758550dd9552db60a825c5e139d4456d",
@@ -1084,8 +1084,8 @@
       "size": 6617
     },
     "includes/System/Scheduler.php": {
-      "sha256": "578bb86ebc04daecc3173f7242841b38c3a76e3407ad8e749a15ef54efebc5d4",
-      "size": 47332
+      "sha256": "dc4d96e05522834ddf5ec760e2513e3d7208062be1cfdd9b0541f1290d0c7194",
+      "size": 50833
     },
     "includes/System/ServerInfo.php": {
       "sha256": "d4f7a59e3939b24d2e0d5cdd542dc5e7de682f4c1b45cc15171a5f6a5efcdf0d",

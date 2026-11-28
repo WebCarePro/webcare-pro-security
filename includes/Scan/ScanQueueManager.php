@@ -106,8 +106,8 @@ class ScanQueueManager {
      * @return int Total files enqueued
      */
     public static function init_queue($scan_id, array $paths, int $file_limit = 0): int {
-        // Clean up any stale sessions older than 2 hours first
-        self::cleanup_expired_sessions(7200);
+        // Clean up any stale abandoned sessions older than 12 hours first
+        self::cleanup_expired_sessions(12 * HOUR_IN_SECONDS);
 
         $session_dir = self::get_session_dir($scan_id, true);
         $use_disk = ($session_dir !== false && wp_is_writable($session_dir));
@@ -170,14 +170,15 @@ class ScanQueueManager {
         }
 
         $total_files = count($all_files);
-        set_transient(self::TRANSIENT_QUEUE_PREFIX . $scan_id, $all_files, HOUR_IN_SECONDS);
+        $ttl = 12 * HOUR_IN_SECONDS;
+        set_transient(self::TRANSIENT_QUEUE_PREFIX . $scan_id, $all_files, $ttl);
         set_transient(self::TRANSIENT_META_PREFIX . $scan_id, [
             'scan_id'         => (int) $scan_id,
             'storage_mode'    => 'transient',
             'total_files'     => $total_files,
             'processed_count' => 0,
             'created_at'      => time(),
-        ], HOUR_IN_SECONDS);
+        ], $ttl);
 
         return $total_files;
     }
@@ -305,7 +306,7 @@ class ScanQueueManager {
                     delete_transient(self::TRANSIENT_QUEUE_PREFIX . $scan_id);
                     return 0;
                 }
-                set_transient(self::TRANSIENT_QUEUE_PREFIX . $scan_id, $queue, HOUR_IN_SECONDS);
+                set_transient(self::TRANSIENT_QUEUE_PREFIX . $scan_id, $queue, 12 * HOUR_IN_SECONDS);
                 return count($queue);
             }
             return 0;
@@ -341,9 +342,9 @@ class ScanQueueManager {
                 self::cleanup($scan_id);
                 return 0;
             }
-            set_transient(self::TRANSIENT_QUEUE_PREFIX . $scan_id, $queue, HOUR_IN_SECONDS);
+            set_transient(self::TRANSIENT_QUEUE_PREFIX . $scan_id, $queue, 12 * HOUR_IN_SECONDS);
             $meta['processed_count'] = (int) ($meta['processed_count'] ?? 0) + $processed_count;
-            set_transient(self::TRANSIENT_META_PREFIX . $scan_id, $meta, HOUR_IN_SECONDS);
+            set_transient(self::TRANSIENT_META_PREFIX . $scan_id, $meta, 12 * HOUR_IN_SECONDS);
             return $remaining;
         }
 
@@ -436,12 +437,13 @@ class ScanQueueManager {
      * @param int $max_age Age in seconds (default 7200 = 2 hours)
      * @return int Number of sessions cleaned
      */
-    public static function cleanup_expired_sessions(int $max_age = 7200): int {
+    public static function cleanup_expired_sessions(int $max_age = 43200): int {
         $base = self::get_base_sessions_dir();
         if (!$base || !is_dir($base)) {
             return 0;
         }
 
+        $active_scan_id = class_exists(ScanLock::class) ? ScanLock::get_locked_scan_id() : null;
         $cleaned = 0;
         $now = time();
 
@@ -453,6 +455,9 @@ class ScanQueueManager {
 
         foreach ($entries as $entry) {
             if ($entry === '.' || $entry === '..' || $entry === '.htaccess' || $entry === 'index.php') {
+                continue;
+            }
+            if ($active_scan_id !== null && is_numeric($entry) && (int) $entry === $active_scan_id) {
                 continue;
             }
             $dir = $base . '/' . $entry;

@@ -568,6 +568,10 @@ class NistCveVaultSync {
      * Process one rate-limited batch of components/pages from the queue.
      */
     public static function process_next_batch(): void {
+        if (function_exists('ignore_user_abort') && !(defined('WP_CLI') && WP_CLI)) {
+            // phpcs:ignore Squiz.PHP.DiscouragedFunctions.Discouraged
+            @ignore_user_abort(true);
+        }
         if (function_exists('get_transient') && function_exists('set_transient')) {
             if (get_transient('webcareproscan_nist_batch_lock')) {
                 return;
@@ -588,8 +592,15 @@ class NistCveVaultSync {
             self::execute_queue_batch($state, false);
             update_option(self::OPTION_SYNC_STATE, $state, false);
 
-            if (!empty($state['is_running']) && !wp_next_scheduled(self::CRON_HOOK)) {
-                wp_schedule_single_event(time() + self::BATCH_INTERVAL_SEC, self::CRON_HOOK);
+            if (!empty($state['is_running'])) {
+                $next_ts = function_exists('wp_next_scheduled') ? wp_next_scheduled(self::CRON_HOOK) : false;
+                if (is_int($next_ts) && $next_ts > 0 && $next_ts < (time() - 60)) {
+                    wp_unschedule_event($next_ts, self::CRON_HOOK);
+                    $next_ts = false;
+                }
+                if (!$next_ts) {
+                    wp_schedule_single_event(time() + self::BATCH_INTERVAL_SEC, self::CRON_HOOK);
+                }
             }
         } finally {
             if (function_exists('delete_transient')) {

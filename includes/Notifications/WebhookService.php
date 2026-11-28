@@ -168,6 +168,10 @@ class WebhookService {
      * Process asynchronous queue items via scheduled task.
      */
     public static function process_queued_webhooks(): void {
+        if (function_exists('ignore_user_abort') && !(defined('WP_CLI') && WP_CLI)) {
+            // phpcs:ignore Squiz.PHP.DiscouragedFunctions.Discouraged
+            @ignore_user_abort(true);
+        }
         $queue = get_option('webcareproscan_async_webhook_queue', []);
         if (!is_array($queue) || empty($queue)) {
             return;

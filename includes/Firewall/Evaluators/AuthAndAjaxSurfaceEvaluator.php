@@ -294,6 +294,8 @@ final readonly class AuthAndAjaxSurfaceEvaluator implements WafEvaluatorInterfac
             $tier1_actions = array_fill_keys([
                 'heartbeat',
                 'webcare_flush_cf_ban_queue',
+                'webcare_scan_bg_tick',
+                'webcare_ast_bg_tick',
                 'woocommerce_get_refreshed_fragments',
                 'woocommerce_add_to_cart',
                 'woocommerce_apply_coupon',

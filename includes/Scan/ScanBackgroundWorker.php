@@ -39,9 +39,14 @@ final class ScanBackgroundWorker {
     public const BROWSER_IDLE_THRESHOLD_SECONDS = 8.0;
 
     /**
-     * Maximum execution window per background cron tick (in seconds) to prevent hosting timeouts.
+     * Maximum execution window per background cron tick (in seconds) to stay safely under FastCGI/PHP limits.
      */
-    public const MAX_CRON_SLICE_SECONDS = 9.0;
+    public const MAX_CRON_SLICE_SECONDS = 20.0;
+
+    /**
+     * Cooldown window (in seconds) between self-healing continuation dispatches during status polls.
+     */
+    public const SELF_HEAL_COOLDOWN_SECONDS = 10;
 
     /**
      * Register WP-Cron action handlers and AJAX loopback handler for scan background continuation.
@@ -81,9 +86,13 @@ final class ScanBackgroundWorker {
         $signature = hash_hmac('sha256', "scan_tick|{$scan_id}|{$now}|{$random_nonce}", $salt);
         $token = "{$scan_id}:{$now}:{$random_nonce}:{$signature}";
 
+        if (!function_exists('wp_safe_remote_post')) {
+            return;
+        }
+
         $ajax_url = admin_url('admin-ajax.php');
         wp_safe_remote_post($ajax_url, [
-            'timeout'             => 1,
+            'timeout'             => 3,
             'blocking'            => false,
             // Strictly allow internal/loopback IP resolution for admin-ajax on Docker / localhost / private IP VPS
             'reject_unsafe_urls'  => false,
@@ -155,9 +164,67 @@ final class ScanBackgroundWorker {
             return;
         }
 
-        if (!wp_next_scheduled(self::CRON_HOOK)) {
+        $next_ts = wp_next_scheduled(self::CRON_HOOK);
+        // Clear stale overdue WP-Cron entries stuck more than 60s in the past so a fresh continuation can be queued
+        if (is_int($next_ts) && $next_ts > 0 && $next_ts < (time() - 60)) {
+            wp_unschedule_event($next_ts, self::CRON_HOOK);
+            $next_ts = wp_next_scheduled(self::CRON_HOOK);
+        }
+
+        if (!$next_ts) {
             wp_schedule_single_event(time() + max(2, $delay_seconds), self::CRON_HOOK);
         }
+    }
+
+    /**
+     * Dispatch non-blocking background continuation only after the current request & CronControlCenter lock finish.
+     */
+    public static function dispatch_deferred_tick(int $scan_id): void {
+        if ($scan_id <= 0 || (defined('WEBCAREPROSCAN_TESTING') && WEBCAREPROSCAN_TESTING)) {
+            return;
+        }
+        register_shutdown_function(static function () use ($scan_id): void {
+            if (ScanLock::get_locked_scan_id() !== $scan_id) {
+                return;
+            }
+            self::trigger_loopback_tick($scan_id);
+            if (function_exists('spawn_cron')) {
+                @spawn_cron();
+            }
+        });
+    }
+
+    /**
+     * Self-heal an active background scan when status polling observes idle browser & worker heartbeats.
+     */
+    public static function maybe_advance_stalled_scan(int $scan_id): bool {
+        if ($scan_id <= 0 || (class_exists(CronControlCenter::class) && !CronControlCenter::is_task_enabled(self::CRON_HOOK))) {
+            return false;
+        }
+        if (ScanLock::get_locked_scan_id() !== $scan_id) {
+            return false;
+        }
+
+        $now = microtime(true);
+        $last_browser = (float) get_transient("webcareproscan_active_scan_last_browser_touch_{$scan_id}");
+        if ($last_browser > 0 && ($now - $last_browser) < self::BROWSER_IDLE_THRESHOLD_SECONDS) {
+            return false;
+        }
+
+        $last_bg_tick = (float) get_transient("webcareproscan_bg_last_tick_{$scan_id}");
+        if ($last_bg_tick > 0 && ($now - $last_bg_tick) < 12.0) {
+            return false;
+        }
+
+        $cooldown_key = "webcareproscan_bg_advance_cooldown_{$scan_id}";
+        if (get_transient($cooldown_key)) {
+            return false;
+        }
+        set_transient($cooldown_key, 1, self::SELF_HEAL_COOLDOWN_SECONDS);
+
+        self::schedule_continuation(5);
+        self::dispatch_deferred_tick($scan_id);
+        return true;
     }
 
     /**
@@ -239,7 +306,11 @@ final class ScanBackgroundWorker {
             ];
         }
 
-        // Memory & execution safeguards
+        // Memory, abort & execution safeguards
+        if (function_exists('ignore_user_abort')) {
+            // phpcs:ignore Squiz.PHP.DiscouragedFunctions.Discouraged
+            @ignore_user_abort(true);
+        }
         if (function_exists('set_time_limit')) {
             // phpcs:ignore Squiz.PHP.DiscouragedFunctions.Discouraged
             @set_time_limit(60);
@@ -251,10 +322,11 @@ final class ScanBackgroundWorker {
         $batch_size = max(25, min(100, $configured_batch));
 
         $slices = 0;
-        $max_slices = 5;
+        $max_slices = 25;
 
         while ($slices < $max_slices && (microtime(true) - $start_time) < self::MAX_CRON_SLICE_SECONDS) {
             $slices++;
+            set_transient("webcareproscan_bg_last_tick_{$locked_id}", microtime(true), 600);
 
             // Create synthetic WP_REST_Request for ScanController::process_batch()
             $request = new \WP_REST_Request('POST', '/webcare-pro-security/v1/scan/batch');
@@ -310,17 +382,16 @@ final class ScanBackgroundWorker {
             }
         }
 
-        // Check if scan is still running; if so, schedule next continuation tick
+        // Check if scan is still running; if so, schedule fallback & chain next tick AFTER CronControlCenter releases its lock
         $is_still_running = ScanLock::get_locked_scan_id() === $locked_id;
         if ($is_still_running) {
-            // 1. Fire immediate non-blocking loopback to continue background execution without waiting for visitors
-            self::trigger_loopback_tick($locked_id);
+            set_transient("webcareproscan_bg_last_tick_{$locked_id}", microtime(true), 600);
 
-            // 2. Schedule WP-Cron event as a safety fallback in case loopback HTTP calls are blocked by host
-            self::schedule_continuation(60);
-            if (function_exists('spawn_cron')) {
-                @spawn_cron();
-            }
+            // 1. Schedule WP-Cron fallback at 10s in case loopback HTTP is blocked by host/proxy
+            self::schedule_continuation(10);
+
+            // 2. Defer non-blocking loopback & spawn_cron until shutdown so CronControlCenter's transient mutex never skips our chained tick
+            self::dispatch_deferred_tick($locked_id);
         } else {
             self::unschedule_continuation();
         }

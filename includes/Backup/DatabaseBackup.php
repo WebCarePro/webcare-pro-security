@@ -997,7 +997,11 @@ class DatabaseBackup {
             return;
         }
 
-        // Increase limits for background execution
+        // Increase limits and ignore socket disconnects for background execution
+        if (function_exists('ignore_user_abort')) {
+            // phpcs:ignore Squiz.PHP.DiscouragedFunctions.Discouraged
+            @ignore_user_abort(true);
+        }
         if (function_exists('set_time_limit')) {
             // phpcs:ignore Squiz.PHP.DiscouragedFunctions.Discouraged
             @set_time_limit(0);
@@ -1011,10 +1015,18 @@ class DatabaseBackup {
             return;
         }
 
-        // Run next chunk
-        $res = $backup->step_session($session_id);
+        $step_start = microtime(true);
+        $chunks = 0;
+        $res = ['success' => true, 'status' => 'running'];
+        while ($chunks < 12 && (microtime(true) - $step_start) < 18.0) {
+            $chunks++;
+            $res = $backup->step_session($session_id);
+            if (empty($res['success']) || ($res['status'] ?? '') !== 'running') {
+                break;
+            }
+        }
 
-        // If still running after this step, self-dispatch or schedule the next step
+        // If still running after this slice, schedule fallback and spawn next tick AFTER CronControlCenter lock releases
         if (!empty($res['success']) && ($res['status'] ?? '') === 'running') {
             self::dispatch_background_worker($session_id);
         }
@@ -1031,14 +1043,23 @@ class DatabaseBackup {
             return;
         }
 
-        // 1. Schedule next WP-Cron single event as a reliable watchdog heartbeat
-        if (!wp_next_scheduled(self::CRON_STEP_HOOK)) {
-            wp_schedule_single_event(time() + 1, self::CRON_STEP_HOOK);
+        // 1. Clear overdue stuck events before scheduling next WP-Cron watchdog heartbeat
+        $next_ts = wp_next_scheduled(self::CRON_STEP_HOOK);
+        if (is_int($next_ts) && $next_ts > 0 && $next_ts < (time() - 60)) {
+            wp_unschedule_event($next_ts, self::CRON_STEP_HOOK);
+            $next_ts = wp_next_scheduled(self::CRON_STEP_HOOK);
+        }
+        if (!$next_ts) {
+            wp_schedule_single_event(time() + 5, self::CRON_STEP_HOOK);
         }
 
-        // 2. Spawn WP-Cron loopback immediately so background execution starts with zero delay
-        if (function_exists('spawn_cron')) {
-            spawn_cron();
+        // 2. Defer spawn_cron() until shutdown so active CronControlCenter transient mutex never skips the next chunk
+        if (function_exists('spawn_cron') && !(defined('WEBCAREPROSCAN_TESTING') && WEBCAREPROSCAN_TESTING)) {
+            register_shutdown_function(static function (): void {
+                if (function_exists('spawn_cron')) {
+                    @spawn_cron();
+                }
+            });
         }
     }
 

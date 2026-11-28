@@ -52,7 +52,19 @@ class ScanInterruptionForensics {
 
         $max_exec_time = (int) ini_get('max_execution_time');
         $start_micro = get_transient("webcareproscan_scan_start_micro_{$scan_id}");
-        $elapsed_sec = ($start_micro && is_numeric($start_micro)) ? max(0.1, round(microtime(true) - (float) $start_micro, 2)) : (float) ($scan['duration'] ?? 0);
+        if ($start_micro && is_numeric($start_micro)) {
+            $elapsed_sec = max(0.1, round(microtime(true) - (float) $start_micro, 2));
+        } elseif (!empty($scan['created_at_gmt'])) {
+            $created_ts = strtotime((string) $scan['created_at_gmt'] . ' UTC');
+            $elapsed_sec = $created_ts ? max(0.1, (float) (time() - $created_ts)) : (float) ($scan['duration'] ?? 0);
+        } elseif (!empty($scan['started_at']) && function_exists('date_create')) {
+            $tz = function_exists('wp_timezone') ? wp_timezone() : new \DateTimeZone('UTC');
+            $start_dt = date_create((string) $scan['started_at'], $tz);
+            $now_dt   = date_create('now', $tz);
+            $elapsed_sec = ($start_dt && $now_dt) ? max(0.1, (float) ($now_dt->getTimestamp() - $start_dt->getTimestamp())) : (float) ($scan['duration'] ?? 0);
+        } else {
+            $elapsed_sec = (float) ($scan['duration'] ?? 0);
+        }
 
         // Check if PHP captured a shutdown error
         $php_error = error_get_last();

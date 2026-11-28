@@ -1529,7 +1529,7 @@ class MicroWafCompiler {
         }
 
         // Merge standard Core guest AJAX safe-passes + ecosystem-specific guest actions (CAF 2.0)
-        $default_guest_ajax = ['heartbeat', 'webcare_flush_cf_ban_queue'];
+        $default_guest_ajax = ['heartbeat', 'webcare_flush_cf_ban_queue', 'webcare_scan_bg_tick', 'webcare_ast_bg_tick'];
         $has_woo = false;
         if ($snapshot && is_array($snapshot->detected_ecosystems)) {
             $has_woo = in_array('woocommerce', $snapshot->detected_ecosystems, true);

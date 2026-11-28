@@ -10,7 +10,7 @@ class ScanLock {
     const LOCK_OPTION          = 'webcareproscan_active_scan_lock';
     const ADVISORY_LOCK_NAME   = 'webcareproscan_scan_mutex';
     const BATCH_LOCK_NAME      = 'webcareproscan_scan_batch_mutex';
-    const LOCK_TIMEOUT_SECONDS = 300; // 5 minutes timeout for auto recovery
+    const LOCK_TIMEOUT_SECONDS = 900; // 15 minutes timeout for background worker resilience & auto recovery
 
     /**
      * Execute a critical lease-mutation callback while holding the MySQL advisory mutex.

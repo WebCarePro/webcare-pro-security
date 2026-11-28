@@ -133,46 +133,53 @@ class Scheduler {
 
          // 1. Discover filesystem files (0 = unlimited)
          $files = [];
+         $paths = [];
          $file_limit = (int) apply_filters('webcareproscan_file_limit', 0, $target);
 
          if (in_array($target, ['unknown_files', 'spam_content', 'user_security', 'outdated_software', 'suspicious_uploads', 'crontab_audit', 'core_integrity', 'rogue_admin', 'hook_sentinel'], true)) {
              $files = [];
          } elseif ($target === 'filesystem_only' || $target === 'full') {
              $paths = [untrailingslashit(ABSPATH)];
-             foreach ($paths as $p) {
-                 $files = array_merge($files, Engine::get_scannable_files($p, $file_limit));
+             if (defined('WP_CLI') && WP_CLI) {
+                 foreach ($paths as $p) {
+                     $files = array_merge($files, Engine::get_scannable_files($p, $file_limit));
+                 }
              }
          } else {
              // plugins_themes
              $paths = [WP_PLUGIN_DIR, get_theme_root()];
-             foreach ($paths as $p) {
-                 $files = array_merge($files, Engine::get_scannable_files($p, $file_limit));
+             if (defined('WP_CLI') && WP_CLI) {
+                 foreach ($paths as $p) {
+                     $files = array_merge($files, Engine::get_scannable_files($p, $file_limit));
+                 }
              }
          }
 
          $now_exact = \WebCareProScanner\Api\Controllers\ScanController::now_fractional_mysql();
          $start_time = microtime(true);
+         $generation_token = function_exists('wp_generate_password') ? wp_generate_password(32, false) : bin2hex(random_bytes(16));
 
          // Insert scan record
          // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
          $wpdb->insert($table_scans, [
-             'status'        => 'running',
-             'scan_target'   => $target,
-             'trigger_type'  => 'scheduled',
-             'scanned_files' => 0,
-             'total_files'   => count($files),
-             'issues_found'  => 0,
-             'risk_score'    => 0,
-             'duration'      => 0,
-             'duration_ms'   => 0,
-             'created_at'    => current_time('mysql'),
-             'created_at_gmt'=> gmdate('Y-m-d H:i:s'),
-             'started_at'    => $now_exact,
+             'status'           => 'running',
+             'generation_token' => $generation_token,
+             'scan_target'      => $target,
+             'trigger_type'     => 'scheduled',
+             'scanned_files'    => 0,
+             'total_files'      => count($files),
+             'issues_found'     => 0,
+             'risk_score'       => 0,
+             'duration'         => 0,
+             'duration_ms'      => 0,
+             'created_at'       => current_time('mysql'),
+             'created_at_gmt'   => gmdate('Y-m-d H:i:s'),
+             'started_at'       => $now_exact,
          ]);
          $scan_id = (int) $wpdb->insert_id;
 
-         // Acquire exclusive scan lock so dashboard doesn't mark it interrupted
-         if (!ScanLock::acquire($scan_id)) {
+         // Acquire exclusive scan lock with matching generation_token so chunked background continuation works cleanly
+         if (!ScanLock::acquire($scan_id, $generation_token)) {
              // Another worker acquired the lock concurrently; cancel this orphaned record gracefully
              // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
              $wpdb->update($table_scans, ['status' => 'cancelled'], ['id' => $scan_id]);
@@ -180,12 +187,65 @@ class Scheduler {
          }
          $lease_token = ScanLock::get_active_lease_token($scan_id);
          if (empty($lease_token)) {
-             ScanLock::force_release($scan_id);
+             ScanLock::force_release($scan_id, $generation_token);
              // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
              $wpdb->update($table_scans, ['status' => 'cancelled'], ['id' => $scan_id]);
              return;
          }
-         set_transient("webcareproscan_scan_start_micro_{$scan_id}", $start_time, HOUR_IN_SECONDS);
+         set_transient("webcareproscan_scan_start_micro_{$scan_id}", $start_time, DAY_IN_SECONDS);
+         set_transient("webcareproscan_scan_last_activity_{$scan_id}", time(), 12 * HOUR_IN_SECONDS);
+
+         // For web/FPM cron runs with filesystem targets, stream into the chunked resumable ScanQueueManager + ScanBackgroundWorker
+         // pipeline instead of attempting all 40,000+ files + 24 engines in a single blocking PHP request that FastCGI can kill.
+         if (!empty($paths) && !(defined('WP_CLI') && WP_CLI)
+             && class_exists('\\WebCareProScanner\\Scan\\ScanQueueManager')
+             && class_exists('\\WebCareProScanner\\Scan\\ScanBackgroundWorker')
+         ) {
+             $total_files = \WebCareProScanner\Scan\ScanQueueManager::init_queue($scan_id, $paths, $file_limit);
+             // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+             $wpdb->update($table_scans, ['total_files' => $total_files], ['id' => $scan_id]);
+
+             \WebCareProScanner\System\WebCareActivityLogger::info(
+                 'scheduled_scan_started',
+                 'scan',
+                 [
+                     'description' => sprintf('Automated chunked scheduled scan #%d started.', $scan_id),
+                     'scan_id'     => (int) $scan_id,
+                     'target'      => (string) $target,
+                     'total_files' => $total_files,
+                 ],
+                 [
+                     'display_name' => 'System (WP-Cron)',
+                     'id'           => 0,
+                     'ip'           => '127.0.0.1',
+                     'role'         => 'system',
+                     'type'         => 'system',
+                     'user_agent'   => 'WordPress/' . get_bloginfo('version') . '; Cron',
+                     'user_login'   => 'System',
+                 ]
+             );
+
+             if ($total_files === 0) {
+                 \WebCareProScanner\Scan\ScanQueueManager::cleanup($scan_id);
+                 $audit_request = new \WP_REST_Request('POST', '/webcare-pro-security/v1/scan/deep-audit');
+                 $audit_request->set_param('scan_id', $scan_id);
+                 $audit_request->set_param('lease_token', $lease_token);
+                 $audit_request->set_param('target', $target);
+                 \WebCareProScanner\Api\Controllers\ScanController::run_deep_audit($audit_request);
+                 return;
+             }
+
+             \WebCareProScanner\Scan\ScanBackgroundWorker::run_background_step(true, $scan_id);
+             return;
+         }
+
+         if (!empty($paths) && empty($files)) {
+             foreach ($paths as $p) {
+                 $files = array_merge($files, Engine::get_scannable_files($p, $file_limit));
+             }
+             // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+             $wpdb->update($table_scans, ['total_files' => count($files)], ['id' => $scan_id]);
+         }
 
          // Audit Trail: Log scheduled scan started (Attributed to System WP-Cron)
          \WebCareProScanner\System\WebCareActivityLogger::info(

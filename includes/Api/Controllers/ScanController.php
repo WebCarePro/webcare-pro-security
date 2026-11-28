@@ -456,14 +456,18 @@ final class ScanController extends AbstractApiController {
             update_option("webcareproscan_scan_opts_{$scan_id}", $custom_options, false);
         }
 
-        set_transient("webcareproscan_scan_start_micro_{$scan_id}", $start_micro, HOUR_IN_SECONDS);
+        set_transient("webcareproscan_scan_start_micro_{$scan_id}", $start_micro, DAY_IN_SECONDS);
+        set_transient("webcareproscan_scan_last_activity_{$scan_id}", time(), 12 * HOUR_IN_SECONDS);
 
         $init_telemetry = self::get_realtime_resource_stats(null, null, 0, $total_files, 0, 0.0);
-        set_transient("webcareproscan_scan_live_telemetry_{$scan_id}", $init_telemetry, 600);
+        set_transient("webcareproscan_scan_live_telemetry_{$scan_id}", $init_telemetry, DAY_IN_SECONDS);
 
         // Schedule background continuation worker so the scan continues autonomously if the user navigates away
         if (class_exists('\\WebCareProScanner\\Scan\\ScanBackgroundWorker')) {
-            \WebCareProScanner\Scan\ScanBackgroundWorker::schedule_continuation(10);
+            \WebCareProScanner\Scan\ScanBackgroundWorker::schedule_continuation(5);
+            if (\WebCareProScanner\System\SettingsManager::get('scan_execution_strategy', 'ajax_client') !== 'ajax_client') {
+                \WebCareProScanner\Scan\ScanBackgroundWorker::dispatch_deferred_tick($scan_id);
+            }
         }
 
         return rest_ensure_response([
@@ -505,10 +509,13 @@ final class ScanController extends AbstractApiController {
             );
         }
 
-        // Record live touch timestamp if request originated from active browser session
-        if (!empty($request->get_param('from_browser')) || (defined('DOING_CRON') && !DOING_CRON)) {
+        // Record live touch timestamp strictly when request originated from active browser session
+        if (!empty($request->get_param('from_browser'))) {
             set_transient("webcareproscan_active_scan_last_browser_touch_{$scan_id}", microtime(true), 120);
         }
+
+        // Record activity timestamp for stale-scan watchdog resilience across multi-hour background runs
+        set_transient("webcareproscan_scan_last_activity_{$scan_id}", time(), 12 * HOUR_IN_SECONDS);
 
         // Keep background continuation armed with a grace delay
         if (class_exists('\\WebCareProScanner\\Scan\\ScanBackgroundWorker')) {
@@ -717,7 +724,7 @@ final class ScanController extends AbstractApiController {
             $elapsed_sec,
             $governor
         );
-        set_transient("webcareproscan_scan_live_telemetry_{$scan_id}", $telemetry, 600);
+        set_transient("webcareproscan_scan_live_telemetry_{$scan_id}", $telemetry, DAY_IN_SECONDS);
 
         ScanLock::release_batch_lock();
 
@@ -1158,9 +1165,10 @@ final class ScanController extends AbstractApiController {
                 $duration_sec = $client_duration;
                 $duration_ms = $client_duration * 1000;
             } elseif ($duration_ms <= 0 && $scan_row) {
+                $tz = function_exists('wp_timezone') ? wp_timezone() : new \DateTimeZone('UTC');
                 if (!empty($scan_row['started_at'])) {
-                    $start_dt = date_create($scan_row['started_at'], wp_timezone());
-                    $end_dt = date_create($completed_at_exact, wp_timezone());
+                    $start_dt = date_create($scan_row['started_at'], $tz);
+                    $end_dt = date_create($completed_at_exact, $tz);
                     if ($start_dt && $end_dt) {
                         $diff_sec = $end_dt->getTimestamp() - $start_dt->getTimestamp() + (($end_dt->format('u') - $start_dt->format('u')) / 1000000);
                         if ($diff_sec > 0) {
@@ -1170,10 +1178,19 @@ final class ScanController extends AbstractApiController {
                     }
                 }
 
+                if ($duration_ms <= 0 && !empty($scan_row['created_at_gmt'])) {
+                    $created_gmt_ts = strtotime((string) $scan_row['created_at_gmt'] . ' UTC');
+                    if ($created_gmt_ts && time() > $created_gmt_ts) {
+                        $diff_sec = time() - $created_gmt_ts;
+                        $duration_ms = (int) round($diff_sec * 1000);
+                        $duration_sec = max(1, (int) round($diff_sec));
+                    }
+                }
+
                 if ($duration_ms <= 0 && !empty($scan_row['created_at'])) {
-                    $created_dt = date_create($scan_row['created_at'], wp_timezone());
+                    $created_dt = date_create($scan_row['created_at'], $tz);
                     if ($created_dt) {
-                        $now_dt = date_create('now', wp_timezone());
+                        $now_dt = date_create('now', $tz);
                         $diff_sec = max(0.1, $now_dt->getTimestamp() - $created_dt->getTimestamp());
                         $duration_ms = (int) round($diff_sec * 1000);
                         $duration_sec = max(1, (int) round($diff_sec));
@@ -1255,9 +1272,15 @@ final class ScanController extends AbstractApiController {
                 \WebCareProScanner\Scan\ScanBackgroundWorker::unschedule_continuation();
             }
             delete_transient("webcareproscan_active_scan_last_browser_touch_{$scan_id}");
+            delete_transient("webcareproscan_scan_last_activity_{$scan_id}");
+            delete_transient("webcareproscan_bg_last_tick_{$scan_id}");
+            delete_transient("webcareproscan_bg_advance_cooldown_{$scan_id}");
 
             // Dispatch granular event notifications via NotificationDispatcher
-            if (class_exists('\\WebCareProScanner\\Notifications\\NotificationDispatcher')) {
+            $is_scheduled_trigger = (($scan_row['trigger_type'] ?? '') === 'scheduled');
+            if ($is_scheduled_trigger && class_exists('\\WebCareProScanner\\System\\Scheduler')) {
+                \WebCareProScanner\System\Scheduler::send_scan_notification($scan_id, $open_issues_count, $summary['score'], (string) $target);
+            } elseif (class_exists('\\WebCareProScanner\\Notifications\\NotificationDispatcher')) {
                 $is_targeted = ($target && !in_array($target, ['full', 'full_filesystem', 'plugins_themes', 'custom'], true));
                 if ($is_targeted) {
                     \WebCareProScanner\Notifications\NotificationDispatcher::trigger('scan_targeted_complete', [
@@ -2168,6 +2191,61 @@ final class ScanController extends AbstractApiController {
         return new \WP_REST_Response($res, !empty($res['success']) ? 200 : 400);
     }
 
+    /**
+     * Resolve the latest Unix activity timestamp across browser touches, background worker ticks, queue mtime, and DB start timestamps.
+     *
+     * @param array<string, mixed> $scan_row
+     * @return int Unix timestamp (seconds).
+     */
+    private static function resolve_scan_last_activity_ts(array $scan_row): int {
+        $scan_id = (int) ($scan_row['id'] ?? 0);
+        $latest  = 0;
+
+        if ($scan_id > 0) {
+            foreach ([
+                "webcareproscan_scan_last_activity_{$scan_id}",
+                "webcareproscan_bg_last_tick_{$scan_id}",
+                "webcareproscan_active_scan_last_browser_touch_{$scan_id}",
+            ] as $t_key) {
+                $val = get_transient($t_key);
+                if (is_numeric($val)) {
+                    $latest = max($latest, (int) round((float) $val));
+                }
+            }
+
+            if (class_exists('\\WebCareProScanner\\Scan\\ScanQueueManager')) {
+                $sdir = \WebCareProScanner\Scan\ScanQueueManager::get_session_dir($scan_id);
+                if ($sdir && is_file($sdir . '/' . \WebCareProScanner\Scan\ScanQueueManager::META_FILE_NAME)) {
+                    $mtime = @filemtime($sdir . '/' . \WebCareProScanner\Scan\ScanQueueManager::META_FILE_NAME);
+                    if ($mtime) {
+                        $latest = max($latest, (int) $mtime);
+                    }
+                }
+            }
+        }
+
+        if (!empty($scan_row['created_at_gmt'])) {
+            $gmt_ts = strtotime((string) $scan_row['created_at_gmt'] . ' UTC');
+            if ($gmt_ts) {
+                $latest = max($latest, (int) $gmt_ts);
+            }
+        } elseif (!empty($scan_row['started_at'])) {
+            $tz = function_exists('wp_timezone') ? wp_timezone() : new \DateTimeZone('UTC');
+            $dt = date_create((string) $scan_row['started_at'], $tz);
+            if ($dt) {
+                $latest = max($latest, $dt->getTimestamp());
+            }
+        } elseif (!empty($scan_row['created_at'])) {
+            $tz = function_exists('wp_timezone') ? wp_timezone() : new \DateTimeZone('UTC');
+            $dt = date_create((string) $scan_row['created_at'], $tz);
+            if ($dt) {
+                $latest = max($latest, $dt->getTimestamp());
+            }
+        }
+
+        return $latest > 0 ? $latest : time();
+    }
+
     public static function get_active_scan(\WP_REST_Request $request) {
         global $wpdb;
 
@@ -2176,31 +2254,58 @@ final class ScanController extends AbstractApiController {
 
         // If no lock option exists, check if there is an active scan record in the DB created recently
         if (!$locked_id) {
-            // Find and record any stale scans marked 'running' older than 10 minutes
-            $stale_scans_sql = "SELECT id, scanned_files, total_files FROM `{$table_scans}` WHERE status = 'running' AND created_at < DATE_SUB(NOW(), INTERVAL 10 MINUTE)";
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.NotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
-            $stale_scans = $wpdb->get_results($stale_scans_sql, ARRAY_A);
-            if (!empty($stale_scans)) {
-                foreach ($stale_scans as $stale_row) {
-                    $stale_id = (int) $stale_row['id'];
-                    \WebCareProScanner\Scan\ScanInterruptionForensics::record($stale_id, \WebCareProScanner\Scan\ScanInterruptionForensics::REASON_STALE_HEARTBEAT);
+            $running_sql = "SELECT * FROM `{$table_scans}` WHERE status = 'running' ORDER BY id DESC LIMIT 10";
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
+            $running_rows = $wpdb->get_results($running_sql, ARRAY_A);
+            $now_ts = time();
+
+            if (!empty($running_rows)) {
+                foreach ($running_rows as $row) {
+                    $cand_id = (int) ($row['id'] ?? 0);
+                    if ($cand_id <= 0) {
+                        continue;
+                    }
+
+                    if (get_transient("webcareproscan_scan_cancelled_{$cand_id}")) {
+                        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+                        $wpdb->update($table_scans, [
+                            'status'       => 'aborted',
+                            'completed_at' => self::now_fractional_mysql(),
+                        ], ['id' => $cand_id]);
+                        continue;
+                    }
+
+                    $has_queue = class_exists('\\WebCareProScanner\\Scan\\ScanQueueManager')
+                        ? \WebCareProScanner\Scan\ScanQueueManager::has_queue($cand_id)
+                        : false;
+                    $idle_sec = max(0, $now_ts - self::resolve_scan_last_activity_ts($row));
+
+                    // Recover most recent active scan when queue is healthy and idle gap is < 30m (or deep-audit < 10m)
+                    $within_recovery_window = $has_queue ? ($idle_sec < 1800) : ($idle_sec < 600);
+                    if ($locked_id === null && $within_recovery_window) {
+                        $gen_token = !empty($row['generation_token']) ? (string) $row['generation_token'] : null;
+                        if (ScanLock::acquire($cand_id, $gen_token)) {
+                            $locked_id = $cand_id;
+                            set_transient("webcareproscan_scan_last_activity_{$cand_id}", $now_ts, 12 * HOUR_IN_SECONDS);
+                            if (class_exists('\\WebCareProScanner\\Scan\\ScanBackgroundWorker')) {
+                                \WebCareProScanner\Scan\ScanBackgroundWorker::schedule_continuation(5);
+                                \WebCareProScanner\Scan\ScanBackgroundWorker::dispatch_deferred_tick($cand_id);
+                            }
+                            continue;
+                        }
+                    }
+
+                    // Otherwise mark genuinely abandoned or superseded scans interrupted
+                    \WebCareProScanner\Scan\ScanInterruptionForensics::record($cand_id, \WebCareProScanner\Scan\ScanInterruptionForensics::REASON_STALE_HEARTBEAT);
+                    // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+                    $wpdb->update($table_scans, [
+                        'status'       => 'interrupted',
+                        'completed_at' => self::now_fractional_mysql(),
+                    ], ['id' => $cand_id]);
                 }
             }
 
-            // Clean up any stale scans marked 'running' older than 10 minutes
-            $cleanup_stale = "UPDATE `{$table_scans}` SET status = 'interrupted', completed_at = NOW() WHERE status = 'running' AND created_at < DATE_SUB(NOW(), INTERVAL 10 MINUTE)";
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.NotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
-            $wpdb->query($cleanup_stale);
-
-            // Fallback: check if any recent scan (< 5 mins) is legitimately running in database
-            $rec_act_sql = "SELECT * FROM `{$table_scans}` WHERE status = 'running' AND created_at >= DATE_SUB(NOW(), INTERVAL 5 MINUTE) ORDER BY id DESC LIMIT 1";
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.NotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
-            $recent_active = $wpdb->get_row($rec_act_sql, ARRAY_A);
-
-            if ($recent_active) {
-                $locked_id = (int) $recent_active['id'];
-                ScanLock::acquire($locked_id);
-            } else {
+            if (!$locked_id) {
                 return rest_ensure_response([
                     'is_running' => false,
                 ]);
@@ -2220,6 +2325,11 @@ final class ScanController extends AbstractApiController {
             return rest_ensure_response([
                 'is_running' => false,
             ]);
+        }
+
+        // Actively self-heal stalled background continuation ticks while monitoring
+        if (class_exists('\\WebCareProScanner\\Scan\\ScanBackgroundWorker')) {
+            \WebCareProScanner\Scan\ScanBackgroundWorker::maybe_advance_stalled_scan((int) $locked_id);
         }
 
         // Lock heartbeat
@@ -2263,17 +2373,18 @@ final class ScanController extends AbstractApiController {
                     $diff = microtime(true) - (float) $start_micro;
                     if ($diff > 0) return max(1, (int) round($diff));
                 }
+                $tz = function_exists('wp_timezone') ? wp_timezone() : new \DateTimeZone('UTC');
                 if (!empty($running_scan['started_at'])) {
-                    $start_dt = date_create($running_scan['started_at'], wp_timezone());
+                    $start_dt = date_create($running_scan['started_at'], $tz);
                     if ($start_dt) {
-                        $now_dt = date_create('now', wp_timezone());
+                        $now_dt = date_create('now', $tz);
                         return max(1, $now_dt->getTimestamp() - $start_dt->getTimestamp());
                     }
                 }
                 if (empty($running_scan['created_at'])) return 1;
-                $created_dt = date_create($running_scan['created_at'], wp_timezone());
+                $created_dt = date_create($running_scan['created_at'], $tz);
                 if ($created_dt) {
-                    $now_dt = date_create('now', wp_timezone());
+                    $now_dt = date_create('now', $tz);
                     return max(1, $now_dt->getTimestamp() - $created_dt->getTimestamp());
                 }
                 return 1;
@@ -2284,10 +2395,11 @@ final class ScanController extends AbstractApiController {
                     $diff = microtime(true) - (float) $start_micro;
                     if ($diff > 0) return (int) round($diff * 1000);
                 }
+                $tz = function_exists('wp_timezone') ? wp_timezone() : new \DateTimeZone('UTC');
                 if (!empty($running_scan['started_at'])) {
-                    $start_dt = date_create($running_scan['started_at'], wp_timezone());
+                    $start_dt = date_create($running_scan['started_at'], $tz);
                     if ($start_dt) {
-                        $now_dt = date_create('now', wp_timezone());
+                        $now_dt = date_create('now', $tz);
                         $diff = $now_dt->getTimestamp() - $start_dt->getTimestamp() + (($now_dt->format('u') - $start_dt->format('u')) / 1000000);
                         return max(100, (int) round($diff * 1000));
                     }
@@ -2329,6 +2441,9 @@ final class ScanController extends AbstractApiController {
                 \WebCareProScanner\Scan\ScanBackgroundWorker::unschedule_continuation();
             }
             delete_transient("webcareproscan_active_scan_last_browser_touch_{$scan_id}");
+            delete_transient("webcareproscan_scan_last_activity_{$scan_id}");
+            delete_transient("webcareproscan_bg_last_tick_{$scan_id}");
+            delete_transient("webcareproscan_bg_advance_cooldown_{$scan_id}");
             if (!$aborted) {
                 return new \WP_Error(
                     'abort_failed',

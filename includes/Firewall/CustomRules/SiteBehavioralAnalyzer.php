@@ -341,7 +341,12 @@ class SiteBehavioralAnalyzer {
             self::unschedule_cron_continuation();
             return;
         }
-        if (!wp_next_scheduled(self::CRON_STEP_HOOK)) {
+        $next_ts = wp_next_scheduled(self::CRON_STEP_HOOK);
+        if (is_int($next_ts) && $next_ts > 0 && $next_ts < (time() - 60)) {
+            wp_unschedule_event($next_ts, self::CRON_STEP_HOOK);
+            $next_ts = wp_next_scheduled(self::CRON_STEP_HOOK);
+        }
+        if (!$next_ts) {
             wp_schedule_single_event(time() + max(2, $delay_seconds), self::CRON_STEP_HOOK);
         }
     }
@@ -361,6 +366,15 @@ class SiteBehavioralAnalyzer {
      * WP-Cron worker: advances an active 'running' scan in the background when no browser tab is polling it.
      */
     public static function run_background_cron_step(bool $bypass_idle_check = false): void {
+        if (function_exists('ignore_user_abort')) {
+            // phpcs:ignore Squiz.PHP.DiscouragedFunctions.Discouraged
+            @ignore_user_abort(true);
+        }
+        if (function_exists('set_time_limit')) {
+            // phpcs:ignore Squiz.PHP.DiscouragedFunctions.Discouraged
+            @set_time_limit(60);
+        }
+
         $state = get_option(self::OPTION_STATE, null);
         if (!$state || !is_array($state) || ($state['status'] ?? '') !== 'running') {
             self::unschedule_cron_continuation();
@@ -376,7 +390,7 @@ class SiteBehavioralAnalyzer {
 
         $cron_start = microtime(true);
         $slices     = 0;
-        while ($slices < 3 && (microtime(true) - $cron_start) < 9.0) {
+        while ($slices < 12 && (microtime(true) - $cron_start) < 18.0) {
             $slices++;
             $res = self::process_batch(400);
             if (($res['status'] ?? '') !== 'running') {
@@ -386,9 +400,13 @@ class SiteBehavioralAnalyzer {
 
         $after = get_option(self::OPTION_STATE, null);
         if (is_array($after) && ($after['status'] ?? '') === 'running') {
-            self::schedule_cron_continuation(3);
-            if (function_exists('spawn_cron')) {
-                @spawn_cron();
+            self::schedule_cron_continuation(5);
+            if (function_exists('spawn_cron') && !(defined('WEBCAREPROSCAN_TESTING') && WEBCAREPROSCAN_TESTING)) {
+                register_shutdown_function(static function (): void {
+                    if (function_exists('spawn_cron')) {
+                        @spawn_cron();
+                    }
+                });
             }
         }
     }
