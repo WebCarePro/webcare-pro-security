@@ -7,10 +7,12 @@ if (!defined('ABSPATH')) {
 
 class ScanLock {
 
-    const LOCK_OPTION          = 'webcareproscan_active_scan_lock';
-    const ADVISORY_LOCK_NAME   = 'webcareproscan_scan_mutex';
-    const BATCH_LOCK_NAME      = 'webcareproscan_scan_batch_mutex';
-    const LOCK_TIMEOUT_SECONDS = 900; // 15 minutes timeout for background worker resilience & auto recovery
+    const LOCK_OPTION            = 'webcareproscan_active_scan_lock';
+    const BATCH_LOCK_OPTION      = 'webcareproscan_active_batch_lock';
+    const ADVISORY_LOCK_NAME     = 'webcareproscan_scan_mutex';
+    const BATCH_LOCK_NAME        = 'webcareproscan_scan_batch_mutex';
+    const LOCK_TIMEOUT_SECONDS   = 900; // 15 minutes timeout for background worker resilience & auto recovery
+    const BATCH_LOCK_TTL_SECONDS = 45;  // Short-TTL per-batch lease so dead/persistent DB workers never stall scans for 15m
 
     /**
      * Execute a critical lease-mutation callback while holding the MySQL advisory mutex.
@@ -105,13 +107,16 @@ class ScanLock {
 
     /**
      * Acquire a per-batch execution lock and verify active scan lease.
-     * Prevents overlapping batch execution across concurrent AJAX/REST requests.
+     * Prevents overlapping batch execution across concurrent AJAX/REST requests while
+     * using a short-TTL lease option so killed workers or persistent MySQL connections
+     * never strand the batch mutex indefinitely.
      *
-     * @param int    $scan_id
-     * @param string $lease_token Mandatory cryptographic token verifying scan lease ownership.
+     * @param int         $scan_id
+     * @param string      $lease_token  Mandatory cryptographic token verifying scan lease ownership.
+     * @param string|null $worker_token Optional output parameter receiving this worker's batch token.
      * @return bool True if batch lock acquired and scan lease is valid.
      */
-    public static function acquire_batch_lock(int $scan_id, string $lease_token): bool {
+    public static function acquire_batch_lock(int $scan_id, string $lease_token, ?string &$worker_token = null): bool {
         global $wpdb;
         $scan_id = (int) $scan_id;
         if ($scan_id <= 0 || empty($lease_token) || !($wpdb instanceof \wpdb)) {
@@ -123,21 +128,97 @@ class ScanLock {
             return false;
         }
 
-        // 2. Acquire per-batch advisory mutex to serialize concurrent batch requests
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
-        $batch_res = $wpdb->get_var($wpdb->prepare("SELECT GET_LOCK(%s, %d)", self::BATCH_LOCK_NAME, 0));
-        if ($batch_res === null || (int) $batch_res !== 1) {
+        $claimed_token = function_exists('wp_generate_password')
+            ? wp_generate_password(16, false)
+            : bin2hex(random_bytes(8));
+
+        // 2. Atomically claim short-TTL per-batch lease under the short mutation mutex
+        $now = time();
+        $claimed = (bool) self::execute_with_mutation_mutex(static function () use ($scan_id, $claimed_token, $now): bool {
+            $existing_batch = get_option(self::BATCH_LOCK_OPTION);
+            if ($existing_batch && is_array($existing_batch)) {
+                $hb = (int) ($existing_batch['heartbeat_at'] ?? 0);
+                if ($hb > 0 && ($now - $hb) < self::BATCH_LOCK_TTL_SECONDS) {
+                    return false;
+                }
+            }
+
+            $payload = [
+                'scan_id'      => $scan_id,
+                'worker_token' => $claimed_token,
+                'heartbeat_at' => $now,
+            ];
+            if (!add_option(self::BATCH_LOCK_OPTION, $payload, '', false)) {
+                update_option(self::BATCH_LOCK_OPTION, $payload, false);
+            }
+
+            $persisted = get_option(self::BATCH_LOCK_OPTION);
+            return is_array($persisted)
+                && (int) ($persisted['scan_id'] ?? 0) === $scan_id
+                && hash_equals((string) ($persisted['worker_token'] ?? ''), $claimed_token);
+        });
+
+        if (!$claimed) {
             return false;
         }
+
+        $worker_token = $claimed_token;
+
+        // 3. Best-effort session advisory lock for non-persistent DB serialization;
+        // if a stranded persistent DB connection holds GET_LOCK after a crash while the
+        // short-TTL BATCH_LOCK_OPTION was free/expired, do NOT deadlock for 15 minutes.
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
+        $wpdb->get_var($wpdb->prepare("SELECT GET_LOCK(%s, %d)", self::BATCH_LOCK_NAME, 0));
 
         return true;
     }
 
     /**
-     * Release per-batch execution lock after batch processing finishes.
+     * Refresh the short-TTL per-batch lease heartbeat during long-running batches.
+     *
+     * @param int    $scan_id
+     * @param string $worker_token
+     * @return bool
      */
-    public static function release_batch_lock(): void {
+    public static function renew_batch_lock(int $scan_id, string $worker_token): bool {
+        if ($scan_id <= 0 || empty($worker_token)) {
+            return false;
+        }
+        return (bool) self::execute_with_mutation_mutex(static function () use ($scan_id, $worker_token): bool {
+            $existing = get_option(self::BATCH_LOCK_OPTION);
+            if (
+                !is_array($existing)
+                || (int) ($existing['scan_id'] ?? 0) !== $scan_id
+                || !hash_equals((string) ($existing['worker_token'] ?? ''), $worker_token)
+            ) {
+                return false;
+            }
+            $existing['heartbeat_at'] = time();
+            update_option(self::BATCH_LOCK_OPTION, $existing, false);
+            return true;
+        });
+    }
+
+    /**
+     * Release per-batch execution lock after batch processing finishes.
+     *
+     * @param string|null $worker_token Optional worker token so expiring/slow workers cannot delete a newer lock.
+     */
+    public static function release_batch_lock(?string $worker_token = null): void {
         global $wpdb;
+
+        self::execute_with_mutation_mutex(static function () use ($worker_token): bool {
+            $existing = get_option(self::BATCH_LOCK_OPTION);
+            if ($worker_token !== null && is_array($existing)) {
+                $held_token = (string) ($existing['worker_token'] ?? '');
+                if ($held_token !== '' && !hash_equals($held_token, $worker_token)) {
+                    return false;
+                }
+            }
+            delete_option(self::BATCH_LOCK_OPTION);
+            return true;
+        });
+
         if ($wpdb instanceof \wpdb) {
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
             $wpdb->query($wpdb->prepare("SELECT RELEASE_LOCK(%s)", self::BATCH_LOCK_NAME));
@@ -306,6 +387,7 @@ class ScanLock {
             }
 
             delete_option(self::LOCK_OPTION);
+            delete_option(self::BATCH_LOCK_OPTION);
             $persisted = get_option(self::LOCK_OPTION);
             return $persisted === false;
         });

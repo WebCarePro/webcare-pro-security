@@ -484,6 +484,14 @@ final class ScanController extends AbstractApiController {
     public static function process_batch(\WP_REST_Request $request) {
         global $wpdb;
 
+        if (function_exists('set_time_limit')) {
+            // phpcs:ignore Squiz.PHP.DiscouragedFunctions.Discouraged
+            @set_time_limit(60);
+        }
+        if (function_exists('wp_raise_memory_limit')) {
+            @wp_raise_memory_limit('admin');
+        }
+
         $scan_id = (int) $request->get_param('scan_id');
         $lease_token = sanitize_text_field((string) ($request->get_param('lease_token') ?? ''));
         if (empty($lease_token)) {
@@ -499,9 +507,11 @@ final class ScanController extends AbstractApiController {
         $batch_size = $param_batch > 0 ? max($param_batch, $configured_batch) : $configured_batch;
         $batch_start = microtime(true);
         $batch_ru_start = function_exists('getrusage') ? @getrusage() : null;
+        $is_from_browser = !empty($request->get_param('from_browser'));
 
-        // Acquire per-batch mutex and verify active scan lease
-        if (!ScanLock::acquire_batch_lock($scan_id, $lease_token)) {
+        // Acquire per-batch lease mutex and verify active scan lease
+        $batch_worker_token = null;
+        if (!ScanLock::acquire_batch_lock($scan_id, $lease_token, $batch_worker_token)) {
             return new \WP_Error(
                 'scan_lock_conflict',
                 __('Concurrent scan batch execution rejected or active scan lease not held.', 'webcare-pro-security'),
@@ -509,236 +519,397 @@ final class ScanController extends AbstractApiController {
             );
         }
 
-        // Record live touch timestamp strictly when request originated from active browser session
-        if (!empty($request->get_param('from_browser'))) {
-            set_transient("webcareproscan_active_scan_last_browser_touch_{$scan_id}", microtime(true), 120);
-        }
-
-        // Record activity timestamp for stale-scan watchdog resilience across multi-hour background runs
-        set_transient("webcareproscan_scan_last_activity_{$scan_id}", time(), 12 * HOUR_IN_SECONDS);
-
-        // Keep background continuation armed with a grace delay
-        if (class_exists('\\WebCareProScanner\\Scan\\ScanBackgroundWorker')) {
-            \WebCareProScanner\Scan\ScanBackgroundWorker::schedule_continuation(12);
-        }
-
-        // Initialize Dynamic Resource Governor
-        $governor = new \WebCareProScanner\Resource\ResourceMonitor(70, 18, 'balanced');
-        $effective_batch_size = $governor->get_adaptive_batch_size($batch_size);
-
-        $batch_data = \WebCareProScanner\Scan\ScanQueueManager::get_batch($scan_id, $effective_batch_size);
-        $files_to_process = $batch_data['files'];
-        $line_bytes = $batch_data['line_bytes'];
-        $remaining = $batch_data['remaining'];
-
-        if (empty($files_to_process)) {
-            // Check if scan exists in DB to prevent hard 404 failure
-            $check_sql = "SELECT id FROM {$wpdb->prefix}webcareproscan_scans WHERE id = %d";
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
-            $scan_exists = $wpdb->get_var(
-                // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
-                $wpdb->prepare($check_sql, $scan_id)
-            );
-            if ($scan_exists) {
-                \WebCareProScanner\Scan\ScanQueueManager::cleanup($scan_id);
-                ScanLock::release_batch_lock();
-                return rest_ensure_response([
-                    'success'     => true,
-                    'is_finished' => true,
-                    'remaining'   => 0,
-                    'processed'   => 0,
-                    'last_file'   => '',
-                ]);
-            }
-            ScanLock::release_batch_lock();
-            return new \WP_Error('scan_not_found', 'Scan queue expired or not found', ['status' => 404]);
-        }
-
+        $batch_finished_cleanly = false;
+        $processed_count = 0;
+        $checkpointed_count = 0;
+        $bytes_consumed = 0;
+        $checkpointed_bytes = 0;
+        $batch_files_records = [];
+        $in_progress_filepath = '';
+        $in_progress_bytes = 0;
         $table_scans = $wpdb->prefix . 'webcareproscan_scans';
         $table_issues = $wpdb->prefix . 'webcareproscan_scan_issues';
         $table_files = $wpdb->prefix . 'webcareproscan_scan_files';
 
-        $file_scanner = new FileScanner();
-        $batch_custom_options = self::get_scan_custom_options($scan_id);
-        $processed_count = 0;
-        $accumulated_weight = 0.0;
-        $bytes_consumed = 0;
-        $batch_files_records = [];
-
-        foreach ($files_to_process as $idx => $filepath) {
-            // Adaptive breathing and resource headroom check before each file
-            if ($governor->throttle_and_check()) {
-                break;
-            }
-
-            // Update live heartbeat and last active file path
-            set_transient("webcareproscan_active_scan_file_{$scan_id}", $filepath, 120);
-
-            // Factor in file complexity weight
-            $weight = \WebCareProScanner\Resource\ResourceMonitor::get_file_weight($filepath);
-            $accumulated_weight += $weight;
-
-            // If heavy files filled the batch weight budget early, save remaining and yield
-            if ($accumulated_weight >= ($effective_batch_size * 1.25) && $processed_count > 10) {
-                break;
-            }
-
-            $findings = $file_scanner->scan_file($filepath, (string) $scan_id, $batch_custom_options);
-            $rel_path = ltrim(str_replace(wp_normalize_path(ABSPATH), '', wp_normalize_path($filepath)), '/');
-            $file_size = @filesize($filepath) ?: 0;
-            $file_status = !empty($findings) ? 'threat' : 'clean';
-
-            $batch_files_records[] = [
-                'file_path'    => $rel_path,
-                'full_path'    => $filepath,
-                'file_size'    => $file_size,
-                'status'       => $file_status,
-                'threat_count' => count($findings),
-            ];
-
-            $processed_count++;
-            if (!empty($line_bytes[$idx])) {
-                $bytes_consumed += $line_bytes[$idx];
-            }
-
-            foreach ($findings as $f) {
-                // Assert ownership + non-cancelled validation immediately before finding insert
-                if (get_transient("webcareproscan_scan_cancelled_{$scan_id}")) {
-                    ScanLock::release_batch_lock();
-                    return new \WP_Error('scan_aborted', __('Scan was aborted. Halting finding inserts.', 'webcare-pro-security'), ['status' => 409]);
+        if (!(defined('WEBCAREPROSCAN_TESTING') && WEBCAREPROSCAN_TESTING)) {
+            register_shutdown_function(static function () use (
+                &$batch_finished_cleanly,
+                &$processed_count,
+                &$checkpointed_count,
+                &$bytes_consumed,
+                &$checkpointed_bytes,
+                &$batch_files_records,
+                &$in_progress_filepath,
+                &$in_progress_bytes,
+                $scan_id,
+                $lease_token,
+                $batch_worker_token,
+                $is_from_browser,
+                $table_scans,
+                $table_issues
+            ): void {
+                if ($batch_finished_cleanly) {
+                    return;
                 }
 
-                $scan_check_sql = "SELECT id FROM `{$table_scans}` WHERE id = %d AND status = 'running' AND generation_token = %s";
-                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.NotPrepared
-                $valid_scan = $wpdb->get_var($wpdb->prepare($scan_check_sql, $scan_id, $lease_token));
-                if (!$valid_scan) {
-                    ScanLock::release_batch_lock();
-                    return new \WP_Error('scan_ownership_lost', __('Scan ownership lost or superseded. Aborting worker immediately.', 'webcare-pro-security'), ['status' => 409]);
+                // Recover progress up to the fatal/timed-out file and skip a single poison-pill file
+                global $wpdb;
+                $uncommitted_files = max(0, $processed_count - $checkpointed_count);
+                $uncommitted_bytes = max(0, $bytes_consumed - $checkpointed_bytes);
+                if ($in_progress_filepath !== '' && $in_progress_bytes > 0) {
+                    $uncommitted_files++;
+                    $uncommitted_bytes += $in_progress_bytes;
+                    set_transient("webcareproscan_active_scan_file_{$scan_id}", 'Skipped timed-out/heavy file: ' . basename($in_progress_filepath), 120);
+                    if (class_exists('\\WebCareProScanner\\System\\AuditLogger')) {
+                        \WebCareProScanner\System\AuditLogger::log(
+                            'scan_file_skipped_recovery',
+                            sprintf('Skipped heavy/timed-out file during batch recovery (Scan #%d): %s', $scan_id, $in_progress_filepath),
+                            'warning'
+                        );
+                    }
                 }
 
-                $item = $f->to_array();
-                $matched_rule = \WebCareProScanner\Findings\WhitelistManager::match_finding($item);
-                $status = ($matched_rule !== null) ? 'ignored' : 'open';
+                if ($wpdb instanceof \wpdb && ($uncommitted_files > 0 || $uncommitted_bytes > 0)) {
+                    if (!empty($batch_files_records) && class_exists('\\WebCareProScanner\\Scan\\ScanVaultManager')) {
+                        \WebCareProScanner\Scan\ScanVaultManager::append_batch($scan_id, $batch_files_records);
+                    }
+                    $rem = \WebCareProScanner\Scan\ScanQueueManager::advance($scan_id, $uncommitted_files, $uncommitted_bytes);
+                    $tot_val = (int) $wpdb->get_var(
+                        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
+                        $wpdb->prepare("SELECT total_files FROM `{$table_scans}` WHERE id = %d", $scan_id)
+                    );
+                    $iss_val = (int) $wpdb->get_var(
+                        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
+                        $wpdb->prepare("SELECT COUNT(*) FROM `{$table_issues}` WHERE scan_id = %d AND status = 'open'", $scan_id)
+                    );
+                    $done_so_far = max(0, $tot_val - $rem);
+                    // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
+                    $wpdb->query(
+                        $wpdb->prepare(
+                            "UPDATE `{$table_scans}` SET scanned_files = %d, issues_found = %d WHERE id = %d AND status = 'running' AND generation_token = %s",
+                            $done_so_far,
+                            $iss_val,
+                            $scan_id,
+                            $lease_token
+                        )
+                    );
+                    // phpcs:enable
+                }
 
+                ScanLock::release_batch_lock($batch_worker_token);
+
+                if (class_exists('\\WebCareProScanner\\Scan\\ScanBackgroundWorker')) {
+                    \WebCareProScanner\Scan\ScanBackgroundWorker::schedule_continuation(3);
+                    if (!$is_from_browser || (function_exists('connection_aborted') && connection_aborted())) {
+                        \WebCareProScanner\Scan\ScanBackgroundWorker::trigger_loopback_tick($scan_id);
+                    }
+                }
+            });
+        }
+
+        try {
+            // Record live touch timestamp strictly when request originated from active browser session
+            if ($is_from_browser) {
+                set_transient("webcareproscan_active_scan_last_browser_touch_{$scan_id}", microtime(true), 120);
+            }
+
+            // Record activity timestamp for stale-scan watchdog resilience across multi-hour background runs
+            set_transient("webcareproscan_scan_last_activity_{$scan_id}", time(), 12 * HOUR_IN_SECONDS);
+
+            // Keep background continuation armed with a grace delay
+            if (class_exists('\\WebCareProScanner\\Scan\\ScanBackgroundWorker')) {
+                \WebCareProScanner\Scan\ScanBackgroundWorker::schedule_continuation(12);
+            }
+
+            // Initialize Dynamic Resource Governor with host timeout/RAM-safe ceilings
+            $max_exec_time = (int) ini_get('max_execution_time');
+            $batch_time_budget = ($max_exec_time > 0 && $max_exec_time < 30) ? max(8, $max_exec_time - 6) : 14;
+            $governor = new \WebCareProScanner\Resource\ResourceMonitor(70, $batch_time_budget, 'balanced');
+            $effective_batch_size = $governor->get_adaptive_batch_size($batch_size);
+            $mem_limit_raw = (string) (ini_get('memory_limit') ?: '256M');
+            if ($mem_limit_raw !== '-1' && preg_match('/^(\d+)M$/i', trim($mem_limit_raw), $mm) && (int) $mm[1] <= 128) {
+                $effective_batch_size = min(35, $effective_batch_size);
+            }
+
+            $batch_data = \WebCareProScanner\Scan\ScanQueueManager::get_batch($scan_id, $effective_batch_size);
+            $files_to_process = $batch_data['files'];
+            $line_bytes = $batch_data['line_bytes'];
+            $remaining = $batch_data['remaining'];
+
+            if (empty($files_to_process)) {
+                // Check if scan exists in DB to prevent hard 404 failure
+                $check_sql = "SELECT id FROM {$wpdb->prefix}webcareproscan_scans WHERE id = %d";
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
+                $scan_exists = $wpdb->get_var(
+                    // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+                    $wpdb->prepare($check_sql, $scan_id)
+                );
+                if ($scan_exists) {
+                    \WebCareProScanner\Scan\ScanQueueManager::cleanup($scan_id);
+                    $batch_finished_cleanly = true;
+                    return rest_ensure_response([
+                        'success'     => true,
+                        'is_finished' => true,
+                        'remaining'   => 0,
+                        'processed'   => 0,
+                        'last_file'   => '',
+                    ]);
+                }
+                $batch_finished_cleanly = true;
+                return new \WP_Error('scan_not_found', 'Scan queue expired or not found', ['status' => 404]);
+            }
+
+            $file_scanner = new FileScanner();
+            $batch_custom_options = self::get_scan_custom_options($scan_id);
+            $accumulated_weight = 0.0;
+            $start_micro = get_transient("webcareproscan_scan_start_micro_{$scan_id}");
+            $cached_total_files = (int) $wpdb->get_var(
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
+                $wpdb->prepare("SELECT total_files FROM `{$table_scans}` WHERE id = %d", $scan_id)
+            );
+
+            foreach ($files_to_process as $idx => $filepath) {
+                // Adaptive breathing and resource headroom check before each file (always advance at least 1 file)
+                if ($processed_count > 0 && $governor->throttle_and_check()) {
+                    break;
+                }
+
+                // Track active file before scanning so shutdown recovery can isolate any fatal/poison file
+                $in_progress_filepath = $filepath;
+                $in_progress_bytes = (int) ($line_bytes[$idx] ?? 0);
+
+                // Update live heartbeat and last active file path
+                set_transient("webcareproscan_active_scan_file_{$scan_id}", $filepath, 120);
+
+                // Factor in file complexity weight
+                $weight = \WebCareProScanner\Resource\ResourceMonitor::get_file_weight($filepath);
+                $accumulated_weight += $weight;
+
+                // If heavy files filled the batch weight budget early, save remaining and yield
+                if ($accumulated_weight >= ($effective_batch_size * 1.25) && $processed_count > 10) {
+                    $in_progress_filepath = '';
+                    $in_progress_bytes = 0;
+                    break;
+                }
+
+                $findings = $file_scanner->scan_file($filepath, (string) $scan_id, $batch_custom_options);
+                $rel_path = ltrim(str_replace(wp_normalize_path(ABSPATH), '', wp_normalize_path($filepath)), '/');
+                $file_size = @filesize($filepath) ?: 0;
+                $file_status = !empty($findings) ? 'threat' : 'clean';
+
+                $batch_files_records[] = [
+                    'file_path'    => $rel_path,
+                    'full_path'    => $filepath,
+                    'file_size'    => $file_size,
+                    'status'       => $file_status,
+                    'threat_count' => count($findings),
+                ];
+
+                $processed_count++;
+                $bytes_consumed += $in_progress_bytes;
+                $in_progress_filepath = '';
+                $in_progress_bytes = 0;
+
+                foreach ($findings as $f) {
+                    // Assert ownership + non-cancelled validation immediately before finding insert
+                    if (get_transient("webcareproscan_scan_cancelled_{$scan_id}")) {
+                        $batch_finished_cleanly = true;
+                        return new \WP_Error('scan_aborted', __('Scan was aborted. Halting finding inserts.', 'webcare-pro-security'), ['status' => 409]);
+                    }
+
+                    $scan_check_sql = "SELECT id FROM `{$table_scans}` WHERE id = %d AND status = 'running' AND generation_token = %s";
+                    // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.NotPrepared
+                    $valid_scan = $wpdb->get_var($wpdb->prepare($scan_check_sql, $scan_id, $lease_token));
+                    if (!$valid_scan) {
+                        $batch_finished_cleanly = true;
+                        return new \WP_Error('scan_ownership_lost', __('Scan ownership lost or superseded. Aborting worker immediately.', 'webcare-pro-security'), ['status' => 409]);
+                    }
+
+                    $item = $f->to_array();
+                    $matched_rule = \WebCareProScanner\Findings\WhitelistManager::match_finding($item);
+                    $status = ($matched_rule !== null) ? 'ignored' : 'open';
+
+                    // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+                    $wpdb->insert($table_issues, [
+                        'scan_id'        => $scan_id,
+                        'engine'         => $item['engine'],
+                        'type'           => $item['type'],
+                        'severity'       => $item['severity'],
+                        'confidence'     => $item['confidence'],
+                        'file_path'      => $item['file_path'],
+                        'line_number'    => $item['line_number'] ?? null,
+                        'code_snippet'   => $item['code_snippet'] ?? null,
+                        'evidence'       => $item['evidence'] ?? null,
+                        'description'    => $item['description'],
+                        'status'         => $status,
+                        'created_at'     => current_time('mysql'),
+                        'created_at_gmt' => gmdate('Y-m-d H:i:s'),
+                    ]);
+                }
+
+                // Checkpoint queue cursor and progress every 10 files so live status stays current
+                // and mid-batch timeouts/crashes never roll progress back to 0.
+                if (($processed_count - $checkpointed_count) >= 10) {
+                    if (get_transient("webcareproscan_scan_cancelled_{$scan_id}")) {
+                        $batch_finished_cleanly = true;
+                        return new \WP_Error('scan_aborted', __('Scan was aborted. Halting progress update.', 'webcare-pro-security'), ['status' => 409]);
+                    }
+                    $delta_count = $processed_count - $checkpointed_count;
+                    $delta_bytes = $bytes_consumed - $checkpointed_bytes;
+                    if (!empty($batch_files_records) && class_exists('\\WebCareProScanner\\Scan\\ScanVaultManager')) {
+                        \WebCareProScanner\Scan\ScanVaultManager::append_batch($scan_id, $batch_files_records);
+                        $batch_files_records = [];
+                    }
+                    $cp_remaining = \WebCareProScanner\Scan\ScanQueueManager::advance($scan_id, $delta_count, $delta_bytes);
+                    $checkpointed_count = $processed_count;
+                    $checkpointed_bytes = $bytes_consumed;
+
+                    $cp_scanned = max(0, $cached_total_files - $cp_remaining);
+                    $cp_issues = (int) $wpdb->get_var(
+                        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
+                        $wpdb->prepare("SELECT COUNT(*) FROM `{$table_issues}` WHERE scan_id = %d AND status = 'open'", $scan_id)
+                    );
+                    // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
+                    $wpdb->query(
+                        $wpdb->prepare(
+                            "UPDATE `{$table_scans}` SET scanned_files = %d, issues_found = %d WHERE id = %d AND status = 'running' AND generation_token = %s",
+                            $cp_scanned,
+                            $cp_issues,
+                            $scan_id,
+                            $lease_token
+                        )
+                    );
+                    // phpcs:enable
+                    set_transient("webcareproscan_scan_last_activity_{$scan_id}", time(), 12 * HOUR_IN_SECONDS);
+                    if ($is_from_browser) {
+                        set_transient("webcareproscan_active_scan_last_browser_touch_{$scan_id}", microtime(true), 120);
+                    }
+                    if (is_string($batch_worker_token)) {
+                        ScanLock::renew_batch_lock($scan_id, $batch_worker_token);
+                    }
+                    $cp_elapsed = ($start_micro && is_numeric($start_micro)) ? max(0.1, microtime(true) - (float) $start_micro) : 0.0;
+                    $cp_tel = self::get_realtime_resource_stats($batch_start, $batch_ru_start, $cp_scanned, $cached_total_files, $cp_issues, $cp_elapsed, $governor);
+                    set_transient("webcareproscan_scan_live_telemetry_{$scan_id}", $cp_tel, DAY_IN_SECONDS);
+                }
+            }
+
+            // Verify scan was not cancelled and ownership is intact before performing final batch advance
+            if (get_transient("webcareproscan_scan_cancelled_{$scan_id}")) {
+                $batch_finished_cleanly = true;
+                return new \WP_Error('scan_aborted', __('Scan was aborted. Halting vault and queue updates.', 'webcare-pro-security'), ['status' => 409]);
+            }
+
+            $scan_pre_advance_sql = "SELECT id FROM `{$table_scans}` WHERE id = %d AND status = 'running' AND generation_token = %s";
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.NotPrepared
+            $valid_pre_advance = $wpdb->get_var($wpdb->prepare($scan_pre_advance_sql, $scan_id, $lease_token));
+            if (!$valid_pre_advance) {
+                $batch_finished_cleanly = true;
+                return new \WP_Error('scan_ownership_lost', __('Scan ownership lost or superseded. Halting vault and queue updates.', 'webcare-pro-security'), ['status' => 409]);
+            }
+
+            // Offload remaining scanned file telemetry to WebCare Scan Vault JSON manifest
+            if (!empty($batch_files_records) && class_exists('\\WebCareProScanner\\Scan\\ScanVaultManager')) {
+                \WebCareProScanner\Scan\ScanVaultManager::append_batch($scan_id, $batch_files_records);
+                $batch_files_records = [];
+            }
+
+            $final_delta_count = max(0, $processed_count - $checkpointed_count);
+            $final_delta_bytes = max(0, $bytes_consumed - $checkpointed_bytes);
+            if ($final_delta_count > 0 || $checkpointed_count === 0) {
+                $remaining = \WebCareProScanner\Scan\ScanQueueManager::advance($scan_id, $final_delta_count, $final_delta_bytes);
+            } else {
+                $remaining = \WebCareProScanner\Scan\ScanQueueManager::get_remaining_count($scan_id);
+            }
+            $checkpointed_count = $processed_count;
+            $checkpointed_bytes = $bytes_consumed;
+            $is_finished = ($remaining === 0);
+
+            $tot_sql = "SELECT total_files, status FROM `{$table_scans}` WHERE id = %d";
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
+            $scan_row = $wpdb->get_row(
+                // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+                $wpdb->prepare($tot_sql, $scan_id),
+                ARRAY_A
+            );
+            $is_cancelled = (bool) get_transient("webcareproscan_scan_cancelled_{$scan_id}");
+            if (!$scan_row && !$is_cancelled) {
+                // Self-healing: recreate running scan row only if missing and NOT aborted/cancelled
                 // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-                $wpdb->insert($table_issues, [
-                    'scan_id'      => $scan_id,
-                    'engine'       => $item['engine'],
-                    'type'         => $item['type'],
-                    'severity'     => $item['severity'],
-                    'confidence'   => $item['confidence'],
-                    'file_path'    => $item['file_path'],
-                    'line_number'  => $item['line_number'] ?? null,
-                    'code_snippet' => $item['code_snippet'] ?? null,
-                    'evidence'     => $item['evidence'] ?? null,
-                    'description'  => $item['description'],
-                    'status'       => $status,
-                    'created_at'   => current_time('mysql'),
-                    'created_at_gmt'=> gmdate('Y-m-d H:i:s'),
+                $wpdb->insert($table_scans, [
+                    'id'               => $scan_id,
+                    'status'           => 'running',
+                    'generation_token' => $lease_token,
+                    'scan_type'        => 'full',
+                    'scanned_files'    => 0,
+                    'total_files'      => max(1, $remaining),
+                    'issues_found'     => 0,
+                    'risk_score'       => 0,
+                    'created_at'       => current_time('mysql'),
+                    'created_at_gmt'   => gmdate('Y-m-d H:i:s'),
                 ]);
+                $scan_row = ['total_files' => max(1, $remaining), 'status' => 'running'];
+            } elseif (!$scan_row || $is_cancelled || ($scan_row['status'] ?? '') !== 'running') {
+                $batch_finished_cleanly = true;
+                return new \WP_Error('scan_aborted', __('Scan was aborted or completed. Stopping progress update.', 'webcare-pro-security'), ['status' => 409]);
             }
-        }
 
-        // Verify scan was not cancelled and ownership is intact before performing durable file telemetry or queue advance
-        if (get_transient("webcareproscan_scan_cancelled_{$scan_id}")) {
-            ScanLock::release_batch_lock();
-            return new \WP_Error('scan_aborted', __('Scan was aborted. Halting vault and queue updates.', 'webcare-pro-security'), ['status' => 409]);
-        }
+            $scan_total = (int) ($scan_row['total_files'] ?? 0);
+            $scanned_so_far = max(0, $scan_total - $remaining);
+            $iss_sql = "SELECT COUNT(*) FROM `{$table_issues}` WHERE scan_id = %d AND status = 'open'";
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
+            $current_issues_total = (int) $wpdb->get_var(
+                // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+                $wpdb->prepare($iss_sql, $scan_id)
+            );
 
-        $scan_pre_advance_sql = "SELECT id FROM `{$table_scans}` WHERE id = %d AND status = 'running' AND generation_token = %s";
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.NotPrepared
-        $valid_pre_advance = $wpdb->get_var($wpdb->prepare($scan_pre_advance_sql, $scan_id, $lease_token));
-        if (!$valid_pre_advance) {
-            ScanLock::release_batch_lock();
-            return new \WP_Error('scan_ownership_lost', __('Scan ownership lost or superseded. Halting vault and queue updates.', 'webcare-pro-security'), ['status' => 409]);
-        }
+            // Conditional progress update: WHERE id = %d AND status = 'running' AND generation_token = %s
+            $update_progress_sql = "UPDATE `{$table_scans}` SET scanned_files = %d, issues_found = %d WHERE id = %d AND status = 'running' AND generation_token = %s";
+            // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.NotPrepared
+            $rows_affected = $wpdb->query(
+                $wpdb->prepare($update_progress_sql, $scanned_so_far, $current_issues_total, $scan_id, $lease_token)
+            );
+            // phpcs:enable
+            if ((int) $rows_affected < 1) {
+                // MySQL returns 0 when scanned_files & issues_found already match the 10-file checkpoint values.
+                // Confirm row ownership directly before rejecting.
+                $still_owned_sql = "SELECT id FROM `{$table_scans}` WHERE id = %d AND status = 'running' AND generation_token = %s";
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.NotPrepared
+                $still_owned = $wpdb->get_var($wpdb->prepare($still_owned_sql, $scan_id, $lease_token));
+                if (!$still_owned) {
+                    $batch_finished_cleanly = true;
+                    return new \WP_Error('scan_ownership_lost', __('Scan progress update rejected: scan aborted or generation token mismatch.', 'webcare-pro-security'), ['status' => 409]);
+                }
+            }
 
-        // Offload scanned file telemetry to WebCare Scan Vault JSON manifest (zero database write bloat)
-        if (!empty($batch_files_records) && class_exists('\\WebCareProScanner\\Scan\\ScanVaultManager')) {
-            \WebCareProScanner\Scan\ScanVaultManager::append_batch($scan_id, $batch_files_records);
-        }
+            $elapsed_sec = ($start_micro && is_numeric($start_micro)) ? max(0.1, microtime(true) - (float) $start_micro) : 0.0;
+            $telemetry = self::get_realtime_resource_stats(
+                $batch_start,
+                $batch_ru_start,
+                $scanned_so_far,
+                $scan_total,
+                $current_issues_total,
+                $elapsed_sec,
+                $governor
+            );
+            set_transient("webcareproscan_scan_live_telemetry_{$scan_id}", $telemetry, DAY_IN_SECONDS);
 
-        $remaining = \WebCareProScanner\Scan\ScanQueueManager::advance($scan_id, $processed_count, $bytes_consumed);
-        $is_finished = ($remaining === 0);
+            $batch_finished_cleanly = true;
 
-
-        $tot_sql = "SELECT total_files, status FROM `{$table_scans}` WHERE id = %d";
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
-        $scan_row = $wpdb->get_row(
-            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
-            $wpdb->prepare($tot_sql, $scan_id),
-            ARRAY_A
-        );
-        $is_cancelled = (bool) get_transient("webcareproscan_scan_cancelled_{$scan_id}");
-        if (!$scan_row && !$is_cancelled) {
-            // Self-healing: recreate running scan row only if missing and NOT aborted/cancelled
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-            $wpdb->insert($table_scans, [
-                'id'               => $scan_id,
-                'status'           => 'running',
-                'generation_token' => $lease_token,
-                'scan_type'        => 'full',
-                'scanned_files'    => 0,
-                'total_files'      => max(1, $remaining),
-                'issues_found'     => 0,
-                'risk_score'       => 0,
-                'created_at'       => current_time('mysql'),
-                'created_at_gmt'   => gmdate('Y-m-d H:i:s'),
+            return rest_ensure_response([
+                'success'        => true,
+                'is_finished'    => $is_finished,
+                'remaining'      => $remaining,
+                'processed'      => $processed_count,
+                'scanned_files'  => $scanned_so_far,
+                'total_files'    => $scan_total,
+                'issues_found'   => $current_issues_total,
+                'last_file'      => !empty($files_to_process) ? basename(end($files_to_process)) : '',
+                'telemetry'      => $telemetry,
             ]);
-            $scan_row = ['total_files' => max(1, $remaining), 'status' => 'running'];
-        } elseif (!$scan_row || $is_cancelled || ($scan_row['status'] ?? '') !== 'running') {
-            // Scan is cancelled or row no longer running — abort worker immediately
-            ScanLock::release_batch_lock();
-            return new \WP_Error('scan_aborted', __('Scan was aborted or completed. Stopping progress update.', 'webcare-pro-security'), ['status' => 409]);
+        } finally {
+            $batch_finished_cleanly = true;
+            ScanLock::release_batch_lock($batch_worker_token);
         }
-
-        $scan_total = (int) ($scan_row['total_files'] ?? 0);
-        $scanned_so_far = max(0, $scan_total - $remaining);
-        $iss_sql = "SELECT COUNT(*) FROM `{$table_issues}` WHERE scan_id = %d AND status = 'open'";
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
-        $current_issues_total = (int) $wpdb->get_var(
-            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
-            $wpdb->prepare($iss_sql, $scan_id)
-        );
-
-        // Conditional progress update: WHERE id = %d AND status = 'running' AND generation_token = %s
-        $update_progress_sql = "UPDATE `{$table_scans}` SET scanned_files = %d, issues_found = %d WHERE id = %d AND status = 'running' AND generation_token = %s";
-        // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.NotPrepared
-        $rows_affected = $wpdb->query(
-            $wpdb->prepare($update_progress_sql, $scanned_so_far, $current_issues_total, $scan_id, $lease_token)
-        );
-        // phpcs:enable
-        if ($rows_affected === 0) {
-            ScanLock::release_batch_lock();
-            return new \WP_Error('scan_ownership_lost', __('Scan progress update rejected: scan aborted or generation token mismatch.', 'webcare-pro-security'), ['status' => 409]);
-        }
-
-        $start_micro = get_transient("webcareproscan_scan_start_micro_{$scan_id}");
-        $elapsed_sec = ($start_micro && is_numeric($start_micro)) ? max(0.1, microtime(true) - (float) $start_micro) : 0.0;
-        $telemetry = self::get_realtime_resource_stats(
-            $batch_start,
-            $batch_ru_start,
-            $scanned_so_far,
-            $scan_total,
-            $current_issues_total,
-            $elapsed_sec,
-            $governor
-        );
-        set_transient("webcareproscan_scan_live_telemetry_{$scan_id}", $telemetry, DAY_IN_SECONDS);
-
-        ScanLock::release_batch_lock();
-
-        return rest_ensure_response([
-            'success'        => true,
-            'is_finished'    => $is_finished,
-            'remaining'      => $remaining,
-            'processed'      => count($files_to_process),
-            'scanned_files'  => $scanned_so_far,
-            'total_files'    => $scan_total,
-            'issues_found'   => $current_issues_total,
-            'last_file'      => !empty($files_to_process) ? basename(end($files_to_process)) : '',
-            'telemetry'      => $telemetry,
-        ]);
     }
 
     public static function run_deep_audit(\WP_REST_Request $request) {
@@ -2382,15 +2553,10 @@ final class ScanController extends AbstractApiController {
             ]);
         }
 
-        // If browser Scan UI is reconnecting to drive batches manually, record browser touch
-        // before running stall self-healing so we do not spawn a competing loopback tick on the same lock.
+        // Actively self-heal stalled background continuation ticks ONLY on passive/non-batch monitors;
+        // do not write last_browser_touch on GET /scan/active so 409 sync polling never starves background workers.
         $trigger_type = !empty($running_scan['trigger_type']) ? $running_scan['trigger_type'] : 'manual';
-        if (!empty($request->get_param('from_browser')) && $trigger_type !== 'scheduled') {
-            set_transient("webcareproscan_active_scan_last_browser_touch_{$locked_id}", microtime(true), 120);
-        }
-
-        // Actively self-heal stalled background continuation ticks while monitoring
-        if (class_exists('\\WebCareProScanner\\Scan\\ScanBackgroundWorker')) {
+        if (empty($request->get_param('from_browser')) && class_exists('\\WebCareProScanner\\Scan\\ScanBackgroundWorker')) {
             \WebCareProScanner\Scan\ScanBackgroundWorker::maybe_advance_stalled_scan((int) $locked_id);
         }
 

@@ -3086,6 +3086,7 @@ Source Code,${escapeCsv(code)}
 
       // Phase 1: Filesystem batch loop (only if totalFiles > 0 and files still remain)
       let finished = totalFiles === 0 || (typeof initialRemaining === 'number' && initialRemaining <= 0);
+      let conflictPollCount = 0;
       while (!finished) {
         try {
           // Request higher batch size (e.g. 60) so the backend Adaptive Governor can scale up to 120-150 files
@@ -3095,6 +3096,7 @@ Source Code,${escapeCsv(code)}
             method: 'POST',
             data: { scan_id: scanId, batch_size: 60, lease_token: activeLeaseToken, from_browser: 1 },
           });
+          conflictPollCount = 0;
 
           if (batchRes?.telemetry) {
             setScanTelemetry(batchRes.telemetry);
@@ -3117,9 +3119,14 @@ Source Code,${escapeCsv(code)}
             throw batchErr;
           }
 
-          // Background worker currently holds the batch mutex — sync live progress instead of failing
+          conflictPollCount++;
+          // Sync live progress WITHOUT marking from_browser=1 during worker polling so background workers are never starved;
+          // every 4th conflict cycle allow stall self-healing in get_active_scan to re-arm stalled ticks cleanly.
           setCurrentFile('Background worker active — syncing live progress...');
-          const activeRes: any = await apiRequest({ path: '/webcare-pro-security/v1/scan/active?from_browser=1' }).catch(() => null);
+          const syncPath = conflictPollCount % 4 === 0
+            ? '/webcare-pro-security/v1/scan/active'
+            : '/webcare-pro-security/v1/scan/active?from_browser=1';
+          const activeRes: any = await apiRequest({ path: syncPath }).catch(() => null);
           if (activeRes?.is_running && activeRes?.scan_id === scanId) {
             if (activeRes.lease_token) {
               activeLeaseToken = activeRes.lease_token;
@@ -3143,7 +3150,7 @@ Source Code,${escapeCsv(code)}
               finished = true;
               break;
             }
-            await new Promise((res) => setTimeout(res, 2000));
+            await new Promise((res) => setTimeout(res, 2500));
             continue;
           }
 

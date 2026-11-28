@@ -251,4 +251,44 @@ class ScanLockTest extends TestCase {
         $this->assertFalse(ScanLock::force_release(888), 'force_release must return false when advisory mutex fails');
         $this->assertTrue(ScanLock::is_locked(), 'Option state must remain intact when force_release fails');
     }
+
+    public function testBatchLockSerializesWorkersRecoversStaleLeaseAndEnforcesWorkerToken(): void {
+        $GLOBALS['wpdb']->mock_get_var_callback = static fn(string $q) => 1;
+
+        $this->assertTrue(ScanLock::acquire(606, 'gen_tok_606'));
+        $worker1 = null;
+        $this->assertTrue(ScanLock::acquire_batch_lock(606, 'gen_tok_606', $worker1));
+        $this->assertNotEmpty($worker1);
+
+        // Concurrent worker cannot acquire while batch heartbeat is active
+        $worker2 = null;
+        $this->assertFalse(ScanLock::acquire_batch_lock(606, 'gen_tok_606', $worker2));
+        $this->assertNull($worker2);
+
+        // Simulate worker crash + stranded persistent DB GET_LOCK(BATCH_LOCK_NAME) returning 0 after TTL expiry
+        update_option(ScanLock::BATCH_LOCK_OPTION, [
+            'scan_id'      => 606,
+            'worker_token' => $worker1,
+            'heartbeat_at' => time() - (ScanLock::BATCH_LOCK_TTL_SECONDS + 10),
+        ], false);
+        $GLOBALS['wpdb']->mock_get_var_callback = static function (string $q) {
+            if (str_contains($q, ScanLock::BATCH_LOCK_NAME)) {
+                return 0; // Stranded MySQL advisory lock on dead persistent connection
+            }
+            return 1;
+        };
+
+        $worker3 = null;
+        $this->assertTrue(ScanLock::acquire_batch_lock(606, 'gen_tok_606', $worker3), 'Expired batch lease must recover cleanly even if persistent DB advisory lock was stranded.');
+        $this->assertNotEmpty($worker3);
+        $this->assertNotSame($worker1, $worker3);
+
+        // Old worker calling release_batch_lock($worker1) must not revoke worker3's active lease
+        ScanLock::release_batch_lock($worker1);
+        $this->assertTrue(ScanLock::renew_batch_lock(606, (string) $worker3));
+
+        // Active owner release clears the batch lock
+        ScanLock::release_batch_lock($worker3);
+        $this->assertFalse(get_option(ScanLock::BATCH_LOCK_OPTION));
+    }
 }

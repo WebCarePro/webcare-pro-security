@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-28T17:32:26.736Z",
+  "generated_at": "2026-11-28T17:59:32.943Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -92,7 +92,7 @@
       "size": 26394
     },
     "build/index.asset.php": {
-      "sha256": "9a7e98a63fda3e7623c34b5afc6937a23a9add3538b0e4e3b145e192a5d40122",
+      "sha256": "c6c0594d3eb45955f143f38f448097832e423f360ba9880846f99e6f9f45833f",
       "size": 174
     },
     "build/index.css": {
@@ -100,8 +100,8 @@
       "size": 26389
     },
     "build/index.js": {
-      "sha256": "3f1334d06768e1a654d3d9aecb01b10b9c93eb0f765dc81dce25adc08dadf216",
-      "size": 3059563
+      "sha256": "225e0975964496095764455d9a5e7afdbe7a4a8c0ae7248fd00ccf94e651fa4c",
+      "size": 3059626
     },
     "build/modular-waf.asset.php": {
       "sha256": "a6e14e7860b2cb0f4b78f523f76f6cdfc4714f1c79647dfa4eb2088b82e6a750",
@@ -124,7 +124,7 @@
       "size": 26394
     },
     "build/scan.asset.php": {
-      "sha256": "9f079de36d6a6c295a96ab22a6c6f8d0c6a1ff36a3f58221d4cd447a88dafed8",
+      "sha256": "d29482c58b658ef5d6a17803a5fd9d718c1edf23427b53d280a7bbd5dc635669",
       "size": 174
     },
     "build/scan.css": {
@@ -132,8 +132,8 @@
       "size": 26389
     },
     "build/scan.js": {
-      "sha256": "7c9af13694ae7aab0ee2a3a382a9946b7d0063c90e9eb7669c83d686ea9b3291",
-      "size": 3051290
+      "sha256": "6d979b2055011102ad184aaf100f8f3c76c322a7c12767db278152981309fb41",
+      "size": 3051353
     },
     "build/settings.asset.php": {
       "sha256": "53604a1901d5ac1e635abcaf8c75f3f04982d57a7d9156677925a611fad19868",
@@ -236,8 +236,8 @@
       "size": 42693
     },
     "includes/Api/Controllers/ScanController.php": {
-      "sha256": "faddf26d60e9b3b4f3fe0301e98b848494759ae2079a8b38d9679eb17a6af89d",
-      "size": 343085
+      "sha256": "468c62dd68c090db5026c2accff651f9239df36fb1dad11c95a1ec1b054ebe5b",
+      "size": 354617
     },
     "includes/Api/Controllers/SystemController.php": {
       "sha256": "bb56c588a80105672b84cf0b83347e898acc979e14f7e98b8cc7ef2916dffaa6",
@@ -844,8 +844,8 @@
       "size": 11247
     },
     "includes/Malware/DeobfuscationEngine.php": {
-      "sha256": "62e10877a3f682fcf21a9a58427cc9e31a550af38d44235af14503e22521a5b5",
-      "size": 19158
+      "sha256": "a889d0599bac4c573f5b18735fc2744efe82454fbcb233dccac5b609b3751686",
+      "size": 19062
     },
     "includes/Malware/HeuristicEngine.php": {
       "sha256": "9a78d35bfb9c616ff2749cfe4181829ad2b75af89108441710e052e19ab3f92a",
@@ -936,8 +936,8 @@
       "size": 245
     },
     "includes/Scan/ScanLock.php": {
-      "sha256": "d4cf739ff52bd2c7678b8adf75020e5b97f7f9e50bad1cc7235e09e0542fa75f",
-      "size": 17101
+      "sha256": "558d9a07d64be8704058f69bfdb3179bbf7beb9bca8d14db1d2676c9afdf94af",
+      "size": 20818
     },
     "includes/Scan/ScanQueueManager.php": {
       "sha256": "a6cc8a0c7fcac69fd611e7b8d43ab4023c23b5b0526cbbd9015ede4c5832125c",
