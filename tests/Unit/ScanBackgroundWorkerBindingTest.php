@@ -153,4 +153,263 @@ final class ScanBackgroundWorkerBindingTest extends TestCase
             delete_option('webcareproscan_interruption_' . $scanId);
         }
     }
+
+    public function testFailedAdvisoryLockAcquisitionDoesNotInterruptHealthyScanWithinRecoveryWindow(): void
+    {
+        unset($GLOBALS['wp_mock_transients']);
+        $scanId = 901;
+        $recentUtc = gmdate('Y-m-d H:i:s', time() - 30);
+        set_transient("webcareproscan_scan_last_activity_{$scanId}", time() - 20, 3600);
+
+        $row = [
+            'id'               => $scanId,
+            'status'           => 'running',
+            'generation_token' => 'gen_tok_901',
+            'scan_target'      => 'full',
+            'trigger_type'     => 'manual',
+            'total_files'      => 500,
+            'scanned_files'    => 250,
+            'issues_found'     => 0,
+            'created_at'       => $recentUtc,
+            'created_at_gmt'   => $recentUtc,
+            'started_at'       => $recentUtc,
+        ];
+
+        // Advisory GET_LOCK fails (returns 0) -> ScanLock::acquire() fails transiently
+        $wpdbMock = new class($row) extends \wpdb {
+            public array $rowState;
+            public function __construct(array $row) {
+                $this->rowState = $row;
+                $this->mock_get_var_callback = static fn(string $q) => 0;
+            }
+            public function get_results(string $query, string $output = 'OBJECT') {
+                $this->queries[] = $query;
+                return str_contains($query, "status = 'running'") ? [$this->rowState] : [];
+            }
+            public function get_row(string $query, string $output = 'OBJECT') {
+                $this->queries[] = $query;
+                return str_contains($query, 'WHERE id =') ? $this->rowState : null;
+            }
+            public function update(string $table, array $data, array $where, ?array $format = null, ?array $where_format = null) {
+                $this->queries[] = "UPDATE {$table}";
+                $this->rowState = array_merge($this->rowState, $data);
+                return 1;
+            }
+        };
+        $GLOBALS['wpdb'] = $wpdbMock;
+
+        $resp = \WebCareProScanner\Api\Controllers\ScanController::get_active_scan(new \WP_REST_Request('GET', '/webcare-pro-security/v1/scan/active'));
+        $data = $resp instanceof \WP_REST_Response ? $resp->get_data() : (array) $resp;
+
+        $this->assertFalse($data['is_running'] ?? true);
+        $this->assertSame('running', $wpdbMock->rowState['status'], 'Transient ScanLock::acquire() failure inside recovery window must NOT mark scan interrupted.');
+        $this->assertNull(get_option('webcareproscan_interruption_' . $scanId, null), 'Must not write interruption forensics when scan is still within recovery window.');
+    }
+
+    public function testConcurrentLockAcquisitionDuringFailedRecoveryReturnsActiveStateWithoutInterrupting(): void
+    {
+        unset($GLOBALS['wp_mock_transients']);
+        $scanId = 902;
+        $recentUtc = gmdate('Y-m-d H:i:s', time() - 30);
+        set_transient("webcareproscan_scan_last_activity_{$scanId}", time() - 15, 3600);
+
+        $row = [
+            'id'               => $scanId,
+            'status'           => 'running',
+            'generation_token' => 'concurrent_tok_902',
+            'scan_target'      => 'full',
+            'trigger_type'     => 'manual',
+            'total_files'      => 500,
+            'scanned_files'    => 300,
+            'issues_found'     => 0,
+            'created_at'       => $recentUtc,
+            'created_at_gmt'   => $recentUtc,
+            'started_at'       => $recentUtc,
+        ];
+
+        $wpdbMock = new class($row, $scanId) extends \wpdb {
+            public array $rowState;
+            private int $scanId;
+            private int $getVarCalls = 0;
+            public function __construct(array $row, int $scanId) {
+                $this->rowState = $row;
+                $this->scanId   = $scanId;
+                $this->mock_get_var_callback = function (string $q) {
+                    $this->getVarCalls++;
+                    // Simulate another worker winning ScanLock right as GET_LOCK contention happens
+                    if (str_contains($q, 'GET_LOCK')) {
+                        update_option(ScanLock::LOCK_OPTION, [
+                            'scan_id'     => $this->scanId,
+                            'time'        => time(),
+                            'lease_token' => 'concurrent_tok_902',
+                        ]);
+                        return 0;
+                    }
+                    return 1;
+                };
+            }
+            public function get_results(string $query, string $output = 'OBJECT') {
+                $this->queries[] = $query;
+                return str_contains($query, "status = 'running'") ? [$this->rowState] : [];
+            }
+            public function get_row(string $query, string $output = 'OBJECT') {
+                $this->queries[] = $query;
+                return str_contains($query, 'WHERE id =') ? $this->rowState : null;
+            }
+        };
+        $GLOBALS['wpdb'] = $wpdbMock;
+
+        try {
+            $resp = \WebCareProScanner\Api\Controllers\ScanController::get_active_scan(new \WP_REST_Request('GET', '/webcare-pro-security/v1/scan/active'));
+            $data = $resp instanceof \WP_REST_Response ? $resp->get_data() : (array) $resp;
+
+            $this->assertTrue($data['is_running'] ?? false, 'Re-reading concurrent lock acquisition must recover active scan state.');
+            $this->assertSame($scanId, $data['scan_id'] ?? 0);
+            $this->assertSame('concurrent_tok_902', $data['lease_token'] ?? '');
+            $this->assertSame('running', $wpdbMock->rowState['status']);
+            $this->assertNull(get_option('webcareproscan_interruption_' . $scanId, null));
+        } finally {
+            delete_option(ScanLock::LOCK_OPTION);
+        }
+    }
+
+    public function testConcurrentlyCompletedScanIsNotOverwrittenByStaleWatchdogCas(): void
+    {
+        unset($GLOBALS['wp_mock_transients']);
+        $scanId   = 903;
+        $staleUtc = gmdate('Y-m-d H:i:s', time() - 3600);
+
+        $initialRow = [
+            'id'               => $scanId,
+            'status'           => 'running',
+            'generation_token' => 'tok_903',
+            'scan_target'      => 'full',
+            'trigger_type'     => 'manual',
+            'total_files'      => 100,
+            'scanned_files'    => 100,
+            'issues_found'     => 0,
+            'created_at'       => $staleUtc,
+            'created_at_gmt'   => $staleUtc,
+            'started_at'       => $staleUtc,
+        ];
+
+        $wpdbMock = new class($initialRow) extends \wpdb {
+            public array $rowState;
+            public int $getRowCalls = 0;
+            public function __construct(array $row) {
+                $this->rowState = $row;
+                $this->mock_get_var_callback = static fn(string $q) => 1;
+            }
+            public function get_results(string $query, string $output = 'OBJECT') {
+                $this->queries[] = $query;
+                return str_contains($query, "status = 'running'") ? [$this->rowState] : [];
+            }
+            public function get_row(string $query, string $output = 'OBJECT') {
+                $this->queries[] = $query;
+                $this->getRowCalls++;
+                if (str_contains($query, 'WHERE id =')) {
+                    // Simulate another worker completing the scan right before watchdog revalidation!
+                    $this->rowState['status'] = 'completed';
+                    return $this->rowState;
+                }
+                return null;
+            }
+            public function query(string $query) {
+                $this->queries[] = $query;
+                if (str_contains($query, "status = 'interrupted'")) {
+                    // Enforce SQL CAS: WHERE status = 'running' AND generation_token = '...'
+                    if ($this->rowState['status'] === 'running' && str_contains($query, $this->rowState['generation_token'])) {
+                        $this->rowState['status'] = 'interrupted';
+                        return 1;
+                    }
+                    return 0;
+                }
+                return parent::query($query);
+            }
+        };
+        $GLOBALS['wpdb'] = $wpdbMock;
+
+        $resp = \WebCareProScanner\Api\Controllers\ScanController::get_active_scan(new \WP_REST_Request('GET', '/webcare-pro-security/v1/scan/active'));
+        $data = $resp instanceof \WP_REST_Response ? $resp->get_data() : (array) $resp;
+
+        $this->assertFalse($data['is_running'] ?? true);
+        $this->assertSame('completed', $wpdbMock->rowState['status'], 'Concurrently completed scan must remain completed.');
+        $this->assertNull(get_option('webcareproscan_interruption_' . $scanId, null), 'Must not write interruption record for completed scan.');
+
+        // Also directly test ScanInterruptionForensics CAS guard with stale token or completed row
+        $casRes = \WebCareProScanner\Scan\ScanInterruptionForensics::record($scanId, \WebCareProScanner\Scan\ScanInterruptionForensics::REASON_STALE_HEARTBEAT, [
+            'expected_generation_token' => 'tok_903',
+            'require_cas_transition'    => true,
+        ]);
+        $this->assertSame([], $casRes, 'CAS forensics transition must abort cleanly when row is no longer running.');
+        $this->assertSame('completed', $wpdbMock->rowState['status']);
+    }
+
+    public function testRecoveringNewestScanDoesNotInterruptSecondaryWithinWindowRow(): void
+    {
+        unset($GLOBALS['wp_mock_transients']);
+        $recentUtc = gmdate('Y-m-d H:i:s', time() - 30);
+        set_transient('webcareproscan_scan_last_activity_905', time() - 10, 3600);
+        set_transient('webcareproscan_scan_last_activity_904', time() - 20, 3600);
+
+        $rows = [
+            905 => [
+                'id'               => 905,
+                'status'           => 'running',
+                'generation_token' => 'tok_905',
+                'scan_target'      => 'full',
+                'trigger_type'     => 'manual',
+                'total_files'      => 100,
+                'scanned_files'    => 10,
+                'issues_found'     => 0,
+                'created_at'       => $recentUtc,
+                'created_at_gmt'   => $recentUtc,
+                'started_at'       => $recentUtc,
+            ],
+            904 => [
+                'id'               => 904,
+                'status'           => 'running',
+                'generation_token' => 'tok_904',
+                'scan_target'      => 'full',
+                'trigger_type'     => 'manual',
+                'total_files'      => 100,
+                'scanned_files'    => 50,
+                'issues_found'     => 0,
+                'created_at'       => $recentUtc,
+                'created_at_gmt'   => $recentUtc,
+                'started_at'       => $recentUtc,
+            ],
+        ];
+
+        $wpdbMock = new class($rows) extends \wpdb {
+            public array $rows;
+            public function __construct(array $rows) {
+                $this->rows = $rows;
+                $this->mock_get_var_callback = static fn(string $q) => 1;
+            }
+            public function get_results(string $query, string $output = 'OBJECT') {
+                $this->queries[] = $query;
+                return str_contains($query, "status = 'running'") ? array_values($this->rows) : [];
+            }
+            public function get_row(string $query, string $output = 'OBJECT') {
+                $this->queries[] = $query;
+                if (preg_match('/WHERE id = (\d+)/', $query, $m) && isset($this->rows[(int) $m[1]])) {
+                    return $this->rows[(int) $m[1]];
+                }
+                return null;
+            }
+        };
+        $GLOBALS['wpdb'] = $wpdbMock;
+
+        try {
+            $resp = \WebCareProScanner\Api\Controllers\ScanController::get_active_scan(new \WP_REST_Request('GET', '/webcare-pro-security/v1/scan/active'));
+            $data = $resp instanceof \WP_REST_Response ? $resp->get_data() : (array) $resp;
+
+            $this->assertTrue($data['is_running'] ?? false);
+            $this->assertSame(905, $data['scan_id'] ?? 0);
+            $this->assertNull(get_option('webcareproscan_interruption_904', null), 'Secondary within-window scan must not be blindly interrupted just because primary scan recovered.');
+        } finally {
+            ScanLock::force_release();
+        }
+    }
 }

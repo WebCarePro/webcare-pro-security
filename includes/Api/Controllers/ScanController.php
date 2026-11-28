@@ -2265,13 +2265,17 @@ final class ScanController extends AbstractApiController {
                     if ($cand_id <= 0) {
                         continue;
                     }
+                    $orig_token = (string) ($row['generation_token'] ?? '');
 
                     if (get_transient("webcareproscan_scan_cancelled_{$cand_id}")) {
-                        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-                        $wpdb->update($table_scans, [
-                            'status'       => 'aborted',
-                            'completed_at' => self::now_fractional_mysql(),
-                        ], ['id' => $cand_id]);
+                        $abort_cas = $wpdb->prepare(
+                            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+                            "UPDATE `{$table_scans}` SET status = 'aborted', completed_at = %s WHERE id = %d AND status = 'running'",
+                            self::now_fractional_mysql(),
+                            $cand_id
+                        );
+                        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.NotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
+                        $wpdb->query($abort_cas);
                         continue;
                     }
 
@@ -2280,28 +2284,79 @@ final class ScanController extends AbstractApiController {
                         : false;
                     $idle_sec = max(0, $now_ts - self::resolve_scan_last_activity_ts($row));
 
-                    // Recover most recent active scan when queue is healthy and idle gap is < 30m (or deep-audit < 10m)
+                    // Branch 1: Scan is within its recovery window -> attempt recovery, NEVER interrupt on lock acquisition failure
                     $within_recovery_window = $has_queue ? ($idle_sec < 1800) : ($idle_sec < 600);
-                    if ($locked_id === null && $within_recovery_window) {
-                        $gen_token = !empty($row['generation_token']) ? (string) $row['generation_token'] : null;
-                        if (ScanLock::acquire($cand_id, $gen_token)) {
-                            $locked_id = $cand_id;
-                            set_transient("webcareproscan_scan_last_activity_{$cand_id}", $now_ts, 12 * HOUR_IN_SECONDS);
-                            if (class_exists('\\WebCareProScanner\\Scan\\ScanBackgroundWorker')) {
-                                \WebCareProScanner\Scan\ScanBackgroundWorker::schedule_continuation(5);
-                                \WebCareProScanner\Scan\ScanBackgroundWorker::dispatch_deferred_tick($cand_id);
+                    if ($within_recovery_window) {
+                        if ($locked_id === null) {
+                            $acquired = ScanLock::acquire($cand_id, $orig_token !== '' ? $orig_token : null);
+                            if ($acquired) {
+                                $locked_id = $cand_id;
+                                set_transient("webcareproscan_scan_last_activity_{$cand_id}", $now_ts, 12 * HOUR_IN_SECONDS);
+                                if (class_exists('\\WebCareProScanner\\Scan\\ScanBackgroundWorker')) {
+                                    \WebCareProScanner\Scan\ScanBackgroundWorker::schedule_continuation(5);
+                                    \WebCareProScanner\Scan\ScanBackgroundWorker::dispatch_deferred_tick($cand_id);
+                                }
+                                continue;
                             }
-                            continue;
+
+                            // Recovery attempt failed (e.g. GET_LOCK contention/timeout or concurrent worker update):
+                            // Re-read the active lock and DB row; do NOT interrupt a healthy or concurrently progressing scan.
+                            $recheck_locked = ScanLock::get_locked_scan_id();
+                            if ($recheck_locked !== null && $recheck_locked > 0) {
+                                $locked_id = $recheck_locked;
+                            }
+                            $recheck_sql = $wpdb->prepare(
+                                // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+                                "SELECT * FROM `{$table_scans}` WHERE id = %d",
+                                $cand_id
+                            );
+                            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.NotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
+                            $wpdb->get_row($recheck_sql, ARRAY_A);
                         }
+                        continue;
                     }
 
-                    // Otherwise mark genuinely abandoned or superseded scans interrupted
-                    \WebCareProScanner\Scan\ScanInterruptionForensics::record($cand_id, \WebCareProScanner\Scan\ScanInterruptionForensics::REASON_STALE_HEARTBEAT);
-                    // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-                    $wpdb->update($table_scans, [
-                        'status'       => 'interrupted',
-                        'completed_at' => self::now_fractional_mysql(),
-                    ], ['id' => $cand_id]);
+                    // Branch 2: Scan is outside its recovery window -> revalidate lock and DB row before CAS interruption
+                    $recheck_locked = ScanLock::get_locked_scan_id();
+                    if ($recheck_locked !== null && $recheck_locked === $cand_id) {
+                        $locked_id = $recheck_locked;
+                        continue;
+                    }
+
+                    $fresh_sql = $wpdb->prepare(
+                        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+                        "SELECT * FROM `{$table_scans}` WHERE id = %d",
+                        $cand_id
+                    );
+                    // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.NotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
+                    $fresh_row = $wpdb->get_row($fresh_sql, ARRAY_A);
+                    if (!is_array($fresh_row) || ($fresh_row['status'] ?? '') !== 'running') {
+                        // Scan completed, aborted, or transitioned concurrently -> never overwrite
+                        continue;
+                    }
+
+                    $fresh_token = (string) ($fresh_row['generation_token'] ?? '');
+                    if ($orig_token !== '' && $fresh_token !== $orig_token) {
+                        continue;
+                    }
+
+                    $fresh_has_queue = class_exists('\\WebCareProScanner\\Scan\\ScanQueueManager')
+                        ? \WebCareProScanner\Scan\ScanQueueManager::has_queue($cand_id)
+                        : false;
+                    $fresh_idle_sec = max(0, time() - self::resolve_scan_last_activity_ts($fresh_row));
+                    if (($fresh_has_queue && $fresh_idle_sec < 1800) || (!$fresh_has_queue && $fresh_idle_sec < 600)) {
+                        continue;
+                    }
+
+                    // Confirmed genuinely stale: atomic compare-and-set transition bound to original generation_token
+                    \WebCareProScanner\Scan\ScanInterruptionForensics::record(
+                        $cand_id,
+                        \WebCareProScanner\Scan\ScanInterruptionForensics::REASON_STALE_HEARTBEAT,
+                        [
+                            'expected_generation_token' => $orig_token,
+                            'require_cas_transition'    => true,
+                        ]
+                    );
                 }
             }
 

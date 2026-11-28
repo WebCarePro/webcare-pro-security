@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
-  "generated_at": "2026-11-28T17:04:45.185Z",
+  "generated_at": "2026-11-28T17:19:32.374Z",
   "algorithm": "sha256",
   "files": {
     "assets/cubes.svg": {
@@ -236,8 +236,8 @@
       "size": 42693
     },
     "includes/Api/Controllers/ScanController.php": {
-      "sha256": "15541ceade5df8fd1c2035a35def1ba8e7dafb6fbbf444d8f237e7b7ef129294",
-      "size": 339131
+      "sha256": "4912b26af69e0e78e0121fa36f469d748c47657d6857fde0ca4e4cf09643539b",
+      "size": 342568
     },
     "includes/Api/Controllers/SystemController.php": {
       "sha256": "bb56c588a80105672b84cf0b83347e898acc979e14f7e98b8cc7ef2916dffaa6",
@@ -928,8 +928,8 @@
       "size": 17418
     },
     "includes/Scan/ScanInterruptionForensics.php": {
-      "sha256": "37177498c1677d72d3cf0b090dff8a9be168edfe4ac12077b1bd4cc56dcc66ff",
-      "size": 18888
+      "sha256": "59abef05f024fde9f382b0a9fecdbd00529e5cdf9b9430097acf298719b8ca6c",
+      "size": 21947
     },
     "includes/Scan/ScanLeaseLostException.php": {
       "sha256": "3677fe8d923536cd70dbc5bbaa515b7f2751bb332b0dfe948d53421ffb01e5b0",

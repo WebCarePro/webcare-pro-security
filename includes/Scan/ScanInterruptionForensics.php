@@ -42,6 +42,21 @@ class ScanInterruptionForensics {
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
         $scan = $wpdb->get_row($wpdb->prepare("SELECT * FROM `{$table_scans}` WHERE id = %d", $scan_id), ARRAY_A);
 
+        $require_cas = !empty($extra_context['require_cas_transition']);
+        $expected_gen = array_key_exists('expected_generation_token', $extra_context)
+            ? (string) $extra_context['expected_generation_token']
+            : null;
+
+        if ($require_cas && $reason_code !== self::REASON_MANUAL_ABORT) {
+            if (!is_array($scan) || ($scan['status'] ?? '') !== 'running') {
+                return [];
+            }
+            $row_gen = (string) ($scan['generation_token'] ?? '');
+            if ($expected_gen !== null && $row_gen !== $expected_gen) {
+                return [];
+            }
+        }
+
         $last_file = $extra_context['last_file'] ?? get_transient("webcareproscan_active_scan_file_{$scan_id}") ?: '';
         $live_telemetry = get_transient("webcareproscan_scan_live_telemetry_{$scan_id}");
 
@@ -126,6 +141,44 @@ class ScanInterruptionForensics {
             ] : null,
         ];
 
+        // Perform atomic compare-and-set transition (WHERE status = 'running' and matching generation_token)
+        // before persisting interruption forensics/notifications so concurrently completed scans are never overwritten.
+        if ($reason_code !== self::REASON_MANUAL_ABORT && $wpdb instanceof \wpdb) {
+            $dur_int        = max(1, (int) round($elapsed_sec));
+            $completed_time = \WebCareProScanner\Api\Controllers\ScanController::now_fractional_mysql();
+            if ($expected_gen !== null && $expected_gen !== '') {
+                $cas_sql = $wpdb->prepare(
+                    // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+                    "UPDATE `{$table_scans}` SET status = 'interrupted', duration = %d, completed_at = %s WHERE id = %d AND status = 'running' AND generation_token = %s",
+                    $dur_int,
+                    $completed_time,
+                    $scan_id,
+                    $expected_gen
+                );
+            } elseif ($expected_gen === '') {
+                $cas_sql = $wpdb->prepare(
+                    // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+                    "UPDATE `{$table_scans}` SET status = 'interrupted', duration = %d, completed_at = %s WHERE id = %d AND status = 'running' AND (generation_token IS NULL OR generation_token = '')",
+                    $dur_int,
+                    $completed_time,
+                    $scan_id
+                );
+            } else {
+                $cas_sql = $wpdb->prepare(
+                    // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+                    "UPDATE `{$table_scans}` SET status = 'interrupted', duration = %d, completed_at = %s WHERE id = %d AND status = 'running'",
+                    $dur_int,
+                    $completed_time,
+                    $scan_id
+                );
+            }
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.NotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
+            $cas_affected = $wpdb->query($cas_sql);
+            if ($require_cas && (int) $cas_affected === 0) {
+                return [];
+            }
+        }
+
         // Store persistent record in WordPress options
         update_option(self::OPTION_PREFIX . $scan_id, $payload, false);
 
@@ -144,14 +197,6 @@ class ScanInterruptionForensics {
                 ],
             ]);
         }
-
-        // Update database scan record with interrupted status if still marked running
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-        $wpdb->update($table_scans, [
-            'status'       => 'interrupted',
-            'duration'     => max(1, (int) round($elapsed_sec)),
-            'completed_at' => \WebCareProScanner\Api\Controllers\ScanController::now_fractional_mysql(),
-        ], ['id' => $scan_id]);
 
         return $payload;
     }
@@ -173,6 +218,21 @@ class ScanInterruptionForensics {
         $table_scans = $wpdb->prefix . 'webcareproscan_scans';
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
         $scan = $wpdb->get_row($wpdb->prepare("SELECT * FROM `{$table_scans}` WHERE id = %d", $scan_id), ARRAY_A);
+
+        $require_cas = !empty($extra_context['require_cas_transition']);
+        $expected_gen = array_key_exists('expected_generation_token', $extra_context)
+            ? (string) $extra_context['expected_generation_token']
+            : null;
+
+        if ($require_cas && $reason_code !== self::REASON_MANUAL_ABORT) {
+            if (!is_array($scan) || ($scan['status'] ?? '') !== 'running') {
+                return [];
+            }
+            $row_gen = (string) ($scan['generation_token'] ?? '');
+            if ($expected_gen !== null && $row_gen !== $expected_gen) {
+                return [];
+            }
+        }
         if (!$scan || $scan['status'] !== 'interrupted') {
             return null;
         }
