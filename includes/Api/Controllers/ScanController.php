@@ -2302,16 +2302,16 @@ final class ScanController extends AbstractApiController {
                             // Recovery attempt failed (e.g. GET_LOCK contention/timeout or concurrent worker update):
                             // Re-read the active lock and DB row; do NOT interrupt a healthy or concurrently progressing scan.
                             $recheck_locked = ScanLock::get_locked_scan_id();
-                            if ($recheck_locked !== null && $recheck_locked > 0) {
-                                $locked_id = $recheck_locked;
-                            }
                             $recheck_sql = $wpdb->prepare(
                                 // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
                                 "SELECT * FROM `{$table_scans}` WHERE id = %d",
                                 $cand_id
                             );
                             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.NotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
-                            $wpdb->get_row($recheck_sql, ARRAY_A);
+                            $recheck_row = $wpdb->get_row($recheck_sql, ARRAY_A);
+                            if ($recheck_locked !== null && $recheck_locked > 0 && is_array($recheck_row) && (($recheck_row['status'] ?? '') === 'running' || $recheck_locked !== $cand_id)) {
+                                $locked_id = $recheck_locked;
+                            }
                         }
                         continue;
                     }
@@ -2336,7 +2336,7 @@ final class ScanController extends AbstractApiController {
                     }
 
                     $fresh_token = (string) ($fresh_row['generation_token'] ?? '');
-                    if ($orig_token !== '' && $fresh_token !== $orig_token) {
+                    if ($fresh_token !== $orig_token) {
                         continue;
                     }
 

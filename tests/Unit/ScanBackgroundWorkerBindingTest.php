@@ -412,4 +412,117 @@ final class ScanBackgroundWorkerBindingTest extends TestCase
             ScanLock::force_release();
         }
     }
+
+    public function testWatchdogCasIdempotencyManualAbortCompatibilityAndForensicsFallback(): void
+    {
+        unset($GLOBALS['wp_mock_transients']);
+        $staleUtc = gmdate('Y-m-d H:i:s', time() - 3600);
+
+        $rows = [
+            906 => [
+                'id'               => 906,
+                'status'           => 'running',
+                'generation_token' => 'tok_906',
+                'scan_target'      => 'full',
+                'trigger_type'     => 'manual',
+                'total_files'      => 100,
+                'scanned_files'    => 10,
+                'issues_found'     => 0,
+                'created_at'       => $staleUtc,
+                'created_at_gmt'   => $staleUtc,
+                'started_at'       => $staleUtc,
+                'duration'         => 3600,
+            ],
+            907 => [
+                'id'               => 907,
+                'status'           => 'aborted',
+                'generation_token' => 'tok_907',
+                'scan_target'      => 'full',
+                'trigger_type'     => 'manual',
+                'total_files'      => 100,
+                'scanned_files'    => 40,
+                'issues_found'     => 0,
+                'created_at'       => $staleUtc,
+                'created_at_gmt'   => $staleUtc,
+                'started_at'       => $staleUtc,
+                'duration'         => 120,
+            ],
+            908 => [
+                'id'               => 908,
+                'status'           => 'interrupted',
+                'generation_token' => 'tok_908',
+                'scan_target'      => 'full',
+                'trigger_type'     => 'manual',
+                'total_files'      => 200,
+                'scanned_files'    => 120,
+                'issues_found'     => 0,
+                'created_at'       => $staleUtc,
+                'created_at_gmt'   => $staleUtc,
+                'started_at'       => $staleUtc,
+                'duration'         => 950,
+            ],
+        ];
+
+        $wpdbMock = new class($rows) extends \wpdb {
+            public array $rows;
+            public int $casTransitions = 0;
+            public function __construct(array $rows) {
+                $this->rows = $rows;
+                $this->mock_get_var_callback = static fn(string $q) => 1;
+            }
+            public function get_row(string $query, string $output = 'OBJECT') {
+                $this->queries[] = $query;
+                if (preg_match('/WHERE id = (\d+)/', $query, $m) && isset($this->rows[(int) $m[1]])) {
+                    return $this->rows[(int) $m[1]];
+                }
+                return null;
+            }
+            public function query(string $query) {
+                $this->queries[] = $query;
+                if (preg_match("/SET status = 'interrupted'.*WHERE id = (\d+) AND status = 'running' AND generation_token = '([^']+)'/s", $query, $m)) {
+                    $id  = (int) $m[1];
+                    $tok = $m[2];
+                    if (isset($this->rows[$id]) && $this->rows[$id]['status'] === 'running' && $this->rows[$id]['generation_token'] === $tok) {
+                        $this->rows[$id]['status'] = 'interrupted';
+                        $this->casTransitions++;
+                        return 1;
+                    }
+                    return 0;
+                }
+                return parent::query($query);
+            }
+        };
+        $GLOBALS['wpdb'] = $wpdbMock;
+
+        // 1. First CAS interruption succeeds once; repeated invocation on now-interrupted row is an idempotent no-op
+        $first = \WebCareProScanner\Scan\ScanInterruptionForensics::record(906, \WebCareProScanner\Scan\ScanInterruptionForensics::REASON_STALE_HEARTBEAT, [
+            'expected_generation_token' => 'tok_906',
+            'require_cas_transition'    => true,
+        ]);
+        $second = \WebCareProScanner\Scan\ScanInterruptionForensics::record(906, \WebCareProScanner\Scan\ScanInterruptionForensics::REASON_STALE_HEARTBEAT, [
+            'expected_generation_token' => 'tok_906',
+            'require_cas_transition'    => true,
+        ]);
+        $this->assertSame('interrupted', $wpdbMock->rows[906]['status']);
+        $this->assertNotEmpty($first);
+        $this->assertSame([], $second);
+        $this->assertSame(1, $wpdbMock->casTransitions);
+
+        // 2. Manual abort compatibility: writes dossier option without overwriting DB status away from 'aborted'
+        $manual = \WebCareProScanner\Scan\ScanInterruptionForensics::record(907, \WebCareProScanner\Scan\ScanInterruptionForensics::REASON_MANUAL_ABORT, [
+            'last_file' => 'wp-content/index.php',
+        ]);
+        $this->assertSame(\WebCareProScanner\Scan\ScanInterruptionForensics::REASON_MANUAL_ABORT, $manual['reason_code'] ?? '');
+        $this->assertSame('aborted', $wpdbMock->rows[907]['status']);
+
+        // 3. Fallback retrieval in ScanInterruptionForensics::get() when stored option is absent executes with zero undefined variables
+        delete_option(\WebCareProScanner\Scan\ScanInterruptionForensics::OPTION_PREFIX . 908);
+        $deduced = \WebCareProScanner\Scan\ScanInterruptionForensics::get(908);
+        $this->assertIsArray($deduced);
+        $this->assertSame(\WebCareProScanner\Scan\ScanInterruptionForensics::REASON_STALE_HEARTBEAT, $deduced['reason_code'] ?? '');
+        $this->assertSame(120, $deduced['scanned_files'] ?? 0);
+
+        delete_option(\WebCareProScanner\Scan\ScanInterruptionForensics::OPTION_PREFIX . 906);
+        delete_option(\WebCareProScanner\Scan\ScanInterruptionForensics::OPTION_PREFIX . 907);
+    }
 }

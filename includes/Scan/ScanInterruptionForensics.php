@@ -174,7 +174,7 @@ class ScanInterruptionForensics {
             }
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.NotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
             $cas_affected = $wpdb->query($cas_sql);
-            if ($require_cas && (int) $cas_affected === 0) {
+            if ($require_cas && (int) $cas_affected < 1) {
                 return [];
             }
         }
@@ -218,21 +218,6 @@ class ScanInterruptionForensics {
         $table_scans = $wpdb->prefix . 'webcareproscan_scans';
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
         $scan = $wpdb->get_row($wpdb->prepare("SELECT * FROM `{$table_scans}` WHERE id = %d", $scan_id), ARRAY_A);
-
-        $require_cas = !empty($extra_context['require_cas_transition']);
-        $expected_gen = array_key_exists('expected_generation_token', $extra_context)
-            ? (string) $extra_context['expected_generation_token']
-            : null;
-
-        if ($require_cas && $reason_code !== self::REASON_MANUAL_ABORT) {
-            if (!is_array($scan) || ($scan['status'] ?? '') !== 'running') {
-                return [];
-            }
-            $row_gen = (string) ($scan['generation_token'] ?? '');
-            if ($expected_gen !== null && $row_gen !== $expected_gen) {
-                return [];
-            }
-        }
         if (!$scan || $scan['status'] !== 'interrupted') {
             return null;
         }
