@@ -21,7 +21,8 @@ import {
   PlayCircle,
   Search,
   ChevronRight,
-  FileText
+  FileText,
+  XCircle
 } from 'lucide-react';
 import WebCareBrandLogo from './WebCareBrandLogo';
 import MegaMenuModal from './MegaMenuModal';
@@ -31,9 +32,9 @@ import { QuickJumpModal } from './QuickJumpModal';
 import { applyWebCareTheme, getWebCareTheme } from '../utils/theme';
 import { apiRequest } from '../utils/api';
 import { toast } from '../utils/dialog';
+import { confirmAction, ConfirmModalHost } from './ui/ConfirmModal';
 import { useWorkspaceMode } from '../hooks/useWorkspaceMode';
 import { ToastProvider } from './ui/ToastProvider';
-import { ConfirmModalHost } from './ui/ConfirmModal';
 import { buildAdminUrl, navigateToRoute, parseCurrentRoute, PILLARS, PILLAR_MAP } from '../utils/routeRegistry';
 
 interface WebCareShellProps {
@@ -81,6 +82,146 @@ export const WebCareShell = ({ activeTab, activePillarId, children }: WebCareShe
     totalTables: number;
     percent: number;
   } | null>(null);
+  const [activeScanSession, setActiveScanSession] = useState<{
+    scanId: number;
+    scanTarget: string;
+    triggerType: string;
+    scannedFiles: number;
+    totalFiles: number;
+    remaining: number;
+    phase: string;
+    lastFile: string;
+    elapsed: number;
+    telemetry?: any;
+    percent: number;
+  } | null>(null);
+  const [abortingScan, setAbortingScan] = useState(false);
+
+  // Poll for active background or resumed security scan across all plugin pages
+  useEffect(() => {
+    let isMounted = true;
+    const TARGETED_TARGETS = new Set([
+      'core_integrity', 'database', 'users', 'vulnerabilities',
+      'seo_spam', 'persistence', 'fim_only', 'filesystem_only'
+    ]);
+
+    const fetchActiveScan = async () => {
+      if (document.hidden) return;
+      try {
+        const res: any = await apiRequest({ path: '/webcare-pro-security/v1/scan/active' });
+        if (!isMounted) return;
+
+        if (res?.is_running && res?.scan_id) {
+          const total = Math.max(1, Number(res.total_files || 0));
+          const scanned = Number(res.scanned_files || 0);
+          const remaining = Number(res.remaining ?? Math.max(0, total - scanned));
+          const phase = String(res.phase || 'batch');
+          const target = String(res.scan_target || 'plugins_themes');
+          let percent = 5;
+          if (TARGETED_TARGETS.has(target)) {
+            percent = phase === 'deep_audit' ? 75 : Math.min(85, Math.max(15, Math.round((scanned / total) * 85)));
+          } else if (phase === 'deep_audit' || (total > 0 && remaining <= 0)) {
+            percent = 90;
+          } else if (res.total_files > 0) {
+            percent = Math.min(85, Math.max(3, Math.round((scanned / total) * 85)));
+          }
+
+          setActiveScanSession({
+            scanId: Number(res.scan_id),
+            scanTarget: target,
+            triggerType: String(res.trigger_type || 'manual'),
+            scannedFiles: scanned,
+            totalFiles: Number(res.total_files || 0),
+            remaining,
+            phase,
+            lastFile: String(res.last_file || ''),
+            elapsed: Number(res.elapsed || 0),
+            telemetry: res.telemetry || null,
+            percent,
+          });
+        } else {
+          setActiveScanSession(null);
+        }
+      } catch (_) {}
+    };
+
+    fetchActiveScan();
+    const interval = setInterval(fetchActiveScan, 3000);
+    const handleScanVisibility = () => {
+      if (!document.hidden) {
+        fetchActiveScan();
+      }
+    };
+    document.addEventListener('visibilitychange', handleScanVisibility);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleScanVisibility);
+    };
+  }, []);
+
+  // Tick local elapsed seconds smoothly between 3s scan status polls
+  useEffect(() => {
+    if (!activeScanSession) return;
+    const timer = setInterval(() => {
+      if (!document.hidden) {
+        setActiveScanSession((prev) => (prev ? { ...prev, elapsed: prev.elapsed + 1 } : null));
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [Boolean(activeScanSession)]);
+
+  const formatScanElapsed = (secs: number) => {
+    const mins = Math.floor(Math.max(0, secs) / 60);
+    const rem = Math.max(0, secs) % 60;
+    return `${String(mins).padStart(2, '0')}:${String(rem).padStart(2, '0')}`;
+  };
+
+  const getScanTargetLabel = (target: string, triggerType: string) => {
+    const targetedNames: Record<string, string> = {
+      core_integrity: 'WordPress Core Integrity Audit',
+      database: 'Database SQL & Content Injection Audit',
+      users: 'User Privilege & Backdoor Audit',
+      vulnerabilities: 'Plugin & Theme CVE Vulnerability Audit',
+      seo_spam: 'SEO Spam & Malicious Redirect Audit',
+      persistence: 'WP-Cron, MU-Plugin & Persistence Audit',
+      fim_only: 'File Integrity Monitoring (FIM) Diff Audit',
+      filesystem_only: 'Targeted Filesystem Malware Scan',
+    };
+    if (targetedNames[target]) return targetedNames[target];
+    if (triggerType === 'scheduled') {
+      return `Scheduled Auto Scan (${target === 'full' ? 'Full System' : 'Plugins & Themes'})`;
+    }
+    if (target === 'custom') return 'Custom Security Scan';
+    if (target === 'full') return 'Complete Website Scan';
+    return 'Quick Scan (Plugins & Themes)';
+  };
+
+  const handleAbortActiveScan = async () => {
+    if (!activeScanSession || abortingScan) return;
+    const confirmed = await confirmAction({
+      title: 'Stop Active Security Scan',
+      message: 'Are you sure you want to stop and cancel the currently running scan? In-progress checks will be aborted immediately.',
+      confirmLabel: 'Stop Scan',
+      variant: 'danger',
+    });
+    if (!confirmed) return;
+
+    setAbortingScan(true);
+    try {
+      await apiRequest({
+        path: '/webcare-pro-security/v1/scan/abort',
+        method: 'POST',
+        data: { scan_id: activeScanSession.scanId },
+      });
+      setActiveScanSession(null);
+      toast.info('Active security scan was stopped and lock released.');
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to abort active scan.');
+    } finally {
+      setAbortingScan(false);
+    }
+  };
 
   // Poll for background database backup status
   useEffect(() => {
@@ -767,6 +908,79 @@ export const WebCareShell = ({ activeTab, activePillarId, children }: WebCareShe
                   <span>Resume Strict Firewall</span>
                 </>
               )}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Global Persistent Active Scan Progress Bar Banner across all standalone plugin pages */}
+      {activeScanSession && (
+        <div className="webcare-active-scan-banner" style={{ marginTop: '14px' }}>
+          <div className="webcare-active-scan-banner-info" style={{ flex: 1, minWidth: '260px' }}>
+            <div className="webcare-active-scan-spinner-box">
+              <Loader2 size={20} className="webcare-spin-icon" />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="webcare-active-scan-title" style={{ flexWrap: 'wrap' }}>
+                <span><strong>Scan in Progress:</strong> </span>
+                <span>{getScanTargetLabel(activeScanSession.scanTarget, activeScanSession.triggerType)}</span>
+                <span className="webcare-active-scan-percent">{activeScanSession.percent}%</span>
+                <span className="webcare-active-scan-telemetry-chip">
+                  <span>⏱️ {formatScanElapsed(activeScanSession.elapsed)}</span>
+                  {activeScanSession.totalFiles > 0 && (
+                    <span> • 📄 {activeScanSession.scannedFiles.toLocaleString()} / {activeScanSession.totalFiles.toLocaleString()}</span>
+                  )}
+                  {activeScanSession.telemetry?.memory_mb && <span> • 💾 {activeScanSession.telemetry.memory_mb} MB</span>}
+                  {activeScanSession.telemetry?.cpu_percent !== null && activeScanSession.telemetry?.cpu_percent !== undefined && (
+                    <span> • ⚡ {activeScanSession.telemetry.cpu_percent}% CPU</span>
+                  )}
+                </span>
+              </div>
+              <div className="webcare-active-scan-subtitle" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span>
+                  {activeScanSession.lastFile
+                    ? activeScanSession.lastFile
+                    : activeScanSession.phase === 'deep_audit'
+                    ? 'Executing deep engine correlation & database integrity inspection...'
+                    : 'Background worker scanning site files...'}
+                </span>
+              </div>
+              <div className="webcare-progress-bar-bg" style={{ height: '5px', marginTop: '8px', background: 'rgba(99, 102, 241, 0.16)' }}>
+                <div
+                  className="webcare-progress-fill"
+                  style={{
+                    width: `${Math.min(100, Math.max(3, activeScanSession.percent))}%`,
+                    background: 'linear-gradient(90deg, #4f46e5 0%, #7c3aed 100%)',
+                    borderRadius: '999px',
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+          <div className="webcare-active-scan-actions">
+            <button
+              type="button"
+              className="webcare-btn"
+              onClick={() => {
+                const isTargeted = [
+                  'core_integrity', 'database', 'users', 'vulnerabilities',
+                  'seo_spam', 'persistence', 'fim_only', 'filesystem_only'
+                ].includes(activeScanSession.scanTarget);
+                window.location.href = buildAdminUrl('webcare-pro-scanner', isTargeted ? 'targeted' : 'malware');
+              }}
+              style={{ fontSize: '12px', padding: '6px 14px', background: '#3b82f6', color: '#fff' }}
+            >
+              <span>View Active Scan</span>
+            </button>
+            <button
+              type="button"
+              className="webcare-btn"
+              disabled={abortingScan}
+              onClick={handleAbortActiveScan}
+              style={{ fontSize: '12px', padding: '6px 14px', background: '#ef4444', color: '#fff', display: 'inline-flex', alignItems: 'center', gap: '6px', opacity: abortingScan ? 0.7 : 1 }}
+            >
+              <XCircle size={14} />
+              <span>{abortingScan ? 'Stopping...' : 'Stop Scan'}</span>
             </button>
           </div>
         </div>

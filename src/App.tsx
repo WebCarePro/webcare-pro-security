@@ -2958,7 +2958,14 @@ Source Code,${escapeCsv(code)}
       })
       .catch((err) => console.warn('Could not load custom scan settings:', err));
 
-    // Check periodically for background scheduled scans every 8 seconds if idle
+    // Immediately check on tab focus/reopen and periodically every 8 seconds if idle
+    const handleVisibilityResume = () => {
+      if (typeof document !== 'undefined' && !document.hidden && !isResumingRef.current) {
+        checkAndResumeActiveScan();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityResume);
+
     const activeScanChecker = setInterval(() => {
       if (typeof document !== 'undefined' && document.hidden) return;
       if (!isResumingRef.current) {
@@ -2966,7 +2973,10 @@ Source Code,${escapeCsv(code)}
       }
     }, 8000);
 
-    return () => clearInterval(activeScanChecker);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityResume);
+      clearInterval(activeScanChecker);
+    };
   }, []);
 
   useEffect(() => {
@@ -3032,6 +3042,17 @@ Source Code,${escapeCsv(code)}
 
   const isResumingRef = useRef<boolean>(false);
 
+  const isScanLockConflict = (err: any): boolean => {
+    const code = err?.code || err?.data?.code || '';
+    const status = Number(err?.data?.status ?? err?.status ?? 0);
+    const msg = String(err?.message || err?.data?.message || '');
+    return (
+      code === 'scan_lock_conflict' ||
+      status === 409 ||
+      /scan_lock_conflict|Concurrent scan batch execution rejected|lease verification failed/i.test(msg)
+    );
+  };
+
   // Resume or run dashboard scan sequence
   const resumeDashboardScan = async (
     scanId: number,
@@ -3040,11 +3061,14 @@ Source Code,${escapeCsv(code)}
     initialScanned: number = 0,
     initialElapsed: number = 0,
     customOptionsToUse?: Record<string, boolean>,
-    leaseToken?: string
+    leaseToken?: string,
+    initialRemaining?: number
   ) => {
     const scanStartTime = initialElapsed > 0 ? (Date.now() - (initialElapsed * 1000)) : Date.now();
     scanStartTimeRef.current = scanStartTime;
     setScanElapsed(initialElapsed > 0 ? initialElapsed : 0);
+    let activeLeaseToken = leaseToken || '';
+    let finishedByWorker = false;
     try {
       setScanning(true);
       setScanTarget(targetType === 'full' ? 'full' : targetType === 'custom' ? 'custom' : 'plugins_themes');
@@ -3060,33 +3084,91 @@ Source Code,${escapeCsv(code)}
       );
       setCurrentFile(initialScanned > 0 ? 'Reconnecting to scan batch pipeline...' : 'Initializing file scanner...');
 
-      // Phase 1: Filesystem batch loop (only if totalFiles > 0)
-      let finished = totalFiles === 0;
+      // Phase 1: Filesystem batch loop (only if totalFiles > 0 and files still remain)
+      let finished = totalFiles === 0 || (typeof initialRemaining === 'number' && initialRemaining <= 0);
       while (!finished) {
-        // Request higher batch size (e.g. 60) so the backend Adaptive Governor can scale up to 120-150 files
-        // when ample memory headroom (>500MB free) is available on the server
-        const batchRes: any = await apiRequest({
-          path: '/webcare-pro-security/v1/scan/batch',
-          method: 'POST',
-          data: { scan_id: scanId, batch_size: 60, lease_token: leaseToken, from_browser: 1 },
-        });
+        try {
+          // Request higher batch size (e.g. 60) so the backend Adaptive Governor can scale up to 120-150 files
+          // when ample memory headroom (>500MB free) is available on the server
+          const batchRes: any = await apiRequest({
+            path: '/webcare-pro-security/v1/scan/batch',
+            method: 'POST',
+            data: { scan_id: scanId, batch_size: 60, lease_token: activeLeaseToken, from_browser: 1 },
+          });
 
-        if (batchRes?.telemetry) {
-          setScanTelemetry(batchRes.telemetry);
+          if (batchRes?.telemetry) {
+            setScanTelemetry(batchRes.telemetry);
+          }
+
+          if (batchRes?.last_file) {
+            setCurrentFile(batchRes.last_file);
+          }
+
+          const remaining = batchRes?.remaining || 0;
+          const processed = total - remaining;
+          const currentPercent = Math.min(85, Math.round((processed / total) * 85));
+          setProgress(currentPercent);
+
+          if (batchRes?.is_finished) {
+            finished = true;
+          }
+        } catch (batchErr: any) {
+          if (!isScanLockConflict(batchErr)) {
+            throw batchErr;
+          }
+
+          // Background worker currently holds the batch mutex — sync live progress instead of failing
+          setCurrentFile('Background worker active — syncing live progress...');
+          const activeRes: any = await apiRequest({ path: '/webcare-pro-security/v1/scan/active?from_browser=1' }).catch(() => null);
+          if (activeRes?.is_running && activeRes?.scan_id === scanId) {
+            if (activeRes.lease_token) {
+              activeLeaseToken = activeRes.lease_token;
+            }
+            if (activeRes.telemetry) {
+              setScanTelemetry(activeRes.telemetry);
+            }
+            if (activeRes.last_file) {
+              setCurrentFile(activeRes.last_file);
+            }
+            const syncedTotal = Math.max(1, Number(activeRes.total_files ?? total));
+            const syncedScanned = Number(activeRes.scanned_files ?? 0);
+            const syncedRemaining = Number(activeRes.remaining ?? Math.max(0, syncedTotal - syncedScanned));
+            const syncedPct = activeRes.phase === 'deep_audit'
+              ? 88
+              : Math.min(85, Math.round(((syncedTotal - syncedRemaining) / syncedTotal) * 85));
+            setProgress(syncedPct);
+            setScanStage(`Stage 1/2: ${syncedScanned} of ${syncedTotal} files scanned (background worker syncing)...`);
+
+            if (activeRes.phase === 'deep_audit' || (totalFiles > 0 && syncedRemaining <= 0)) {
+              finished = true;
+              break;
+            }
+            await new Promise((res) => setTimeout(res, 2000));
+            continue;
+          }
+
+          // Check whether background worker already finished or stopped this scan
+          const histRes: any = await apiRequest({ path: `/webcare-pro-security/v1/scan/history/${scanId}` }).catch(() => null);
+          const histStatus = histRes?.summary?.status;
+          if (histStatus === 'completed') {
+            finishedByWorker = true;
+            finished = true;
+            break;
+          }
+          if (histStatus === 'aborted' || histStatus === 'interrupted') {
+            await loadLatestScan();
+            return;
+          }
+          throw batchErr;
         }
+      }
 
-        if (batchRes?.last_file) {
-          setCurrentFile(batchRes.last_file);
-        }
-
-        const remaining = batchRes?.remaining || 0;
-        const processed = total - remaining;
-        const currentPercent = Math.min(85, Math.round((processed / total) * 85));
-        setProgress(currentPercent);
-
-        if (batchRes?.is_finished) {
-          finished = true;
-        }
+      if (finishedByWorker) {
+        setProgress(100);
+        setScanStage('Scan completed successfully!');
+        setCurrentFile('Audit finalized.');
+        await loadLatestScan();
+        return;
       }
 
       // Phase 2: Deep audits
@@ -3107,7 +3189,7 @@ Source Code,${escapeCsv(code)}
         if (stopDeepAuditPolling) return;
         if (typeof document !== 'undefined' && document.hidden) return;
         try {
-          const activeRes: any = await apiRequest({ path: '/webcare-pro-security/v1/scan/active' });
+          const activeRes: any = await apiRequest({ path: '/webcare-pro-security/v1/scan/active?from_browser=1' });
           if (activeRes?.last_file) {
             setCurrentFile(activeRes.last_file);
           }
@@ -3133,13 +3215,13 @@ Source Code,${escapeCsv(code)}
         }
       }, 600);
 
-      // Execute Deep Audit with resilient auto-retry to prevent transient server gateway timeouts (504/timeout) from aborting completed scans
+      // Execute Deep Audit with resilient auto-retry & background worker lock coordination
       let deepAuditSuccess = false;
       let deepAuditAttempts = 0;
       let lastDeepError = null;
 
       try {
-        while (!deepAuditSuccess && deepAuditAttempts < 3) {
+        while (!deepAuditSuccess && deepAuditAttempts < 12) {
           deepAuditAttempts++;
           try {
             await apiRequest({
@@ -3151,14 +3233,38 @@ Source Code,${escapeCsv(code)}
                 custom_options: customOptionsToUse || customScanOptions,
                 client_duration: clientElapsedSecs,
                 client_duration_ms: clientElapsedMs,
-                lease_token: leaseToken
+                lease_token: activeLeaseToken
               },
             });
             deepAuditSuccess = true;
           } catch (auditErr: any) {
             lastDeepError = auditErr;
-            console.warn(`[WebCare Pro] Deep audit attempt ${deepAuditAttempts} encountered timeout/network hiccup, checking scan state...`, auditErr);
-            // Wait 2.5 seconds before retrying or checking completion
+            const histRes: any = await apiRequest({ path: `/webcare-pro-security/v1/scan/history/${scanId}` }).catch(() => null);
+            const histStatus = histRes?.summary?.status;
+            if (histStatus === 'completed') {
+              deepAuditSuccess = true;
+              finishedByWorker = true;
+              break;
+            }
+            if (histStatus === 'aborted' || histStatus === 'interrupted') {
+              await loadLatestScan();
+              return;
+            }
+            const activeRes: any = await apiRequest({ path: '/webcare-pro-security/v1/scan/active?from_browser=1' }).catch(() => null);
+            if (activeRes?.is_running && activeRes?.scan_id === scanId) {
+              if (activeRes.lease_token) {
+                activeLeaseToken = activeRes.lease_token;
+              }
+              if (activeRes.last_file) {
+                setCurrentFile(activeRes.last_file);
+              }
+              if (!isScanLockConflict(auditErr) && deepAuditAttempts >= 3) {
+                break;
+              }
+            } else if (!isScanLockConflict(auditErr) && deepAuditAttempts >= 3) {
+              break;
+            }
+            console.warn(`[WebCare Pro] Deep audit attempt ${deepAuditAttempts} waiting for scan state...`, auditErr);
             await new Promise((res) => setTimeout(res, 2500));
           }
         }
@@ -3169,6 +3275,14 @@ Source Code,${escapeCsv(code)}
 
       if (!deepAuditSuccess && lastDeepError) {
         throw lastDeepError;
+      }
+
+      if (finishedByWorker) {
+        setProgress(100);
+        setScanStage('Scan completed successfully!');
+        setCurrentFile('Audit finalized.');
+        await loadLatestScan();
+        return;
       }
 
       // Real-time NIST NVD CVE Audit (4 plugins/themes/core per 30s)
@@ -3285,42 +3399,93 @@ Source Code,${escapeCsv(code)}
         }
       }, 500);
 
-      // If filesystem-only scan, process file batches first
+      // If filesystem-only scan, process file batches first with 409 lock-conflict resilience
+      let activeLeaseToken = leaseToken || '';
+      let workerCompleted = false;
       if (targetType === 'filesystem_only') {
         let finished = false;
         while (!finished) {
-          const batchRes: any = await apiRequest({
-            path: '/webcare-pro-security/v1/scan/batch',
-            method: 'POST',
-            data: { scan_id: scanId, batch_size: 60, lease_token: leaseToken, from_browser: 1 },
-          });
-          if (batchRes.last_file) {
-            setTargetedDetail(`Auditing: ${batchRes.last_file}`);
-          }
-          if (batchRes.is_finished) {
-            finished = true;
+          try {
+            const batchRes: any = await apiRequest({
+              path: '/webcare-pro-security/v1/scan/batch',
+              method: 'POST',
+              data: { scan_id: scanId, batch_size: 60, lease_token: activeLeaseToken, from_browser: 1 },
+            });
+            if (batchRes.last_file) {
+              setTargetedDetail(`Auditing: ${batchRes.last_file}`);
+            }
+            if (batchRes.is_finished) {
+              finished = true;
+            }
+          } catch (batchErr: any) {
+            if (!isScanLockConflict(batchErr)) {
+              throw batchErr;
+            }
+            setTargetedDetail('Background worker active — syncing live progress...');
+            const activeRes: any = await apiRequest({ path: '/webcare-pro-security/v1/scan/active?from_browser=1' }).catch(() => null);
+            if (activeRes?.is_running && activeRes?.scan_id === scanId) {
+              if (activeRes.lease_token) activeLeaseToken = activeRes.lease_token;
+              if (activeRes.last_file) setTargetedDetail(`Auditing: ${activeRes.last_file}`);
+              if (activeRes.phase === 'deep_audit' || Number(activeRes.remaining ?? 1) <= 0) {
+                finished = true;
+                break;
+              }
+              await new Promise((res) => setTimeout(res, 2000));
+              continue;
+            }
+            const histRes: any = await apiRequest({ path: `/webcare-pro-security/v1/scan/history/${scanId}` }).catch(() => null);
+            if (histRes?.summary?.status === 'completed') {
+              workerCompleted = true;
+              finished = true;
+              break;
+            }
+            if (histRes?.summary?.status === 'aborted' || histRes?.summary?.status === 'interrupted') {
+              await loadLatestScan();
+              return;
+            }
+            throw batchErr;
           }
         }
       }
 
-      setTargetedDetail('Executing deep forensic evaluation...');
+      if (!workerCompleted) {
+        setTargetedDetail('Executing deep forensic evaluation...');
 
-      const finalElapsedMs = Math.max(50, Date.now() - targetedStartTime);
-      const finalElapsedSecs = Math.max(1, Math.round(finalElapsedMs / 1000));
+        const finalElapsedMs = Math.max(50, Date.now() - targetedStartTime);
+        const finalElapsedSecs = Math.max(1, Math.round(finalElapsedMs / 1000));
 
-      // Run deep audit for the target
-      await apiRequest({
-        path: '/webcare-pro-security/v1/scan/deep-audit',
-        method: 'POST',
-        data: { 
-          scan_id: scanId, 
-          target: targetType,
-          admins_only: extraOptions.admins_only ?? false,
-          client_duration: finalElapsedSecs,
-          client_duration_ms: finalElapsedMs,
-          lease_token: leaseToken
-        },
-      });
+        // Run deep audit for the target with background lock resilience
+        let targetedDeepDone = false;
+        for (let attempt = 0; attempt < 10 && !targetedDeepDone; attempt++) {
+          try {
+            await apiRequest({
+              path: '/webcare-pro-security/v1/scan/deep-audit',
+              method: 'POST',
+              data: { 
+                scan_id: scanId, 
+                target: targetType,
+                admins_only: extraOptions.admins_only ?? false,
+                client_duration: finalElapsedSecs,
+                client_duration_ms: finalElapsedMs,
+                lease_token: activeLeaseToken
+              },
+            });
+            targetedDeepDone = true;
+          } catch (deepErr: any) {
+            const histRes: any = await apiRequest({ path: `/webcare-pro-security/v1/scan/history/${scanId}` }).catch(() => null);
+            if (histRes?.summary?.status === 'completed') {
+              targetedDeepDone = true;
+              break;
+            }
+            if (!isScanLockConflict(deepErr)) {
+              throw deepErr;
+            }
+            const activeRes: any = await apiRequest({ path: '/webcare-pro-security/v1/scan/active?from_browser=1' }).catch(() => null);
+            if (activeRes?.lease_token) activeLeaseToken = activeRes.lease_token;
+            await new Promise((res) => setTimeout(res, 2500));
+          }
+        }
+      }
 
       setTargetedDetail('Compiling audit results & correlation score...');
 
@@ -3440,11 +3605,11 @@ Source Code,${escapeCsv(code)}
     }
   };
 
-  // Inspect and auto-resume running scan upon page load or refresh
+  // Inspect and auto-resume running scan upon page load, refresh, or browser reopen
   const checkAndResumeActiveScan = async () => {
     if (isResumingRef.current || scanning || targetedScanning !== null) return;
     try {
-      const activeRes: any = await apiRequest({ path: '/webcare-pro-security/v1/scan/active' });
+      const activeRes: any = await apiRequest({ path: '/webcare-pro-security/v1/scan/active?from_browser=1' });
       if (activeRes?.is_running && activeRes?.scan_id) {
         if (isResumingRef.current || scanning || targetedScanning !== null) return;
         isResumingRef.current = true;
@@ -3452,6 +3617,7 @@ Source Code,${escapeCsv(code)}
         const target = activeRes.scan_target || 'plugins_themes';
         const total = activeRes.total_files || 1;
         const scanned = activeRes.scanned_files || 0;
+        const remaining = typeof activeRes.remaining === 'number' ? activeRes.remaining : undefined;
         const elapsed = activeRes.elapsed || 1;
         const triggerType = activeRes.trigger_type || 'manual';
         const leaseToken = activeRes.lease_token || '';
@@ -3467,7 +3633,7 @@ Source Code,${escapeCsv(code)}
           await resumeTargetedScan(scanId, target, elapsed, {}, leaseToken);
         } else {
           setActiveScanTrigger('manual');
-          await resumeDashboardScan(scanId, total, target, scanned, elapsed, undefined, leaseToken);
+          await resumeDashboardScan(scanId, total, target, scanned, elapsed, undefined, leaseToken, remaining);
         }
       }
     } catch (e) {
@@ -5343,12 +5509,12 @@ Source Code,${escapeCsv(code)}
       {/* Persistent Global Active Scan Top Banner (Only visible outside Scan page to avoid duplicate progress bars) */}
       {(scanning || targetedScanning) && navTab !== 'scan' && (
         <div className="webcare-active-scan-banner">
-          <div className="webcare-active-scan-banner-info">
+          <div className="webcare-active-scan-banner-info" style={{ flex: 1, minWidth: '260px' }}>
             <div className="webcare-active-scan-spinner-box">
               <Loader2 size={20} className="webcare-spin-icon" />
             </div>
-            <div>
-              <div className="webcare-active-scan-title">
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="webcare-active-scan-title" style={{ flexWrap: 'wrap' }}>
                 <span><strong>Scan in Progress:</strong> </span>
                 <span>
                   {targetedScanning
@@ -5370,8 +5536,18 @@ Source Code,${escapeCsv(code)}
                   </span>
                 )}
               </div>
-              <div className="webcare-active-scan-subtitle">
+              <div className="webcare-active-scan-subtitle" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 <span>{targetedScanning ? (targetedStage || 'Auditing security vectors...') : (scanStage || 'Examining filesystem...')}</span>
+              </div>
+              <div className="webcare-progress-bar-bg" style={{ height: '5px', marginTop: '8px', background: 'rgba(99, 102, 241, 0.16)' }}>
+                <div
+                  className="webcare-progress-fill"
+                  style={{
+                    width: `${Math.min(100, Math.max(3, targetedScanning ? targetedProgress : progress))}%`,
+                    background: 'linear-gradient(90deg, #4f46e5 0%, #7c3aed 100%)',
+                    borderRadius: '999px',
+                  }}
+                />
               </div>
             </div>
           </div>

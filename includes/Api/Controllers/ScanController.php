@@ -2382,6 +2382,13 @@ final class ScanController extends AbstractApiController {
             ]);
         }
 
+        // If browser Scan UI is reconnecting to drive batches manually, record browser touch
+        // before running stall self-healing so we do not spawn a competing loopback tick on the same lock.
+        $trigger_type = !empty($running_scan['trigger_type']) ? $running_scan['trigger_type'] : 'manual';
+        if (!empty($request->get_param('from_browser')) && $trigger_type !== 'scheduled') {
+            set_transient("webcareproscan_active_scan_last_browser_touch_{$locked_id}", microtime(true), 120);
+        }
+
         // Actively self-heal stalled background continuation ticks while monitoring
         if (class_exists('\\WebCareProScanner\\Scan\\ScanBackgroundWorker')) {
             \WebCareProScanner\Scan\ScanBackgroundWorker::maybe_advance_stalled_scan((int) $locked_id);
@@ -2390,7 +2397,6 @@ final class ScanController extends AbstractApiController {
         // Lock heartbeat
         $total = (int) $running_scan['total_files'];
         $scanned = (int) $running_scan['scanned_files'];
-        $trigger_type = !empty($running_scan['trigger_type']) ? $running_scan['trigger_type'] : 'manual';
         $remaining = \WebCareProScanner\Scan\ScanQueueManager::get_remaining_count($locked_id);
         if ($remaining === 0 && $total > $scanned) {
             $remaining = max(0, $total - $scanned);
